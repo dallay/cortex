@@ -320,6 +320,11 @@ pub trait AgentLoop: Send + Sync {
 `AgentLoop` also provides a default `compact` method. See the core API for its
 exact signature.
 
+An implementation is replaceable only if it is certifiable. The clauses it must satisfy,
+the case that proves each one, and the contract gaps that remain are in
+[Agent loop conformance](agent-loop-conformance.md). Certify a loop with
+`cargo test -p huginn-conformance`.
+
 ## Native Tools
 
 Built-in tools registered by the Huginn runtime:

@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use huginn_core::{
     kernel::{Manifest, Plugin, PluginContext, ServiceId, Supervisor},
     AgentLoop, ApprovalPolicy, CancellationToken, Event, EventSink, LoopService, Message, Result,
-    Role, Session,
+    Role, Session, StepId, TurnId,
 };
 use huginn_plugin_api::v1::{
     contributions_id, CommandMetadata, CommandResult, Contribution, Dialog, UiService, View,
@@ -32,6 +32,7 @@ impl AgentLoop for Engine {
         }
         if prompt == "hold" {
             events.emit(Event::Text {
+                step: StepId(1),
                 text: "STREAM_HELD".into(),
             });
             cancel.cancelled().await;
@@ -64,7 +65,10 @@ impl AgentLoop for Engine {
             let marker = gated_resize_stream && index % 4 == 0;
             tokio::select! {
                 _ = cancel.cancelled() => { session.interrupted = true; return Err(huginn_core::AgentError::Cancelled); },
-                _ = tokio::time::sleep(Duration::from_millis(20)) => events.emit(Event::Text { text: format!("{}chunk{index} ", if marker { "\n" } else { "" }) }),
+                _ = tokio::time::sleep(Duration::from_millis(20)) => events.emit(Event::Text {
+                    step: StepId(1),
+                    text: format!("{}chunk{index} ", if marker { "\n" } else { "" }),
+                }),
             }
             if marker {
                 let signal = format!("resize-{index}");
@@ -79,7 +83,7 @@ impl AgentLoop for Engine {
         session
             .messages
             .push(Message::text(Role::Assistant, "STREAM_COMPLETE"));
-        events.emit(Event::TurnFinished);
+        events.emit(Event::TurnFinished { turn: TurnId(1) });
         Ok(())
     }
 }

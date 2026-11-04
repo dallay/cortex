@@ -6,7 +6,7 @@ use huginn_core::{
     kernel::{Manifest, Plugin, PluginContext},
     ApprovalPrompt, ApprovalRequest, CancellationToken, Event, EventSink, InstructionSource,
     LoopService, ModelDelta, ModelProvider, ModelRequest, PreparedAction, Result, Role, Session,
-    SessionInfo, SessionStore, Tool, ToolCall, ToolContext, ToolDefinition, ToolRegistry,
+    SessionInfo, SessionStore, StepId, Tool, ToolCall, ToolContext, ToolDefinition, ToolRegistry,
 };
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -323,7 +323,10 @@ async fn annotated_results_reserve_visible_notes_within_the_output_budget() {
                 .iter()
                 .filter_map(|e| match e {
                     Event::ToolFinished {
-                        output, is_error, ..
+                        step: StepId(1),
+                        output,
+                        is_error,
+                        ..
                     } => Some((output.as_str(), *is_error)),
                     _ => None,
                 })
@@ -383,6 +386,7 @@ async fn continuing_hooks_cannot_override_a_host_denial_and_observe_the_error() 
     assert!(events.iter().any(|event| matches!(
         event,
         Event::ApprovalResolved {
+            step: StepId(1),
             approved: false,
             ..
         }

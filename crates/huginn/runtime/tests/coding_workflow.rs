@@ -3,7 +3,7 @@ use futures::{stream::BoxStream, StreamExt};
 use huginn_core::{
     AgentError, AgentLoop, ApprovalPolicy, ApprovalRequest, CancellationToken, Event, EventSink,
     Message, ModelDelta, ModelProvider, ModelRequest, OperationId, Result, Role, ScopedEventSink,
-    Session, SessionStore, ToolCall, ToolContext, ToolRegistry,
+    Session, SessionStore, StepId, ToolCall, ToolContext, ToolRegistry,
 };
 use huginn_runtime::{
     loop_engine::{recover, LoopConfig, StandardLoop},
@@ -240,6 +240,7 @@ async fn explicit_skill_is_lower_trust_and_cannot_grant_effect_authority_on_resu
     assert!(events.0.lock().unwrap().iter().any(|event| matches!(
         event,
         Event::ApprovalResolved {
+            step: StepId(1),
             approved: false,
             ..
         }
@@ -500,7 +501,7 @@ async fn operation_scope_survives_tool_continuation_and_is_distinct_per_run() {
         .any(|(id, event)| *id == first && matches!(event, Event::ToolFinished { .. })));
     assert!(events
         .iter()
-        .any(|(id, event)| *id == first && matches!(event, Event::TurnFinished)));
+        .any(|(id, event)| *id == first && matches!(event, Event::TurnFinished { .. })));
     assert!(events.iter().any(|(id, _)| *id == second));
     assert!(!events.iter().any(|(id, _)| *id == OperationId::default()));
     assert!(!events.iter().any(|(id, _)| *id == OperationId(43)));

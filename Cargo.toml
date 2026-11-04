@@ -25,6 +25,7 @@ members = [
     "crates/infrastructure/alias-sqlite",
     "apps/rook",
     "apps/huginn",
+    "crates/huginn/conformance",
     "crates/huginn/core",
     "crates/huginn/guards",
     "crates/huginn/application",

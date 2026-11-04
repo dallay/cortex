@@ -1,5 +1,6 @@
 //! Contract doubles only; no remote provider or OS credential-store validation.
 use async_trait::async_trait;
+use huginn_core::StepId as HuginnStepId;
 use huginn_core::{
     connections::*,
     kernel::{Manifest, Plugin, PluginContext, ServiceId, Supervisor},
@@ -541,6 +542,7 @@ async fn repeated_ui_commands_after_dedup_expiry_preserve_stream_and_conversatio
     ui.emit_for(
         operation,
         Event::Text {
+            step: HuginnStepId(1),
             text: "stream remains intact".into(),
         },
     );

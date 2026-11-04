@@ -3,7 +3,7 @@ use futures::StreamExt;
 use huginn_core::{
     hooks::{ToolHooks, ToolOutcome},
     AgentError, AgentLoop, ApprovalPolicy, CancellationToken, Event, EventSink, InstructionSource,
-    Message, ModelDelta, ModelProvider, ModelRequest, Result, Role, Session, SessionStore,
+    Message, ModelDelta, ModelProvider, ModelRequest, Result, Role, Session, SessionStore, StepId,
     ToolContext, ToolRegistry,
 };
 use std::{
@@ -41,6 +41,15 @@ pub struct LoopConfig {
     pub skills: Option<Arc<dyn crate::skills::SkillLoader>>,
     /// Live, generation-owned registry; plugins may add hooks after the loop starts.
     pub hooks: Option<Arc<ToolHooks>>,
+    /// Turn-level hooks around the model call, same ownership rules.
+    pub inference_hooks: Option<Arc<huginn_core::hooks::InferenceHooks>>,
+    /// Host mailbox the loop drains at step boundaries.
+    pub steering: Option<Arc<huginn_core::SteeringQueue>>,
+    /// Tokens the whole turn may spend, summed from provider usage reports. `None`
+    /// leaves the turn unbounded, which is the historical behavior.
+    pub max_turn_tokens: Option<u64>,
+    /// Bounded repeats of a retryable inference failure. Effects are never retried.
+    pub max_model_retries: u32,
     pub max_iterations: usize,
     pub context_tokens: usize,
     pub max_output_tokens: u32,
@@ -50,6 +59,10 @@ impl Default for LoopConfig {
         Self {
             skills: None,
             hooks: None,
+            inference_hooks: None,
+            steering: None,
+            max_turn_tokens: None,
+            max_model_retries: 0,
             max_iterations: 20,
             context_tokens: 32768,
             max_output_tokens: 4096,
@@ -87,6 +100,42 @@ pub(crate) async fn skill_commands(
         .map(|entry| (format!("/skill:{}", entry.name), entry.description.clone()))
         .collect())
 }
+/// Host-owned decision points for a whole turn.
+/// The output budget for a request: the configured limit, capped by what the turn has
+/// left. Without a turn budget it is just the configured limit.
+impl LoopExecution<'_> {
+    fn remaining_output_tokens(&self, spent: u64) -> u32 {
+        self.config
+            .max_turn_tokens
+            .map_or(self.config.max_output_tokens, |budget| {
+                u32::try_from(budget.saturating_sub(spent))
+                    .unwrap_or(u32::MAX)
+                    .min(self.config.max_output_tokens)
+            })
+    }
+}
+
+struct TurnHost<'a> {
+    approvals: &'a dyn ApprovalPolicy,
+    sink: &'a dyn EventSink,
+}
+
+/// Host-facing I/O and identity for one model call inside a turn.
+///
+/// Bundling it keeps every event a step emits on the same identity and the same host
+/// decision points, instead of threading the same five values through the loop.
+/// Largest answer the loop will persist; a truncated stream or an oversized reply is an
+/// error, not something to store.
+const MAX_RESPONSE_BYTES: usize = 1_048_576;
+
+struct StepScope<'a> {
+    step: StepId,
+    selected: &'a [String],
+    approvals: &'a dyn ApprovalPolicy,
+    sink: &'a dyn EventSink,
+    cancel: CancellationToken,
+}
+
 pub(crate) struct LoopExecution<'a> {
     model: &'a dyn ModelProvider,
     tools: &'a dyn ToolRegistry,
@@ -273,12 +322,12 @@ impl<'a> LoopExecution<'a> {
         model: &dyn ModelProvider,
         request: ModelRequest,
         session: &mut Session,
-        cancel: CancellationToken,
-        sink: &dyn EventSink,
+        scope: &StepScope<'_>,
+        spent: &mut u64,
     ) -> Result<Message> {
-        let model_request = model.stream(request, cancel.clone());
+        let model_request = model.stream(request, scope.cancel.clone());
         let mut stream = tokio::select! {
-            _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+            _ = scope.cancel.cancelled() => return Err(AgentError::Cancelled),
             _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
             result = model_request => result?,
         };
@@ -287,7 +336,7 @@ impl<'a> LoopExecution<'a> {
         let mut count = 0;
         loop {
             let item = tokio::select! {
-                _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+                _ = scope.cancel.cancelled() => return Err(AgentError::Cancelled),
                 _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
                 item = stream.next() => item,
             };
@@ -307,7 +356,10 @@ impl<'a> LoopExecution<'a> {
                     response.content.push_str(&text);
                     // Text deltas are live-only; the completed response is saved below.
                     // Incomplete or cancelled turns intentionally lose partial text.
-                    sink.emit(Event::Text { text });
+                    scope.sink.emit(Event::Text {
+                        step: scope.step,
+                        text,
+                    });
                 }
                 ModelDelta::ToolCall(call) => {
                     if response.tool_calls.len() >= 64 {
@@ -319,13 +371,17 @@ impl<'a> LoopExecution<'a> {
                     input_tokens,
                     output_tokens,
                 } => {
+                    // Counted even if this attempt later fails: the provider already
+                    // spent those tokens, so the turn budget must see them.
+                    *spent = spent.saturating_add(input_tokens.saturating_add(output_tokens));
                     self.record(
                         session,
                         Event::Usage {
+                            step: scope.step,
                             input_tokens,
                             output_tokens,
                         },
-                        sink,
+                        scope.sink,
                     )
                     .await?;
                 }
@@ -333,7 +389,9 @@ impl<'a> LoopExecution<'a> {
             }
         }
         if !finished {
-            return Err(AgentError::Model(
+            // A truncated stream is the canonical transient inference failure: no effect
+            // exists, so the same request may be repeated safely.
+            return Err(AgentError::Inference(
                 "model returned an incomplete turn".into(),
             ));
         }
@@ -344,17 +402,27 @@ impl<'a> LoopExecution<'a> {
         &self,
         call: huginn_core::ToolCall,
         session: &mut Session,
-        approvals: &dyn ApprovalPolicy,
-        cancel: CancellationToken,
-        sink: &dyn EventSink,
-        selected: &[String],
+        scope: &StepScope<'_>,
     ) -> Result<()> {
-        self.record(session, Event::ToolStarted { call: call.clone() }, sink)
-            .await?;
+        // A cancelled turn must not start another effect. Waiting for the token inside
+        // `select!` below is not enough: a chosen effect can complete before the
+        // cancellation is observed, and `select!` is unbiased by default.
+        if scope.cancel.is_cancelled() || self.lifecycle.is_cancelled() {
+            return Err(AgentError::Cancelled);
+        }
+        self.record(
+            session,
+            Event::ToolStarted {
+                step: scope.step,
+                call: call.clone(),
+            },
+            scope.sink,
+        )
+        .await?;
         let ctx = ToolContext {
-            selected_skills: selected.to_vec(),
+            selected_skills: scope.selected.to_vec(),
             workspace: session.workspace.clone(),
-            cancellation: cancel.clone(),
+            cancellation: scope.cancel.clone(),
         };
         let execution = async {
             let tool = self
@@ -376,19 +444,24 @@ impl<'a> LoopExecution<'a> {
                 self.record(
                     session,
                     Event::ApprovalRequested {
+                        step: scope.step,
                         request: request.clone(),
                     },
-                    sink,
+                    scope.sink,
                 )
                 .await?;
-                let approved = approvals.approve(request, cancel.clone()).await?;
+                let approved = scope
+                    .approvals
+                    .approve(request, scope.cancel.clone())
+                    .await?;
                 self.record(
                     session,
                     Event::ApprovalResolved {
+                        step: scope.step,
                         id: request.id.clone(),
                         approved,
                     },
-                    sink,
+                    scope.sink,
                 )
                 .await?;
                 if !approved {
@@ -397,10 +470,15 @@ impl<'a> LoopExecution<'a> {
                     ));
                 }
             }
+            // Cancellation can begin during prepare or while the user decides, so the
+            // decision is re-checked immediately before the effect.
+            if scope.cancel.is_cancelled() || self.lifecycle.is_cancelled() {
+                return Err(AgentError::Cancelled);
+            }
             tool.execute(action, &ctx).await
         };
         let output = tokio::select! {
-            _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+            _ = scope.cancel.cancelled() => return Err(AgentError::Cancelled),
             _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
             output = execution => output,
         };
@@ -415,7 +493,7 @@ impl<'a> LoopExecution<'a> {
                 is_error,
             };
             let notes = tokio::select! {
-                _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+                _ = scope.cancel.cancelled() => return Err(AgentError::Cancelled),
                 _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
                 notes = hooks.after(&call, outcome, &ctx) => notes,
             };
@@ -441,11 +519,12 @@ impl<'a> LoopExecution<'a> {
         self.record(
             session,
             Event::ToolFinished {
+                step: scope.step,
                 id: call.id,
                 output,
                 is_error,
             },
-            sink,
+            scope.sink,
         )
         .await?;
         Ok(())
@@ -456,11 +535,13 @@ impl<'a> LoopExecution<'a> {
         model: Result<Option<Arc<dyn ModelProvider>>>,
         session: &mut Session,
         input: (String, &[String], Option<crate::skills::SkillCatalog>),
-        approvals: &dyn ApprovalPolicy,
-        sink: &dyn EventSink,
+        scope: TurnHost<'_>,
         cancel: CancellationToken,
+        turn: huginn_core::TurnId,
     ) -> Result<()> {
         let (prompt, selected, catalog_snapshot) = input;
+        let TurnHost { approvals, sink } = scope;
+        let mut spent = 0_u64;
         recover(session);
         session.messages.push(Message::text(Role::User, prompt));
         self.sessions.save(session).await?;
@@ -493,42 +574,199 @@ impl<'a> LoopExecution<'a> {
         } else {
             String::new()
         };
-        for _ in 0..self.config.max_iterations {
-            if cancel.is_cancelled() || self.lifecycle.is_cancelled() {
-                return Err(AgentError::Cancelled);
-            }
-            let mut instructions = tokio::select! {
+        // Pinned once for the whole turn: a mid-turn change to repository instructions
+        // must not silently alter what the model was already told.
+        let pinned = {
+            let mut loaded = tokio::select! {
                 biased;
                 _ = cancel.cancelled() => return Err(AgentError::Cancelled),
                 _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
                 result = self.instructions.load(&session.workspace) => result?,
             };
-            instructions.push_str(&metadata);
+            loaded.push_str(&metadata);
+            loaded
+        };
+        self.record(
+            session,
+            Event::ContextPinned {
+                turn,
+                bytes: pinned.len(),
+                digest: huginn_core::fingerprint(pinned.as_bytes()),
+            },
+            sink,
+        )
+        .await?;
+        for iteration in 1..=self.config.max_iterations {
+            if cancel.is_cancelled() || self.lifecycle.is_cancelled() {
+                return Err(AgentError::Cancelled);
+            }
+            // One model call is one step. Step identity is turn-scoped and restarts
+            // at one for every `run`, so it is never confused with a turn id.
+            let scope = StepScope {
+                step: StepId(iteration as u64),
+                selected,
+                approvals,
+                sink,
+                cancel: cancel.clone(),
+            };
+            // Steering lands between steps: nothing is mid-flight, so the model sees a
+            // complete history plus the injected messages.
+            if let Some(steering) = &self.config.steering {
+                let injected = steering.take();
+                if !injected.is_empty() {
+                    let count = injected.len();
+                    for message in injected {
+                        session.messages.push(Message::text(Role::User, message));
+                    }
+                    self.record(
+                        session,
+                        Event::Steered {
+                            turn,
+                            step: scope.step,
+                            count,
+                        },
+                        scope.sink,
+                    )
+                    .await?;
+                }
+            }
+            let instructions = &pinned;
             let tools = self.tools.definitions();
             let tool_bytes = serde_json::to_vec(&tools)?.len();
             let context = self
                 .context(
                     model,
                     session,
-                    &instructions,
+                    instructions,
                     tool_bytes,
                     cancel.clone(),
                     sink,
                 )
                 .await?;
-            let response = self
-                .collect_response(
-                    model,
-                    ModelRequest {
-                        messages: context,
-                        tools,
-                        max_tokens: self.config.max_output_tokens,
-                    },
-                    session,
-                    cancel.clone(),
-                    sink,
-                )
-                .await?;
+            let hook_context = ToolContext {
+                selected_skills: scope.selected.to_vec(),
+                workspace: session.workspace.clone(),
+                cancellation: scope.cancel.clone(),
+            };
+            // Turn-level hooks run before the request exists: a block costs no call.
+            if let Some(hooks) = &self.config.inference_hooks {
+                let blocked = tokio::select! {
+                    biased;
+                    _ = scope.cancel.cancelled() => return Err(AgentError::Cancelled),
+                    _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
+                    blocked = hooks.before(turn, scope.step, &hook_context) => blocked,
+                };
+                if let Some(blocked) = blocked {
+                    self.record(
+                        session,
+                        Event::InferenceBlocked {
+                            turn,
+                            step: scope.step,
+                            hook: blocked.hook.clone(),
+                            reason: blocked.reason.clone(),
+                        },
+                        scope.sink,
+                    )
+                    .await?;
+                    return Err(AgentError::Model(format!(
+                        "model call blocked by hook {}: {}",
+                        blocked.hook, blocked.reason
+                    )));
+                }
+            }
+            // The budget is checked before the request that would exceed it, so a turn
+            // never pays for a call it cannot keep.
+            if let Some(budget) = self.config.max_turn_tokens {
+                if spent >= budget {
+                    return Err(AgentError::Model(format!(
+                        "turn budget exhausted ({spent}/{budget} tokens); start a new session"
+                    )));
+                }
+            }
+            let mut attempt = 0_u32;
+            let mut response = loop {
+                let request = ModelRequest {
+                    messages: context.clone(),
+                    tools: tools.clone(),
+                    max_tokens: self.remaining_output_tokens(spent),
+                };
+                match self
+                    .collect_response(model, request, session, &scope, &mut spent)
+                    .await
+                {
+                    Ok(response) => break response,
+                    Err(error)
+                        if attempt < self.config.max_model_retries
+                            && error.is_retryable_inference() =>
+                    {
+                        // A retry is another request: it must fit the remaining budget.
+                        if let Some(budget) = self.config.max_turn_tokens {
+                            if spent >= budget {
+                                return Err(AgentError::Model(format!(
+                                    "turn budget exhausted ({spent}/{budget} tokens) before a retry"
+                                )));
+                            }
+                        }
+                        attempt += 1;
+                        self.record(
+                            session,
+                            Event::ModelRetried {
+                                turn,
+                                step: scope.step,
+                                attempt,
+                            },
+                            scope.sink,
+                        )
+                        .await?;
+                    }
+                    Err(error) => return Err(error),
+                }
+            };
+            if let Some(hooks) = &self.config.inference_hooks {
+                let notes = tokio::select! {
+                    biased;
+                    _ = scope.cancel.cancelled() => return Err(AgentError::Cancelled),
+                    _ = self.lifecycle.cancelled() => return Err(AgentError::Cancelled),
+                    notes = hooks.after(turn, scope.step, &response, &hook_context) => notes,
+                };
+                if !notes.is_empty() {
+                    let budget = crate::output::MAX_OUTPUT_BYTES / 4;
+                    let mut annotations = String::new();
+                    for note in notes {
+                        annotations.push_str(&format!("\n\n[hook {}] {}", note.hook, note.text));
+                        if annotations.len() > budget {
+                            annotations =
+                                crate::output::bounded_text_with_limit(annotations, budget);
+                            break;
+                        }
+                    }
+                    if response.content.len().saturating_add(annotations.len()) > MAX_RESPONSE_BYTES
+                    {
+                        // Reserve the marker: the bound must hold after it is appended.
+                        const MARKER: usize = 32;
+                        let room = MAX_RESPONSE_BYTES
+                            .saturating_sub(response.content.len())
+                            .saturating_sub(MARKER);
+                        if room > MARKER {
+                            response
+                                .content
+                                .push_str(&crate::output::bounded_text_with_limit(
+                                    annotations,
+                                    room,
+                                ));
+                        }
+                    } else {
+                        response.content.push_str(&annotations);
+                    }
+                }
+            }
+            if let Some(budget) = self.config.max_turn_tokens {
+                if spent > budget {
+                    return Err(AgentError::Model(format!(
+                        "turn budget exceeded ({spent}/{budget} tokens); nothing further was sent"
+                    )));
+                }
+            }
             let mut ids: BTreeSet<_> = session
                 .messages
                 .iter()
@@ -550,8 +788,7 @@ impl<'a> LoopExecution<'a> {
                 return Ok(());
             }
             for call in calls {
-                self.execute_tool(call, session, approvals, cancel.clone(), sink, selected)
-                    .await?;
+                self.execute_tool(call, session, &scope).await?;
             }
         }
         Err(AgentError::Model(
@@ -773,11 +1010,15 @@ impl LoopExecution<'_> {
         let (prompt, selected, catalog_snapshot) = input;
         // Pin before instruction/session I/O; every request in this turn reuses it.
         let model = self.pin_model(cancellation.clone()).await;
+        // Allocation is persisted with the session before the turn reports itself, so a
+        // crash can never hand the same identity to two turns of one session.
+        let turn = session.allocate_turn()?;
         session.interrupted = true;
         self.record(
             session,
             Event::TurnStarted {
                 session_id: session.id.clone(),
+                turn,
             },
             events,
         )
@@ -787,15 +1028,19 @@ impl LoopExecution<'_> {
                 model,
                 session,
                 (prompt, selected, catalog_snapshot),
-                approvals,
-                events,
+                TurnHost {
+                    approvals,
+                    sink: events,
+                },
                 cancellation,
+                turn,
             )
             .await;
         match &result {
             Ok(()) => {
                 session.interrupted = false;
-                self.record(session, Event::TurnFinished, events).await?;
+                self.record(session, Event::TurnFinished { turn }, events)
+                    .await?;
             }
             Err(error) => {
                 self.record(
