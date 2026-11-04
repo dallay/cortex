@@ -44,10 +44,10 @@ process-wrap = { version = "10", features = ["tokio1", "process-group", "kill-on
 wasmtime = { version = "=50.0.1", optional = true, default-features = false, features = ["anyhow", "async", "component-model", "cranelift", "runtime", "std"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-keyring = { version = "=3.6.3", default-features = false, features = ["apple-native"] }
+keyring = { version = "=4.2.0", default-features = false, features = ["apple-native"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-keyring = { version = "=3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust", "vendored"] }
+keyring = { version = "=4.2.0", default-features = false, features = ["sync-secret-service", "crypto-rust", "vendored"] }
 
 [[test]]
 name = "tls_transport"
