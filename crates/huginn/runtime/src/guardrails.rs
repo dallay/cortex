@@ -1,4 +1,4 @@
-//! Lectura única y acotada de restricciones adicionales del proyecto.
+//! Single, bounded read of additional project restrictions.
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use huginn_core::{AgentError, Result};
 use huginn_guards::Guardrails;

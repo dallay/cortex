@@ -1,9 +1,9 @@
-//! Uso observado en un frame rechazado por la validación del proveedor.
+//! Usage observed in a frame rejected by provider validation.
 
 use crate::{CortexError, TokenUsage};
 
-/// Conserva el uso sin convertir un fallo upstream en un chunk válido.
-/// Solo envuelve errores de validación del proveedor, que siguen siendo reintentables.
+/// Preserves the usage without turning an upstream failure into a valid chunk.
+/// Wraps only provider validation errors, which remain retryable.
 #[derive(Debug, thiserror::Error)]
 #[error("{error}")]
 pub struct StreamValidationError {
