@@ -177,6 +177,58 @@ PYTHONPATH=dev/muninn python3 -m unittest discover \
   -s dev/muninn/tests -p 'test_gm01*.py' -v
 ```
 
+## GM-05 runner-controlled candidate build
+
+GM-05 no longer accepts `--binary`. It builds and executes the current workspace
+bytes, including dirty and relevant untracked files, from a private temporary
+source copy. The package and executable are both `muninn` (not `muninn-bridge`).
+Running the following command requires separate authorization for a real Cargo
+build, dependency downloads, the reference capture, and ephemeral Docker fixtures:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 dev/muninn/gm05_runner.py \
+  --sources dev/muninn/.cache/sources \
+  --reference-python /path/to/verified-oracle-venv/bin/python \
+  --output /path/to/new-gm05-evidence
+```
+
+There is no build-only or external-binary bypass. The runner copies Cargo
+manifests, lockfile, toolchain/configuration, workspace Rust trees and their
+resources (including `third_party`), and active literal include resources. It
+excludes generated/cache trees and the non-Cargo dashboard. Symlinks, escaping
+manifest/configuration paths and sensitive input filenames fail closed. Cargo
+configuration also retains the GM-01 credential checks. Unsupported or missing
+inputs block the run; they are not replaced with HEAD or live checkout paths.
+
+The fixed command is `cargo build --locked --release -p muninn --bin muninn
+--target-dir <fresh-private-target>`, executed inside the snapshot. Cargo home,
+build target and HOME are temporary; inherited Cargo/Rust flags are not passed.
+The source copy and executable remain private until capture finishes and are
+then removed. `summary.json` records `build.sources`, the canonical JSON source
+manifest SHA-256, exact command/cwd, Cargo/Rust versions and executable SHA-256.
+The product fixture receives that executable, and its observed hash must match.
+Harness hashes include the runner, builder, reused GM-01 helpers and fixture.
+
+This is **local provenance, not a hermetic build or signed attestation**. The
+system toolchain, PATH tools, Rustup installation and dependencies are trusted.
+Preparation/build errors publish a failing summary before any Docker fixture is
+started. Capture failures still publish their verdict and reference diagnostics.
+Output must be a new directory. Exit **0** means comparison pass; **2** means
+build/capture/comparison failure (or invalid CLI usage). Neither establishes H2.
+
+Normalization orders tied result identities and graph edges by their complete
+normalized comparable payload, retaining duplicates and strict differences.
+API `relationship_type/type` and `properties/attributes`, plus graph edge
+`relation_type/type`, accept equal aliases or either single name. Conflicting
+pairs, including null versus a value, fail with field names only, not payloads.
+
+Deterministic tests mock external builds and do not run Docker or the oracle:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover \
+  -s dev/muninn/tests -p 'test_gm05*.py' -v
+```
+
 ## Reproducir la exportación de dependencias
 
 Con `uv` 0.9.5, desde el checkout fijado de `agent-memory`:
