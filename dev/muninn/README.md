@@ -468,3 +468,111 @@ extracción, carga de modelos o compatibilidad completa.
 
 El goal continuo se sigue en `.agents/rpi/plan/tasks/muninn-functional-parity-goal.md`.
 El [spike Rust](bridge/README.md) está separado de la arquitectura permanente.
+
+## H3 completion and list controls
+
+The permanent bridge's existing `complete_trace` supports an additive structured
+`outcome` object with required `success` and `summary`, optional `error_kind`,
+`related_entities` and numeric `metrics`. Structured success overrides the outer flag.
+Legacy string/null outcomes and legacy response shapes remain unchanged.
+`generate_step_embeddings` is now forwarded and still defaults to false.
+
+The existing `list_traces` forwards `success_only`, RFC 3339 `since`/`until`,
+nonnegative `limit`/`offset`, `order_by` (`started_at`/`completed_at`) and
+`order_dir` (`asc`/`desc`), retaining session filtering and defaults 100/0/started_at/desc.
+Malformed controls are rejected before store or embedding access.
+
+See [H3 completion details and evidence](../../docs/muninn/h3-execution-memory.md)
+for the exact write order, partial-write semantics and native API. These deterministic
+mock tests do not replace T5's fresh isolated graph, Silver29 and GM-08 measurements.
+No provider-private reasoning is captured, and no new bridge method is introduced.
+
+## H3 native recorder and observers
+
+`muninn_application` exports `StreamingTraceRecorder`, `RecorderOptions`, `RecorderStep`,
+`ToolCallObserver` and `HookContext`. Start explicitly and await `finish()` on success or
+`finish_failed(application_approved_summary)` on an error path. Dropping/cancelling a recorder
+leaves its trace open; it never spawns completion work or captures exception text automatically.
+Only explicit approved summary/action/observation/tool content is accepted, not provider events.
+Field names are not content validation or authorization.
+
+Register ordered callbacks with the consuming `ReasoningMemory::on_tool_call_recorded` builder
+before sharing the service. They run after call, observation and explicit touched writes.
+Callback errors alone are suppressed with a static payload-free warning; other persistence
+errors propagate. No shared registration lock or new bridge/MCP method is added.
+
+Focused deterministic checks (no Docker or external models):
+
+```sh
+cargo test -p muninn-application --test reasoning_recorder --locked
+```
+
+See [T3 lifecycle and callback details](../../docs/muninn/h3-execution-memory.md#t3-explicit-recorder-and-ordered-observers)
+for defaults, partial-write behavior and an explicit awaited error-path example.
+Live graph, final Silver29 and GM-08 proof remain T5 work; H3 is not accepted by these tests.
+
+## GM08 execution-memory candidate (deterministic only; live run pending)
+
+The frozen synthetic fixture is `fixtures/gm08-v1.json`: two tasks, three ordered steps each,
+explicit success/failure/timeout calls, legacy/structured outcomes and existing entity/message
+references. `gm08_capture.py` retains raw API writes/reads and independent graph observations,
+statistics, list/search ordering and reconnect reads. `gm08_contract.py` compares exact numeric
+values with no deviations; absent/null and API/graph counter differences remain visible.
+Each side is also validated independently, so an equal-but-corrupt pair fails: fixture step/call
+shape and declared statuses/durations, API-to-graph identity and HAS_STEP order, edge cardinality
+and endpoint labels, orphans and duplicate edges, relative graph timestamps, and tool statistics
+against recorded calls (the API failure count stays total minus successes while the persisted
+graph counter stays error+timeout).
+Native reference fields absent from the bridge are retained as differences, never graph-filled.
+
+Deterministic checks, without Docker or an oracle measurement:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover \
+  -s dev/muninn/tests -p 'test_gm08*.py' -v
+cargo test -p muninn-neo4j --test reasoning_execution --locked --no-run
+```
+
+The comparison-only CLI is read-only:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -B dev/muninn/gm08_contract.py \
+  --expected /path/to/reference.json --actual /path/to/product.json
+```
+
+Exit 0 means offline comparison pass; exit 2 means invalid input/differences. It is not a live
+GM08 receipt. The source-bound runner supports only verified sources and a new task evidence
+directory; `--binary`, archived oracle and tolerance bypasses are unavailable. Its prepared
+real T5 command, installed-image/cache prerequisites, native ignored-test invocation, known
+source conflicts and remaining live proof are in the
+[GM08 implementation notes](../../docs/muninn/h3-execution-memory.md#t4-gm08-implementation-candidate--partial-not-live-acceptance).
+
+The runner accepts repeatable `--cargo-cache PATH` seeds: read-only host cargo registries are
+copied into the private writable cache and used only together with `--offline`, so no crate is
+downloaded or installed:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -B dev/muninn/gm08_runner.py \
+  --sources dev/muninn/.cache/sources \
+  --cargo-cache "$HOME/.cargo/registry" \
+  --output .agents/rpi/plan/tasks/muninn-h3-execution-memory/evidence/t5-live/gm08-next
+```
+
+The lifecycle journal and peer guards have deterministic simulated tests (ownership, idempotent
+cleanup, failed-stage cleanup, credential redaction, unknown side, binary hash, non-empty
+database). They start no Docker and are not live proof.
+
+T5 status: all three live checks passed after the human authorized a lockfile-only crate
+fetch. The GM08 paired differential returned `pass` with zero field diffs, the post-change
+Silver29 run returned `29 passed` on exact expected/collected/executed sets, and the native
+execution target passed with 0 ignored. The fetch used a private `CARGO_HOME` in one
+exclusion-checked state directory (700 crate archives, `Cargo.lock` unchanged), so no global
+cache, shared volume or permission changed. See
+[H3 T5 status](../../docs/muninn/h3-execution-memory.md#t5-live-status).
+
+The three GM05 preservation failures were attributed to base `8554ccbe` with
+[gm05-attribution.py](../../.agents/rpi/plan/tasks/muninn-h3-execution-memory/evidence/t4-gm08/gm05-attribution.py):
+same tests, same messages and byte-identical GM05 modules, so they are pre-existing baseline
+failures, not a regression of this candidate.
+No provider-private reasoning is ingested. H2/A4 and all reference pins remain unchanged.
+H3 acceptance remains a human decision; these runs record evidence, not acceptance.
