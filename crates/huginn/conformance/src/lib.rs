@@ -24,7 +24,7 @@ use huginn_core::{
     ToolRegistry, TurnId,
 };
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
@@ -951,50 +951,14 @@ fn last_answer(session: &Session) -> &str {
         .unwrap_or_default()
 }
 
-/// The kernel substitutes `agent:model` between two turns. A loop that leases the slot
-/// serves the second turn from the new provider; a loop that pinned its `Arc` cannot,
-/// because the retired provider is the only one it can reach.
-async fn substitution_rebinds_services(under_test: &UnderTest) -> std::result::Result<(), String> {
-    let publish = under_test.publish.as_ref().ok_or_else(|| {
-        "the implementation declares rebind awareness without being published into a supervisor"
-            .to_string()
-    })?;
-    let host = Host::new(vec![Reply::Text("first")]).await;
-    let mut supervisor = Supervisor::default();
-    let services: Vec<Box<dyn Plugin>> = vec![
-        Box::new(ModelSlotPlugin {
-            plugin_id: "conformance.model.first",
-            model: host.script.clone(),
-        }),
-        Box::new(composition::ToolsPlugin(host.tools())),
-        Box::new(composition::SessionsPlugin(host.sessions.clone())),
-        Box::new(composition::InstructionsPlugin(host.instructions())),
-        Box::new(composition::HooksPlugin(host.hooks.clone())),
-        Box::new(composition::InferenceHooksPlugin(
-            host.inference_hooks.clone(),
-        )),
-    ];
-    for plugin in services {
-        supervisor
-            .register(plugin)
-            .map_err(|error| format!("registering a host service failed: {error}"))?;
-    }
-    let implementation = publish(&host)
-        .await
-        .map_err(|error| format!("publishing the implementation failed: {error}"))?;
-    supervisor
-        .register(implementation)
-        .map_err(|error| format!("registering the implementation failed: {error}"))?;
-    supervisor
-        .start()
-        .await
-        .map_err(|error| format!("starting the supervisor failed: {error}"))?;
-    let implementation = supervisor
-        .resolve::<LoopService>(&agent_loop_id())
-        .map_err(|error| format!("resolving the loop failed: {error}"))?
-        .0
-        .clone();
-
+/// The kernel substitutes `agent:model` and `agent:sessions` between two turns. A loop that
+/// leases the slots serves the second turn from the new services; a loop that pinned an `Arc`
+/// cannot, because the retired service is the only one it can reach.
+async fn substitution_rebinds_services(
+    host: &Host,
+    supervisor: &mut Supervisor,
+    implementation: Arc<dyn AgentLoop>,
+) -> std::result::Result<(), String> {
     let approval = host.approval(true);
     let mut first = Session::new(host.workspace.clone());
     implementation
@@ -1020,7 +984,10 @@ async fn substitution_rebinds_services(under_test: &UnderTest) -> std::result::R
         ));
     }
 
-    let replacement = Arc::new(ScriptModel::new(vec![Reply::Text("second")]));
+    let replacement = Arc::new(ScriptModel::new(vec![
+        Reply::Text("second"),
+        Reply::Text("third"),
+    ]));
     let second: Arc<dyn ModelProvider> = replacement.clone();
     supervisor
         .substitute(
@@ -1050,10 +1017,11 @@ async fn substitution_rebinds_services(under_test: &UnderTest) -> std::result::R
         .await
         .map_err(|error| format!("substituting the session store failed: {error}"))?;
 
-    let mut next = Session::new(host.workspace.clone());
+    // The second turn reuses the session that already ran: a loop that caches its services per
+    // session would keep the retired providers for it while passing with a fresh session.
     implementation
         .run(
-            &mut next,
+            &mut first,
             "two".into(),
             &*approval,
             &Events::default(),
@@ -1067,9 +1035,39 @@ async fn substitution_rebinds_services(under_test: &UnderTest) -> std::result::R
             replacement.calls()
         ));
     }
-    if last_answer(&next) != "second" {
+    if last_answer(&first) != "second" {
         return Err(format!(
             "the second turn must answer from the substituted provider, got {:?}",
+            last_answer(&first)
+        ));
+    }
+    if replacement_store.snapshot().map(|saved| saved.id) != Some(first.id.clone()) {
+        return Err(
+            "the substituted session store must hold the session the reused turn wrote".into(),
+        );
+    }
+
+    // A brand-new session must also resolve the live services, not replay a cached decision.
+    let mut next = Session::new(host.workspace.clone());
+    implementation
+        .run(
+            &mut next,
+            "three".into(),
+            &*approval,
+            &Events::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .map_err(|error| format!("the third turn failed: {error}"))?;
+    if replacement.calls() != 2 {
+        return Err(format!(
+            "a fresh session must also use the substituted provider, it was called {} times",
+            replacement.calls()
+        ));
+    }
+    if last_answer(&next) != "third" {
+        return Err(format!(
+            "a fresh session must answer from the substituted provider, got {:?}",
             last_answer(&next)
         ));
     }
@@ -1086,7 +1084,7 @@ async fn substitution_rebinds_services(under_test: &UnderTest) -> std::result::R
     }
     if replacement_store.snapshot().map(|saved| saved.id) != Some(next.id.clone()) {
         return Err(
-            "the substituted session store must hold the session the second turn wrote".into(),
+            "the substituted session store must hold the session the fresh turn wrote".into(),
         );
     }
     if host.sessions.saves() != retired_saves {
@@ -1452,24 +1450,94 @@ async fn duplicate_tool_calls_are_rejected(
     Ok(())
 }
 
-/// Rebind support is declared by the implementation, not by the harness. A declaration
-/// that cannot be exercised is a failure: the case needs the publish builder to substitute
-/// a service under the loop it is certifying.
+/// Rebind support is declared by the implementation, not by the harness, and the gate reads
+/// the very instance the case exercises: the one the publisher resolves. Build and publish
+/// may return different loops, so gating on the built one could certify a declaration nobody
+/// holds, or skip one the published loop does hold. A declaration that cannot be exercised is
+/// a failure: the capability needs a publisher to substitute a service under it.
 async fn rebinding_case(under_test: &UnderTest) -> CaseOutcome {
-    let host = Host::new(vec![Reply::Text("first")]).await;
-    let implementation = (under_test.build)(&host).await;
-    if !implementation.capabilities().rebinds_services {
-        return CaseOutcome {
-            case: "substitution_rebinds_services",
-            status: Status::Skipped,
-            detail: "the implementation does not declare rebind awareness".into(),
+    const CASE: &str = "substitution_rebinds_services";
+    let skipped = |detail: &str| CaseOutcome {
+        case: CASE,
+        status: Status::Skipped,
+        detail: detail.into(),
+    };
+    let Some(publish) = under_test.publish.as_ref() else {
+        let host = Host::new(vec![Reply::Text("first")]).await;
+        let built = (under_test.build)(&host).await;
+        return if built.capabilities().rebinds_services {
+            CaseOutcome {
+                case: CASE,
+                status: Status::Failed,
+                detail: "the implementation declares rebind awareness without a publisher, so \
+                         the suite cannot substitute a service under it"
+                    .into(),
+            }
+        } else {
+            skipped("the implementation does not declare rebind awareness")
         };
+    };
+    let (host, mut supervisor, implementation) = match publish_into_supervisor(publish).await {
+        Ok(prepared) => prepared,
+        Err(detail) => {
+            return CaseOutcome {
+                case: CASE,
+                status: Status::Failed,
+                detail,
+            }
+        }
+    };
+    if !implementation.capabilities().rebinds_services {
+        return skipped("the published implementation does not declare rebind awareness");
     }
     guarded(
-        "substitution_rebinds_services",
-        substitution_rebinds_services(under_test).await,
+        CASE,
+        substitution_rebinds_services(&host, &mut supervisor, implementation).await,
     )
     .await
+}
+
+/// Publishes the implementation into a supervisor that already owns every host service, so a
+/// case can substitute `agent:model` and `agent:sessions` under the loop it is certifying.
+async fn publish_into_supervisor(
+    publish: &PublishBuilder,
+) -> std::result::Result<(Host, Supervisor, Arc<dyn AgentLoop>), String> {
+    let host = Host::new(vec![Reply::Text("first")]).await;
+    let mut supervisor = Supervisor::default();
+    let services: Vec<Box<dyn Plugin>> = vec![
+        Box::new(ModelSlotPlugin {
+            plugin_id: "conformance.model.first",
+            model: host.script.clone(),
+        }),
+        Box::new(composition::ToolsPlugin(host.tools())),
+        Box::new(composition::SessionsPlugin(host.sessions.clone())),
+        Box::new(composition::InstructionsPlugin(host.instructions())),
+        Box::new(composition::HooksPlugin(host.hooks.clone())),
+        Box::new(composition::InferenceHooksPlugin(
+            host.inference_hooks.clone(),
+        )),
+    ];
+    for plugin in services {
+        supervisor
+            .register(plugin)
+            .map_err(|error| format!("registering a host service failed: {error}"))?;
+    }
+    let implementation = publish(&host)
+        .await
+        .map_err(|error| format!("publishing the implementation failed: {error}"))?;
+    supervisor
+        .register(implementation)
+        .map_err(|error| format!("registering the implementation failed: {error}"))?;
+    supervisor
+        .start()
+        .await
+        .map_err(|error| format!("starting the supervisor failed: {error}"))?;
+    let implementation = supervisor
+        .resolve::<LoopService>(&agent_loop_id())
+        .map_err(|error| format!("resolving the loop failed: {error}"))?
+        .0
+        .clone();
+    Ok((host, supervisor, implementation))
 }
 
 async fn compaction_case(under_test: &UnderTest) -> CaseOutcome {
@@ -1811,6 +1879,113 @@ pub mod broken {
     /// Publishes a loop that leases the model but pins its session store.
     pub fn pinned_sessions_plugin(sessions: Arc<dyn SessionStore>) -> Box<dyn Plugin> {
         Box::new(PinnedSessionsPlugin(sessions))
+    }
+
+    /// Declares rebind awareness while caching the provider it resolved per session.
+    ///
+    /// A conversation that already ran keeps the retired provider, so the case must catch it by
+    /// reusing the session instead of opening a new one.
+    pub struct SessionCachingLoop {
+        model: ServiceSlotHandle<ModelService>,
+        sessions: ServiceSlotHandle<SessionsService>,
+        cached: Mutex<HashMap<String, Arc<dyn ModelProvider>>>,
+    }
+
+    #[async_trait]
+    impl AgentLoop for SessionCachingLoop {
+        fn capabilities(&self) -> huginn_core::AgentLoopCapabilities {
+            huginn_core::AgentLoopCapabilities {
+                compaction: false,
+                skill_commands: false,
+                rebinds_services: true,
+            }
+        }
+
+        async fn run(
+            &self,
+            session: &mut Session,
+            prompt: String,
+            _approvals: &dyn ApprovalPolicy,
+            events: &dyn EventSink,
+            cancel: CancellationToken,
+        ) -> Result<()> {
+            // Read under one lock scope: the guard must be released before the insert below.
+            let cached = self.cached.lock().unwrap().get(&session.id).cloned();
+            let model = match cached {
+                Some(model) => model,
+                None => {
+                    let leased = self.model.acquire()?;
+                    let model = leased.0.clone();
+                    self.cached
+                        .lock()
+                        .unwrap()
+                        .insert(session.id.clone(), model.clone());
+                    model
+                }
+            };
+            let store = self.sessions.acquire()?.0.clone();
+            let turn = session.allocate_turn()?;
+            session.events.push(Event::TurnStarted {
+                session_id: session.id.clone(),
+                turn,
+            });
+            session.messages.push(Message::text(Role::User, prompt));
+            store.save(session).await?;
+            let mut stream = model
+                .stream(
+                    ModelRequest {
+                        messages: session.messages.clone(),
+                        tools: vec![],
+                        max_tokens: 64,
+                    },
+                    cancel,
+                )
+                .await?;
+            let mut answer = String::new();
+            while let Some(delta) = stream.next().await {
+                if let ModelDelta::Text(text) = delta? {
+                    answer.push_str(&text);
+                }
+            }
+            session
+                .messages
+                .push(Message::text(Role::Assistant, answer.clone()));
+            events.emit(Event::Text {
+                step: StepId(1),
+                text: answer,
+            });
+            session.events.push(Event::TurnFinished { turn });
+            Ok(())
+        }
+    }
+
+    struct SessionCachingPlugin;
+    #[async_trait]
+    impl Plugin for SessionCachingPlugin {
+        fn manifest(&self) -> Manifest {
+            Manifest {
+                id: "conformance.session-caching".into(),
+                provides: vec![agent_loop_id()],
+                requires: vec![model_id(), sessions_id()],
+            }
+        }
+        async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+            let model = ctx.service_slot_handle::<ModelService>(&model_id())?;
+            let sessions = ctx.service_slot_handle::<SessionsService>(&sessions_id())?;
+            ctx.provide(
+                agent_loop_id(),
+                LoopService(Arc::new(SessionCachingLoop {
+                    model,
+                    sessions,
+                    cached: Mutex::new(HashMap::new()),
+                })),
+            )
+        }
+    }
+
+    /// Publishes a loop that leases both slots but caches what it resolved per session.
+    pub fn session_caching_plugin() -> Box<dyn Plugin> {
+        Box::new(SessionCachingPlugin)
     }
 }
 

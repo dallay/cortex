@@ -3,7 +3,10 @@
 use async_trait::async_trait;
 use huginn_application::{composition, loop_engine::StandardLoop};
 use huginn_conformance::{
-    broken::{pinned_provider_plugin, pinned_sessions_plugin, PinnedProviderLoop, ReplayingLoop},
+    broken::{
+        pinned_provider_plugin, pinned_sessions_plugin, session_caching_plugin, PinnedProviderLoop,
+        ReplayingLoop,
+    },
     hook_plugin, inference_hook_plugin, run, Host, Status, UnderTest,
 };
 use huginn_core::{
@@ -387,6 +390,54 @@ async fn a_loop_that_pins_only_the_session_store_fails_the_rebinding_case() {
     assert!(
         report.failed("substitution_rebinds_services"),
         "the suite must catch a loop that keeps writing into the retired session store:\n{}",
+        report.describe()
+    );
+}
+
+fn session_caching() -> UnderTest {
+    UnderTest::rebinding(
+        "SessionCachingLoop",
+        |host| {
+            Box::pin(async move {
+                let implementation = PinnedProviderLoop::new(host.script.clone());
+                Arc::new(implementation) as Arc<dyn AgentLoop>
+            })
+        },
+        |_| Box::pin(async move { Ok(session_caching_plugin()) }),
+    )
+}
+
+#[tokio::test]
+async fn a_loop_that_caches_services_per_session_fails_the_rebinding_case() {
+    let report = run(&session_caching()).await;
+    assert!(
+        report.failed("substitution_rebinds_services"),
+        "the case must reuse the session so a per-session cache is caught:\n{}",
+        report.describe()
+    );
+}
+
+/// The gate reads the published loop, not the built one: this build declares nothing while the
+/// published leased loop both declares and proves the capability.
+fn declared_only_by_the_published_loop() -> UnderTest {
+    UnderTest::rebinding(
+        "declared by the published loop",
+        |host| {
+            Box::pin(async move {
+                let implementation = ReplayingLoop::new(host.script.clone(), host.tools());
+                Arc::new(implementation) as Arc<dyn AgentLoop>
+            })
+        },
+        |host| Box::pin(async move { Ok(composition::leased_loop_plugin(host.kernel_config())) }),
+    )
+}
+
+#[tokio::test]
+async fn the_gate_reads_the_published_loop_not_the_built_one() {
+    let report = run(&declared_only_by_the_published_loop()).await;
+    assert!(
+        report.passed("substitution_rebinds_services"),
+        "a capability held by the published loop must be certified:\n{}",
         report.describe()
     );
 }

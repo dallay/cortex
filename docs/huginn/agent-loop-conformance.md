@@ -38,7 +38,7 @@ A run certifies three implementations: `StandardLoop`, the production `LeasedAge
 | C15 | A transient inference failure may be repeated; an effect never is | `retry_repeats_inference_only` | loop |
 | C16 | Compaction stops at a complete-turn boundary and never splits a tool pair | `compaction_keeps_turn_boundary` | loop |
 | C17 | One in-process operation per session; overlapping turns and supported compaction reject before effects, without queueing | `concurrent_session_admission_is_bounded` | loop + shared `SessionOperation` |
-| C18 | A loop that leases `agent:model` and `agent:sessions` serves the next turn from the substituted provider and persists into the substituted store; one that pins either never does | `substitution_rebinds_services` | loop + `AgentLoopCapabilities::rebinds_services` |
+| C18 | A loop that leases `agent:model` and `agent:sessions` serves the next turn of a session that already ran from the substituted provider and writes it into the substituted store; one that pins either, or caches its services per session, never does | `substitution_rebinds_services` | published loop + `AgentLoopCapabilities::rebinds_services` |
 
 The host owns authorization in every clause: a loop may *ask* `ApprovalPolicy`, and no clause
 lets a loop grant itself a decision.
@@ -92,9 +92,15 @@ behavior is unchanged.
 when `LoopConfig::skills` is present. `StepLoop` declares compaction but no skill commands.
 `LeasedAgentLoop` and the leased `StepLoop` (`StepLoop::leasing`) declare `rebinds_services`,
 because each acquires its model and session store from the kernel on every turn. The pinned
-`StepLoop` does not: it keeps the services it was constructed with. C18 substitutes both
-`agent:model` and `agent:sessions` and proves the next turn uses each replacement, so the
-declaration cannot be claimed by rebinding only half of what it describes. The suite reads the actual
+`StepLoop` does not: it keeps the services it was constructed with.
+
+C18 reads the declaration from the loop the publisher resolves, not from the one the build
+closure returns: they may differ, and gating on the built instance would certify a claim the
+exercised loop does not hold, or skip one it does. The case then substitutes both
+`agent:model` and `agent:sessions` and runs the next turn on a session that already ran, so a
+loop that pins either service, or caches what it resolved per session, fails instead of
+passing on a fresh conversation. A declaration with no publisher fails the clause rather than
+skipping it. The suite reads the actual
 implementation built for each optional case instead of a separate harness declaration, so a
 loop cannot pass a case it does not declare and cannot declare a case it was never asked to
 prove.
