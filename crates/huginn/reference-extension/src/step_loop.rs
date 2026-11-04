@@ -11,8 +11,8 @@ use huginn_plugin_api::{
     v1::agent::{
         agent_loop_id, AgentLoop, ApprovalPolicy, ApprovalRequest, CancellationToken, Event,
         EventSink, InstructionSource, LoopService, Message, ModelDelta, ModelProvider,
-        ModelRequest, PreparedAction, Role, Session, SessionStore, SteeringQueue, StepId, Tool,
-        ToolCall, ToolContext, ToolDefinition, ToolRegistry,
+        ModelRequest, PreparedAction, Role, Session, SessionOperation, SessionStore, SteeringQueue,
+        StepId, Tool, ToolCall, ToolContext, ToolDefinition, ToolRegistry,
     },
     v1::hooks::{InferenceHooks, ToolHooks},
     AgentError, Result,
@@ -535,6 +535,7 @@ impl AgentLoop for StepLoop {
         events: &dyn EventSink,
         cancellation: CancellationToken,
     ) -> Result<()> {
+        let _operation = SessionOperation::try_enter(&session.id)?;
         let turn = session.allocate_turn()?;
         session.interrupted = true;
         self.record(
@@ -575,6 +576,7 @@ impl AgentLoop for StepLoop {
         events: &dyn EventSink,
         cancellation: CancellationToken,
     ) -> Result<()> {
+        let _operation = SessionOperation::try_enter(&session.id)?;
         let Some(through) = Self::complete_turn_end(&session.messages, session.summary_through)
         else {
             return Err(AgentError::Model(

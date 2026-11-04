@@ -332,6 +332,7 @@ impl AgentLoop for LeasedAgentLoop {
         events: &dyn EventSink,
         cancellation: CancellationToken,
     ) -> Result<()> {
+        let _operation = huginn_core::SessionOperation::try_enter(&session.id)?;
         let _admission = self.admission.enter()?;
         let model = self.model.acquire()?;
         let sessions = self.sessions.acquire()?;
@@ -349,6 +350,7 @@ impl AgentLoop for LeasedAgentLoop {
         events: &dyn EventSink,
         cancellation: CancellationToken,
     ) -> Result<()> {
+        let _operation = huginn_core::SessionOperation::try_enter(&session.id)?;
         let _admission = self.admission.enter()?;
         let model = self.model.acquire()?;
         let sessions = self.sessions.acquire()?;

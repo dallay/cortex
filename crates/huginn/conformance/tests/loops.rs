@@ -65,6 +65,183 @@ fn standard() -> UnderTest {
     })
 }
 
+#[tokio::test]
+async fn standard_skill_entrypoints_reject_during_compaction_and_release_on_drop() {
+    use futures::FutureExt;
+    use huginn_conformance::{Events, Host, Reply};
+    use huginn_core::{AgentError, Message, Role};
+
+    let host = Host::new(vec![Reply::Hang]).await;
+    let implementation = StandardLoop {
+        model: host.script.clone(),
+        tools: host.tools(),
+        sessions: host.sessions.clone(),
+        instructions: host.instructions(),
+        config: host.loop_config(),
+        lifecycle: CancellationToken::new(),
+    };
+    let mut session = Session::new(host.workspace.clone());
+    session.messages = vec![
+        Message::text(Role::User, "request"),
+        Message::text(Role::Assistant, "answer"),
+    ];
+    let mut clone = session.clone();
+    let before = serde_json::to_value(&clone).unwrap();
+    let events = Events::default();
+    let approval = host.approval(true);
+    let mut compact =
+        Box::pin(implementation.compact(&mut session, &events, CancellationToken::new()));
+    assert!(futures::poll!(&mut compact).is_pending());
+    assert_eq!(host.script.calls(), 1);
+    let saves = host.sessions.saves();
+    for explicit in [false, true] {
+        let result = if explicit {
+            implementation
+                .run_with_skills(
+                    &mut clone,
+                    "blocked".into(),
+                    &["missing".into()],
+                    &*approval,
+                    &events,
+                    CancellationToken::new(),
+                )
+                .now_or_never()
+        } else {
+            implementation
+                .run(
+                    &mut clone,
+                    "/skill:missing blocked".into(),
+                    &*approval,
+                    &events,
+                    CancellationToken::new(),
+                )
+                .now_or_never()
+        };
+        assert!(matches!(result, Some(Err(AgentError::Session(ref message)))
+            if message == "session already has an active in-process operation (capacity 1; no waiting queue)"));
+    }
+    assert_eq!(serde_json::to_value(&clone).unwrap(), before);
+    assert_eq!(host.script.calls(), 1);
+    assert_eq!(host.sessions.saves(), saves);
+    assert!(events.snapshot().is_empty());
+    drop(compact);
+    implementation
+        .run_with_skills(
+            &mut session,
+            "after drop".into(),
+            &[],
+            &*approval,
+            &events,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+    // An ordinary error also releases admission.
+    let mut empty = Session::new(host.workspace.clone());
+    assert!(implementation
+        .compact(&mut empty, &events, CancellationToken::new())
+        .await
+        .is_err());
+    implementation
+        .run(
+            &mut empty,
+            "after error".into(),
+            &*approval,
+            &events,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+}
+
+/// A store whose first save waits, so admission can be probed during final persistence.
+#[derive(Default)]
+struct PausingSessions {
+    saving: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+    saves: std::sync::atomic::AtomicUsize,
+}
+#[async_trait]
+impl huginn_core::SessionStore for PausingSessions {
+    async fn save(&self, _: &Session) -> Result<()> {
+        if self.saves.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            self.saving.notify_one();
+            self.release.notified().await;
+        }
+        Ok(())
+    }
+    async fn load(&self, id: &str) -> Result<Session> {
+        Err(huginn_core::AgentError::Session(format!("no session {id}")))
+    }
+    async fn list(&self) -> Result<Vec<huginn_core::SessionInfo>> {
+        Ok(vec![])
+    }
+}
+
+#[tokio::test]
+async fn admission_is_held_through_final_persistence() {
+    use futures::FutureExt;
+    use huginn_conformance::{Events, Host, Reply};
+    use huginn_core::AgentError;
+
+    let host = Host::new(vec![Reply::Text("answer")]).await;
+    let sessions = Arc::new(PausingSessions::default());
+    let implementation = StandardLoop {
+        model: host.script.clone(),
+        tools: host.tools(),
+        sessions: sessions.clone(),
+        instructions: host.instructions(),
+        config: host.loop_config(),
+        lifecycle: CancellationToken::new(),
+    };
+    let mut session = Session::new(host.workspace.clone());
+    let mut overlapping = session.clone();
+    let approval = host.approval(true);
+    let events = Events::default();
+    let mut run = Box::pin(implementation.run(
+        &mut session,
+        "hi".into(),
+        &*approval,
+        &events,
+        CancellationToken::new(),
+    ));
+    tokio::select! {
+        result = &mut run => panic!("the turn finished before its final save: {result:?}"),
+        _ = sessions.saving.notified() => {}
+        _ = tokio::time::sleep(Duration::from_secs(1)) => panic!("the turn never persisted"),
+    }
+    // The final save is still in flight, so admission must still be held.
+    let result = implementation
+        .run(
+            &mut overlapping,
+            "overlap".into(),
+            &*approval,
+            &events,
+            CancellationToken::new(),
+        )
+        .now_or_never();
+    assert!(matches!(result, Some(Err(AgentError::Session(ref message)))
+        if message == "session already has an active in-process operation (capacity 1; no waiting queue)"));
+    sessions.release.notify_one();
+    tokio::time::timeout(Duration::from_secs(1), run)
+        .await
+        .expect("the released turn must finish")
+        .expect("the turn must succeed");
+
+    // Completion released admission for the same id, not just for a fresh one.
+    implementation
+        .run(
+            &mut session,
+            "after".into(),
+            &*approval,
+            &events,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+}
+
 /// The production adapter: a leased loop published by the composition kernel.
 fn leased() -> UnderTest {
     UnderTest::new("LeasedAgentLoop", Capabilities::FULL, |host| {
@@ -131,7 +308,7 @@ async fn standard_loop_passes_the_suite() {
     );
     assert_eq!(
         report.outcomes.len(),
-        16,
+        17,
         "the suite must run every case:\n{}",
         report.describe()
     );
@@ -155,6 +332,7 @@ async fn a_loop_that_replays_effects_fails_the_suite() {
         "a loop that replays effects must not be certified:\n{}",
         report.describe()
     );
+    assert!(report.failed("concurrent_session_admission_is_bounded"));
     assert!(
         report.failed("effect_unknown_is_not_replayed"),
         "the suite must catch the replay:\n{}",
