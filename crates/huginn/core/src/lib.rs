@@ -1,4 +1,6 @@
 //! Product-owned contracts for Huginn, the Cortex coding agent. No terminal or Rook dependencies.
+mod admission;
+pub use admission::SessionOperation;
 pub mod connections;
 pub mod kernel;
 pub mod providers;
@@ -445,6 +447,14 @@ pub trait SessionStore: Send + Sync {
     async fn load(&self, id: &str) -> Result<Session>;
     async fn list(&self) -> Result<Vec<SessionInfo>>;
 }
+/// A certifiable loop admits one in-process operation per exact `Session::id`.
+///
+/// This applies across snapshots and loop instances. Acquire a
+/// `SessionOperation` before host access in `run` and supported `compact`;
+/// hold it through final persistence. Busy admission returns `AgentError::Session`
+/// immediately with no queue, mutation, event, or host effect. Different sessions
+/// remain independent. Reuse the completed snapshot or reload before retrying;
+/// admission provides no merge or stale-snapshot protection.
 #[async_trait]
 pub trait AgentLoop: Send + Sync {
     /// Host-owned discovery only. Entries are not plugin command contributions.

@@ -850,6 +850,7 @@ impl AgentLoop for StandardLoop {
         events: &dyn EventSink,
         cancellation: CancellationToken,
     ) -> Result<()> {
+        let _operation = huginn_core::SessionOperation::try_enter(&session.id)?;
         self.execution()
             .compact(session, events, cancellation)
             .await
@@ -863,6 +864,7 @@ impl AgentLoop for StandardLoop {
         events: &dyn EventSink,
         cancellation: CancellationToken,
     ) -> Result<()> {
+        let _operation = huginn_core::SessionOperation::try_enter(&session.id)?;
         self.execution()
             .run(session, prompt, approvals, events, cancellation)
             .await
@@ -890,6 +892,7 @@ impl StandardLoop {
         events: &dyn EventSink,
         cancellation: CancellationToken,
     ) -> Result<()> {
+        let _operation = huginn_core::SessionOperation::try_enter(&session.id)?;
         self.execution()
             .run_with_skills(session, prompt, selected, approvals, events, cancellation)
             .await

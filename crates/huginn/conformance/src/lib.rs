@@ -56,6 +56,7 @@ pub fn write_call(id: &str) -> ToolCall {
 pub struct ScriptModel {
     replies: Mutex<VecDeque<Reply>>,
     calls: AtomicUsize,
+    started: tokio::sync::Notify,
     requests: Mutex<Vec<ModelRequest>>,
     usage: (u64, u64),
 }
@@ -68,6 +69,7 @@ impl ScriptModel {
         Self {
             replies: Mutex::new(replies.into()),
             calls: AtomicUsize::new(0),
+            started: tokio::sync::Notify::new(),
             requests: Mutex::new(vec![]),
             usage,
         }
@@ -89,6 +91,7 @@ impl ModelProvider for ScriptModel {
         _: CancellationToken,
     ) -> Result<BoxStream<'static, Result<ModelDelta>>> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        self.started.notify_one();
         self.requests.lock().unwrap().push(request);
         let reply = self
             .replies
@@ -188,10 +191,11 @@ impl ToolRegistry for EffectsRegistry {
 
 /// In-memory session store that can be reloaded, to model a fresh process.
 #[derive(Clone, Default)]
-pub struct MemorySessions(Arc<Mutex<Option<Session>>>);
+pub struct MemorySessions(Arc<Mutex<Option<Session>>>, Arc<AtomicUsize>);
 #[async_trait]
 impl SessionStore for MemorySessions {
     async fn save(&self, session: &Session) -> Result<()> {
+        self.1.fetch_add(1, Ordering::SeqCst);
         *self.0.lock().unwrap() = Some(session.clone());
         Ok(())
     }
@@ -207,6 +211,9 @@ impl SessionStore for MemorySessions {
     }
 }
 impl MemorySessions {
+    pub fn saves(&self) -> usize {
+        self.1.load(Ordering::SeqCst)
+    }
     pub fn snapshot(&self) -> Option<Session> {
         self.0.lock().unwrap().clone()
     }
@@ -749,7 +756,129 @@ pub async fn run(under_test: &UnderTest) -> Report {
             detail: "the implementation does not declare compaction".into(),
         }
     });
+    record(
+        guarded(
+            "concurrent_session_admission_is_bounded",
+            concurrent_session_admission_is_bounded(under_test).await,
+        )
+        .await,
+    );
     report
+}
+
+async fn concurrent_session_admission_is_bounded(
+    under_test: &UnderTest,
+) -> std::result::Result<(), String> {
+    use futures::FutureExt;
+
+    let instructions = Arc::new(ChangingInstructions::default());
+    let host = Host::with_changing_instructions(
+        vec![Reply::Hang, Reply::ToolCalls(vec![write_call("rejected")])],
+        instructions.clone(),
+    )
+    .await;
+    let implementation = (under_test.build)(&host).await;
+    // Independent instances and snapshots must still share admission by session ID.
+    let other = (under_test.build)(&host).await;
+    let mut session = Session::new(host.workspace.clone());
+    let mut rejected = session.clone();
+    let before = serde_json::to_value(&rejected).unwrap();
+    let approval = host.approval(true);
+    let events = Events::default();
+    let cancel = CancellationToken::new();
+    let mut active = Box::pin(implementation.run(
+        &mut session,
+        "hold".into(),
+        &*approval,
+        &events,
+        cancel.clone(),
+    ));
+    tokio::select! {
+        result = &mut active => return Err(format!("first turn did not stay active: {result:?}")),
+        _ = host.script.started.notified() => {},
+        _ = tokio::time::sleep(Duration::from_secs(1)) =>
+            return Err("first turn never reached the model".into()),
+    }
+    let saved = serde_json::to_value(host.sessions.snapshot()).unwrap();
+    let saves = host.sessions.saves();
+    let loads = instructions.loads();
+    let rejected_events = Events::default();
+    for _ in 0..8 {
+        let result = other
+            .run(
+                &mut rejected,
+                "must not write".into(),
+                &*approval,
+                &rejected_events,
+                CancellationToken::new(),
+            )
+            .now_or_never();
+        if !matches!(result, Some(Err(AgentError::Session(ref message)))
+            if message == "session already has an active in-process operation (capacity 1; no waiting queue)")
+        {
+            return Err(format!(
+                "overlapping turn must reject immediately, got {result:?}"
+            ));
+        }
+    }
+    if under_test.capabilities.compaction {
+        let result = other
+            .compact(&mut rejected, &rejected_events, CancellationToken::new())
+            .now_or_never();
+        if !matches!(result, Some(Err(AgentError::Session(ref message)))
+            if message == "session already has an active in-process operation (capacity 1; no waiting queue)")
+        {
+            return Err(format!(
+                "overlapping compaction must reject immediately, got {result:?}"
+            ));
+        }
+    }
+    if serde_json::to_value(&rejected).unwrap() != before
+        || serde_json::to_value(host.sessions.snapshot()).unwrap() != saved
+        || host.sessions.saves() != saves
+        || instructions.loads() != loads
+        || !rejected_events.snapshot().is_empty()
+        || host.script.calls() != 1
+        || host.effects.prepared() != 0
+        || host.effects.executed() != 0
+        || host.approvals.prompts.load(Ordering::SeqCst) != 0
+        || host.target.exists()
+    {
+        return Err("rejected admissions changed state or reached a host effect".into());
+    }
+    // A busy ID must not block a different session.
+    let mut independent = Session::new(host.workspace.clone());
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        other.run(
+            &mut independent,
+            "independent".into(),
+            &*approval,
+            &Events::default(),
+            CancellationToken::new(),
+        ),
+    )
+    .await
+    .map_err(|_| "different session was queued".to_string())?
+    .map_err(|error| format!("different session was rejected: {error}"))?;
+    cancel.cancel();
+    let result = tokio::time::timeout(Duration::from_secs(1), &mut active).await;
+    if !matches!(result, Ok(Err(AgentError::Cancelled))) {
+        return Err(format!("active turn did not cancel: {result:?}"));
+    }
+    drop(active);
+    // Reuse the current snapshot, not the stale clone; rejection never merges history.
+    implementation
+        .run(
+            &mut session,
+            "retry".into(),
+            &*approval,
+            &events,
+            CancellationToken::new(),
+        )
+        .await
+        .map_err(|error| format!("admission was not released: {error}"))?;
+    Ok(())
 }
 
 async fn guarded(name: &'static str, outcome: std::result::Result<(), String>) -> CaseOutcome {

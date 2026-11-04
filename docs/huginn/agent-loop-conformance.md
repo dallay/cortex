@@ -35,9 +35,45 @@ A run certifies three implementations: `StandardLoop`, the production `LeasedAge
 | C14 | Repository instructions are read once per turn; the system context cannot drift mid-turn | `context_is_pinned_for_the_turn` | loop |
 | C15 | A transient inference failure may be repeated; an effect never is | `retry_repeats_inference_only` | loop |
 | C16 | Compaction stops at a complete-turn boundary and never splits a tool pair | `compaction_keeps_turn_boundary` | loop |
+| C17 | One in-process operation per session; overlapping turns and supported compaction reject before effects, without queueing | `concurrent_session_admission_is_bounded` | loop + shared `SessionOperation` |
 
 The host owns authorization in every clause: a loop may *ask* `ApprovalPolicy`, and no clause
 lets a loop grant itself a decision.
+
+## Single-process admission and backpressure
+
+Each exact persisted `Session::id` has capacity **N=1**, shared across loop
+instances and independently cloned or loaded snapshots in the process. A turn or
+supported manual compaction acquires `SessionOperation::try_enter` before any
+host access, including model pinning, provider leases, instruction or skill
+loading, turn allocation, events, persistence, previews, approval, and tools.
+Internal automatic compaction remains part of the admitted turn.
+
+There is **no waiting queue**. The N+1th operation, and every further overlapping
+request, immediately returns `AgentError::Session` with this diagnostic:
+
+```text
+session already has an active in-process operation (capacity 1; no waiting queue)
+```
+
+Rejection changes neither the submitted snapshot nor stored data, emits no event,
+and performs no host effect. The active operation is not cancelled by rejection.
+Its permit lasts through final persistence and releases on success, error,
+cancellation, dropped future, or unwind. Poisoned admission state fails closed.
+Different session IDs remain independent; no aggregate process-wide limit is
+introduced.
+
+C17 holds a turn open at a deterministic model boundary and submits a burst through
+a separately built loop, checking immediate diagnostics, unchanged state and
+counters, no file effect, compaction exclusion, independent-session progress, and
+readmission after cancellation. An unguarded loop fails this case.
+
+Admission does not merge snapshots: after an active operation finishes, reuse its
+updated session or reload before retrying. Later use of a stale clone is not
+protected. IDs are compared exactly as persistence addresses them; this rule adds
+no UUID spelling normalization. The cross-process lease protocol is unchanged.
+Trusted native loop authors must adopt the permit; the trait does not sandbox
+implementations, and the conformance suite certifies this behavioral obligation.
 
 ## Gap list
 
@@ -54,7 +90,6 @@ copy host code or cannot express a guarantee at all.
 | G6 | `Event::Error` carries no turn identity | Kept as-is for schema compatibility | A consumer must infer the turn positionally |
 | G7 | Steering has no producer in the terminal | `LoopConfig::steering` is honored, the TUI composer still drops a draft while busy | The capability exists but no user can reach it |
 | G9 | Tool-output bounding is not part of the contract | `StepLoop` had to define its own `MAX_OUTPUT_BYTES`; the host limit lives in `huginn_application::output`, unexported | Two loops can persist wildly different history sizes for the same tool |
-| G8 | Concurrency and backpressure are unspecified | Only cross-process session leases exist | Two turns on one session in one process have no defined outcome |
 
 G1, G2 and G4 are the ones that would change the contract; the rest are either additive or
 adoption work. They are tracked as follow-up issues rather than folded into this change.

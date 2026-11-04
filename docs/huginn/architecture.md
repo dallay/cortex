@@ -318,7 +318,12 @@ pub trait AgentLoop: Send + Sync {
 ```
 
 `AgentLoop` also provides a default `compact` method. See the core API for its
-exact signature.
+exact signature. Turns and supported manual compaction share process-local
+`SessionOperation` admission: capacity one per exact session ID, with immediate
+rejection and no waiting queue. The permit covers host access through final
+persistence across loop instances. Different sessions remain independent; callers
+must reload or reuse the completed snapshot before retrying. Cross-process leases
+are unchanged.
 
 An implementation is replaceable only if it is certifiable. The clauses it must satisfy,
 the case that proves each one, and the contract gaps that remain are in
