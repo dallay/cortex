@@ -121,6 +121,7 @@ pub struct RatatuiPlugin {
     readiness: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     ui_config: Option<Arc<crate::settings::UiConfig>>,
     save_ui_config: Option<crate::settings::SaveUiConfig>,
+    steering: Option<Arc<huginn_core::SteeringQueue>>,
 }
 impl Default for RatatuiPlugin {
     fn default() -> Self {
@@ -136,6 +137,7 @@ impl RatatuiPlugin {
             readiness: None,
             ui_config: None,
             save_ui_config: None,
+            steering: None,
         }
     }
     pub fn with_readiness(readiness: Arc<dyn Fn() -> bool + Send + Sync>) -> Self {
@@ -146,7 +148,15 @@ impl RatatuiPlugin {
             readiness: Some(readiness),
             ui_config: None,
             save_ui_config: None,
+            steering: None,
         }
+    }
+    /// Share the host's steering queue. The composer writes into it while a turn
+    /// is busy and the loop drains it at step boundaries; one queue per host, so
+    /// the UI can never feed a mailbox the loop does not read.
+    pub fn with_steering(mut self, steering: Arc<huginn_core::SteeringQueue>) -> Self {
+        self.steering = Some(steering);
+        self
     }
     /// Inject the host-owned UI config and a persistence closure. The
     /// plugin pipes both into the `Ui` via `Ratatui`.
@@ -213,6 +223,7 @@ impl Plugin for RatatuiPlugin {
                 readiness: self.readiness.clone(),
                 ui_config: self.ui_config.clone(),
                 save_ui_config: self.save_ui_config.clone(),
+                steering: self.steering.clone(),
             })),
         )
     }
