@@ -9,12 +9,12 @@ use futures::StreamExt;
 use huginn_plugin_api::{
     kernel::{Manifest, Plugin, PluginContext},
     v1::agent::{
-        agent_loop_id, inference_hooks_id, model_id, sessions_id, tool_hooks_id, AgentLoop,
-        ApprovalPolicy, ApprovalRequest, CancellationToken, Event, EventSink,
-        InferenceHooksService, InstructionSource, LoopService, Message, ModelDelta, ModelProvider,
-        ModelRequest, ModelService, PreparedAction, Role, ServiceSlotHandle, Session,
-        SessionOperation, SessionStore, SessionsService, SteeringQueue, StepId, Tool, ToolCall,
-        ToolContext, ToolDefinition, ToolHooksService, ToolRegistry,
+        agent_loop_id, complete_turn_ends, inference_hooks_id, model_id, sessions_id,
+        tool_hooks_id, AgentLoop, ApprovalPolicy, ApprovalRequest, CancellationToken, Event,
+        EventSink, InferenceHooksService, InstructionSource, LoopService, Message, ModelDelta,
+        ModelProvider, ModelRequest, ModelService, PreparedAction, Role, ServiceSlotHandle,
+        Session, SessionOperation, SessionStore, SessionsService, SteeringQueue, StepId, Tool,
+        ToolCall, ToolContext, ToolDefinition, ToolHooksService, ToolRegistry,
     },
     v1::hooks::{InferenceHooks, ToolHooks},
     AgentError, Result,
@@ -549,23 +549,6 @@ impl StepLoop {
             "iteration limit reached; review the session before continuing".into(),
         ))
     }
-
-    /// Last message index that closes a turn: an assistant without tool calls that has a
-    /// user message before it. Every loop must reimplement this rule today.
-    fn complete_turn_end(messages: &[Message], from: usize) -> Option<usize> {
-        let mut last_user = None;
-        let mut end = None;
-        for (index, message) in messages.iter().enumerate().skip(from) {
-            match message.role {
-                Role::User => last_user = Some(index),
-                Role::Assistant if message.tool_calls.is_empty() && last_user.is_some() => {
-                    end = Some(index + 1)
-                }
-                _ => {}
-            }
-        }
-        end
-    }
 }
 
 /// Host-facing I/O for one model call inside a turn.
@@ -661,12 +644,10 @@ impl AgentLoop for StepLoop {
         cancellation: CancellationToken,
     ) -> Result<()> {
         let _operation = SessionOperation::try_enter(&session.id)?;
-        let Some(through) = Self::complete_turn_end(&session.messages, session.summary_through)
-        else {
-            return Err(AgentError::Model(
-                "no complete turns available to summarize".into(),
-            ));
-        };
+        let through = complete_turn_ends(&session.messages, session.summary_through)
+            .last()
+            .copied()
+            .unwrap_or(session.summary_through);
         if through <= session.summary_through {
             return Err(AgentError::Model(
                 "no complete turns available to summarize".into(),
