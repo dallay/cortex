@@ -120,6 +120,41 @@ impl Plugin for HooksPlugin {
     }
 }
 
+/// The kernel owns the hook registries.
+///
+/// A caller that supplies a different registry would see its guards dropped silently,
+/// which fails open, so a mismatch is refused instead of overwritten.
+fn adopt_hook_registries(ctx: &PluginContext, config: &mut LoopConfig) -> Result<()> {
+    let kernel_tool_hooks = ctx.resolve::<ToolHooksService>(&tool_hooks_id())?.0.clone();
+    let kernel_inference_hooks = ctx
+        .resolve::<huginn_core::hooks::InferenceHooksService>(
+            &huginn_core::hooks::inference_hooks_id(),
+        )?
+        .0
+        .clone();
+    if config
+        .hooks
+        .as_ref()
+        .is_some_and(|supplied| !Arc::ptr_eq(supplied, &kernel_tool_hooks))
+    {
+        return Err(AgentError::Composition(
+            "loop config supplies a tool-hook registry the kernel does not own".into(),
+        ));
+    }
+    if config
+        .inference_hooks
+        .as_ref()
+        .is_some_and(|supplied| !Arc::ptr_eq(supplied, &kernel_inference_hooks))
+    {
+        return Err(AgentError::Composition(
+            "loop config supplies an inference-hook registry the kernel does not own".into(),
+        ));
+    }
+    config.hooks = Some(kernel_tool_hooks);
+    config.inference_hooks = Some(kernel_inference_hooks);
+    Ok(())
+}
+
 pub struct LoopPlugin(pub LoopConfig);
 #[async_trait]
 impl Plugin for LoopPlugin {
@@ -139,35 +174,7 @@ impl Plugin for LoopPlugin {
     }
     async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
         let mut config = self.0.clone();
-        // The kernel owns the hook registries. A caller that supplies a different one
-        // would see its guards dropped silently, which fails open, so refuse instead.
-        let kernel_tool_hooks = ctx.resolve::<ToolHooksService>(&tool_hooks_id())?.0.clone();
-        let kernel_inference_hooks = ctx
-            .resolve::<huginn_core::hooks::InferenceHooksService>(
-                &huginn_core::hooks::inference_hooks_id(),
-            )?
-            .0
-            .clone();
-        if config
-            .hooks
-            .as_ref()
-            .is_some_and(|supplied| !Arc::ptr_eq(supplied, &kernel_tool_hooks))
-        {
-            return Err(AgentError::Composition(
-                "loop config supplies a tool-hook registry the kernel does not own".into(),
-            ));
-        }
-        if config
-            .inference_hooks
-            .as_ref()
-            .is_some_and(|supplied| !Arc::ptr_eq(supplied, &kernel_inference_hooks))
-        {
-            return Err(AgentError::Composition(
-                "loop config supplies an inference-hook registry the kernel does not own".into(),
-            ));
-        }
-        config.hooks = Some(kernel_tool_hooks);
-        config.inference_hooks = Some(kernel_inference_hooks);
+        adopt_hook_registries(ctx, &mut config)?;
         let implementation = StandardLoop {
             model: ctx.resolve::<ModelService>(&model_id())?.0.clone(),
             tools: ctx.resolve::<ToolsService>(&tools_id())?.0.clone(),
@@ -357,35 +364,7 @@ impl Plugin for LeasedLoopPlugin {
         let model = ctx.service_slot_handle::<ModelService>(&model_id())?;
         let sessions = ctx.service_slot_handle::<SessionsService>(&sessions_id())?;
         let mut config = self.config.clone();
-        // The kernel owns the hook registries. A caller that supplies a different one
-        // would see its guards dropped silently, which fails open, so refuse instead.
-        let kernel_tool_hooks = ctx.resolve::<ToolHooksService>(&tool_hooks_id())?.0.clone();
-        let kernel_inference_hooks = ctx
-            .resolve::<huginn_core::hooks::InferenceHooksService>(
-                &huginn_core::hooks::inference_hooks_id(),
-            )?
-            .0
-            .clone();
-        if config
-            .hooks
-            .as_ref()
-            .is_some_and(|supplied| !Arc::ptr_eq(supplied, &kernel_tool_hooks))
-        {
-            return Err(AgentError::Composition(
-                "loop config supplies a tool-hook registry the kernel does not own".into(),
-            ));
-        }
-        if config
-            .inference_hooks
-            .as_ref()
-            .is_some_and(|supplied| !Arc::ptr_eq(supplied, &kernel_inference_hooks))
-        {
-            return Err(AgentError::Composition(
-                "loop config supplies an inference-hook registry the kernel does not own".into(),
-            ));
-        }
-        config.hooks = Some(kernel_tool_hooks);
-        config.inference_hooks = Some(kernel_inference_hooks);
+        adopt_hook_registries(ctx, &mut config)?;
 
         let implementation = LeasedAgentLoop {
             model,
