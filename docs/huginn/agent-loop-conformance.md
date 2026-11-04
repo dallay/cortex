@@ -13,10 +13,9 @@ cargo test -p huginn-conformance
 
 A run certifies three implementations: `StandardLoop`, the production `LeasedAgentLoop`, and
 `StepLoop`, authored in `crates/huginn-reference-extension` against the plugin contract only.
-`StandardLoop` and `StepLoop` pin their providers and are therefore skipped for `C18`;
-`LeasedAgentLoop` leases the kernel's services and is certified for it.
-`broken::ReplayingLoop` and `broken::PinnedProviderLoop` must fail; a suite that cannot fail
-certifies nothing.
+`StandardLoop` pins its providers and is therefore skipped for `C18`; `LeasedAgentLoop` and
+`StepLoop` lease the kernel's services and are certified for it. `broken::ReplayingLoop` and
+`broken::PinnedProviderLoop` must fail; a suite that cannot fail certifies nothing.
 
 ## Certified clauses
 

@@ -10,7 +10,7 @@ use huginn_core::{
     kernel::{SubstitutionPolicy, Supervisor},
     AgentLoop, ApprovalPolicy, CancellationToken, EventSink, LoopService, Result, Session,
 };
-use huginn_reference_extension::step_loop::{step_loop_plugin, StepLoopConfig};
+use huginn_reference_extension::step_loop::{step_loop_plugin_leased, StepLoopConfig};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -396,54 +396,64 @@ async fn a_loop_that_replays_effects_fails_the_suite() {
     );
 }
 
-/// A loop authored only against the plugin contracts, installed by substitution.
+/// A loop authored only against the plugin contracts, installed by substitution. It leases
+/// the kernel-owned services, so it also proves rebinding from the SDK alone.
 fn extension_step_loop() -> UnderTest {
-    UnderTest::new("StepLoop (extension)", Capabilities::FULL, |host| {
-        Box::pin(async move {
-            let mut supervisor = composition::build(
-                host.script.clone(),
-                host.tools(),
-                host.sessions.clone(),
-                host.kernel_config(),
-                host.instructions(),
-            )
-            .await
-            .unwrap();
-            let plugin = step_loop_plugin(
-                host.script.clone(),
-                host.tools(),
-                host.sessions.clone(),
-                host.instructions(),
-                StepLoopConfig {
-                    max_iterations: host.config.max_iterations,
-                    max_output_tokens: host.config.max_output_tokens,
-                    hooks: host.loop_config().hooks,
-                    inference_hooks: host.loop_config().inference_hooks,
-                    steering: host.loop_config().steering,
-                    max_turn_tokens: host.config.max_turn_tokens,
-                    max_model_retries: host.config.max_model_retries,
-                },
-            );
-            supervisor
-                .substitute(
-                    &composition::loop_id(),
-                    plugin,
-                    SubstitutionPolicy::ReportUndrained,
-                    Duration::from_secs(1),
-                )
-                .await
-                .unwrap();
-            let inner = supervisor
-                .resolve::<LoopService>(&composition::loop_id())
-                .unwrap()
-                .0
-                .clone();
-            Arc::new(Supervised {
-                _supervisor: Arc::new(supervisor),
-                inner,
-            }) as Arc<dyn AgentLoop>
-        })
-    })
+    UnderTest::rebinding(
+        "StepLoop (extension)",
+        Capabilities::REBINDING,
+        |host| {
+            Box::pin(async move {
+                let mut supervisor = leased_supervisor(host).await;
+                supervisor
+                    .substitute(
+                        &composition::loop_id(),
+                        step_loop_plugin_leased(
+                            host.tools(),
+                            host.instructions(),
+                            step_loop_config(host),
+                        ),
+                        SubstitutionPolicy::ReportUndrained,
+                        Duration::from_secs(1),
+                    )
+                    .await
+                    .unwrap();
+                let inner = supervisor
+                    .resolve::<LoopService>(&composition::loop_id())
+                    .unwrap()
+                    .0
+                    .clone();
+                Arc::new(Supervised {
+                    _supervisor: Arc::new(supervisor),
+                    inner,
+                }) as Arc<dyn AgentLoop>
+            })
+        },
+        |host| {
+            Box::pin(async move {
+                Ok(step_loop_plugin_leased(
+                    host.tools(),
+                    host.instructions(),
+                    step_loop_config(host),
+                ))
+            })
+        },
+    )
+}
+
+/// The extension loop configures itself, but never chooses a hook registry: the kernel owns
+/// both, so the config carries none.
+fn step_loop_config(host: &Host) -> StepLoopConfig {
+    let config = host.kernel_config();
+    StepLoopConfig {
+        max_iterations: config.max_iterations,
+        max_output_tokens: config.max_output_tokens,
+        hooks: None,
+        inference_hooks: None,
+        steering: config.steering,
+        max_turn_tokens: config.max_turn_tokens,
+        max_model_retries: config.max_model_retries,
+    }
 }
 
 #[tokio::test]
@@ -452,6 +462,11 @@ async fn extension_loop_passes_the_same_suite() {
     assert!(
         report.failures().is_empty(),
         "a loop authored outside the host crate must pass every case:\n{}",
+        report.describe()
+    );
+    assert!(
+        report.passed("substitution_rebinds_the_model"),
+        "an external loop must be able to lease the kernel services:\n{}",
         report.describe()
     );
 }
