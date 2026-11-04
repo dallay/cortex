@@ -75,6 +75,27 @@ no UUID spelling normalization. The cross-process lease protocol is unchanged.
 Trusted native loop authors must adopt the permit; the trait does not sandbox
 implementations, and the conformance suite certifies this behavioral obligation.
 
+## Capability discovery and error identity
+
+`AgentLoop::capabilities()` returns the core contract's `AgentLoopCapabilities`
+(`compaction` and `skill_commands`), also exported by `v1::agent`. Each implementation
+owns its declaration for its configuration; wrappers forward it. Discovery is synchronous,
+side-effect-free, and needs neither provider leases nor I/O. It describes support, not
+readiness or authorization. The default is conservative: both fields are `false`, so
+existing implementations need no new method. Existing optional method behavior is unchanged.
+
+`StandardLoop` and `LeasedAgentLoop` declare compaction and declare skill commands only
+when `LoopConfig::skills` is present. `StepLoop` declares compaction but no skill commands.
+The suite reads the actual implementation built for each optional case, rather than a
+separate harness declaration. It skips unsupported compaction and checks supported
+compaction during session admission; no extra discovery-only loop is built.
+
+`Event::Error` carries a serde-defaulted `turn: TurnId`. Both loops attach the allocated
+turn to failures; catalog-change warnings use that same turn. Identity-less historical
+records load as `TurnId::UNKNOWN` (zero), also used for diagnostics outside an allocated
+turn. A consumer no longer needs surrounding events to attribute a newly recorded error.
+The cancellation case checks the exact identity and diagnostic live and after reload.
+
 ## Gap list
 
 These are contract gaps, not loop defects. Each one is why an external implementation has to
@@ -86,8 +107,8 @@ copy host code or cannot express a guarantee at all.
 | G2 | A supervisor-based loop cannot choose its hook registries | `LoopPlugin::activate` overwrites `LoopConfig::hooks` and `inference_hooks` with the kernel's own services; the conformance harness had to hand the same hook through two paths | An author cannot predict which registry a loop will see |
 | G3 | Lease-aware rebinding is not authorable | `ServiceSlotHandle`, `ModelService` and `SessionsService` are not exported by `v1::agent` | An external loop pins its providers with `Arc`, so a mid-process substitution leaves it on the retired ones |
 | G4 | Transient transport failures are not classified by the adapters | Only a truncated stream yields `AgentError::Inference`; HTTP failures still surface as `Model` | The retry budget added here never engages for a real provider |
-| G5 | Capabilities are declared out of band | The suite needs `Capabilities { compaction }` because `AgentLoop::compact` has a default `Err` | Nothing in the trait says what an implementation supports |
-| G6 | `Event::Error` carries no turn identity | Kept as-is for schema compatibility | A consumer must infer the turn positionally |
+| G5 (resolved) | Capabilities are part of `AgentLoop` | `AgentLoopCapabilities` is read by the host and suite | One declaration per implementation/configuration; conservative default |
+| G6 (resolved) | `Event::Error` carries a defaulted turn identity | Old JSON loads as unknown; new errors round-trip with their turn | Additive persisted schema, no positional inference for new turn errors |
 | G7 | Steering has no producer in the terminal | `LoopConfig::steering` is honored, the TUI composer still drops a draft while busy | The capability exists but no user can reach it |
 | G9 | Tool-output bounding is not part of the contract | `StepLoop` had to define its own `MAX_OUTPUT_BYTES`; the host limit lives in `huginn_application::output`, unexported | Two loops can persist wildly different history sizes for the same tool |
 

@@ -34,10 +34,11 @@ pub mod hooks {
 /// receives them and can only request decisions (ADR-0017).
 pub mod agent {
     pub use huginn_core::{
-        agent_loop_id, AgentLoop, ApprovalPolicy, ApprovalRequest, CancellationToken, Event,
-        EventSink, InstructionSource, LoopService, Message, ModelDelta, ModelProvider,
-        ModelRequest, PreparedAction, Result, Role, Session, SessionOperation, SessionStore,
-        SteeringQueue, StepId, Tool, ToolCall, ToolContext, ToolDefinition, ToolRegistry, TurnId,
+        agent_loop_id, AgentLoop, AgentLoopCapabilities, ApprovalPolicy, ApprovalRequest,
+        CancellationToken, Event, EventSink, InstructionSource, LoopService, Message, ModelDelta,
+        ModelProvider, ModelRequest, PreparedAction, Result, Role, Session, SessionOperation,
+        SessionStore, SteeringQueue, StepId, Tool, ToolCall, ToolContext, ToolDefinition,
+        ToolRegistry, TurnId,
     };
 }
 

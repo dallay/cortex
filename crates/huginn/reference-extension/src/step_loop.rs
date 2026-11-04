@@ -527,6 +527,13 @@ async fn execute(tool: &dyn Tool, action: PreparedAction, context: &ToolContext)
 
 #[async_trait]
 impl AgentLoop for StepLoop {
+    fn capabilities(&self) -> huginn_plugin_api::v1::agent::AgentLoopCapabilities {
+        huginn_plugin_api::v1::agent::AgentLoopCapabilities {
+            compaction: true,
+            skill_commands: false,
+        }
+    }
+
     async fn run(
         &self,
         session: &mut Session,
@@ -560,6 +567,7 @@ impl AgentLoop for StepLoop {
                 self.record(
                     session,
                     Event::Error {
+                        turn,
                         message: error.to_string(),
                     },
                     events,

@@ -19,7 +19,7 @@ use huginn_core::{
     AgentError, AgentLoop, ApprovalPolicy, ApprovalRequest, CancellationToken, Event, EventSink,
     InstructionSource, Message, ModelDelta, ModelProvider, ModelRequest, PreparedAction, Result,
     Role, Session, SessionInfo, SessionStore, StepId, Tool, ToolCall, ToolContext, ToolDefinition,
-    ToolRegistry,
+    ToolRegistry, TurnId,
 };
 use std::{
     collections::VecDeque,
@@ -550,35 +550,21 @@ impl ToolHook for BlockWrites {
     }
 }
 
-/// What an implementation claims it supports, so a case is skipped rather than faked.
-#[derive(Clone, Copy)]
-pub struct Capabilities {
-    pub compaction: bool,
-}
-impl Capabilities {
-    /// `AgentLoop::compact` has a default error, so compaction is optional.
-    pub const STREAMING_ONLY: Self = Self { compaction: false };
-    pub const FULL: Self = Self { compaction: true };
-}
-
 /// Building an implementation may need to compose a supervisor, so it may be async.
 pub type BuildFuture<'a> = Pin<Box<dyn Future<Output = Arc<dyn AgentLoop>> + Send + 'a>>;
 
 /// One loop implementation under certification.
 pub struct UnderTest {
     pub name: String,
-    pub capabilities: Capabilities,
     build: Box<dyn for<'a> Fn(&'a Host) -> BuildFuture<'a> + Send + Sync>,
 }
 impl UnderTest {
     pub fn new(
         name: impl Into<String>,
-        capabilities: Capabilities,
         build: impl for<'a> Fn(&'a Host) -> BuildFuture<'a> + Send + Sync + 'static,
     ) -> Self {
         Self {
             name: name.into(),
-            capabilities,
             build: Box::new(build),
         }
     }
@@ -743,19 +729,7 @@ pub async fn run(under_test: &UnderTest) -> Report {
         )
         .await,
     );
-    record(if under_test.capabilities.compaction {
-        guarded(
-            "compaction_keeps_turn_boundary",
-            compaction_keeps_turn_boundary(under_test).await,
-        )
-        .await
-    } else {
-        CaseOutcome {
-            case: "compaction_keeps_turn_boundary",
-            status: Status::Skipped,
-            detail: "the implementation does not declare compaction".into(),
-        }
-    });
+    record(compaction_case(under_test).await);
     record(
         guarded(
             "concurrent_session_admission_is_bounded",
@@ -821,7 +795,7 @@ async fn concurrent_session_admission_is_bounded(
             ));
         }
     }
-    if under_test.capabilities.compaction {
+    if other.capabilities().compaction {
         let result = other
             .compact(&mut rejected, &rejected_events, CancellationToken::new())
             .now_or_never();
@@ -952,14 +926,10 @@ async fn cancel_before_model_stream(under_test: &UnderTest) -> std::result::Resu
     cancel.cancel();
     let approval = host.approval(true);
     let mut session = Session::new(host.workspace.clone());
+    session.turn_seq = 41;
+    let events = Events::default();
     let outcome = implementation
-        .run(
-            &mut session,
-            "hi".into(),
-            &*approval,
-            &Events::default(),
-            cancel,
-        )
+        .run(&mut session, "hi".into(), &*approval, &events, cancel)
         .await;
     if !matches!(outcome, Err(AgentError::Cancelled)) {
         return Err(format!(
@@ -981,6 +951,21 @@ async fn cancel_before_model_stream(under_test: &UnderTest) -> std::result::Resu
         .any(|event| matches!(event, Event::TurnFinished { .. }))
     {
         return Err("a cancelled turn must not report completion".into());
+    }
+    let persisted = host
+        .sessions
+        .load(&session.id)
+        .await
+        .map_err(|error| error.to_string())?;
+    for recorded in [&session.events, &events.snapshot(), &persisted.events] {
+        if !matches!(recorded.last(), Some(Event::Error { turn: TurnId(42), message })
+            if message == "operation cancelled")
+        {
+            return Err(format!(
+                "failure must carry its allocated turn durably and live, got {:?}",
+                recorded.last()
+            ));
+        }
     }
     Ok(())
 }
@@ -1239,9 +1224,27 @@ async fn duplicate_tool_calls_are_rejected(
     Ok(())
 }
 
-async fn compaction_keeps_turn_boundary(under_test: &UnderTest) -> std::result::Result<(), String> {
+async fn compaction_case(under_test: &UnderTest) -> CaseOutcome {
     let host = Host::new(vec![Reply::Text("summary")]).await;
     let implementation = (under_test.build)(&host).await;
+    if !implementation.capabilities().compaction {
+        return CaseOutcome {
+            case: "compaction_keeps_turn_boundary",
+            status: Status::Skipped,
+            detail: "the implementation does not declare compaction".into(),
+        };
+    }
+    guarded(
+        "compaction_keeps_turn_boundary",
+        compaction_keeps_turn_boundary(&host, implementation.as_ref()).await,
+    )
+    .await
+}
+
+async fn compaction_keeps_turn_boundary(
+    host: &Host,
+    implementation: &dyn AgentLoop,
+) -> std::result::Result<(), String> {
     let mut session = Session::new(host.workspace.clone());
     session.messages.push(Message::text(Role::User, "first"));
     session.messages.push(Message {
@@ -1302,6 +1305,14 @@ pub mod broken {
 
     #[async_trait]
     impl AgentLoop for ReplayingLoop {
+        // Deliberately overclaims support so certification must catch the default error.
+        fn capabilities(&self) -> huginn_core::AgentLoopCapabilities {
+            huginn_core::AgentLoopCapabilities {
+                compaction: true,
+                skill_commands: false,
+            }
+        }
+
         async fn run(
             &self,
             session: &mut Session,
