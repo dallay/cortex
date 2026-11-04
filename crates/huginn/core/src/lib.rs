@@ -502,6 +502,21 @@ pub fn agent_loop_id() -> kernel::ServiceId {
     kernel::ServiceId::new("agent:loop", 1)
 }
 
+/// Stable service id for the model provider a loop calls.
+///
+/// A loop that leases this slot instead of pinning a provider keeps working when the
+/// host substitutes `agent:model` between turns (ADR-0017).
+pub fn model_id() -> kernel::ServiceId {
+    kernel::ServiceId::new("agent:model", 1)
+}
+
+/// Stable service id for the session store a loop persists through.
+///
+/// Leased like [`model_id`]: a substituted store is picked up at the next turn.
+pub fn sessions_id() -> kernel::ServiceId {
+    kernel::ServiceId::new("agent:sessions", 1)
+}
+
 /// Workspace context supplied by a replaceable adapter.
 #[async_trait]
 pub trait InstructionSource: Send + Sync {

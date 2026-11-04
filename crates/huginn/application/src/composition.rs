@@ -13,14 +13,16 @@ use huginn_core::{
 use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
 
+/// Delegates to the contract crate so the host and an authoring plugin cannot drift.
 pub fn model_id() -> ServiceId {
-    ServiceId::new("agent:model", 1)
+    huginn_core::model_id()
 }
 pub fn tools_id() -> ServiceId {
     ServiceId::new("agent:tools", 1)
 }
+/// Delegates to the contract crate so the host and an authoring plugin cannot drift.
 pub fn sessions_id() -> ServiceId {
-    ServiceId::new("agent:sessions", 1)
+    huginn_core::sessions_id()
 }
 /// Delegates to the contract crate so the host and an authoring plugin cannot drift.
 pub fn loop_id() -> ServiceId {
