@@ -528,7 +528,7 @@ pub const GET_ENTITY_MENTIONS: &str = "
 MATCH (e:Entity {id: $id})
 OPTIONAL MATCH (c:Conversation)-[:HAS_MESSAGE]->(m:Message)-[:MENTIONS]->(e)
 WITH e, c, m ORDER BY m.timestamp ASC
-RETURN collect(CASE WHEN m IS NULL THEN NULL ELSE {
+RETURN e.id AS entity_id, collect(CASE WHEN m IS NULL THEN NULL ELSE {
     conversation_id: c.id,
     message_id: m.id,
     content: m.content,
@@ -595,6 +595,37 @@ ON CREATE SET u.id = $user_identifier, u.created_at = datetime()
 WITH u
 MATCH (p:Preference {id: $preference_id})
 MERGE (u)-[:HAS_PREFERENCE]->(p)
+";
+
+/// Mark the old preference as superseded by the new one; idempotent.
+pub const SUPERSEDE_PREFERENCE: &str = "
+MATCH (old:Preference {id: $old_id})
+MATCH (new:Preference {id: $new_id})
+MERGE (old)-[:SUPERSEDED_BY]->(new)
+SET old.valid_until = coalesce(old.valid_until, datetime())
+";
+
+/// Preferences linked to a user, most recent first; optionally hide superseded.
+pub const PREFERENCES_FOR_USER: &str = "
+MATCH (u:User {identifier: $user_identifier})-[:HAS_PREFERENCE]->(p:Preference)
+WHERE ($active_only = false OR NOT (p)-[:SUPERSEDED_BY]->(:Preference))
+  AND ($applies_to IS NULL OR EXISTS {
+      MATCH (p)-[:APPLIES_TO]->(:Entity {id: $applies_to})
+  })
+  AND ($as_of IS NULL OR (
+      (p.valid_from IS NULL OR p.valid_from <= datetime($as_of))
+      AND (p.valid_until IS NULL OR p.valid_until > datetime($as_of))
+  ))
+RETURN DISTINCT p
+ORDER BY p.created_at DESC
+";
+
+/// `(:Preference)-[:APPLIES_TO]->(:Entity)`, idempotent like upstream's
+/// `_link_preference_to_entity`.
+pub const LINK_PREFERENCE_TO_ENTITY: &str = "
+MATCH (p:Preference {id: $preference_id})
+MATCH (e:Entity {id: $entity_id})
+MERGE (p)-[:APPLIES_TO]->(e)
 ";
 
 pub const SEARCH_PREFERENCES_BY_EMBEDDING: &str = "

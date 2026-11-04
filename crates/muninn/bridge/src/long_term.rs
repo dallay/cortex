@@ -20,6 +20,9 @@ pub async fn dispatch(state: &BridgeState, method: &str, args: &Args) -> Option<
         "add_entity" => add_entity(state, args).await,
         "add_preference" => add_preference(state, args).await,
         "add_fact" => add_fact(state, args).await,
+        "get_facts_about" => get_facts_about(state, args).await,
+        "supersede_preference" => supersede_preference(state, args).await,
+        "get_preferences_for" => get_preferences_for(state, args).await,
         "search_entities" => search_entities(state, args).await,
         "search_preferences" => search_preferences(state, args).await,
         "get_entity_by_name" => get_entity_by_name(state, args).await,
@@ -66,6 +69,9 @@ async fn add_preference(state: &BridgeState, args: &Args) -> BridgeResult {
     let options = AddPreferenceOptions {
         user_identifier: args.opt_string("user_identifier")?,
         context: args.opt_string("context")?,
+        confidence: args.opt_f64("confidence")?.unwrap_or(1.0),
+        metadata: args.object("metadata")?,
+        applies_to: args.uuid_list("applies_to")?,
         ..AddPreferenceOptions::default()
     };
     let preference = state
@@ -80,8 +86,59 @@ async fn add_preference(state: &BridgeState, args: &Args) -> BridgeResult {
     Ok(Reply::Json(wire::preference(&preference)))
 }
 
+/// Facts about one subject, ordered and limited by the application policy.
+async fn get_facts_about(state: &BridgeState, args: &Args) -> BridgeResult {
+    let facts = state
+        .memory
+        .long_term()
+        .get_facts_about(
+            &args.string("subject")?,
+            args.opt_i64("limit")?.unwrap_or(10),
+        )
+        .await?;
+    Ok(Reply::Json(Value::Array(
+        facts.iter().map(wire::fact).collect(),
+    )))
+}
+
+/// Marks the old preference as superseded by the new one.
+async fn supersede_preference(state: &BridgeState, args: &Args) -> BridgeResult {
+    state
+        .memory
+        .long_term()
+        .supersede_preference(args.uuid("old_id")?, args.uuid("new_id")?)
+        .await?;
+    Ok(Reply::Json(Value::Null))
+}
+
+/// Preferences linked to a user; `active_only` defaults to true, as upstream.
+async fn get_preferences_for(state: &BridgeState, args: &Args) -> BridgeResult {
+    let active_only = args.opt_bool("active_only")?.unwrap_or(true);
+    let found = state
+        .memory
+        .long_term()
+        .get_preferences_for_filtered(
+            &args.string("user_identifier")?,
+            active_only,
+            args.opt_string("applies_to")?
+                .map(|_| args.uuid("applies_to"))
+                .transpose()?,
+            args.opt_datetime("as_of")?,
+        )
+        .await?;
+    Ok(Reply::Json(Value::Array(
+        found.iter().map(wire::preference).collect(),
+    )))
+}
+
 /// The TCK sends the object as `obj` (Python keyword clash).
 async fn add_fact(state: &BridgeState, args: &Args) -> BridgeResult {
+    let options = muninn_application::AddFactOptions {
+        confidence: args.opt_f64("confidence")?.unwrap_or(1.0),
+        valid_from: args.opt_datetime("valid_from")?,
+        valid_until: args.opt_datetime("valid_until")?,
+        ..muninn_application::AddFactOptions::default()
+    };
     let fact = state
         .memory
         .long_term()
@@ -89,7 +146,7 @@ async fn add_fact(state: &BridgeState, args: &Args) -> BridgeResult {
             &args.string("subject")?,
             &args.string("predicate")?,
             &args.string("obj")?,
-            muninn_application::AddFactOptions::default(),
+            options,
         )
         .await?;
     Ok(Reply::Json(wire::fact(&fact)))
@@ -161,8 +218,11 @@ async fn get_related_entities(state: &BridgeState, args: &Args) -> BridgeResult 
 
 async fn add_relationship(state: &BridgeState, args: &Args) -> BridgeResult {
     let options = AddRelationshipOptions {
+        description: args.opt_string("description")?,
+        confidence: args.opt_f64("confidence")?.unwrap_or(1.0),
+        valid_from: args.opt_datetime("valid_from")?,
+        valid_until: args.opt_datetime("valid_until")?,
         properties: args.object("properties")?,
-        ..AddRelationshipOptions::default()
     };
     let relationship = state
         .memory

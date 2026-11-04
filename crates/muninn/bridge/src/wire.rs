@@ -69,6 +69,36 @@ impl Args {
             .map_err(|_| BridgeError::BadRequest(format!("'{key}' must be a UUID")))
     }
 
+    /// RFC 3339 timestamp; a malformed value is a client error, never a silent `None`.
+    pub fn opt_datetime(&self, key: &str) -> Result<Option<DateTime<Utc>>, BridgeError> {
+        let Some(text) = self.opt_string(key)? else {
+            return Ok(None);
+        };
+        DateTime::parse_from_rfc3339(&text)
+            .map(|value| Some(value.with_timezone(&Utc)))
+            .map_err(|_| BridgeError::BadRequest(format!("'{key}' must be an RFC 3339 timestamp")))
+    }
+
+    /// List of UUIDs; absent and empty are equivalent, anything else is validated.
+    pub fn uuid_list(&self, key: &str) -> Result<Vec<Uuid>, BridgeError> {
+        match self.get(key) {
+            None => Ok(Vec::new()),
+            Some(Value::Array(items)) => items
+                .iter()
+                .map(|item| {
+                    item.as_str()
+                        .and_then(|text| Uuid::parse_str(text).ok())
+                        .ok_or_else(|| {
+                            BridgeError::BadRequest(format!("'{key}' must be a list of UUIDs"))
+                        })
+                })
+                .collect(),
+            Some(_) => Err(BridgeError::BadRequest(format!(
+                "'{key}' must be a list of UUIDs"
+            ))),
+        }
+    }
+
     pub fn object(&self, key: &str) -> Result<Metadata, BridgeError> {
         match self.get(key) {
             None => Ok(Metadata::new()),
@@ -152,6 +182,10 @@ pub fn preference(preference: &Preference) -> Value {
         "category": preference.category,
         "preference": preference.preference,
         "context": preference.context,
+        "confidence": preference.confidence,
+        "metadata": preference.metadata,
+        "valid_from": opt_datetime(preference.valid_from.as_ref()),
+        "valid_until": opt_datetime(preference.valid_until.as_ref()),
         "embedding": preference.embedding,
     })
 }
@@ -162,6 +196,10 @@ pub fn fact(fact: &Fact) -> Value {
         "subject": fact.subject,
         "predicate": fact.predicate,
         "object": fact.object,
+        "confidence": fact.confidence,
+        "valid_from": opt_datetime(fact.valid_from.as_ref()),
+        "valid_until": opt_datetime(fact.valid_until.as_ref()),
+        "metadata": fact.metadata,
         "embedding": fact.embedding,
     })
 }
@@ -172,6 +210,10 @@ pub fn relationship(relationship: &Relationship) -> Value {
         "source_id": relationship.source_id,
         "target_id": relationship.target_id,
         "relationship_type": relationship.relationship_type,
+        "description": relationship.description,
+        "confidence": relationship.confidence,
+        "valid_from": opt_datetime(relationship.valid_from.as_ref()),
+        "valid_until": opt_datetime(relationship.valid_until.as_ref()),
         "properties": relationship.properties,
     })
 }
@@ -483,6 +525,8 @@ mod tests {
             context: Some("technical answers".into()),
             confidence: 1.0,
             embedding: None,
+            valid_from: None,
+            valid_until: None,
             created_at,
             metadata: Metadata::new(),
         };
@@ -507,6 +551,8 @@ mod tests {
             relationship_type: "KNOWS".into(),
             description: None,
             confidence: 1.0,
+            valid_from: None,
+            valid_until: None,
             properties: Metadata::new(),
             created_at,
         };

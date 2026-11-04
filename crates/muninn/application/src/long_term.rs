@@ -70,6 +70,8 @@ impl Default for SearchEntitiesOptions {
 pub struct AddRelationshipOptions {
     pub description: Option<String>,
     pub confidence: f64,
+    pub valid_from: Option<DateTime<Utc>>,
+    pub valid_until: Option<DateTime<Utc>>,
     pub properties: Metadata,
 }
 
@@ -78,6 +80,8 @@ impl Default for AddRelationshipOptions {
         Self {
             description: None,
             confidence: 1.0,
+            valid_from: None,
+            valid_until: None,
             properties: Metadata::new(),
         }
     }
@@ -91,6 +95,8 @@ pub struct AddPreferenceOptions {
     pub metadata: Metadata,
     /// Links the preference to `(:User {identifier})` when present.
     pub user_identifier: Option<String>,
+    /// Entities this preference applies to; each one creates `APPLIES_TO`.
+    pub applies_to: Vec<Uuid>,
 }
 
 impl Default for AddPreferenceOptions {
@@ -101,6 +107,7 @@ impl Default for AddPreferenceOptions {
             generate_embedding: true,
             metadata: Metadata::new(),
             user_identifier: None,
+            applies_to: Vec::new(),
         }
     }
 }
@@ -313,6 +320,8 @@ impl LongTermMemory {
             relationship_type: relationship_type.to_owned(),
             description: options.description,
             confidence: options.confidence,
+            valid_from: options.valid_from,
+            valid_until: options.valid_until,
             properties: options.properties,
             created_at: Utc::now(),
         };
@@ -463,6 +472,14 @@ impl LongTermMemory {
         options: AddPreferenceOptions,
     ) -> MemoryResult<Preference> {
         self.validate_preference_scope(options.user_identifier.as_deref())?;
+        // SOURCE-CONFLICT: upstream skips missing explicit IDs. Reject the whole
+        // list before embedding or writes, including the deduplication path.
+        // This preflight does not make concurrent entity deletion atomic.
+        for id in &options.applies_to {
+            self.get_entity(*id)
+                .await?
+                .ok_or_else(|| MemoryError::not_found(format!("entity {id}")))?;
+        }
         let mut text = format!("{category}: {preference}");
         if let Some(context) = options.context.as_deref().filter(|c| !c.is_empty()) {
             text.push_str(&format!(" ({context})"));
@@ -492,6 +509,11 @@ impl LongTermMemory {
                         .link_user_to_preference(user, existing.id)
                         .await?;
                 }
+                for entity in &options.applies_to {
+                    self.store
+                        .link_preference_to_entity(existing.id, *entity)
+                        .await?;
+                }
                 return Ok(existing);
             }
         }
@@ -502,6 +524,8 @@ impl LongTermMemory {
             context: options.context,
             confidence: options.confidence,
             embedding,
+            valid_from: Some(Utc::now()),
+            valid_until: None,
             created_at: Utc::now(),
             metadata: options.metadata,
         };
@@ -509,7 +533,46 @@ impl LongTermMemory {
         if let Some(user) = &options.user_identifier {
             self.store.link_user_to_preference(user, stored.id).await?;
         }
+        for entity in &options.applies_to {
+            self.store
+                .link_preference_to_entity(stored.id, *entity)
+                .await?;
+        }
         Ok(stored)
+    }
+
+    /// Marks `old` as superseded by `new`, closing its validity interval.
+    ///
+    /// Idempotent, as upstream: repeating the call keeps the first `valid_until`.
+    pub async fn supersede_preference(&self, old_id: Uuid, new_id: Uuid) -> MemoryResult<()> {
+        self.store.supersede_preference(old_id, new_id).await
+    }
+
+    /// Preferences linked to a user, most recent first.
+    pub async fn get_preferences_for(
+        &self,
+        user_identifier: &str,
+        active_only: bool,
+    ) -> MemoryResult<Vec<Preference>> {
+        require_text(user_identifier, "user identifier")?;
+        self.store
+            .preferences_for(user_identifier, active_only)
+            .await
+    }
+
+    /// Preferences for a user AND an optional target edge AND validity instant.
+    /// `active_only` excludes superseded records even for historical instants.
+    pub async fn get_preferences_for_filtered(
+        &self,
+        user_identifier: &str,
+        active_only: bool,
+        applies_to: Option<Uuid>,
+        as_of: Option<DateTime<Utc>>,
+    ) -> MemoryResult<Vec<Preference>> {
+        require_text(user_identifier, "user identifier")?;
+        self.store
+            .preferences_for_filtered(user_identifier, active_only, applies_to, as_of)
+            .await
     }
 
     /// Semantic preference search, optionally restricted to a category.
@@ -728,6 +791,9 @@ mod tests {
         preferences: Vec<Scored<Preference>>,
         owners: Vec<(String, Preference)>,
         forbid_preferences: bool,
+        entities: Vec<Entity>,
+        created: Mutex<Vec<Preference>>,
+        target_links: Mutex<Vec<(Uuid, Uuid)>>,
     }
 
     struct FixedEmbedder;
@@ -770,6 +836,8 @@ mod tests {
                 relationship_type: kind.to_owned(),
                 description: None,
                 confidence: 1.0,
+                valid_from: None,
+                valid_until: None,
                 properties: Metadata::new(),
                 created_at: Utc::now(),
             },
@@ -786,6 +854,8 @@ mod tests {
                 context: None,
                 confidence: 1.0,
                 embedding: None,
+                valid_from: None,
+                valid_until: None,
                 created_at: Utc::now(),
                 metadata: Metadata::new(),
             },
@@ -799,8 +869,8 @@ mod tests {
             *self.upserted.lock().unwrap() = Some(entity.clone());
             Ok(entity.clone())
         }
-        async fn get_entity(&self, _: Uuid) -> MemoryResult<Option<Entity>> {
-            unimplemented!()
+        async fn get_entity(&self, id: Uuid) -> MemoryResult<Option<Entity>> {
+            Ok(self.entities.iter().find(|e| e.id == id).cloned())
         }
         async fn get_entity_by_name(&self, _: &str) -> MemoryResult<Option<Entity>> {
             unimplemented!()
@@ -856,8 +926,13 @@ mod tests {
         async fn entity_graph(&self, _: i64) -> MemoryResult<EntityGraph> {
             unimplemented!()
         }
-        async fn create_preference(&self, _: &Preference) -> MemoryResult<Preference> {
-            unimplemented!()
+        async fn create_preference(&self, preference: &Preference) -> MemoryResult<Preference> {
+            assert!(
+                !self.forbid_preferences,
+                "rejected input must not create a preference"
+            );
+            self.created.lock().unwrap().push(preference.clone());
+            Ok(preference.clone())
         }
         async fn find_duplicate_preference(
             &self,
@@ -882,6 +957,29 @@ mod tests {
                 .iter()
                 .any(|(owner, p)| owner == user && p.id == id));
             Ok(())
+        }
+        async fn link_preference_to_entity(
+            &self,
+            preference: Uuid,
+            target: Uuid,
+        ) -> MemoryResult<()> {
+            assert!(
+                !self.forbid_preferences,
+                "rejected input must not link a target"
+            );
+            self.target_links.lock().unwrap().push((preference, target));
+            Ok(())
+        }
+        async fn supersede_preference(&self, _: Uuid, _: Uuid) -> MemoryResult<()> {
+            unreachable!()
+        }
+        async fn preferences_for(&self, user: &str, _: bool) -> MemoryResult<Vec<Preference>> {
+            Ok(self
+                .owners
+                .iter()
+                .filter(|(owner, _)| owner == user)
+                .map(|(_, p)| p.clone())
+                .collect())
         }
         async fn search_preferences(
             &self,
@@ -964,6 +1062,8 @@ mod tests {
             context: None,
             confidence: 1.0,
             embedding: None,
+            valid_from: None,
+            valid_until: None,
             created_at: Utc::now(),
             metadata: Metadata::new(),
         };
@@ -1102,6 +1202,120 @@ mod tests {
                 )
                 .await
                 .is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn preference_target_preflight_preserves_new_and_deduplicated_linking() {
+        for duplicate in [false, true] {
+            for with_target in [false, true] {
+                let target = entity("target");
+                let existing = preference("food").item;
+                let (store, memory) = memory(FakeStore {
+                    entities: vec![target.clone()],
+                    owners: if duplicate {
+                        vec![("owner".into(), existing.clone())]
+                    } else {
+                        vec![]
+                    },
+                    ..FakeStore::default()
+                });
+                let result = memory
+                    .add_preference(
+                        "food",
+                        "tea",
+                        AddPreferenceOptions {
+                            applies_to: if with_target { vec![target.id] } else { vec![] },
+                            ..AddPreferenceOptions::default()
+                        },
+                    )
+                    .await
+                    .unwrap();
+                if duplicate {
+                    assert_eq!(result.id, existing.id);
+                    assert_eq!(result.metadata["deduplicated"], true);
+                }
+                assert_eq!(store.created.lock().unwrap().len(), usize::from(!duplicate));
+                assert_eq!(
+                    *store.target_links.lock().unwrap(),
+                    if with_target {
+                        vec![(result.id, target.id)]
+                    } else {
+                        vec![]
+                    }
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_store_reads_remain_compatible_and_filters_fail_closed() {
+        let expected = preference("food").item;
+        let (_, memory) = memory(FakeStore {
+            owners: vec![("owner".into(), expected.clone())],
+            ..FakeStore::default()
+        });
+        for result in [
+            memory.get_preferences_for("owner", false).await.unwrap(),
+            memory
+                .get_preferences_for_filtered("owner", false, None, None)
+                .await
+                .unwrap(),
+        ] {
+            assert_eq!(result.len(), 1);
+            assert_eq!(result[0].id, expected.id);
+        }
+        // FakeStore intentionally does not implement the additive port method.
+        for (target, as_of) in [(Some(Uuid::new_v4()), None), (None, Some(Utc::now()))] {
+            let error = memory
+                .get_preferences_for_filtered("owner", true, target, as_of)
+                .await
+                .unwrap_err();
+            assert!(matches!(error, MemoryError::NotSupported(_)));
+        }
+        assert!(matches!(
+            memory
+                .get_preferences_for_filtered(" ", true, None, None)
+                .await,
+            Err(MemoryError::InvalidInput(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn missing_preference_target_rejects_full_list_before_embedding_or_mutation() {
+        for duplicate in [false, true] {
+            for generate_embedding in [false, true] {
+                let present = entity("present");
+                let missing = Uuid::new_v4();
+                let store = Arc::new(FakeStore {
+                    entities: vec![present.clone()],
+                    owners: if duplicate {
+                        vec![("owner".into(), preference("food").item)]
+                    } else {
+                        vec![]
+                    },
+                    forbid_preferences: true,
+                    ..FakeStore::default()
+                });
+                let memory =
+                    LongTermMemory::new(store.clone(), Some(Arc::new(ForbiddenEmbedder)), false);
+                let error = memory
+                    .add_preference(
+                        "food",
+                        "tea",
+                        AddPreferenceOptions {
+                            user_identifier: Some("owner".into()),
+                            applies_to: vec![present.id, missing, present.id],
+                            generate_embedding,
+                            ..AddPreferenceOptions::default()
+                        },
+                    )
+                    .await
+                    .unwrap_err();
+                assert_eq!(error.to_string(), format!("not found: entity {missing}"));
+                assert!(store.created.lock().unwrap().is_empty());
+                assert!(store.target_links.lock().unwrap().is_empty());
+            }
         }
     }
 

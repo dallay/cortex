@@ -169,6 +169,8 @@ pub struct Relationship {
     pub relationship_type: String,
     pub description: Option<String>,
     pub confidence: f64,
+    pub valid_from: Option<DateTime<Utc>>,
+    pub valid_until: Option<DateTime<Utc>>,
     pub properties: Metadata,
     pub created_at: DateTime<Utc>,
 }
@@ -181,6 +183,8 @@ pub struct Preference {
     pub context: Option<String>,
     pub confidence: f64,
     pub embedding: Option<Vec<f64>>,
+    pub valid_from: Option<DateTime<Utc>>,
+    pub valid_until: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub metadata: Metadata,
 }

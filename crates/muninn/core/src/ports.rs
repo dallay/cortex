@@ -504,6 +504,40 @@ pub trait LongTermStore: Send + Sync {
         preference_id: Uuid,
     ) -> MemoryResult<()>;
 
+    /// `(:Preference)-[:APPLIES_TO]->(:Entity)`, idempotent like upstream.
+    async fn link_preference_to_entity(
+        &self,
+        preference_id: Uuid,
+        entity_id: Uuid,
+    ) -> MemoryResult<()>;
+
+    /// `(:Preference)-[:SUPERSEDED_BY]->(:Preference)` and `valid_until` on the
+    /// old preference, exactly once; repeating the call is a no-op.
+    async fn supersede_preference(&self, old_id: Uuid, new_id: Uuid) -> MemoryResult<()>;
+
+    /// Preferences linked to a user, most recent first; `active_only` hides the
+    /// ones already superseded.
+    async fn preferences_for(
+        &self,
+        user_identifier: &str,
+        active_only: bool,
+    ) -> MemoryResult<Vec<Preference>>;
+
+    /// AND target-edge and half-open validity filters with the user scope.
+    /// Legacy implementations remain source-compatible, but must not ignore filters.
+    async fn preferences_for_filtered(
+        &self,
+        user_identifier: &str,
+        active_only: bool,
+        applies_to: Option<Uuid>,
+        as_of: Option<DateTime<Utc>>,
+    ) -> MemoryResult<Vec<Preference>> {
+        if applies_to.is_some() || as_of.is_some() {
+            return Err(MemoryError::NotSupported("preference filters".into()));
+        }
+        self.preferences_for(user_identifier, active_only).await
+    }
+
     async fn search_preferences(
         &self,
         embedding: &[f64],

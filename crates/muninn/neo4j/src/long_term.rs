@@ -75,6 +75,8 @@ pub fn preference_from_value(value: &BoltType) -> MemoryResult<Preference> {
         context: props.string("context"),
         confidence: props.f64("confidence").unwrap_or(1.0),
         embedding: props.f64_list("embedding"),
+        valid_from: props.datetime("valid_from"),
+        valid_until: props.datetime("valid_until"),
         created_at: props.datetime_or_now("created_at"),
         metadata: deserialize_metadata(props.string("metadata").as_deref()),
     })
@@ -116,6 +118,8 @@ const RELATION_COLUMNS: &[&str] = &[
     "neo4j_type",
     "confidence",
     "description",
+    "valid_from",
+    "valid_until",
     "created_at",
     "properties",
 ];
@@ -137,6 +141,8 @@ fn related_from_row(row: &Row, entity_id: Uuid) -> MemoryResult<RelatedEntity> {
             relationship_type,
             description: props.string("description"),
             confidence: props.f64("confidence").unwrap_or(1.0),
+            valid_from: props.datetime("valid_from"),
+            valid_until: props.datetime("valid_until"),
             properties: deserialize_metadata(props.string("properties").as_deref()),
             created_at: props.datetime_or_now("created_at"),
         },
@@ -344,8 +350,19 @@ impl LongTermStore for Neo4jLongTermStore {
                     ("extractor", NULL),
                     ("message_id", NULL),
                     ("evidence", NULL),
-                    ("valid_from", NULL),
-                    ("valid_until", NULL),
+                    (
+                        "valid_from",
+                        opt_string(relationship.valid_from.map(|ts| ts.to_rfc3339()).as_deref()),
+                    ),
+                    (
+                        "valid_until",
+                        opt_string(
+                            relationship
+                                .valid_until
+                                .map(|ts| ts.to_rfc3339())
+                                .as_deref(),
+                        ),
+                    ),
                     ("properties", opt_string(properties.as_deref())),
                 ],
             )
@@ -615,6 +632,69 @@ impl LongTermStore for Neo4jLongTermStore {
             )
             .await
             .map(|_| ())
+    }
+
+    async fn link_preference_to_entity(
+        &self,
+        preference_id: Uuid,
+        entity_id: Uuid,
+    ) -> MemoryResult<()> {
+        self.client
+            .execute(
+                q::LINK_PREFERENCE_TO_ENTITY,
+                vec![
+                    ("preference_id", id_param(preference_id)),
+                    ("entity_id", id_param(entity_id)),
+                ],
+            )
+            .await
+            .map(|_| ())
+    }
+
+    async fn supersede_preference(&self, old_id: Uuid, new_id: Uuid) -> MemoryResult<()> {
+        self.client
+            .execute(
+                q::SUPERSEDE_PREFERENCE,
+                vec![("old_id", id_param(old_id)), ("new_id", id_param(new_id))],
+            )
+            .await
+            .map(|_| ())
+    }
+
+    async fn preferences_for(
+        &self,
+        user_identifier: &str,
+        active_only: bool,
+    ) -> MemoryResult<Vec<Preference>> {
+        self.preferences_for_filtered(user_identifier, active_only, None, None)
+            .await
+    }
+
+    async fn preferences_for_filtered(
+        &self,
+        user_identifier: &str,
+        active_only: bool,
+        applies_to: Option<Uuid>,
+        as_of: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> MemoryResult<Vec<Preference>> {
+        let rows = self
+            .client
+            .execute(
+                q::PREFERENCES_FOR_USER,
+                vec![
+                    ("user_identifier", user_identifier.into()),
+                    ("active_only", active_only.into()),
+                    ("applies_to", applies_to.map_or(NULL, id_param)),
+                    (
+                        "as_of",
+                        opt_string(as_of.map(|time| time.to_rfc3339()).as_deref()),
+                    ),
+                ],
+            )
+            .await?;
+        rows.iter()
+            .map(|row| preference_from_value(&column(row, "p")?))
+            .collect()
     }
 
     async fn search_preferences(
