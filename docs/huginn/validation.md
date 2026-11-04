@@ -3,75 +3,75 @@
 Date: 2026-10-06. Implementation host: macOS, Rust 1.89.
 Linux fixture host: ARM64 container, Rust 1.99 (existing stable toolchain).
 
-## Automatización PTY Ratatui — DALLAY-665
+## Ratatui PTY automation — DALLAY-665
 
-**Estado: cobertura automatizada ampliada; no es certificación de terminales nativos.**
+**Status: extended automated coverage; not a certification of native terminals.**
 
-El test `composer_and_fresh_approval_work_after_100_streaming_resizes` usa el
-fixture determinista `tui-fixture` y `portable-pty` para cambiar 100 veces entre
-20x8 y 120x40 mientras llegan fragmentos de una respuesta. Luego verifica que
-el composer admite otro comando y que una aprobación requiere y acepta un código
-fresco. El helper reconstruye la pantalla visible, no el transcript lógico completo;
-por eso este caso no afirma ausencia de duplicación fuera del viewport. No certifica
-Terminal.app, iTerm2, SSH ni tmux.
+The `composer_and_fresh_approval_work_after_100_streaming_resizes` test uses the
+deterministic `tui-fixture` and `portable-pty` to switch 100 times between
+20x8 and 120x40 while fragments of a response arrive. It then verifies that
+the composer accepts another command and that an approval requires and accepts a
+fresh code. The helper reconstructs the visible screen, not the complete logical transcript;
+therefore this case does not assert the absence of duplication outside the viewport. It does not certify
+Terminal.app, iTerm2, SSH, or tmux.
 
-Ejecución focal en Linux x86_64 (`uname -a`: Linux 7.0.14-26-pve):
+Focused run on Linux x86_64 (`uname -a`: Linux 7.0.14-26-pve):
 
 ```sh
 cargo test -p huginn-presentation --features test-driver --test pty composer_and_fresh_approval_work_after_100_streaming_resizes -- --exact --nocapture
 ```
 
-Resultado focal observado: 1 test aprobado en 1.04 s. Por separado, la suite PTY
-completa aprobó 41 tests en ejecución serial (16.47 s), y también pasó
-`cargo test -p huginn-presentation --features test-driver` (suite completa, incluido
-PTY: 41 tests más las suites unitarias/integración). Toolchain
-Rust/Cargo 1.99.1. Versiones fijadas en `crates/huginn/presentation/Cargo.toml`:
-Ratatui 0.30.2, Crossterm 0.29.0 y portable-pty 0.9.0. El fixture usa salida
-simulada; no accede a un modelo real. La compilación reporta un warning deprecado
-preexistente en `src/event/test_support.rs:20` y warnings de asignación en
+Observed focused result: 1 test passed in 1.04 s. Separately, the complete PTY
+suite passed 41 tests in serial execution (16.47 s), and also passed
+`cargo test -p huginn-presentation --features test-driver` (complete suite, including
+PTY: 41 tests plus the unit/integration suites). Toolchain
+Rust/Cargo 1.99.1. Versions pinned in `crates/huginn/presentation/Cargo.toml`:
+Ratatui 0.30.2, Crossterm 0.29.0, and portable-pty 0.9.0. The fixture uses simulated
+output; it does not access a real model. The build reports a pre-existing deprecated
+warning in `src/event/test_support.rs:20` and assignment warnings in
 `tests/event.rs:201-204`.
 
-Este test no mide tokens por segundo: sus fragmentos deterministas no representan
-tokens del proveedor. Tampoco mide latencia input-a-estado ni cubre 10 000 líneas
-lógicas. No se publican umbrales de rendimiento sin un benchmark representativo.
-La matriz de 100 cambios valida secuencia funcional y autorización posterior, no
-certifica que cada resize haya generado un frame distinto. Las métricas de 100 tok/s,
-ráfaga 10x, 10k líneas y latencia quedan pendientes de un benchmark reproducible.
+This test does not measure tokens per second: its deterministic fragments do not represent
+provider tokens. It also does not measure input-to-state latency nor cover 10,000
+logical lines. No performance thresholds are published without a representative benchmark.
+The matrix of 100 changes validates functional sequence and subsequent authorization; it does not
+certify that each resize generated a distinct frame. The metrics for 100 tok/s,
+10x burst, 10k lines, and latency remain pending a reproducible benchmark.
 
-## Cadena de hooks, registro y guards — 2026-10-27
+## Hook, registration, and guards chain — 2026-10-27
 
-**Estado: Ready para abrir la cadena de PRs; no es aprobación de merge.**
-Código integrado verificado: `6236d57`, sobre main `cb92f8a`. Doce ramas locales
-en `feature-branch-chain`, con referencia `integration/huginn-guards`.
-Cada capa cumple su presupuesto: 400 líneas, salvo las excepciones autorizadas
-del scanner, 455/470, y shell, 786/800. Los PRs dependientes apuntan a su rama padre.
+**Status: Ready to open the PR chain; not merge approval.**
+Verified integrated code: `6236d57`, on top of main `cb92f8a`. Twelve local branches
+in `feature-branch-chain`, with reference `integration/huginn-guards`.
+Each layer meets its budget: 400 lines, except for the scanner's authorized
+exceptions, 455/470, and shell, 786/800. Dependent PRs point to their parent branch.
 
-- `just ci-local`: nueve etapas aprobadas en 524 segundos; incluye tests Rust,
-  frontend, documentación y 90 E2E con imagen reconstruida desde el candidato.
+- `just ci-local`: nine stages passed in 524 seconds; includes Rust tests,
+  frontend, documentation, and 90 E2E with an image rebuilt from the candidate.
 - `RUST_TEST_THREADS=1 cargo llvm-cov --workspace --all-features --fail-under-lines 87 --lcov`:
-  aprobado; 37068 de 41326 líneas, **89,70 %**, por encima del umbral de 87 %.
-- Semgrep 1.126.0 con los tres rulesets de CI: cero findings activos, 233 targets.
-  Se mantienen visibles cuatro avisos de parsing parcial preexistentes en
-  PowerShell de `release.yml`; no se afirma cobertura completa del scanner.
-- Siete excepciones nuevas exactas y siete históricas separadas, con controles
-  positivos, negativos y supresiones desactivadas. Diez tests Python aprobados.
-  Los cambios aislados de los scripts activan CI: 290 tests Node de metadatos
-  aprobados, incluidos los dos casos de clasificación añadidos tras actualizar main.
-- `cargo audit`: cero vulnerabilidades, con avisos de mantenimiento. Gitleaks:
-  rango completo de la cadena desde `cb92f8a`, catorce commits sin secretos.
-- Trivy 0.76.1, con filtros de CI `HIGH,CRITICAL` e `ignore-unfixed`: cero findings
-  en ambos lockfiles y ambos Dockerfiles. El snapshot se analizó sin usuario root
-  ni escritura en el proyecto; no se extiende el resultado fuera de esos filtros.
-- Revisiones independientes aprobaron las unidades y sus correcciones. Los límites
-  heredados de notas/resultados y las dos fronteras del lexer tienen regresiones
-  que fallaron antes de corregirlos y pasaron después. No se eliminaron pruebas.
+  passed; 37068 of 41326 lines, **89.70%**, above the 87% threshold.
+- Semgrep 1.126.0 with the three CI rulesets: zero active findings, 233 targets.
+  Four pre-existing partial-parsing warnings remain visible in
+  PowerShell within `release.yml`; complete scanner coverage is not claimed.
+- Seven new exact exceptions and seven separate historical ones, with positive,
+  negative, and disabled-suppression checks. Ten Python tests passed.
+  The scripts' isolated changes trigger CI: 290 Node metadata tests
+  passed, including the two classification cases added after updating main.
+- `cargo audit`: zero vulnerabilities, with maintenance notices. Gitleaks:
+  complete chain range from `cb92f8a`, fourteen commits with no secrets.
+- Trivy 0.76.1, with CI filters `HIGH,CRITICAL` and `ignore-unfixed`: zero findings
+  in both lockfiles and both Dockerfiles. The snapshot was analyzed without root user
+  or writes in the project; the result is not extended beyond those filters.
+- Independent reviews approved the units and their fixes. The inherited
+  notes/results limits and the two lexer boundaries have regressions that
+  failed before the fixes and passed afterward. No tests were removed.
 
-Se conservan los límites de código nativo confiable, ausencia de sandbox y riesgo
-residual de sustitución concurrente de archivos. ADR-0016 sigue `Proposed`.
-Los quality gates remotos, incluidos Sonar/CodeQL y la revisión humana, deberán
-ejecutarse al publicar: esta evidencia local no los sustituye.
-No se ha realizado push ni se han abierto PRs. El cierre posterior a `6236d57`
-solo incorpora esta evidencia documental, sin modificar código ejecutable.
+The limits of trusted native code, absence of a sandbox, and residual risk
+of concurrent file substitution remain. ADR-0016 stays `Proposed`.
+Remote quality gates, including Sonar/CodeQL and human review, must
+run upon publication: this local evidence does not replace them.
+No push has been made and no PRs have been opened. The closure after `6236d57`
+only incorporates this documentary evidence, without modifying executable code.
 
 ## Skills and prompt templates S1 acceptance (DALLAY-717) — 2026-10-26
 
@@ -359,39 +359,39 @@ and CLI integration tests (4 passed); `cargo clippy -p huginn
 -p huginn-runtime --all-targets -- -D warnings`; focused Markdown lint (0 issues);
 `git diff --check`.
 
-## Integración nativa de políticas, sin activación CLI (B9)
+## Native policy integration, no CLI activation (B9)
 
-La unidad añade plugin restrictivo, checks de adaptadores y builder protegido
-explícito. Conserva el registro existente y las firmas de composición legacy.
-Las pruebas de `huginn-guards` incluyen lifecycle del plugin; runtime `guardrails`
-cubre bloqueo antes de previews y búsqueda recursiva con `.env` y `.ENV`.
-Checks focales: guards, runtime `guardrails`, `tool_authoring`, `tool_lifecycle`,
-`mcp_lifecycle`, `coding_workflow`, clippy de guards/runtime, formato y arquitectura.
-`just huginn-test` incluye guards, plugin-api y reference-extension.
-Esto no certifica carga de archivos, activación run/chat/resume ni CI/cobertura
-global. Esas validaciones corresponden a las capas y al extremo integrado siguientes.
+The unit adds a restrictive plugin, adapter checks, and an explicit protected
+builder. It preserves the existing registration and the legacy composition signatures.
+The `huginn-guards` tests include the plugin lifecycle; runtime `guardrails`
+covers blocking before previews and recursive search with `.env` and `.ENV`.
+Focused checks: guards, runtime `guardrails`, `tool_authoring`, `tool_lifecycle`,
+`mcp_lifecycle`, `coding_workflow`, guards/runtime clippy, format, and architecture.
+`just huginn-test` includes guards, plugin-api, and reference-extension.
+This does not certify file loading, run/chat/resume activation, or global
+CI/coverage. Those validations correspond to the following layers and the integrated endpoint.
 
-## Cargador explícito de políticas (B10)
+## Explicit policy loader (B10)
 
-Runtime `guardrails` conserva las dos regresiones nativas de B9 y añade carga
-aditiva acotada, rechazo de configuración inválida/no regular y, en Unix, enlaces
-y FIFO sin bloqueo. El FIFO se crea únicamente en una fixture temporal propia.
-La carga es una API explícita del host; esta unidad no activa la CLI ni sustituye
-las comprobaciones del extremo integrado, cobertura Rust o quality gates remotos.
+Runtime `guardrails` keeps the two native regressions from B9 and adds bounded
+additive loading, rejection of invalid/non-regular configuration, and, on Unix, non-blocking
+links and FIFO. The FIFO is created only in a dedicated temporary fixture.
+Loading is an explicit host API; this unit does not activate the CLI nor substitute
+the checks of the integrated endpoint, Rust coverage, or remote quality gates.
 
-## Activación CLI y verificación local (B11)
+## CLI activation and local verification (B11)
 
-Las secciones B9/B10 anteriores describen snapshots históricos, no el estado
-actual del binario. B11 carga la política desde la sesión preparada y selecciona
-el builder protegido antes de run/chat/resume, línea o TUI. No cambia credenciales,
-MCP, providers, instrucciones ni persistencia; conserva la autoridad de `HostPolicy`.
+The B9/B10 sections above describe historical snapshots, not the
+current state of the binary. B11 loads the policy from the prepared session and selects
+the protected builder before run/chat/resume, line mode, or TUI. It does not change credentials,
+MCP, providers, instructions, or persistence; it preserves `HostPolicy` authority.
 
-TDD local: antes de activar la entrada protegida, cinco tests CLI fallaron y uno
-pasó: hubo efectos solo dentro de fixtures, búsqueda sensible y política ignorada.
-Tras el wiring original, los seis aprobaron, incluido rechazo de alias/trap con
-payloads inocuos, bloqueo pese a grants, política inválida, búsqueda y resume.
+Local TDD: before activating the protected entry point, five CLI tests failed and one
+passed: there were effects only within fixtures, sensitive search, and ignored policy.
+After the original wiring, all six passed, including rejection of alias/trap with
+harmless payloads, blocking despite grants, invalid policy, search, and resume.
 
-Comandos reproducibles ejecutados con caché Cargo externa:
+Reproducible commands run with external Cargo cache:
 
 ```sh
 cargo test -p huginn --test guardrails --test cli --test skills_acceptance \
@@ -400,16 +400,16 @@ cargo test -p huginn --test guardrails --test cli --test skills_acceptance \
 cargo test -p huginn --test tui --locked -- --test-threads=1
 ```
 
-Aprobaron 36 tests del primer comando y 14 del TUI completo: diez escenarios y
-cuatro tests del lector PTY. Se usó ejecución secuencial local, sin cambiar producto
-ni CI; no hubo fallo transitorio de `openpty` ni fue necesario repetir casos.
-También aprobaron guards (24), runtime `coding_workflow` (34) y `guardrails` (4),
-core `tool_hook_evaluation`/`tool_hooks` (6/4), application `tool_hooks` (3) y los
-dos tests focales de `output`. Estos no son totales de suites no ejecutadas.
-Clippy de huginn/runtime/guards con todos los targets/features y `-D warnings`,
-formato, arquitectura, Markdown e inventario Python se verifican en esta capa.
+36 tests from the first command passed, and 14 from the complete TUI: ten scenarios and
+four tests of the PTY reader. Local serial execution was used, without changing the product
+or CI; there was no transient `openpty` failure, nor was it necessary to retry cases.
+Guards (24), runtime `coding_workflow` (34), and `guardrails` (4) also passed,
+along with core `tool_hook_evaluation`/`tool_hooks` (6/4), application `tool_hooks` (3), and the
+two focused `output` tests. These are not totals of unexecuted suites.
+Clippy for huginn/runtime/guards with all targets/features and `-D warnings`,
+format, architecture, Markdown, and Python inventory are verified at this layer.
 
-Los logs primarios están en el temporal aprobado `huginn-cli-chain-evidence/`.
-El respaldo `ee44ab8` y el plan RPI conservan la evidencia anterior; no se atribuye
-a esta ejecución. No se ejecutan aquí CI global, cobertura Rust del 87 %, Sonar ni
-gates remotos: su validación integrada corresponde al orquestador antes del PR.
+The primary logs are in the approved temporary directory `huginn-cli-chain-evidence/`.
+The backup `ee44ab8` and the RPI plan preserve previous evidence; it is not attributed
+to this run. Global CI, 87% Rust coverage, Sonar, or remote
+gates are not run here: their integrated validation corresponds to the orchestrator before the PR.

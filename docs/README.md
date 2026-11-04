@@ -1,40 +1,40 @@
-# Documentación de Cortex
+# Cortex Documentation
 
-Cortex es un proyecto Rust que incluye **Rook** (proxy y router de IA) y **Huginn** (agente de programación local).
+Cortex is a Rust project that includes **Rook** (AI proxy and router) and **Huginn** (local coding agent).
 
-## Estructura de documentación
+## Documentation structure
 
 ```
 docs/
-├── README.md              ← Este archivo
-├── development.md         ← Guía de desarrollo local
+├── README.md              ← This file
+├── development.md         ← Local development guide
 │
-├── rook/                  ← Documentación de Rook
-│   ├── README.md          ← Guía principal de Rook
-│   ├── architecture.md    ← Arquitectura interna
-│   ├── api.md             ← Referencia de API HTTP
-│   ├── configuration.md   ← Guía de configuración
-│   ├── providers.md       ← Configuración de proveedores
-│   ├── deployment.md      ← Guía de despliegue
+├── rook/                  ← Rook documentation
+│   ├── README.md          ← Rook main guide
+│   ├── architecture.md    ← Internal architecture
+│   ├── api.md             ← HTTP API reference
+│   ├── configuration.md   ← Configuration guide
+│   ├── providers.md       ← Provider configuration
+│   ├── deployment.md      ← Deployment guide
 │   ├── product-requirements.md ← Product requirements
-│   └── adr/               ← ADRs específicos de Rook
+│   └── adr/               ← Rook-specific ADRs
 │       └── README.md
 │
-├── adr/                   ← Architecture Decision Records (generales)
-│   └── README.md          ← Índice de ADRs
+├── adr/                   ← Architecture Decision Records (general)
+│   └── README.md          ← ADR index
 │
-├── c4/                    ← Diagramas C4
+├── c4/                    ← C4 diagrams
 │   ├── c1-context.md
 │   ├── c2-containers.md
 │   └── c3-components.md
 │
-├── contributing/          ← Políticas de contribución
+├── contributing/          ← Contribution policies
 │   ├── labeling-policy.md
 │   └── linear-sync-policy.md
 │
-├── huginn/                ← Documentación de Huginn
-│   ├── README.md          ← Guía principal de Huginn
-│   ├── architecture.md    ← Arquitectura técnica
+├── huginn/                ← Huginn documentation
+│   ├── README.md          ← Huginn main guide
+│   ├── architecture.md    ← Technical architecture
 │   ├── authoring.md
 │   ├── connections.md
 │   ├── implementation-plan.md
@@ -43,46 +43,46 @@ docs/
 │   ├── linux-daily-use.md
 │   ├── providers.md
 │   ├── validation.md
-│   └── adr/               ← ADRs específicos de Huginn
+│   └── adr/               ← Huginn-specific ADRs
 │       ├── README.md
 │       ├── 0001-*.md ... 0015-*.md
 │       └── template.md
 │
-└── assets/                ← Recursos estáticos
+└── assets/                ← Static resources
 ```
 
-## Guías rápidas
+## Quick guides
 
-### Para usuarios de Rook
+### For Rook users
 
-1. [rook/README.md](rook/README.md) — Guía principal de Rook
-2. [rook/configuration.md](rook/configuration.md) — Cómo configurar Rook
-3. [rook/api.md](rook/api.md) — Endpoints disponibles
-4. [rook/providers.md](rook/providers.md) — Configurar modelos de IA
-5. [Dashboard](../apps/rook/dashboard/README.md) — Interfaz visual de gestión
-6. [rook/deployment.md](rook/deployment.md) — Producción y contenedores
+1. [rook/README.md](rook/README.md) — Rook main guide
+2. [rook/configuration.md](rook/configuration.md) — How to configure Rook
+3. [rook/api.md](rook/api.md) — Available endpoints
+4. [rook/providers.md](rook/providers.md) — Configuring AI models
+5. [Dashboard](../apps/rook/dashboard/README.md) — Visual management interface
+6. [rook/deployment.md](rook/deployment.md) — Production and containers
 
-### Para usuarios de Huginn
+### For Huginn users
 
-1. [huginn/README.md](huginn/README.md) — Guía principal de Huginn
-2. [huginn/authoring.md](huginn/authoring.md) — Cómo crear herramientas
-3. [huginn/connections.md](huginn/connections.md) — Configurar conexiones
+1. [huginn/README.md](huginn/README.md) — Huginn main guide
+2. [huginn/authoring.md](huginn/authoring.md) — How to create tools
+3. [huginn/connections.md](huginn/connections.md) — Configuring connections
 
-### Para desarrolladores
+### For developers
 
 1. [development.md](development.md) — Setup, tests, CI
-2. [rook/architecture.md](rook/architecture.md) — Diseño interno de Rook
-3. [Contributing](../CONTRIBUTING.md) — Cómo contribuir
+2. [rook/architecture.md](rook/architecture.md) — Rook internal design
+3. [Contributing](../CONTRIBUTING.md) — How to contribute
 
-### Para contributors avanzados
+### For advanced contributors
 
-- [ADRs de Rook](rook/adr/README.md) — Decisiones de arquitectura de Rook
-- [ADRs de Huginn](huginn/adr/README.md) — Decisiones de Huginn
-- [ADRs generales](adr/README.md) — Decisiones compartidas
-- [Políticas de contribución](contributing/) — Labels, Linear sync
+- [Rook ADRs](rook/adr/README.md) — Rook architecture decisions
+- [Huginn ADRs](huginn/adr/README.md) — Huginn decisions
+- [General ADRs](adr/README.md) — Shared decisions
+- [Contribution policies](contributing/) — Labels, Linear sync
 
-## Referencias externas
+## External references
 
-- [README principal](../README.md) — Overview del proyecto
-- [Contributing](../CONTRIBUTING.md) — Guía general
-- [.github/](../.github/) — Configs de GitHub (labels, workflows)
+- [Main README](../README.md) — Project overview
+- [Contributing](../CONTRIBUTING.md) — General guide
+- [.github/](../.github/) — GitHub configs (labels, workflows)

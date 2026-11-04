@@ -1,4 +1,4 @@
-//! Subconjunto léxico deliberadamente limitado de POSIX shell.
+//! Deliberately limited lexical subset of POSIX shell.
 const MAX_BYTES: usize = 16_384;
 const MAX_TOKENS: usize = 1024;
 type Result<T> = std::result::Result<T, &'static str>;
