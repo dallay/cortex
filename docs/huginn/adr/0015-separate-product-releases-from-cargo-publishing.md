@@ -1,94 +1,94 @@
-# ADR-0015: Separar releases de producto de publicación Cargo
+# ADR-0015: Separate product releases from Cargo publishing
 
-- **Estado:** Aceptado
-- **Fecha:** 2026-10-11
-- **Alcance:** Rook GA, Huginn posterior y futuros productos Cortex
+- **Status:** Accepted
+- **Date:** 2026-10-11
+- **Scope:** Rook GA, later Huginn, and future Cortex products
 
-## Contexto
+## Context
 
-Cortex contiene productos y crates internos con boundaries técnicos distintos.
-Rook puede distribuirse como binario mediante GitHub Releases, npm y Docker sin
-hacer públicos todos sus crates internos.
+Cortex contains products and internal crates with distinct technical boundaries.
+Rook can be distributed as a binary via GitHub Releases, npm, and Docker without
+making all its internal crates public.
 
-La publicación de `rook` en crates.io no es equivalente al release del
-producto: Cargo exige que el cierre transitivo de dependencias esté disponible
-en un registry. Eso convertiría crates técnicos como `shared-kernel`,
-`db-migration` y `providers-core` en unidades públicas de versionado, aunque no
-sean productos para usuarios finales.
+Publishing `rook` on crates.io is not equivalent to the product
+release: Cargo requires the transitive dependency closure to be available
+in a registry. That would turn technical crates such as `shared-kernel`,
+`db-migration`, and `providers-core` into public versioning units, even though they
+are not end-user products.
 
-## Decisión
+## Decision
 
-Adoptamos **Opción C para Rook GA**:
+We adopt **Option C for Rook GA**:
 
-- GitHub Releases, npm y Docker Hub/GHCR son canales obligatorios.
-- `cargo install --git` desde el tag exacto es el canal Rust soportado.
-- `cargo install rook` desde crates.io no bloquea el primer lanzamiento.
-- Los crates internos conservan su privacidad/publicabilidad actual.
-- Huginn no se publica hasta superar sus acceptance gates.
-- La publicación en crates.io se conserva como una evolución explícita, no se
-  descarta.
+- GitHub Releases, npm, and Docker Hub/GHCR are mandatory channels.
+- `cargo install --git` from the exact tag is the supported Rust channel.
+- `cargo install rook` from crates.io does not block the first launch.
+- Internal crates keep their current privacy/publishability.
+- Huginn is not published until it passes its acceptance gates.
+- Publishing on crates.io is kept as an explicit future evolution; it is not
+  discarded.
 
-## Alternativas consideradas
+## Alternatives considered
 
-### Publicar el cierre transitivo desde el principio
+### Publish the transitive closure from the start
 
-Es técnicamente válido y será la opción futura si crates.io demuestra ser un
-canal estratégico. Requiere verificar ownership, posiblemente renombrar crates
-genéricos y mantener versiones inmutables de cada dependencia.
+It is technically valid and will be the future option if crates.io proves to be a
+strategic channel. It requires verifying ownership, possibly renaming generic
+crates, and maintaining immutable versions of each dependency.
 
-### Reestructurar Rook para que sea un crate autocontenido
+### Restructure Rook as a self-contained crate
 
-No se adopta. Cambiaría Clean Architecture y boundaries técnicos para satisfacer
-una restricción de packaging, no una necesidad del dominio.
+Not adopted. It would change Clean Architecture and technical boundaries to satisfy
+a packaging constraint, not a domain need.
 
-## Consecuencias
+## Consequences
 
-### Positivas
+### Positive
 
-- Rook alcanza GA sin publicar internals prematuramente.
-- Se preserva la arquitectura actual.
-- Los artefactos distribuidos se pueden verificar por tag y SHA.
-- La decisión de crates.io queda reversible sin imponer deuda arquitectónica.
+- Rook reaches GA without prematurely publishing internals.
+- The current architecture is preserved.
+- Distributed artifacts can be verified by tag and SHA.
+- The crates.io decision remains reversible without imposing architectural debt.
 
-### Negativas
+### Negative
 
-- `cargo install rook` no está disponible desde crates.io en GA.
-- La instalación Rust requiere Git y acceso al repositorio.
-- La fase posterior deberá calcular y publicar el cierre transitivo real.
+- `cargo install rook` is not available from crates.io at GA.
+- Rust installation requires Git and repository access.
+- The later phase will need to compute and publish the actual transitive closure.
 
-## Reglas para la fase crates.io
+## Rules for the crates.io phase
 
-Cuando se active:
+When activated:
 
-1. calcular solo el cierre transitivo usado por Rook;
-2. verificar ownership y colisiones de nombres;
-3. preferir nombres con namespace reconocible, como `cortex-shared-kernel`;
-4. publicar en orden topológico;
-5. recordar que cada publicación es inmutable y cada fix requiere una nueva
-   versión aunque no cambien API ni grafo de dependencias.
+1. compute only the transitive closure used by Rook;
+2. verify ownership and name collisions;
+3. prefer names with a recognizable namespace, such as `cortex-shared-kernel`;
+4. publish in topological order;
+5. remember that each publication is immutable and each fix requires a new
+   version even if the API and dependency graph do not change.
 
-## Separación de configuración, activación y distribución
+## Separation of configuration, activation, and distribution
 
-La preparación técnica y la activación operativa de Release Please no requieren
-que el producto ya esté aceptado: Release Please puede abrir release PRs, pero
-el usuario revisa y decide si las mergea. Se mantienen tres fases:
+Technical preparation and operational activation of Release Please do not require
+the product to already be accepted: Release Please can open release PRs, but
+the user reviews and decides whether to merge them. Three phases are kept:
 
-1. **Configuración y validación:** preparar el config/manifest multi-producto y
-   comprobar su independencia.
-2. **Release PRs:** Release Please queda activo para Rook y Huginn. El usuario
-   conserva el control del merge; al mergear se crean tags y GitHub Releases
-   conforme al flujo normal.
-3. **Distribución:** publicar binarios o paquetes en cada canal requiere el
-   gate de aceptación del producto y el preflight de ese canal.
+1. **Configuration and validation:** prepare the multi-product config/manifest and
+   verify its independence.
+2. **Release PRs:** Release Please remains active for Rook and Huginn. The user
+   keeps control of the merge; merging creates tags and GitHub Releases
+   following the normal flow.
+3. **Distribution:** publishing binaries or packages on each channel requires the
+   product acceptance gate and that channel's preflight.
 
-La activación de Release Please no equivale a autorizar distribución. Los jobs
-actuales de build y publicación siguen conectados solo a Rook. DALLAY-630,
-DALLAY-665 y DALLAY-666 se rastrean como evidencia del MVP en DALLAY-634, no
-como gates independientes adicionales.
+Activating Release Please does not amount to authorizing distribution. The
+current build and publishing jobs remain connected only to Rook. DALLAY-630,
+DALLAY-665, and DALLAY-666 are tracked as MVP evidence under DALLAY-634, not
+as additional independent gates.
 
-## No objetivos
+## Non-goals
 
-- No convertir crates internos en productos independientes.
-- No crear tags de producto para cada crate técnico.
-- No reorganizar el dominio solo para habilitar Cargo.
-- La distribución pública de Huginn requiere DALLAY-634 y el preflight del canal.
+- Do not turn internal crates into independent products.
+- Do not create product tags for every technical crate.
+- Do not reorganize the domain solely to enable Cargo.
+- Public distribution of Huginn requires DALLAY-634 and that channel's preflight.

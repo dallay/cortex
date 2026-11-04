@@ -82,7 +82,7 @@ pub async fn build_native_with_connections(
     .await
 }
 
-/// Composición protegida; la política es una instantánea seleccionada por el host.
+/// Guarded composition; the policy is a snapshot selected by the host.
 pub async fn build_native_with_connections_and_guards(
     model: Arc<dyn ModelProvider>,
     access: Arc<huginn_application::connections::ConnectionAccess>,

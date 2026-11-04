@@ -64,15 +64,15 @@ pub mod hooks {
 /// let model = self.model.acquire()?;
 /// ```
 ///
-/// A loop that leases its services declares `Capabilities::rebinds_services` in the
+/// A loop that leases its services declares `AgentLoopCapabilities::rebinds_services` in the
 /// conformance suite, which then proves it uses the substituted provider on the next turn.
 pub mod agent {
     pub use huginn_core::{
-        agent_loop_id, model_id, sessions_id, AgentLoop, ApprovalPolicy, ApprovalRequest,
-        CancellationToken, Event, EventSink, InstructionSource, LoopService, Message, ModelDelta,
-        ModelProvider, ModelRequest, ModelService, PreparedAction, Result, Role, Session,
-        SessionOperation, SessionStore, SessionsService, SteeringQueue, StepId, Tool, ToolCall,
-        ToolContext, ToolDefinition, ToolRegistry, TurnId,
+        agent_loop_id, model_id, sessions_id, AgentLoop, AgentLoopCapabilities, ApprovalPolicy,
+        ApprovalRequest, CancellationToken, Event, EventSink, InstructionSource, LoopService,
+        Message, ModelDelta, ModelProvider, ModelRequest, ModelService, PreparedAction, Result,
+        Role, Session, SessionOperation, SessionStore, SessionsService, SteeringQueue, StepId,
+        Tool, ToolCall, ToolContext, ToolDefinition, ToolRegistry, TurnId,
     };
     pub use huginn_core::{
         hooks::{inference_hooks_id, tool_hooks_id, InferenceHooksService, ToolHooksService},

@@ -165,11 +165,13 @@ fn engine_and_host_fallback_errors_share_one_operation_diagnostic() {
     // The loop records its error before returning; the host then emits the
     // returned error as a fallback through the same scoped sink.
     scoped.emit(Event::Error {
+        turn: TurnId::UNKNOWN,
         message: "provider unavailable".into(),
     });
     scoped.emit_for(
         huginn_core::OperationId(operation.0.wrapping_add(100)),
         Event::Error {
+            turn: TurnId::UNKNOWN,
             message: "provider unavailable".into(),
         },
     );
@@ -204,12 +206,15 @@ fn explicit_event_operation_scope_survives_interleaved_producers() {
         operation: operation_b,
     };
     scoped_a.emit(Event::Error {
+        turn: TurnId::UNKNOWN,
         message: "engine failure".into(),
     });
     scoped_b.emit(Event::Error {
+        turn: TurnId::UNKNOWN,
         message: "engine failure".into(),
     });
     scoped_a.emit(Event::Error {
+        turn: TurnId::UNKNOWN,
         message: "engine failure".into(),
     });
     assert_eq!(
@@ -228,6 +233,7 @@ fn explicit_event_operation_scope_survives_interleaved_producers() {
     ui.emit_for(
         operation,
         Event::Error {
+            turn: TurnId::UNKNOWN,
             message: "late producer failure".into(),
         },
     );
@@ -236,6 +242,7 @@ fn explicit_event_operation_scope_survives_interleaved_producers() {
     ui.emit_for(
         operation_c,
         Event::Error {
+            turn: TurnId::UNKNOWN,
             message: "engine failure".into(),
         },
     );
@@ -262,6 +269,7 @@ fn error_event_producer_uses_injected_clock_and_deduplicates_by_operation() {
     let operation = interaction.begin(CancellationToken::new());
     let emit_error = || {
         ui.emit(Event::Error {
+            turn: TurnId::UNKNOWN,
             message: "provider failed".into(),
         });
     };
@@ -296,6 +304,7 @@ fn oversized_errors_remain_visible_without_dedup_caching_and_have_bounded_ui_sum
     let full_message = "s".repeat(ERROR_DEDUP_MAX_MESSAGE_BYTES + 37);
     for _ in 0..2 {
         ui.emit(Event::Error {
+            turn: TurnId::UNKNOWN,
             message: full_message.clone(),
         });
     }

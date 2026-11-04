@@ -318,6 +318,14 @@ impl LeasedAgentLoop {
 
 #[async_trait]
 impl AgentLoop for LeasedAgentLoop {
+    fn capabilities(&self) -> huginn_core::AgentLoopCapabilities {
+        huginn_core::AgentLoopCapabilities {
+            compaction: true,
+            skill_commands: self.config.skills.is_some(),
+            rebinds_services: true,
+        }
+    }
+
     async fn skill_commands(
         &self,
         workspace: &std::path::Path,

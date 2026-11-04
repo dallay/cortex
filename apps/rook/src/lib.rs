@@ -1,5 +1,6 @@
 // rook — library interface for the AI proxy server
 
+pub mod banner;
 pub mod config;
 pub mod dashboard;
 pub mod di;
