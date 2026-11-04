@@ -18,8 +18,8 @@ Local Rust coding assistant with native tools and MCP integration
 
 ---
 
-Las [plantillas Markdown de tareas](prompt-templates.md) permiten reutilizar
-prompts con `/prompts:nombre` en la TUI, modo línea y `huginn run`.
+The [Markdown task templates](prompt-templates.md) allow reusing
+prompts with `/prompts:name` in the TUI, line mode, and `huginn run`.
 
 ## 🎯 What is Huginn?
 
@@ -179,16 +179,16 @@ Piped input, redirected output, `--json`, and `--line-mode` are rejected. There
 is no API-key argument or stdin secret-entry mode. OAuth and device-code login
 remain unsupported. Secrets must only be entered in the host-owned masked form.
 
-### Catálogo de Agent Skills
+### Agent Skills catalog
 
-`huginn skills list` muestra metadatos globales y del proyecto sin configurar
-un modelo, abrir SQLite ni iniciar MCP. `huginn --json skills list` devuelve
-entradas, diagnósticos y una huella SHA-256. Consulta el
-[contrato del catálogo](skills.md) para rutas, límites y política de enlaces.
-El listado no carga cuerpos al modelo. Para invocar una skill, usa
-`/skill:<nombre> [tarea]` en la TUI, modo línea o `huginn run`.
-La TUI ofrece nombres y descripciones en el autocompletado. La carga conserva
-la procedencia no confiable y no concede permisos adicionales.
+`huginn skills list` shows global and project metadata without configuring
+a model, opening SQLite, or starting MCP. `huginn --json skills list` returns
+entries, diagnostics, and a SHA-256 fingerprint. See the
+[catalog contract](skills.md) for paths, limits, and link policy.
+The listing does not load bodies into the model. To invoke a skill, use
+`/skill:<name> [task]` in the TUI, line mode, or `huginn run`.
+The TUI offers names and descriptions in autocomplete. Loading preserves
+untrusted provenance and does not grant additional permissions.
 
 ### Command Reference
 
@@ -288,19 +288,19 @@ The `/help` view supports scrolling with `↑/↓` and `PgUp`/`PgDn`.
 | `Ctrl+C` | Cancel current request |
 | `Ctrl+L` | Clear screen |
 | `Enter` / `Ctrl+Enter` | Send message |
-| `Shift+Enter` (terminales compatibles) / `Alt+Enter` / `Ctrl+J` | Insert a newline |
+| `Shift+Enter` (compatible terminals) / `Alt+Enter` / `Ctrl+J` | Insert a newline |
 | `↑/↓` | History navigation |
 
-El composer crece con el borrador hasta un límite basado en la altura del
-terminal. Si el texto ocupa más filas, el composer desplaza las filas anteriores
-y mantiene visible el cursor. `Shift+Enter` requiere un terminal compatible con
-el protocolo de teclado extendido; `Alt+Enter` y `Ctrl+J` son alternativas.
-Los pegados de al menos tres líneas o más de 150 caracteres se muestran como
-`[Pasted ~N lines]`; al enviar un prompt normal, Huginn expande los marcadores
-y aplica `trim()`, que elimina whitespace al inicio y al final. Las invocaciones
-`/skill:` conservan su tratamiento existente. El contenido interno del pegado
-se conserva y el marcador no se envía. Un pegado que supera el límite de entrada
-de 64 KiB se descarta.
+The composer grows with the draft up to a limit based on the terminal's
+height. If the text takes more rows, the composer shifts the earlier rows
+and keeps the cursor visible. `Shift+Enter` requires a terminal compatible with
+the extended keyboard protocol; `Alt+Enter` and `Ctrl+J` are alternatives.
+Pastes of at least three lines or more than 150 characters are shown as
+`[Pasted ~N lines]`; when sending a normal prompt, Huginn expands the markers
+and applies `trim()`, which removes leading and trailing whitespace. `/skill:`
+invocations keep their existing handling. The paste's internal content
+is preserved, and the marker is not sent. A paste exceeding the input
+limit of 64 KiB is discarded.
 
 ---
 
@@ -523,37 +523,37 @@ MIT License - same as [Cortex repository](https://github.com/dallay/cortex).
 
 </div>
 
-## Plugins core de proveedores
+## Core provider plugins
 
-`cargo run -p huginn -- chat` incluye tres plugins core independientes. `/login`
-muestra una sola entrada por proveedor:
+`cargo run -p huginn -- chat` includes three independent core plugins. `/login`
+shows a single entry per provider:
 
-- **Ollama local** (`ollama`): endpoint inicial `http://127.0.0.1:11434`, sin clave
-  ni selección de almacén de secretos. Autoriza HTTP local explícitamente. La
-  excepción solo permite direcciones loopback literales, no `localhost` ni hosts
-  remotos.
-- **Ollama Cloud** (`ollama-cloud`): requiere una API key y usa el endpoint oficial
-  fijo `https://ollama.com`. No requiere un daemon local. El formulario no permite
-  enviar la clave Cloud a otro host.
-- **Custom — OpenAI-compatible** (`openai`): introduce la URL base del servicio
-  (incluye `/v1` si el servicio lo requiere). Elige autenticación dentro del flujo;
-  la API key es opcional. No implementa el protocolo Anthropic. Conserva el ID
-  `openai` para reutilizar las conexiones guardadas.
+- **Local Ollama** (`ollama`): initial endpoint `http://127.0.0.1:11434`, with no key
+  or secret-store selection. It explicitly authorizes local HTTP. The
+  exception only allows literal loopback addresses, not `localhost` or
+  remote hosts.
+- **Ollama Cloud** (`ollama-cloud`): requires an API key and uses the fixed
+  official endpoint `https://ollama.com`. It does not require a local daemon. The form does not
+  allow sending the Cloud key to another host.
+- **Custom — OpenAI-compatible** (`openai`): enter the service's base URL
+  (include `/v1` if the service requires it). Choose authentication within the flow;
+  the API key is optional. It does not implement the Anthropic protocol. It keeps the
+  `openai` ID to reuse saved connections.
 
-Deja `Model ID` vacío para consultar el catálogo y elegir un modelo antes de
-persistir la conexión. Si introduces un ID, se comprueba contra el catálogo cuando
-está disponible. Si el alta falla, el formulario permanece abierto con el motivo
-concreto y conserva los valores públicos; el secreto enviado se descarta y hay que
-reintroducirlo. Un catálogo vacío o un error de conexión/autenticación no guarda una
-conexión incompleta. Si Custom no implementa el catálogo
-(`/models` devuelve 404 o 405), introduce el ID manualmente: el servicio comprobará
-ese modelo al recibir la solicitud de inferencia. Otros fallos no activan este
-fallback. Después de guardar, usa `/model` para seleccionar la conexión para chat.
-No se descargan modelos ni se arranca Ollama automáticamente.
+Leave `Model ID` empty to query the catalog and choose a model before
+persisting the connection. If you enter an ID, it is checked against the catalog when
+available. If creation fails, the form remains open with the specific reason
+and retains the public values; the submitted secret is discarded, and it must be
+re-entered. An empty catalog or a connection/authentication error does not save an
+incomplete connection. If Custom does not implement the catalog
+(`/models` returns 404 or 405), enter the ID manually: the service will check
+that model when it receives the inference request. Other failures do not trigger this
+fallback. After saving, use `/model` to select the connection for chat.
+No models are downloaded, and Ollama is not started automatically.
 
-El catálogo y las capacidades de Ollama usan `/api/tags` y `/api/show`; la
-inferencia usa `/v1`. Las conexiones locales previas con clave siguen siendo
-compatibles, pero las nuevas altas locales no solicitan clave. Cada plugin posee
-su propio registro y puede retirarse sin retirar los otros proveedores. Para
-agregar un proveedor core, registra otro `ProviderAdapter` desde un plugin con su
-propia identidad. El selector usa el catálogo; no necesita una rama por proveedor.
+The Ollama catalog and capabilities use `/api/tags` and `/api/show`;
+inference uses `/v1`. Previous local connections with a key remain
+compatible, but new local creations do not request a key. Each plugin owns
+its own registration and can be retired without retiring the other providers. To
+add a core provider, register another `ProviderAdapter` from a plugin with its
+own identity. The selector uses the catalog; it does not need a branch per provider.

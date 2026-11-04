@@ -1,4 +1,4 @@
-//! Codificador incremental con acumulación acotada para las instantáneas finales.
+//! Incremental encoder with bounded accumulation for final snapshots.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -73,8 +73,8 @@ impl ResponsesStream {
     }
 
     pub fn push(&mut self, chunk: StreamChunk) -> Result<Vec<Value>, &'static str> {
-        // Revertir únicamente el frame rechazado, no copiar la salida acumulada.
-        // Guardar longitudes evita copiar argumentos por cada delta recibido.
+        // Roll back only the rejected frame; do not copy the accumulated output.
+        // Saving lengths avoids copying arguments for every delta received.
         let previous_indices: HashSet<_> = self.tools.keys().copied().collect();
         let previous_tools: Vec<_> = self
             .tools
@@ -132,7 +132,7 @@ impl ResponsesStream {
             self.output_bytes = previous_output_bytes;
             self.argument_bytes = previous_argument_bytes;
             self.finish_reason = previous_finish;
-            // El uso observado sí pertenece al intento, aunque se rechace el contenido.
+            // The observed usage does belong to the attempt, even if the content is rejected.
         }
         result
     }
@@ -226,7 +226,7 @@ impl ResponsesStream {
             }
             self.emit_tool(delta.index, chunk.finish_reason.is_some(), &mut events)?;
         }
-        // Un finish separado también materializa funciones sin argumentos.
+        // A separate finish also materializes functions without arguments.
         if matches!(
             chunk.finish_reason,
             Some(FinishReason::Length | FinishReason::ContentFilter)
@@ -348,7 +348,7 @@ impl ResponsesStream {
         if finish == FinishReason::Stop && !self.tools.is_empty() {
             return Err("Estado stop con funciones");
         }
-        // Validar todo antes de publicar eventos done: un fallo no debe anunciar éxito.
+        // Validate everything before publishing done events: a failure must not announce success.
         for tool in self.tools.values() {
             let Some(_) = tool.output_index else {
                 return Err("Llamada de función incompleta");

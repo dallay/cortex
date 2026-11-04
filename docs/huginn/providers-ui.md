@@ -35,11 +35,11 @@ missing credentials rather than implying availability.
 
 ## Contract and limits
 
-Para conocer la compatibilidad actual con los métodos de autenticación, consulta la
-[matriz de compatibilidad con OAuth y el impedimento para su implementación](oauth.md).
-`/login` y `/providers` indican explícitamente que OAuth no es compatible, incluso
-en los adaptadores que solo declaran OAuth. No ofrecen opciones de OAuth ni campos
-para tokens; los formularios de clave de API y los formularios locales no cambian.
+To learn the current compatibility with authentication methods, see the
+[OAuth compatibility matrix and the reason its implementation is blocked](oauth.md).
+`/login` and `/providers` explicitly state that OAuth is not supported, even
+on adapters that declare only OAuth. They do not offer OAuth options or fields
+for tokens; the API-key forms and local forms remain unchanged.
 
 `huginn-plugin-api::v1::Workflow` describes fields and an asynchronous operation.
 The synchronous callback only returns that description. The host captures public

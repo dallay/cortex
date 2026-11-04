@@ -1,4 +1,4 @@
-//! Demostración offline: dos adaptadores, selección por turno y revocación local.
+//! Offline demonstration: two adapters, per-turn selection, and local revocation.
 use async_trait::async_trait;
 use futures::{stream::BoxStream, StreamExt};
 use huginn_application::{

@@ -840,6 +840,7 @@ impl AgentLoop for StandardLoop {
         huginn_core::AgentLoopCapabilities {
             compaction: true,
             skill_commands: self.config.skills.is_some(),
+            rebinds_services: false,
         }
     }
 

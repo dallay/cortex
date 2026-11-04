@@ -3,13 +3,14 @@
 use async_trait::async_trait;
 use huginn_application::{composition, loop_engine::StandardLoop};
 use huginn_conformance::{
-    broken::ReplayingLoop, hook_plugin, inference_hook_plugin, run, UnderTest,
+    broken::{pinned_provider_plugin, PinnedProviderLoop, ReplayingLoop},
+    hook_plugin, inference_hook_plugin, run, Host, Status, UnderTest,
 };
 use huginn_core::{
     kernel::{SubstitutionPolicy, Supervisor},
     AgentLoop, ApprovalPolicy, CancellationToken, EventSink, LoopService, Result, Session,
 };
-use huginn_reference_extension::step_loop::{step_loop_plugin, StepLoopConfig};
+use huginn_reference_extension::step_loop::{step_loop_plugin_leased, StepLoopConfig};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -248,43 +249,54 @@ async fn admission_is_held_through_final_persistence() {
 
 /// The production adapter: a leased loop published by the composition kernel.
 fn leased() -> UnderTest {
-    UnderTest::new("LeasedAgentLoop", |host| {
-        Box::pin(async move {
-            let mut supervisor = composition::build(
-                host.script.clone(),
-                host.tools(),
-                host.sessions.clone(),
-                host.kernel_config(),
-                host.instructions(),
-            )
-            .await
+    UnderTest::rebinding(
+        "LeasedAgentLoop",
+        |host| {
+            Box::pin(async move {
+                let supervisor = Arc::new(leased_supervisor(host).await);
+                let inner = supervisor
+                    .resolve::<LoopService>(&composition::loop_id())
+                    .unwrap()
+                    .0
+                    .clone();
+                Arc::new(Supervised {
+                    _supervisor: supervisor,
+                    inner,
+                }) as Arc<dyn AgentLoop>
+            })
+        },
+        |host| Box::pin(async move { Ok(composition::leased_loop_plugin(host.kernel_config())) }),
+    )
+}
+
+/// A started supervisor that already owns every service the production loop requires,
+/// so a case can substitute `agent:model` under it.
+async fn leased_supervisor(host: &Host) -> Supervisor {
+    let mut supervisor = composition::build(
+        host.script.clone(),
+        host.tools(),
+        host.sessions.clone(),
+        host.kernel_config(),
+        host.instructions(),
+    )
+    .await
+    .unwrap();
+    // The composition kernel owns the hook registry: a supervisor-based
+    // implementation must be given the host hook here, not through the config.
+    let tool_hook = host.hook();
+    let inference_hook = host.inference_hook();
+    if let Some(hook) = &tool_hook {
+        supervisor.register(hook_plugin(hook.clone())).unwrap();
+    }
+    if let Some(hook) = &inference_hook {
+        supervisor
+            .register(inference_hook_plugin(hook.clone()))
             .unwrap();
-            // The composition kernel owns the hook registry: a supervisor-based
-            // implementation must be given the host hook here, not through the config.
-            let tool_hook = host.hook();
-            let inference_hook = host.inference_hook();
-            if let Some(hook) = &tool_hook {
-                supervisor.register(hook_plugin(hook.clone())).unwrap();
-            }
-            if let Some(hook) = &inference_hook {
-                supervisor
-                    .register(inference_hook_plugin(hook.clone()))
-                    .unwrap();
-            }
-            if tool_hook.is_some() || inference_hook.is_some() {
-                supervisor.start().await.unwrap();
-            }
-            let inner = supervisor
-                .resolve::<LoopService>(&composition::loop_id())
-                .unwrap()
-                .0
-                .clone();
-            Arc::new(Supervised {
-                _supervisor: Arc::new(supervisor),
-                inner,
-            }) as Arc<dyn AgentLoop>
-        })
-    })
+    }
+    if tool_hook.is_some() || inference_hook.is_some() {
+        supervisor.start().await.unwrap();
+    }
+    supervisor
 }
 
 fn replaying() -> UnderTest {
@@ -294,6 +306,20 @@ fn replaying() -> UnderTest {
             Arc::new(implementation) as Arc<dyn AgentLoop>
         })
     })
+}
+
+/// Declares rebind awareness while keeping the provider it was constructed with.
+fn pinned_provider() -> UnderTest {
+    UnderTest::rebinding(
+        "PinnedProviderLoop",
+        |host| {
+            Box::pin(async move {
+                let implementation = PinnedProviderLoop::new(host.script.clone());
+                Arc::new(implementation) as Arc<dyn AgentLoop>
+            })
+        },
+        |host| Box::pin(async move { Ok(pinned_provider_plugin(host.script.clone())) }),
+    )
 }
 
 #[tokio::test]
@@ -312,8 +338,14 @@ async fn standard_loop_passes_the_suite() {
     );
     assert_eq!(
         report.outcomes.len(),
-        17,
+        18,
         "the suite must run every case:\n{}",
+        report.describe()
+    );
+    assert_eq!(
+        report.status("substitution_rebinds_the_model"),
+        Some(Status::Skipped),
+        "a loop that pins its providers is not certified for rebinding:\n{}",
         report.describe()
     );
 }
@@ -324,6 +356,23 @@ async fn production_leased_loop_passes_the_same_suite() {
     assert!(
         report.failures().is_empty(),
         "the production loop must pass every case:\n{}",
+        report.describe()
+    );
+    assert!(
+        report.passed("substitution_rebinds_the_model"),
+        "the production loop leases its model, so it must be certified for rebinding:\n{}",
+        report.describe()
+    );
+}
+
+/// A loop that keeps the provider it was constructed with cannot be certified for
+/// rebinding, even when it declares the capability.
+#[tokio::test]
+async fn a_loop_that_pins_its_provider_fails_the_rebinding_case() {
+    let report = run(&pinned_provider()).await;
+    assert!(
+        report.failed("substitution_rebinds_the_model"),
+        "the suite must catch a loop that keeps the retired provider:\n{}",
         report.describe()
     );
 }
@@ -349,54 +398,63 @@ async fn a_loop_that_replays_effects_fails_the_suite() {
     );
 }
 
-/// A loop authored only against the plugin contracts, installed by substitution.
+/// A loop authored only against the plugin contracts, installed by substitution. It leases
+/// the kernel-owned services, so it also proves rebinding from the SDK alone.
 fn extension_step_loop() -> UnderTest {
-    UnderTest::new("StepLoop (extension)", |host| {
-        Box::pin(async move {
-            let mut supervisor = composition::build(
-                host.script.clone(),
-                host.tools(),
-                host.sessions.clone(),
-                host.kernel_config(),
-                host.instructions(),
-            )
-            .await
-            .unwrap();
-            let plugin = step_loop_plugin(
-                host.script.clone(),
-                host.tools(),
-                host.sessions.clone(),
-                host.instructions(),
-                StepLoopConfig {
-                    max_iterations: host.config.max_iterations,
-                    max_output_tokens: host.config.max_output_tokens,
-                    hooks: host.loop_config().hooks,
-                    inference_hooks: host.loop_config().inference_hooks,
-                    steering: host.loop_config().steering,
-                    max_turn_tokens: host.config.max_turn_tokens,
-                    max_model_retries: host.config.max_model_retries,
-                },
-            );
-            supervisor
-                .substitute(
-                    &composition::loop_id(),
-                    plugin,
-                    SubstitutionPolicy::ReportUndrained,
-                    Duration::from_secs(1),
-                )
-                .await
-                .unwrap();
-            let inner = supervisor
-                .resolve::<LoopService>(&composition::loop_id())
-                .unwrap()
-                .0
-                .clone();
-            Arc::new(Supervised {
-                _supervisor: Arc::new(supervisor),
-                inner,
-            }) as Arc<dyn AgentLoop>
-        })
-    })
+    UnderTest::rebinding(
+        "StepLoop (extension)",
+        |host| {
+            Box::pin(async move {
+                let mut supervisor = leased_supervisor(host).await;
+                supervisor
+                    .substitute(
+                        &composition::loop_id(),
+                        step_loop_plugin_leased(
+                            host.tools(),
+                            host.instructions(),
+                            step_loop_config(host),
+                        ),
+                        SubstitutionPolicy::ReportUndrained,
+                        Duration::from_secs(1),
+                    )
+                    .await
+                    .unwrap();
+                let inner = supervisor
+                    .resolve::<LoopService>(&composition::loop_id())
+                    .unwrap()
+                    .0
+                    .clone();
+                Arc::new(Supervised {
+                    _supervisor: Arc::new(supervisor),
+                    inner,
+                }) as Arc<dyn AgentLoop>
+            })
+        },
+        |host| {
+            Box::pin(async move {
+                Ok(step_loop_plugin_leased(
+                    host.tools(),
+                    host.instructions(),
+                    step_loop_config(host),
+                ))
+            })
+        },
+    )
+}
+
+/// The extension loop configures itself, but never chooses a hook registry: the kernel owns
+/// both, so the config carries none.
+fn step_loop_config(host: &Host) -> StepLoopConfig {
+    let config = host.kernel_config();
+    StepLoopConfig {
+        max_iterations: config.max_iterations,
+        max_output_tokens: config.max_output_tokens,
+        hooks: None,
+        inference_hooks: None,
+        steering: config.steering,
+        max_turn_tokens: config.max_turn_tokens,
+        max_model_retries: config.max_model_retries,
+    }
 }
 
 #[tokio::test]
@@ -405,6 +463,11 @@ async fn extension_loop_passes_the_same_suite() {
     assert!(
         report.failures().is_empty(),
         "a loop authored outside the host crate must pass every case:\n{}",
+        report.describe()
+    );
+    assert!(
+        report.passed("substitution_rebinds_the_model"),
+        "an external loop must be able to lease the kernel services:\n{}",
         report.describe()
     );
 }
@@ -492,6 +555,7 @@ async fn implementations_declare_configured_capabilities_without_host_access() {
         AgentLoopCapabilities {
             compaction: true,
             skill_commands: false,
+            rebinds_services: false,
         }
     );
     for configured in [false, true] {
@@ -522,15 +586,28 @@ async fn implementations_declare_configured_capabilities_without_host_access() {
             .0
             .clone();
         assert_eq!(direct.capabilities().skill_commands, configured);
-        assert_eq!(implementation.capabilities(), direct.capabilities());
+        let direct_capabilities = direct.capabilities();
+        let leased_capabilities = implementation.capabilities();
+        assert_eq!(
+            leased_capabilities.compaction,
+            direct_capabilities.compaction
+        );
+        assert_eq!(
+            leased_capabilities.skill_commands,
+            direct_capabilities.skill_commands
+        );
+        assert!(
+            leased_capabilities.rebinds_services,
+            "the production adapter leases its model and session store per turn"
+        );
         supervisor.shutdown().await;
         // Discovery still works after providers are revoked: it needs no leases.
-        assert_eq!(implementation.capabilities(), direct.capabilities());
+        assert_eq!(implementation.capabilities(), leased_capabilities);
         let wrapped = Supervised {
             _supervisor: Arc::new(supervisor),
             inner: implementation,
         };
-        assert_eq!(wrapped.capabilities(), direct.capabilities());
+        assert_eq!(wrapped.capabilities(), leased_capabilities);
         assert_eq!(host.script.calls(), 0);
         assert_eq!(host.sessions.saves(), 0);
     }

@@ -482,6 +482,9 @@ async fn main() -> anyhow::Result<()> {
         return Err(error.into());
     }
     let implementation = supervisor.resolve::<LoopService>(&composition::loop_id())?;
+    if !cli.json && !is_doctor {
+        huginn::banner::print_banner();
+    }
     if !cli.json {
         eprintln!(
             "Session: {}\nWorkspace: {}",

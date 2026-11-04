@@ -13,7 +13,9 @@ cargo test -p huginn-conformance
 
 A run certifies three implementations: `StandardLoop`, the production `LeasedAgentLoop`, and
 `StepLoop`, authored in `crates/huginn-reference-extension` against the plugin contract only.
-`broken::ReplayingLoop` must fail; a suite that cannot fail certifies nothing.
+`StandardLoop` pins its providers and is therefore skipped for `C18`; `LeasedAgentLoop` and
+`StepLoop` lease the kernel's services and are certified for it. `broken::ReplayingLoop` and
+`broken::PinnedProviderLoop` must fail; a suite that cannot fail certifies nothing.
 
 ## Certified clauses
 
@@ -36,6 +38,7 @@ A run certifies three implementations: `StandardLoop`, the production `LeasedAge
 | C15 | A transient inference failure may be repeated; an effect never is | `retry_repeats_inference_only` | loop |
 | C16 | Compaction stops at a complete-turn boundary and never splits a tool pair | `compaction_keeps_turn_boundary` | loop |
 | C17 | One in-process operation per session; overlapping turns and supported compaction reject before effects, without queueing | `concurrent_session_admission_is_bounded` | loop + shared `SessionOperation` |
+| C18 | A loop that leases `agent:model` serves the next turn from the substituted provider; one that pins it never does | `substitution_rebinds_the_model` | loop + `Capabilities::rebinds_services` |
 
 The host owns authorization in every clause: a loop may *ask* `ApprovalPolicy`, and no clause
 lets a loop grant itself a decision.
@@ -78,17 +81,26 @@ implementations, and the conformance suite certifies this behavioral obligation.
 ## Capability discovery and error identity
 
 `AgentLoop::capabilities()` returns the core contract's `AgentLoopCapabilities`
-(`compaction` and `skill_commands`), also exported by `v1::agent`. Each implementation
-owns its declaration for its configuration; wrappers forward it. Discovery is synchronous,
-side-effect-free, and needs neither provider leases nor I/O. It describes support, not
-readiness or authorization. The default is conservative: both fields are `false`, so
-existing implementations need no new method. Existing optional method behavior is unchanged.
+(`compaction`, `skill_commands` and `rebinds_services`), also exported by `v1::agent`.
+Each implementation owns its declaration for its configuration; wrappers forward it.
+Discovery is synchronous, side-effect-free, and needs neither provider leases nor I/O.
+It describes support, not readiness or authorization. The default is conservative: every
+field is `false`, so existing implementations need no new method. Existing optional method
+behavior is unchanged.
 
 `StandardLoop` and `LeasedAgentLoop` declare compaction and declare skill commands only
 when `LoopConfig::skills` is present. `StepLoop` declares compaction but no skill commands.
-The suite reads the actual implementation built for each optional case, rather than a
-separate harness declaration. It skips unsupported compaction and checks supported
-compaction during session admission; no extra discovery-only loop is built.
+Only the leased production adapter declares `rebinds_services`, because it acquires its
+model and session store from the kernel on every turn. The suite reads the actual
+implementation built for each optional case instead of a separate harness declaration, so a
+loop cannot pass a case it does not declare and cannot declare a case it was never asked to
+prove.
+
+Two clauses are capability-gated, and a skip differs from a pass: `C16` is skipped by a loop
+that does not declare `compaction`, and `C18` is skipped by a loop that does not declare
+`rebinds_services`. A skipped clause is not a certification: only the declared case is
+proven. Declaring `rebinds_services` without publishing the loop into a supervisor fails
+`C18` rather than skipping it, so the capability cannot be claimed without being exercised.
 
 `Event::Error` carries a serde-defaulted `turn: TurnId`. Both loops attach the allocated
 turn to failures; catalog-change warnings use that same turn. Identity-less historical
@@ -104,13 +116,18 @@ copy host code or cannot express a guarantee at all.
 | # | Gap | Evidence | Consequence |
 | --- | --- | --- | --- |
 | G1 | The complete-turn boundary rule is not part of the contract | The rule is implemented twice, in `huginn_application::loop_engine::complete_turn_ends` and in `StepLoop::complete_turn_end` | Every implementation must reimplement compaction boundaries and can silently disagree |
-| G2 | A supervisor-based loop cannot choose its hook registries | `LoopPlugin::activate` overwrites `LoopConfig::hooks` and `inference_hooks` with the kernel's own services; the conformance harness had to hand the same hook through two paths | An author cannot predict which registry a loop will see |
-| G3 | Lease-aware rebinding is not authorable | `ServiceSlotHandle`, `ModelService` and `SessionsService` are not exported by `v1::agent` | An external loop pins its providers with `Arc`, so a mid-process substitution leaves it on the retired ones |
 | G4 | Transient transport failures are not classified by the adapters | Only a truncated stream yields `AgentError::Inference`; HTTP failures still surface as `Model` | The retry budget added here never engages for a real provider |
 | G5 (resolved) | Capabilities are part of `AgentLoop` | `AgentLoopCapabilities` is read by the host and suite | One declaration per implementation/configuration; conservative default |
 | G6 (resolved) | `Event::Error` carries a defaulted turn identity | Old JSON loads as unknown; new errors round-trip with their turn | Additive persisted schema, no positional inference for new turn errors |
 | G7 | Steering has no producer in the terminal | `LoopConfig::steering` is honored, the TUI composer still drops a draft while busy | The capability exists but no user can reach it |
 | G9 | Tool-output bounding is not part of the contract | `StepLoop` had to define its own `MAX_OUTPUT_BYTES`; the host limit lives in `huginn_application::output`, unexported | Two loops can persist wildly different history sizes for the same tool |
 
-G1, G2 and G4 are the ones that would change the contract; the rest are either additive or
+G1 and G4 are the ones that would change the contract; the rest are either additive or
 adoption work. They are tracked as follow-up issues rather than folded into this change.
+
+G2 and G3 are closed. The hook-registry rule is one rule with one owner: the kernel owns
+`agent:tool-hooks@1` and `agent:inference-hooks@1`, refuses a loop that supplies a foreign
+registry, and says so in `v1::agent`. Rebinding is authorable rather than host-only:
+`v1::agent` exports `ServiceSlotHandle`, `ServiceId`, `ModelService`, `SessionsService`,
+`model_id()` and `sessions_id()`, and `C18` proves a substituted provider is the one the next
+turn uses. The reference extension exercises both from the SDK alone.

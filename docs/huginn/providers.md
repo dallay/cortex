@@ -1,75 +1,75 @@
-# Providers: contratos headless de Huginn
+# Providers: Huginn headless contracts
 
-Esta entrega implementa P0.1 de [ADR-0014](adr/0014-builtin-providers-and-turn-scoped-model-routing.md)
-y [#350](https://github.com/dallay/cortex/issues/350). No implementa todavía
-`/login`, formularios, secretos persistentes ni adaptadores reales.
+This delivery implements P0.1 of [ADR-0014](adr/0014-builtin-providers-and-turn-scoped-model-routing.md)
+and [#350](https://github.com/dallay/cortex/issues/350). It does not yet implement
+`/login`, forms, persistent secrets, or real adapters.
 
-## Composición
+## Composition
 
-`ProvidersPlugin` publica `agent:provider-catalog@1`, `agent:providers@1` y el
-único `agent:model@1`. Los adaptadores requieren el catálogo y se registran
-mediante `ProviderCatalog::register(ctx, adapter)` durante activación. El host
-conserva la propiedad de registros y tareas; el plugin no controla el terminal.
+`ProvidersPlugin` publishes `agent:provider-catalog@1`, `agent:providers@1`, and the
+single `agent:model@1`. Adapters require the catalog and register
+via `ProviderCatalog::register(ctx, adapter)` during activation. The host
+retains ownership of registrations and tasks; the plugin does not control the terminal.
 
-Los registros se reservan inmediatamente para detectar colisiones, pero son
-invisibles hasta que `Activation::is_active()` confirma publicación. Un fallo
-de activación o discrepancia con el manifiesto libera la reserva. Teardown y
-drop revocan handles retenidos, sin sustituirlos por una generación nueva.
-Los identificadores también distinguen catálogos de supervisores diferentes.
+Registrations are reserved immediately to detect collisions, but are
+invisible until `Activation::is_active()` confirms publication. An
+activation failure or manifest mismatch releases the reservation. Teardown and
+drop revoke retained handles, without substituting them with a new generation.
+Identifiers also distinguish catalogs from different supervisors.
 
-Los builders existentes y `ModelPlugin` conservan sus firmas: delegan en
-Providers y envuelven el proveedor configurado en una conexión efímera legacy.
-Un `UnconfiguredModelProvider` no se presenta como conexión lista. No se añade
-un segundo supervisor ni se cambia la configuración CLI/entorno existente.
+Existing builders and `ModelPlugin` keep their signatures: they delegate to
+Providers and wrap the configured provider in a legacy ephemeral connection.
+An `UnconfiguredModelProvider` is not presented as a ready connection. No
+second supervisor is added, nor is the existing CLI/environment configuration changed.
 
-## Selección y autorización
+## Selection and authorization
 
-`ProviderAction` ofrece diagnóstico, conexión efímera, selección, revocación y
-reemplazo. Son operaciones headless asíncronas con `CancellationToken`; no
-autentican ni persisten credenciales. `ProviderActionState` describe estados
-que un host futuro podrá mostrar al ejecutar las acciones, sin bloquear un
-callback UI. Las acciones se serializan antes de mutar el estado; cancelación
-previa o generación obsoleta no puede modificarlo.
+`ProviderAction` offers diagnostics, ephemeral connection, selection, revocation, and
+replacement. These are asynchronous headless operations with `CancellationToken`; they do not
+authenticate or persist credentials. `ProviderActionState` describes states
+that a future host can show while running the actions, without blocking a
+UI callback. Actions are serialized before mutating state; prior
+cancellation or an obsolete generation cannot modify it.
 
-`ModelProvider::pin_turn` es un seam aditivo: los proveedores estáticos no
-necesitan implementarlo. El router fija conexión, revisión, adaptador y modelo
-antes de esperar a una fábrica. `StandardLoop` conserva esa fijación para
-respuesta, continuación tras herramientas y compactación automática. La
-compactación manual fija su propia operación. Sin selección, el diagnóstico
-funciona y la inferencia falla con `ProviderError::Unconfigured`.
+`ModelProvider::pin_turn` is an additive seam: static providers do not
+need to implement it. The router fixes connection, revision, adapter, and model
+before waiting on a factory. `StandardLoop` preserves that fixing for
+the response, continuation after tools, and automatic compaction. Manual
+compaction fixes its own operation. Without a selection, diagnostics
+work and inference fails with `ProviderError::Unconfigured`.
 
-Cambiar la selección afecta al turno siguiente. Revocar o reemplazar la
-conexión invalida las inferencias siguientes, incluso en el turno actual.
-Eliminar el adaptador o el núcleo invalida sus generaciones. No hay fallback
-automático ante errores y una selección revocada permanece visible como tal
-hasta que se elija explícitamente otra conexión.
+Changing the selection affects the next turn. Revoking or replacing the
+connection invalidates subsequent inferences, even within the current turn.
+Removing the adapter or the core invalidates its generations. There is no
+automatic fallback on errors, and a revoked selection remains visible as such
+until another connection is explicitly chosen.
 
-La admisión de inferencia se serializa con revocación y reemplazo antes de
-llamar al adaptador. Una solicitud admitida antes de revocar es una operación
-en curso, aunque el adaptador todavía no haya sido sondeado.
-Una revocación posterior a esa comprobación cancela localmente la operación
-best effort, tanto al abrir como al consumir streaming. Abandonar el stream
-cancela su token. Los productores reciben cancelación incluso si el consumidor
-conserva el stream sin leerlo. Los watchers de generación pertenecen al kernel;
-no se crean tareas desprendidas y no se afirma
-que el servidor remoto haya cancelado, revocado o dejado de facturar.
+Inference admission is serialized with revocation and replacement before
+calling the adapter. A request admitted before revocation is an operation
+in progress, even if the adapter has not yet been polled.
+A revocation after that check locally cancels the operation
+on a best-effort basis, both when opening and when consuming streaming. Abandoning the stream
+cancels its token. Producers receive cancellation even if the consumer
+retains the stream without reading it. Generation watchers belong to the kernel;
+no detached tasks are created, and it is not asserted
+that the remote server canceled, revoked, or stopped billing.
 
-El token entregado a `ProviderAdapter::create_model` dura solo lo que dure la
-fábrica y termina también al completar con éxito. El modelo devuelto debe usar
-el token nuevo de cada llamada `stream`, no retener el token de fábrica como
-autorización de la conexión.
+The token delivered to `ProviderAdapter::create_model` lasts only for the
+factory's duration and ends on successful completion too. The returned model must use
+the new token from each `stream` call, not retain the factory token as
+authorization of the connection.
 
-## Demostración sin red ni terminal
+## Network- and terminal-free demonstration
 
 ```sh
 cargo run -p huginn-application --example providers_headless
 ```
 
-Registra dos adaptadores internos de demostración, conecta ambos, fija uno,
-selecciona el otro y verifica que la revocación no dispara fallback. No requiere
-variables de proveedor, Ratatui, archivos de configuración ni credenciales.
+Registers two internal demonstration adapters, connects both, fixes one,
+selects the other, and verifies that revocation does not trigger fallback. It does not require
+provider environment variables, Ratatui, configuration files, or credentials.
 
-## Verificación focal
+## Focused verification
 
 ```sh
 cargo test -p huginn-core -p huginn-application
@@ -77,7 +77,7 @@ cargo test -p huginn-runtime --test stream_persistence --test coding_workflow
 cargo test -p huginn --test cli --test config_compat
 ```
 
-Las pruebas usan dobles, señales y barreras para selección durante herramientas,
-compactación, fábricas y turnos concurrentes; cubren rollback, cancelación,
-revocación y handles obsoletos. No certifican backends de secretos, proveedores
-HTTP reales, onboarding definitivo ni aceptación humana del MVP.
+Tests use doubles, signals, and barriers for selection during tools,
+compaction, factories, and concurrent turns; they cover rollback, cancellation,
+revocation, and obsolete handles. They do not certify secret backends, real
+HTTP providers, final onboarding, or human acceptance of the MVP.

@@ -1,4 +1,4 @@
-//! Registro de herramientas controlado por el ciclo de vida del plugin.
+//! Tool registration controlled by the plugin lifecycle.
 use crate::{kernel::PluginContext, kernel::ServiceId, AgentError, Result, Tool};
 use std::sync::Arc;
 
@@ -6,28 +6,28 @@ pub fn tool_registration_id() -> ServiceId {
     ServiceId::new("agent:tool-registration", 1)
 }
 
-/// El adaptador reserva el nombre y publica solo tras el commit del contexto.
-/// El contexto posee la revocación; registrar no concede permisos de ejecución.
+/// The adapter reserves the name and publishes it only after the context commits.
+/// The context owns revocation; registration does not grant execution permissions.
 pub trait ToolRegistration: Send + Sync {
     fn register(&self, ctx: &mut PluginContext, tool: Arc<dyn Tool>) -> Result<()>;
 }
 
-/// El autor usa `register`; el puerto interno no forma parte de la API soportada.
+/// The caller uses `register`; the inner port is not part of the supported API.
 ///
 /// ```compile_fail,E0616
 /// use huginn_core::tools::ToolRegistrationService;
-/// fn acceso_directo(service: &ToolRegistrationService) {
+/// fn direct_access(service: &ToolRegistrationService) {
 ///     let _ = &service.0;
 /// }
 /// ```
 pub struct ToolRegistrationService(Arc<dyn ToolRegistration>);
 impl ToolRegistrationService {
-    /// El host construye el servicio a partir de su adaptador de registro.
+    /// The host builds the service from its registration adapter.
     pub fn new(port: Arc<dyn ToolRegistration>) -> Self {
         Self(port)
     }
 
-    /// Exige declarar la dependencia y utilizar la instancia publicada por el host.
+    /// Requires declaring the dependency and using the instance published by the host.
     pub fn register(&self, ctx: &mut PluginContext, tool: Arc<dyn Tool>) -> Result<()> {
         let service = ctx.resolve::<Self>(&tool_registration_id())?;
         if !Arc::ptr_eq(&self.0, &service.0) {

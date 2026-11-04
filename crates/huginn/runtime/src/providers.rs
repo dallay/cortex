@@ -16,7 +16,7 @@ use std::{sync::Arc, time::Duration};
 
 pub use huginn_core::providers::{DiscoveredModel, ModelCatalog, ToolSupport};
 
-// Permite catálogos de agregadores sin eliminar el límite de entradas ni el de bytes.
+// Allows aggregator catalogs without removing the entry limit or the byte limit.
 const MAX_DISCOVERED_MODELS: usize = 16_384;
 const MAX_CATALOG_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 

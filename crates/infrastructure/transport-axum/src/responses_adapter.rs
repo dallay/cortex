@@ -1,4 +1,4 @@
-//! Adaptación stateless de texto y funciones; no implementa estado nativo de Responses.
+//! Stateless adaptation of text and functions; does not implement native Responses state.
 
 use std::collections::HashSet;
 

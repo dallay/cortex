@@ -1,20 +1,20 @@
-# Catálogo de modelos y elegibilidad
+# Model catalog and eligibility
 
-Rook separa tres hechos: la presencia de un identificador, las capacidades
-declaradas del modelo y las capacidades que conserva el adaptador. La presencia
-de un modelo no demuestra que admita herramientas, imágenes o streaming.
+Rook separates three facts: the presence of an identifier, the model's
+declared capabilities, and the capabilities retained by the adapter. The presence
+of a model does not prove it supports tools, images, or streaming.
 
-## Declaraciones
+## Declarations
 
-El catálogo incluido en `models-catalog/src/models.json` conserva los
-identificadores anteriores. No contiene garantías de capacidades: sus estados
-iniciales son `unknown`. Las declaraciones administrativas de `rook.toml`
-permiten registrar capacidades comprobadas:
+The catalog included in `models-catalog/src/models.json` retains the
+previous identifiers. It contains no capability guarantees: their initial
+states are `unknown`. Administrative declarations in `rook.toml`
+allow registering verified capabilities:
 
 ```toml
 [[model_catalog]]
 provider_kind = "openai"
-model_id = "deployment-verificado"
+model_id = "verified-deployment"
 
 [model_catalog.capabilities]
 tools = "supported"
@@ -25,90 +25,90 @@ context_tokens = 8192
 
 [[model_catalog]]
 provider_kind = "openai"
-model_id = "deployment-verificado"
+model_id = "verified-deployment"
 connection_id = "c56a4180-65aa-42ec-a945-5fd21dec0538"
 
 [model_catalog.capabilities]
 tools = "unknown"
 ```
 
-Los identificadores y el límite del ejemplo son ilustrativos, no garantías de
-un proveedor real. El administrador debe verificar el modelo y el endpoint antes
-de declarar `supported`. Las declaraciones no contienen credenciales.
+The identifiers and the limit in the example are illustrative, not guarantees for
+a real provider. The administrator must verify the model and the endpoint before
+declaring `supported`. Declarations do not contain credentials.
 
-La resolución aplica cada campo en este orden de prioridad:
+Resolution applies each field in this priority order:
 
-1. Declaración de la conexión exacta y del modelo.
-2. Declaración del tipo de proveedor y del modelo.
-3. Declaración incluida en el catálogo.
+1. Declaration of the exact connection and model.
+2. Declaration of the provider type and model.
+3. Declaration included in the catalog.
 4. `unknown`.
 
-Un campo omitido hereda el valor anterior. Un estado explícito `unknown`
-elimina una afirmación de soporte de menor prioridad. `context_tokens` es
-opcional y debe ser positivo; su ausencia significa que el límite no se conoce.
-Las declaraciones duplicadas para la misma conexión, proveedor y modelo son
-inválidas. Los cambios requieren reiniciar Rook.
+An omitted field inherits the previous value. An explicit `unknown` state
+removes a lower-priority support claim. `context_tokens` is
+optional and must be positive; its absence means the limit is not known.
+Duplicate declarations for the same connection, provider, and model are
+invalid. Changes require restarting Rook.
 
-Los modelos adicionales de una declaración de proveedor se añaden al catálogo
-de ese proveedor. Los modelos declarados para una conexión no se publican en
-otras conexiones. Azure conserva únicamente su deployment configurado;
-OpenAI-compatible conserva únicamente `supported_models`. Los metadatos no
-amplían esas dos listas.
+Additional models from a provider declaration are added to that provider's
+catalog. Models declared for a connection are not published to
+other connections. Azure retains only its configured deployment;
+OpenAI-compatible retains only `supported_models`. Metadata does not
+extend those two lists.
 
-## Procedencia y descubrimiento
+## Provenance and discovery
 
-Cada capacidad y límite conocido conserva `source`: `bundled`,
-`provider_configuration`, `connection_configuration`, `adapter` o `unknown`.
-`ModelCatalogPort::resolve` acepta también identificadores obtenidos mediante
-descubrimiento verificado por el llamador. Combina ese identificador con las
-declaraciones aplicables, pero no deduce capacidades por nombre o presencia.
-Las comprobaciones de salud no se convierten en descubrimiento de capacidades.
-Esta implementación no añade consultas automáticas a proveedores.
+Each known capability and limit retains `source`: `bundled`,
+`provider_configuration`, `connection_configuration`, `adapter`, or `unknown`.
+`ModelCatalogPort::resolve` also accepts identifiers obtained through
+discovery verified by the caller. It combines that identifier with the
+applicable declarations, but does not infer capabilities from name or presence.
+Health checks do not become capability discovery.
+This implementation does not add automatic queries to providers.
 
-Los metadatos resueltos permanecen asociados a la misma instancia del adaptador
-durante las actualizaciones del registro y atraviesan el límite de concurrencia.
+Resolved metadata remains associated with the same adapter instance
+across registry updates and crosses the concurrency boundary.
 
-## Política conservadora
+## Conservative policy
 
-Una capacidad obligatoria necesita soporte positivo del modelo **y** del
-adaptador. Rook excluye candidatos con estado `unsupported` o `unknown` antes de
-ejecutar una llamada al proveedor. Los descartes no consumen intentos de llamada
-ni abren circuitos. Si no queda un candidato elegible, se conserva el error de
-agotamiento de proveedores; los combos incluyen motivos de descarte distintos
-para incompatibilidad y falta de evidencia.
+A required capability needs positive support from both the model **and** the
+adapter. Rook excludes candidates with state `unsupported` or `unknown` before
+making a call to the provider. Exclusions do not consume call attempts
+or open circuits. If no eligible candidate remains, the provider-exhaustion
+error is retained; combos include distinct exclusion reasons
+for incompatibility and lack of evidence.
 
-- Las declaraciones de herramientas, `tool_choice` distinto de `none` y los
-  mensajes con historial de herramientas requieren `tools`.
-- Una solicitud de streaming directo requiere `streaming`.
-- El texto ordinario no requiere capacidades opcionales no utilizadas.
-- Los combos ejecutan `complete` y sintetizan SSE. No necesitan streaming nativo.
-- Los permisos del alias y de sus pasos físicos se comprueban antes del filtrado
-  por capacidades. Un paso posterior no autorizado sigue rechazando el combo.
-- Las solicitudes que requieren herramientas no leen ni escriben la caché de
-  respuestas. Una respuesta guardada antes de cambiar la declaración no permite
-  eludir la política actual.
+- Tool declarations, `tool_choice` other than `none`, and
+  messages with tool history require `tools`.
+- A direct streaming request requires `streaming`.
+- Ordinary text does not require unused optional capabilities.
+- Combos run `complete` and synthesize SSE. They do not need native streaming.
+- The alias's permissions and those of its physical steps are checked before
+  capability filtering. An unauthorized later step still rejects the combo.
+- Requests requiring tools do not read or write the response cache. A
+  response saved before changing the declaration does not allow
+  bypassing the current policy.
 
-Los adaptadores actuales no conservan imágenes de entrada. OpenAI rechaza los
-contenidos no textuales al deserializar la solicitud, con HTTP 422, antes de
-convertirla al dominio o realizar llamadas externas. Anthropic también rechaza
-bloques de imagen no representables. Declarar `vision = "supported"` no habilita
-esa funcionalidad. El soporte de controles explícitos de razonamiento tampoco
-se habilita con una declaración.
+Current adapters do not retain input images. OpenAI rejects
+non-text content when deserializing the request, with HTTP 422, before
+converting it to the domain or making external calls. Anthropic also rejects
+non-representable image blocks. Declaring `vision = "supported"` does not enable
+that functionality. Support for explicit reasoning controls is also not
+enabled by a declaration.
 
-Los adaptadores OpenAI, Azure OpenAI, OpenAI-compatible y Anthropic pueden
-conservar solicitudes de herramientas; Gemini, Groq y Ollama no conservan
-actualmente todos los campos necesarios y no pueden habilitarse por configuración.
-Gemini no implementa streaming nativo. Estas restricciones del adaptador no
-constituyen evidencia sobre las capacidades del modelo remoto.
+The OpenAI, Azure OpenAI, OpenAI-compatible, and Anthropic adapters can
+retain tool requests; Gemini, Groq, and Ollama currently do not retain
+all the required fields and cannot be enabled by configuration.
+Gemini does not implement native streaming. These adapter restrictions do not
+constitute evidence about the remote model's capabilities.
 
-## Respuesta de `GET /v1/models`
+## `GET /v1/models` response
 
-Se conservan `id`, `object`, `created` y `owned_by`. La extensión aditiva `rook`
-incluye capacidades, procedencia de presencia y política de desconocidos:
+`id`, `object`, `created`, and `owned_by` are retained. The additive `rook` extension
+includes capabilities, presence provenance, and unknown-value policy:
 
 ```json
 {
-  "id": "connection-id/deployment-verificado",
+  "id": "connection-id/verified-deployment",
   "object": "model",
   "created": 0,
   "owned_by": "connection-id",
@@ -126,23 +126,23 @@ incluye capacidades, procedencia de presencia y política de desconocidos:
 }
 ```
 
-La lista respeta `allowed_models` y `allowed_providers` del contexto autenticado.
-Un alias `rook/*` solo es visible si sus pasos físicos también están autorizados.
-Los aliases conservan sus identificadores y publican capacidades `unknown`:
-Rook no atribuye a todo el combo el soporte de uno de sus pasos.
+The list respects `allowed_models` and `allowed_providers` of the authenticated context.
+A `rook/*` alias is only visible if its physical steps are also authorized.
+Aliases retain their identifiers and publish `unknown` capabilities:
+Rook does not attribute support of one of its steps to the whole combo.
 
-## Migración
+## Migration
 
-**Antes de actualizar un despliegue que usa herramientas o streaming directo,
-declare las capacidades verificadas de sus modelos.** Esto también aplica a los
-identificadores incluidos en el catálogo: sus capacidades anteriores no estaban
-verificadas y no se convierten automáticamente en `supported`.
+**Before upgrading a deployment that uses tools or direct streaming,
+declare the verified capabilities of its models.** This also applies to
+identifiers included in the catalog: their previous capabilities were not
+verified and are not automatically converted to `supported`.
 
-No use una declaración global de proveedor para endpoints personalizados que no
-comparten sus garantías. Prefiera `connection_id` para esos casos. Una solicitud
-de texto sin herramientas y sin streaming conserva su elegibilidad anterior.
+Do not use a global provider declaration for custom endpoints that do not
+share its guarantees. Prefer `connection_id` for those cases. A
+text request without tools and without streaming keeps its previous eligibility.
 
-Para probar sin proveedores reales:
+To test without real providers:
 
 ```sh
 cargo test -p models-catalog

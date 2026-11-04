@@ -1,198 +1,198 @@
-# ADR-0014: Providers integrados y enrutamiento del modelo por turno
+# ADR-0014: Built-in providers and turn-scoped model routing
 
-- Estado: Accepted
-- Fecha: 2026-10-13
-- Producto: Huginn
-- Base de decisión: aprobación explícita del usuario para formalizar la dirección
-  Providers y preparar cinco entregas P0 y una P1 OAuth. Accepted acepta la
-  dirección; no declara implementación, verificación ni aceptación del producto.
+- Status: Accepted
+- Date: 2026-10-13
+- Product: Huginn
+- Decision basis: explicit user approval to formalize the Providers
+  direction and prepare five P0 deliveries and one P1 OAuth delivery. Accepted accepts the
+  direction; it does not declare implementation, verification, or product acceptance.
 
-## Contexto
+## Context
 
-Huginn necesita gestionar varias conexiones y elegir modelos sin acoplar el
-agente a una terminal ni mezclar credenciales. Hoy `ModelProvider` y
-`ModelService` delimitan la inferencia; la composición publica `agent:model@1`.
-El adaptador `OpenAiProvider` implementa streaming compatible con OpenAI y
-desactiva redirecciones. La configuración actual construye un proveedor desde
-CLI, TOML y variables de entorno; no constituye un gestor de conexiones.
+Huginn needs to manage several connections and choose models without coupling the
+agent to a terminal or mixing credentials. Today `ModelProvider` and
+`ModelService` delimit inference; the composition publishes `agent:model@1`.
+The `OpenAiProvider` adapter implements OpenAI-compatible streaming and
+disables redirects. The current configuration builds a provider from
+CLI, TOML, and environment variables; it does not constitute a connection manager.
 
-[ADR-0013](0013-authorable-plugin-contract-and-loading.md) establece composición
-nativa estática, contribuciones declarativas y registros por generación.
-Los callbacks UI actuales son síncronos y no bloqueantes: las acciones asíncronas
-y los formularios secretos de esta decisión son trabajo futuro, no APIs actuales.
-El bucle puede inferir varias veces, ejecutar herramientas y compactar contexto
-dentro de un turno; resolver la selección en cada llamada produciría cambios
-silenciosos de modelo o de identidad durante una misma operación.
+[ADR-0013](0013-authorable-plugin-contract-and-loading.md) establishes static
+native composition, declarative contributions, and per-generation registrations.
+Current UI callbacks are synchronous and non-blocking: the asynchronous actions
+and secret forms covered by this decision are future work, not current APIs.
+The loop can infer multiple times, run tools, and compact context
+within a turn; resolving selection on each call would produce silent
+model or identity changes during the same operation.
 
-## Decisión
+## Decision
 
-### Catálogo, gestión y router
+### Catalog, management, and router
 
-Providers será una capacidad integrada de Huginn, compuesta estáticamente según
-ADR-0013, con responsabilidades separadas: catálogo de proveedores/modelos,
-gestión de conexiones y selección, y router de inferencia. El router será el
-único publicador de `agent:model@1`; los adaptadores se registrarán en el
-catálogo y no competirán por ese servicio. Las identidades y tipos concretos de
-los nuevos contratos se definirán durante P0.1, sin declarar aquí APIs existentes.
+Providers will be a built-in Huginn capability, statically composed per
+ADR-0013, with separated responsibilities: provider/model catalog,
+connection management and selection, and inference router. The router will be the
+sole publisher of `agent:model@1`; adapters will register in the
+catalog and will not compete for that service. The concrete identities and types of
+the new contracts will be defined during P0.1; this document does not declare existing APIs.
 
-Catálogo, acciones, registros y tareas estarán asociados a la generación de
-activación. La publicación será transaccional: una activación fallida revierte
-todos sus efectos; el desmontaje revoca sus registros y cancela sus tareas.
-Un identificador de una generación antigua no puede ejecutar su reemplazo.
-El rollback de activación no borra conexiones duraderas preexistentes; una
-operación de gestión fallida tampoco puede dejar metadatos y secretos incoherentes.
+Catalog, actions, registrations, and tasks will be associated with the activation
+generation. Publication will be transactional: a failed activation reverts
+all its effects; teardown revokes its registrations and cancels its tasks.
+An identifier from an old generation cannot execute its replacement.
+Activation rollback does not delete pre-existing durable connections; a
+failed management operation also cannot leave metadata and secrets inconsistent.
 
-`builtin.providers.core` proporcionará catálogo, conexiones y routing en modo
-headless. `builtin.providers.ui` dependerá del servicio Providers y de las
-contribuciones UI; registrará `/login`, `/providers`, `/model` y `/logout`.
-Los adaptadores serán plugins internos independientes registrados en el catálogo.
-La contribución UI será opcional: el host posee TTY, foco, teclado, renderizado,
-formularios y tratamiento de campos secretos. Las acciones serán declarativas
-y asíncronas, con estados de espera, éxito, error y cancelación; no se hará I/O
-en callbacks síncronos ni se exigirá importar internals de Ratatui al proveedor.
-Los secretos no se introducirán como argumentos de comandos, historial o texto
-de contribuciones. Esta frontera no convierte extensiones nativas confiables
-en código aislado ni en un sandbox.
+`builtin.providers.core` will provide catalog, connections, and routing in
+headless mode. `builtin.providers.ui` will depend on the Providers service and on
+the UI contributions; it will register `/login`, `/providers`, `/model`, and `/logout`.
+Adapters will be independent internal plugins registered in the catalog.
+The UI contribution will be optional: the host owns TTY, focus, keyboard, rendering,
+forms, and handling of secret fields. Actions will be declarative
+and asynchronous, with pending, success, error, and cancellation states; no I/O will be
+done in synchronous callbacks, and providers will not be required to import Ratatui internals.
+Secrets will not be introduced as command arguments, history, or contribution
+text. This boundary does not turn trusted native extensions into
+isolated code or a sandbox.
 
-### Selección por turno y revocación
+### Turn-scoped selection and revocation
 
-Al comenzar un turno se fija la identidad de conexión, modelo y generación
-autorizada. Todas sus inferencias, incluidas continuación tras herramientas y
-compactación, usan esa fijación. Cambiar la selección afecta al siguiente turno;
-no hay fallback automático a otro modelo, conexión o proveedor ante errores.
+At the start of a turn, the connection, model, and authorized generation
+identity are fixed. All its inferences, including continuation after tools and
+compaction, use that fixed selection. Changing the selection affects the next turn;
+there is no automatic fallback to another model, connection, or provider on errors.
 
-La autorización se comprueba antes de cada inferencia, no solo al fijar el
-turno. Revocar, eliminar o reemplazar las credenciales de la conexión, o revocar
-su generación, invalida las inferencias posteriores incluso dentro del mismo
-turno; no se reutiliza una credencial retenida ni se adopta su reemplazo.
-La cancelación de una petición en curso es best effort: puede detener consumo
-local, pero no prueba que el servidor haya cancelado, dejado de facturar o
-revocado remotamente la credencial. El estado observable debe distinguirlo.
-En P1, un refresh autorizado de tokens dentro de la misma autorización no será
-un cambio de conexión/modelo; deberá distinguirse de rotación o revocación y
-jamás restaurar una autorización invalidada.
+Authorization is checked before each inference, not only when the turn is
+fixed. Revoking, deleting, or replacing the connection's credentials, or revoking
+its generation, invalidates subsequent inferences even within the same
+turn; a retained credential is never reused, nor is its replacement adopted.
+Cancelling a request in progress is best effort: it can stop local consumption,
+but it does not prove that the server canceled, stopped billing, or
+remotely revoked the credential. Observable state must distinguish this.
+In P1, an authorized token refresh within the same authorization will not be
+a connection/model change; it must be distinguished from rotation or revocation and
+must never restore an invalidated authorization.
 
-### Conexiones, secretos y precedencia
+### Connections, secrets, and precedence
 
-Los metadatos persistentes de conexión y selección se guardarán separados de
-los secretos. Cada conexión tiene identidad propia y referencia a sus
-credenciales; ni sesiones, TOML, logs, errores, eventos JSON ni contribuciones
-UI deben recibir valores secretos. No se presupone que el historial general
-carezca de información sensible aportada por el usuario.
+Persistent connection and selection metadata will be stored separately from
+secrets. Each connection has its own identity and a reference to its
+credentials; neither sessions, TOML, logs, errors, JSON events, nor UI
+contributions may receive secret values. It is not assumed that the general history
+lacks sensitive information provided by the user.
 
-En macOS se usará Keychain. En Linux se usará un backend seguro cuando esté
-disponible; si falta o está bloqueado, se informa el estado y solo se ofrece
-modo efímero explícito, nunca persistencia silenciosa en texto plano. El modo
-efímero no promete recuperación de credenciales tras reiniciar. Persistencia,
-fallos parciales, eliminación y reconciliación necesitan pruebas de rollback.
+On macOS, Keychain will be used. On Linux, a secure backend will be used when
+available; if it is missing or locked, the state is reported, and only an
+explicit ephemeral mode is offered, never silent plain-text persistence. The
+ephemeral mode does not promise credential recovery after a restart. Persistence,
+partial failures, deletion, and reconciliation need rollback tests.
 
-La precedencia será: CLI explícita > configuración explícita o entorno elegido
-> selección persistida > `unconfigured`. Dentro del segundo nivel, la
-configuración explícita conserva prioridad sobre valores por defecto de entorno;
-el entorno utilizado debe quedar determinado y asociado a la conexión elegida.
-La resolución valida una conexión coherente: no combina endpoint/modelo de una
-con credenciales de otra ni completa una elección explícita inválida recurriendo
-a la selección persistida. Sin selección se permite diagnóstico sin inferencia;
-un intento de inferencia falla con un estado accionable y sin secretos.
-La migración de la configuración actual preservará este aislamiento y explicará
-su procedencia sin presentar un nuevo esquema como ya implementado.
+Precedence will be: explicit CLI > explicit configuration or chosen environment
+> persisted selection > `unconfigured`. Within the second level, explicit
+configuration retains priority over environment defaults;
+the environment used must be determined and associated with the chosen connection.
+Resolution validates a coherent connection: it does not combine one connection's endpoint/model
+with another connection's credentials, nor does it complete an invalid explicit choice by falling back
+to the persisted selection. Without a selection, diagnostics without inference are allowed;
+an inference attempt fails with an actionable state and without secrets.
+Migration of the current configuration will preserve this isolation and explain
+its provenance without presenting a new schema as already implemented.
 
-### Transporte y autenticación
+### Transport and authentication
 
-Los endpoints personalizados requieren TLS validado, excepto loopback local
-autorizado explícitamente para transporte sin TLS. No se amplía la excepción
-a redes privadas ni se desactiva validación de certificados. Las redirecciones
-se rechazan por defecto; cualquier política futura debe impedir fugas de
-autorización a otro origen y degradación a HTTP. La configuración existente que
-acepta HTTP general deberá adecuarse y documentarse en P0.4.
+Custom endpoints require validated TLS, except for local loopback
+explicitly authorized for transport without TLS. The exception is not extended
+to private networks, nor is certificate validation disabled. Redirects
+are rejected by default; any future policy must prevent authorization
+leaks to another origin and downgrades to HTTP. The existing configuration that
+accepts general HTTP must be adapted and documented in P0.4.
 
-P0 incluye un adaptador OpenAI-compatible y un adaptador local Ollama cuya
-compatibilidad se verificará, no se inferirá del nombre. OAuth oficial queda
-para P1, evaluado por proveedor y solo mediante flujos documentados y permitidos.
-Una cuenta o suscripción ChatGPT no equivale a credenciales ni acceso a la API
-OpenAI. No se importan cookies, tokens de sesión ni flujos privados de productos
-de consumo. Rook, carga dinámica, hot reload y runtimes externos quedan fuera.
+P0 includes an OpenAI-compatible adapter and a local Ollama adapter whose
+compatibility will be verified, not inferred from the name. Official OAuth is left
+for P1, evaluated per provider and only through documented and permitted flows.
+A ChatGPT account or subscription is not equivalent to API credentials or access to the
+OpenAI API. No cookies, session tokens, or private consumer-product flows are
+imported. Rook, dynamic loading, hot reload, and external runtimes are out of scope.
 
-## Alternativas consideradas
+## Alternatives considered
 
-- Un publicador de `agent:model@1` por proveedor: reduce intermediación, pero
-  crea colisiones de composición y acopla el bucle a la gestión de conexiones.
-  Se elige un router único con catálogo separado.
-- Resolver selección por inferencia y aplicar fallback: mejora disponibilidad,
-  pero cambia identidad, coste y comportamiento durante un turno. Se elige
-  fijación por turno con fallo explícito y revocación comprobada en cada llamada.
-- Retener indefinidamente la credencial fijada: facilita continuidad, pero
-  ignora revocaciones. Se conserva identidad, no autorización irrevocable.
-- Gestión implementada solo en TUI: entrega visual más rápida, pero impide
-  automatización y pruebas sin terminal. Se eligen casos de uso headless y UI
-  opcional con acciones declarativas.
-- Secretos en TOML/SQLite o fallback automático en Linux: simplifica despliegue,
-  pero aumenta exposición y oculta pérdida de garantías. Se eligen almacenes
-  seguros y modo efímero explícito, con coste de integración por plataforma.
-- HTTP personalizado general: facilita servidores remotos de desarrollo,
-  pero expone credenciales y contenido. Se restringe la excepción a loopback
-  explícito, a costa de migrar configuraciones inseguras.
-- OAuth genérico o reutilizar autenticación ChatGPT: aparenta onboarding
-  uniforme, pero no demuestra permisos ni acceso oficial a inferencia.
-  Se difiere OAuth oficial por proveedor a P1.
-- Integración Rook o loader dinámico ahora: amplía reutilización y extensibilidad,
-  pero añade contratos y confianza ajenos al objetivo. Se mantiene composición
-  integrada y estática.
+- A per-provider publisher of `agent:model@1`: reduces intermediation, but
+  creates composition collisions and couples the loop to connection management.
+  A single router with a separate catalog is chosen.
+- Resolving selection per inference and applying fallback: improves availability,
+  but changes identity, cost, and behavior during a turn. A per-turn
+  fixed selection with explicit failure and checked revocation on each call is chosen.
+- Retaining the fixed credential indefinitely: eases continuity, but
+  ignores revocations. Identity is retained, not irrevocable authorization.
+- Management implemented only in the TUI: faster visual delivery, but prevents
+  automation and tests without a terminal. Headless use cases and optional
+  UI with declarative actions are chosen.
+- Secrets in TOML/SQLite or automatic fallback on Linux: simplifies deployment,
+  but increases exposure and hides loss of guarantees. Secure stores
+  and an explicit ephemeral mode are chosen, at the cost of per-platform integration.
+- General custom HTTP: eases remote development servers,
+  but exposes credentials and content. The exception is restricted to explicit
+  loopback, at the cost of migrating insecure configurations.
+- Generic OAuth or reusing ChatGPT authentication: appears to give uniform
+  onboarding, but does not prove permissions or official access to inference.
+  Official per-provider OAuth is deferred to P1.
+- Rook integration or a dynamic loader now: expands reuse and extensibility,
+  but adds contracts and trust outside the goal. Built-in, static
+  composition is kept.
 
-## Consecuencias
+## Consequences
 
-- La selección es predecible y se puede probar sin red ni terminal; la UI no
-  impide avanzar al núcleo ni a los adaptadores.
-- Se introducen gestión de generaciones, carreras de revocación, transacciones
-  entre almacenes y estados de credenciales bloqueadas o ausentes.
-- Un error o revocación puede detener el turno; no se prioriza disponibilidad
-  sobre identidad. Cancelación local no implica cancelación remota.
-- La seguridad de Linux depende del backend disponible. El modo efímero y los
-  fallos de recuperación deben ser visibles antes de inferir.
-- El alcance de pruebas automatizadas no equivale a aceptación de onboarding
-  ni a validación de todas las combinaciones de proveedores reales.
+- Selection is predictable and testable without network or terminal; the UI does
+  not block progress on the core or the adapters.
+- Generation management, revocation races, cross-store transactions,
+  and blocked or missing credential states are introduced.
+- An error or revocation can stop the turn; availability is not prioritized
+  over identity. Local cancellation does not imply remote cancellation.
+- Linux security depends on the available backend. Ephemeral mode and
+  recovery failures must be visible before inferring.
+- The scope of automated tests does not equal acceptance of onboarding
+  nor validation of every combination of real providers.
 
-## Seguimiento y evidencia
+## Follow-up and evidence
 
-Base inspeccionada: [`application/src/composition.rs`](../../../crates/huginn/application/src/composition.rs),
+Inspected baseline: [`application/src/composition.rs`](../../../crates/huginn/application/src/composition.rs),
 [`runtime/src/model.rs`](../../../crates/huginn/runtime/src/model.rs),
 [`core/src/kernel.rs`](../../../crates/huginn/core/src/kernel.rs),
 [`plugin-api/src/v1.rs`](../../../crates/huginn/plugin-api/src/v1.rs),
-[`config.rs`](../../../apps/huginn/src/config.rs) y
+[`config.rs`](../../../apps/huginn/src/config.rs), and
 [`config.example.toml`](../../../apps/huginn/config.example.toml).
 
-Entregas previstas, no implementadas por este registro:
+Planned deliveries, not implemented by this record:
 
-1. P0.1: contratos, catálogo y router; demostración headless con dobles y
-   pruebas de fijación por turno, rollback y revocación.
-2. P0.2: conexiones, secretos y precedencia headless sobre P0.1; pruebas de
-   aislamiento, fallos parciales, reinicio y ausencia de fugas.
-3. P0.3: UI independiente sobre P0.1/P0.2; dobles hasta disponer de P0.4,
-   formularios secretos, acciones cancelables y generaciones obsoletas.
-4. P0.4: adaptadores OpenAI-compatible y Ollama local sobre P0.1/P0.2;
-   streaming, herramientas, transporte seguro y compatibilidad comprobada.
-5. P0.5: integración automatizada de P0.1–P0.4, desde selección hasta turnos
-   y recuperación, con rollback, revocación, reinicio y secret leakage.
-6. P1: OAuth oficial por proveedor sobre el flujo P0 integrado; renovación,
-    expiración, revocación y ausencia de credenciales de productos de consumo.
+1. P0.1: contracts, catalog, and router; headless demonstration with doubles and
+   tests for per-turn fixing, rollback, and revocation.
+2. P0.2: connections, secrets, and headless precedence over P0.1; tests for
+   isolation, partial failures, restart, and absence of leaks.
+3. P0.3: UI independent of P0.1/P0.2; doubles until P0.4 is available,
+   secret forms, cancelable actions, and obsolete generations.
+4. P0.4: OpenAI-compatible and local Ollama adapters over P0.1/P0.2;
+   streaming, tools, secure transport, and verified compatibility.
+5. P0.5: automated integration of P0.1–P0.4, from selection through turns
+   and recovery, with rollback, revocation, restart, and secret leakage checks.
+6. P1: official per-provider OAuth over the integrated P0 flow; renewal,
+    expiration, revocation, and absence of consumer-product credentials.
 
-Seguimiento de ingeniería creado en GitHub:
+Engineering tracking created on GitHub:
 [P0.1 / #350](https://github.com/dallay/cortex/issues/350),
 [P0.2 / #351](https://github.com/dallay/cortex/issues/351),
 [P0.3 / #352](https://github.com/dallay/cortex/issues/352),
 [P0.4 / #353](https://github.com/dallay/cortex/issues/353),
-[P0.5 / #354](https://github.com/dallay/cortex/issues/354) y
+[P0.5 / #354](https://github.com/dallay/cortex/issues/354), and
 [P1 / #355](https://github.com/dallay/cortex/issues/355).
-Abrir las issues no acredita la implementación.
+Opening the issues does not attest to implementation.
 
-Los tipos concretos, formato de metadatos, backend Linux, política de
-reconciliación y matriz Ollama se concretarán con evidencia en esas entregas.
-No son decisiones de implementación cerradas por este ADR.
+The concrete types, metadata format, Linux backend, reconciliation
+policy, and Ollama matrix will be made concrete with evidence in those deliveries.
+They are not implementation decisions closed by this ADR.
 
-Las QA [#276](https://github.com/dallay/cortex/issues/276),
+QA items [#276](https://github.com/dallay/cortex/issues/276),
 [#332](https://github.com/dallay/cortex/issues/332),
-[#307](https://github.com/dallay/cortex/issues/307) y
-[#280](https://github.com/dallay/cortex/issues/280) siguen independientes:
-este ADR y sus entregas no las cierran ni las convierten en bloqueos para
-desarrollar Providers. La aceptación de onboarding es un gate separado;
-las pruebas de entrega aportan evidencia, no sustituyen ese gate.
+[#307](https://github.com/dallay/cortex/issues/307), and
+[#280](https://github.com/dallay/cortex/issues/280) remain independent:
+this ADR and its deliveries do not close them nor turn them into blockers for
+developing Providers. Onboarding acceptance is a separate gate;
+delivery tests provide evidence, they do not replace that gate.
