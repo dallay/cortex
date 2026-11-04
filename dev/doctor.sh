@@ -95,7 +95,7 @@ doctor_fail() {
 
 doctor_warn() {
     DOCTOR_WARNINGS=$((DOCTOR_WARNINGS + 1))
-    printf '[AVISO] %s\n' "$1"
+    printf '[WARNING] %s\n' "$1"
 }
 
 check_command() {
@@ -225,14 +225,14 @@ main() {
     check_optional_command "cargo-hack" "just hack"
     check_optional_command "cargo-spellcheck" "just spellcheck"
 
-    printf '\nResumen: %s requisito(s) obligatorio(s) faltante(s), %s aviso(s) opcional(es).\n' \
+    printf '\nSummary: %s mandatory requirement(s) missing, %s optional warning(s).\n' \
         "$DOCTOR_FAILURES" "$DOCTOR_WARNINGS"
     if (( DOCTOR_FAILURES > 0 )); then
         printf 'Mandatory requirements are missing. Review [MISSING] messages before continuing.\n'
         return 1
     fi
 
-    printf 'Requisitos obligatorios listos. Los avisos opcionales solo afectan las recetas indicadas.\n'
+    printf 'Mandatory requirements ready. Optional warnings only affect the indicated recipes.\n'
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

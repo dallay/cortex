@@ -80,7 +80,7 @@ for incompatibility and lack of evidence.
 - Tool declarations, `tool_choice` other than `none`, and messages with tool history require `tools`.
 - A direct streaming request requires `streaming`.
 - Plain text does not require unused optional capabilities.
-- Combos execute `complete` and synthesize SSE. They do not need native streaming.
+- Non-streaming combo requests use `complete`. Streaming combo requests require each eligible step to support native `streaming` and skip completion-only steps.
 - Permissions for the alias and its physical steps are checked before filtering
   by capabilities. An unauthorized downstream step still rejects the combo.
 - Requests requiring tools do not read or write the response cache.

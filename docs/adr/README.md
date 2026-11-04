@@ -4,12 +4,12 @@ ADRs document significant architecture decisions for the Cortex project.
 
 ## General ADRs
 
-> Huginn-specific ADRs are located in [docs/huginn/adr/](huginn/adr/README.md).
+> Huginn-specific ADRs are located in [docs/huginn/adr/](../huginn/adr/README.md).
 
 Currently there are no pending general ADRs. Product and architecture ADRs
 specific to each component reside in their respective directories:
 
-- [Huginn ADRs](huginn/adr/) — Decisions regarding the coding agent
+- [Huginn ADRs](../huginn/adr/) — Decisions regarding the coding agent
 - [ADR-0015: Separate product releases from Cargo publishing](../huginn/adr/0015-separate-product-releases-from-cargo-publishing.md) — Distribution policy
 
 ## ADR Format
