@@ -1,91 +1,90 @@
-# Guía de Desarrollo
+# Development Guide
 
-Esta guía cubre el setup local, herramientas, testing y flujo de CI.
+This guide covers local setup, tooling, testing, and CI workflows.
 
-## Requisitos
+## Prerequisites
 
-- **Rust** (toolchain, componentes y targets definidos en `rust-toolchain.toml`)
-- **Node.js** + **pnpm** (para el dashboard)
-- **just** — interfaz recomendada para las tareas del repositorio (ver `justfile`)
-- **GNU Make** — alternativa independiente opcional, disponible mediante `Makefile`
-- **Docker** (para E2E tests)
+- **Rust** (toolchain, components, and targets defined in `rust-toolchain.toml`)
+- **Node.js** + **pnpm** (for the dashboard)
+- **just** — recommended interface for repository tasks (see `justfile`)
+- **GNU Make** — optional independent alternative, available via `Makefile`
+- **Docker** (for E2E tests)
 
-## Setup inicial
+## Initial Setup
 
 ```bash
-# Interfaz recomendada: instalar dependencias, verificar Rust y crear config de Rook
+# Recommended interface: install dependencies, verify Rust, and create Rook config
 just setup
 
-# Alternativa opcional sin instalar just
+# Optional alternative without installing just
 make setup
 make doctor
 make help
 
-# Ver recetas disponibles en la interfaz recomendada
+# View available recipes in the recommended interface
 just --list
 ```
 
-GNU Make ejecuta directamente las herramientas y scripts del repositorio; no requiere ni invoca `just`. Para comandos con argumentos, pasa los valores mediante `ARGS`, por ejemplo `make huginn-run ARGS='--provider mock run "list files"'` o `make push ARGS='origin HEAD'`. `just` sigue siendo la interfaz recomendada y ofrece su propio paso de argumentos.
+GNU Make runs repository tools and scripts directly; it neither requires nor invokes `just`. For commands with arguments, pass values via `ARGS`, e.g. `make huginn-run ARGS='--provider mock run "list files"'` or `make push ARGS='origin HEAD'`. `just` remains the recommended interface and provides its own argument passing.
 
-`just setup` ejecuta `just init-config`, que crea `~/.cortex/rook/config.toml`
-solo si no existe; nunca sobrescribe una configuración previa. Rook exige ese
-archivo (o la ruta indicada por `ROOK_CONFIG`) para arrancar.
+`just setup` executes `just init-config`, which creates `~/.cortex/rook/config.toml`
+only if it does not already exist; it never overwrites an existing configuration. Rook requires that
+file (or the path specified by `ROOK_CONFIG`) to start.
 
-`just doctor` no instala ni modifica nada. Devuelve código distinto de cero si
-falta una herramienta obligatoria o si Node.js/pnpm no cumplen las versiones
-del repo. Docker, las dependencias del dashboard y las herramientas Cargo de
-recetas especializadas se reportan como avisos opcionales.
+`just doctor` installs and modifies nothing. It exits with a non-zero code if
+a required tool is missing or if Node.js/pnpm do not match the repository versions.
+Docker, dashboard dependencies, and specialized Cargo tools are reported as optional warnings.
 
-`setup` también ejecuta `codegraph init` si la CLI `codegraph` ya está instalada.
-Si no está disponible, muestra un aviso y continúa sin inicializar el índice.
-El setup no instala CodeGraph ni administra credenciales; para habilitarlo,
-instala la CLI según su documentación y vuelve a ejecutar `just setup` o `make setup`.
+`setup` also runs `codegraph init` if the `codegraph` CLI is already installed.
+If unavailable, it displays a notice and continues without initializing the index.
+Setup does not install CodeGraph or manage credentials; to enable it,
+install the CLI according to its documentation and re-run `just setup` or `make setup`.
 
-## Desarrollo de Rook (Backend Rust)
+## Rook Development (Rust Backend)
 
-### Comandos principales
+### Main Commands
 
 ```bash
 # Build
 cargo build
 
-# Tests del workspace
+# Workspace tests
 cargo test --workspace --all-features
 
-# Paquete específico
+# Specific package
 cargo test -p rook-core
 
-# Test de integración específico
+# Specific integration test
 cargo test -p rook-usecases --test route_request_restrictions
 
-# Run con logging
+# Run with logging
 RUST_LOG=debug cargo run --bin rook
 
-# Formato y lint
+# Format and lint
 cargo fmt --check
 cargo clippy --all-targets
 ```
 
-### Estructura de crates
+### Crate Structure
 
 ```
 crates/
-├── rook-core/          # Domain layer (modelos, ports)
-├── rook-usecases/     # Application layer (casos de uso)
+├── rook-core/          # Domain layer (models, ports)
+├── rook-usecases/     # Application layer (use cases)
 ├── transport-axum/    # Infrastructure (HTTP server, adapters)
 ├── providers-openai/  # Provider implementations
 ├── providers-anthropic/
 ├── providers-ollama/
-└── ... (otros providers)
+└── ... (other providers)
 ```
 
 ## Dashboard (Vue SPA)
 
 ```bash
-# Desde la raíz del repo
+# From repository root
 just run-dashboard
 
-# Tests del dashboard
+# Dashboard tests
 pnpm --filter @dallay/rook-dashboard exec vitest run
 
 # Typecheck + build
@@ -93,15 +92,15 @@ cd apps/rook/dashboard
 pnpm typecheck && pnpm build
 ```
 
-## Huginn (Agente de coding local)
+## Huginn (Local Coding Agent)
 
-Ver [docs/huginn/README.md](huginn/README.md) para setup y uso.
+See [docs/huginn/README.md](huginn/README.md) for setup and usage.
 
 ```bash
 # Run Huginn
 just huginn-run
 
-# Con un provider real
+# With a real provider
 HUGINN_BASE_URL=https://api.openai.com/v1 \
 HUGINN_MODEL=gpt-4o \
 HUGINN_API_KEY=sk-... \
@@ -110,189 +109,189 @@ just huginn-run
 
 ## Testing
 
-### Tipos de Tests
+### Test Types
 
-| Tipo | Comando | Cuándo usar |
+| Type | Command | When to use |
 |------|---------|-------------|
-| Tests Rust | `cargo test --workspace --all-features` | Verificación de los crates del workspace |
-| Dashboard | `pnpm --filter @dallay/rook-dashboard exec vitest run` | Tests de UI/Vue |
-| Tipos del dashboard | `pnpm --filter @dallay/rook-dashboard run typecheck` | Verificación de tipos con `vue-tsc` |
-| Lint/formato del dashboard | `pnpm --filter @dallay/rook-dashboard run lint` | Biome; `lint:fix` aplica formato y fixes seguros |
-| E2E con Docker | `just test-e2e` | Flujos integrados del dashboard y API |
-| E2E multi-distribución | [Dev Testing Guide](../dev/README.md) | Validación del binario en varias distribuciones |
+| Rust Tests | `cargo test --workspace --all-features` | Workspace crate verification |
+| Dashboard | `pnpm --filter @dallay/rook-dashboard exec vitest run` | UI/Vue tests |
+| Dashboard Types | `pnpm --filter @dallay/rook-dashboard run typecheck` | Type verification with `vue-tsc` |
+| Dashboard Lint/Format | `pnpm --filter @dallay/rook-dashboard run lint` | Biome; `lint:fix` applies formatting and safe fixes |
+| E2E with Docker | `just test-e2e` | Integrated dashboard and API workflows |
+| Multi-distribution E2E | [Dev Testing Guide](../dev/README.md) | Binary validation across distributions |
 
-Para escoger el flujo Docker adecuado, consulta la tabla de decisión de [Dev Testing Guide](../dev/README.md).
+To choose the appropriate Docker workflow, refer to the decision matrix in [Dev Testing Guide](../dev/README.md).
 
-### Tests unitarios y de integración
+### Unit and Integration Tests
 
 ```bash
-# Todo el workspace
+# Entire workspace
 cargo test --workspace --all-features
 
-# Paquete específico
+# Specific package
 cargo test -p rook-core
 
-# Con output detallado
+# With verbose output
 cargo test -p rook-core -- --nocapture
 
-# Solo tests unitarios (sin integración)
+# Unit tests only (no integration)
 cargo test --lib
 
-# Tests unitarios y de integración
+# Unit and integration tests
 cargo test --workspace --tests --all-features
 ```
 
-### Tests del Dashboard
+### Dashboard Tests
 
 ```bash
-# Todos los tests
+# All tests
 pnpm --filter @dallay/rook-dashboard exec vitest run
 
-# Test específico
+# Specific test
 pnpm --filter @dallay/rook-dashboard exec vitest run src/views/LoginView.spec.ts
 ```
 
-### Tests E2E (requiere Docker)
+### E2E Tests (Requires Docker)
 
 ```bash
-# 1. Preparar imagen Docker
+# 1. Prepare Docker image
 just test-e2e-build
 
 # 2a. Smoke test (backend only) - ~2 min
 just dev-build && just dev-up
 curl http://127.0.0.1:8090/health
 
-# 2b. Full E2E con Playwright - ~10 min
+# 2b. Full E2E with Playwright - ~10 min
 just test-e2e
 ```
 
-Para detalles completos de arquitectura Docker y troubleshooting, ver [dev/README.md](../dev/README.md).
+For complete Docker architecture details and troubleshooting, see [dev/README.md](../dev/README.md).
 
-## Validación pre-PR
+## Pre-PR Validation
 
-### `just ci` — gates locales de PR
+### `just ci` — Local PR Gates
 
-`just ci` ejecuta en secuencia y detiene el proceso ante el primer fallo. Incluye los gates bloqueantes aplicables a una PR: instalación congelada de dependencias, contratos CI, pruebas de doctor e issue labeler, build del dashboard, markdown y catálogo de skills, formato, Clippy, arquitectura de Huginn, compilación, suites Rust y frontend, documentación, auditoría de dependencias, escáneres de seguridad, cobertura y E2E.
+`just ci` runs sequentially and stops on the first failure. It includes the blocking gates applicable to a PR: frozen dependency install, CI contracts, doctor and issue labeler tests, dashboard build, markdown and skills catalog validation, formatting, Clippy, Huginn architecture checks, compilation, Rust and frontend test suites, documentation, dependency audit, security scanners, coverage, and E2E.
 
 ```bash
-# Suite local de PR, recomendada antes de abrir o actualizar un PR
+# Local PR suite, recommended before opening or updating a PR
 just ci
 
-# Atajos para iteración focalizada
+# Shortcuts for focused iteration
 just ci-lint
 just ci-check-only
 just ci-test-only
 just ci-ci
 ```
 
-`just ci-local` se conserva como alias compatible de `just ci`. `just ci-ci` es un atajo anterior sin E2E ni todos los gates; no sustituye `just ci` y `just ci-audit` ya es bloqueante cuando se llama directamente.
+`just ci-local` is preserved as a compatible alias for `just ci`. `just ci-ci` is an older shortcut without E2E or full gates; it does not replace `just ci`, and `just ci-audit` is already blocking when invoked directly.
 
-`just ci` requiere las dependencias del repositorio y las herramientas `cargo-audit`, `cargo-llvm-cov`, Docker, Gitleaks, `jq` y `uv`. `uv` prepara temporalmente Semgrep `1.126.0` (la versión fijada en GitHub Actions), con `setuptools<81` para mantener compatible el import de `pkg_resources`; Trivy debe estar instalado. Los artefactos temporales de coverage y Semgrep se guardan en `~/.cache/cortex-ci` por defecto; `CORTEX_CI_TMPDIR` puede cambiar esa ubicación. La receta no instala herramientas del sistema; si falta una dependencia, el paso falla. Docker debe estar iniciado para E2E.
+`just ci` requires repository dependencies and the tools `cargo-audit`, `cargo-llvm-cov`, Docker, Gitleaks, `jq`, and `uv`. `uv` temporarily provisions Semgrep `1.126.0` (the pinned version in GitHub Actions), with `setuptools<81` to keep `pkg_resources` imports compatible; Trivy must be installed. Temporary coverage and Semgrep artifacts are stored in `~/.cache/cortex-ci` by default; `CORTEX_CI_TMPDIR` can override that location. The recipe does not install system tools; if a dependency is missing, the step fails. Docker must be running for E2E.
 
-| Gate de GitHub Actions | Validación local | Límite local |
-|------------------------|-----------------|--------------|
-| Contratos CI | `node --test .github/scripts/ci-*.test.cjs` | Incluye el contrato del propio runner local. |
-| Doctor e issue labeler | `just doctor-test` y pruebas Node del labeler | Sin diferencia funcional prevista. |
-| Build dashboard, fmt, Markdown, Clippy, check, Rust tests, frontend, docs y cargo audit | Mismos comandos y configuración del workflow | Las dependencias se comparten desde el checkout local. |
-| Coverage Rust (87% líneas) y frontend | Generación local de ambos reportes y umbrales configurados | No carga reportes a Codecov. |
-| Trivy y Semgrep | Mismos escáneres/reglas y severidades; Semgrep usa `jq` para detectar findings SARIF sin supresión | GitHub Actions publica SARIF; los reportes locales se borran al terminar cada escaneo. |
-| Gitleaks | Escanea desde el merge-base de `CI_BASE_REF` hasta `HEAD` | GitHub analiza el rango exacto de commits de la PR; el clone local puede tener distinta profundidad. Define `CI_BASE_REF` si la ref local predeterminada `origin/main` no corresponde al target del PR. |
-| E2E | Requiere Docker y la imagen/flujo de `dev/e2e` | El entorno local puede diferir de `ubuntu-latest`. |
-| SonarCloud | No se ejecuta | Requiere `SONAR_TOKEN` y acceso al servicio remoto. |
-| Cross-compile Windows y builds de push | No incluidos en la suite de PR | Son validaciones exclusivas de push en GitHub Actions. |
+| GitHub Actions Gate | Local Validation | Local Limitation |
+|---------------------|------------------|------------------|
+| CI Contracts | `node --test .github/scripts/ci-*.test.cjs` | Includes the contract for the local runner itself. |
+| Doctor and Issue Labeler | `just doctor-test` and labeler Node tests | No planned functional difference. |
+| Dashboard build, fmt, Markdown, Clippy, check, Rust tests, frontend, docs, and cargo audit | Same commands and workflow configuration | Dependencies are shared from the local checkout. |
+| Rust coverage (87% lines) and frontend | Local generation of both reports and configured thresholds | Does not upload reports to Codecov. |
+| Trivy and Semgrep | Same scanners/rules and severities; Semgrep uses `jq` to detect unsuppressed SARIF findings | GitHub Actions publishes SARIF; local reports are removed after each scan. |
+| Gitleaks | Scans from the merge-base of `CI_BASE_REF` to `HEAD` | GitHub analyzes the exact PR commit range; local clone may have different depth. Define `CI_BASE_REF` if the default local ref `origin/main` does not match the PR target. |
+| E2E | Requires Docker and the `dev/e2e` image/flow | Local environment may differ from `ubuntu-latest`. |
+| SonarCloud | Not executed | Requires `SONAR_TOKEN` and remote service access. |
+| Windows cross-compile and push builds | Not included in PR suite | Exclusive to push workflows in GitHub Actions. |
 
-Consulta `.github/workflows/ci.yml` y `justfile` para la secuencia fuente de verdad. `just ci-local` y `just ci-ci` permanecen disponibles para compatibilidad, pero solo `just ci` representa la suite local completa de gates de PR.
+Consult `.github/workflows/ci.yml` and `justfile` for the canonical source of truth sequence. `just ci-local` and `just ci-ci` remain available for compatibility, but only `just ci` represents the full local PR gate suite.
 
 ## Troubleshooting
 
-### Tests reportan un bloqueo de SQLite
+### Tests Report SQLite Lock
 
-Comprueba que no haya otro proceso usando la base de datos de prueba. No borres la base de datos de desarrollo sin autorización; consulta `just db-reset` y su alcance antes de usarlo.
+Ensure no other process is using the test database. Do not delete the development database without authorization; check `just db-reset` and its scope before using it.
 
-### Dashboard no carga
+### Dashboard Does Not Load
 
-1. Comprueba que Rook responde: `curl http://127.0.0.1:8090/health` con `just dev-up`. Con `cargo run -p rook`, usa el puerto definido en `ServerConfig` (sección `[server]` del archivo indicado por `ROOK_CONFIG` o, si no está definido, `~/.cortex/rook/config.toml`): `curl http://127.0.0.1:3773/health` solo si contiene `port = 3773`; en otro caso, sustituye `3773` por el puerto configurado.
-2. Comprueba que la sesión de administración sea válida.
-3. Revisa los logs con `RUST_LOG=debug cargo run -p rook`.
+1. Check that Rook responds: `curl http://127.0.0.1:8090/health` with `just dev-up`. With `cargo run -p rook`, use the port defined in `ServerConfig` (`[server]` section of the file specified by `ROOK_CONFIG` or, if unset, `~/.cortex/rook/config.toml`): `curl http://127.0.0.1:3773/health` only if it contains `port = 3773`; otherwise replace `3773` with the configured port.
+2. Verify that the admin session is valid.
+3. Review logs with `RUST_LOG=debug cargo run -p rook`.
 
-### Circuit breaker activo
+### Circuit Breaker Active
 
-Consulta el estado actual con `GET /api/resilience`. La petición requiere una sesión autenticada; no es un endpoint público. Para el formato de respuesta y las operaciones disponibles, usa la [referencia de API](rook/api.md).
+Check the current state with `GET /api/resilience`. The request requires an authenticated session; it is not a public endpoint. For response format and available operations, see the [API reference](rook/api.md).
 
-### E2E con Docker falla o agota el tiempo
+### E2E with Docker Fails or Times Out
 
-Consulta el [Troubleshooting de Dev Testing Guide](../dev/README.md), que cubre los contenedores, puertos y la suite Playwright.
+Refer to the [Troubleshooting section in Dev Testing Guide](../dev/README.md), which covers containers, ports, and the Playwright suite.
 
-## Git hooks
+## Git Hooks
 
-El proyecto usa lefthook para gestionar hooks de git (`pre-commit`, `pre-push`, etc.):
+The project uses lefthook to manage git hooks (`pre-commit`, `pre-push`, etc.):
 
 ```bash
-# Instalar hooks (automático con `just setup`)
+# Install hooks (automatic with `just setup`)
 lefthook install
 
-# Ejecutar manualmente
+# Run manually
 lefthook run pre-commit
 lefthook run pre-push
 ```
 
-El hook `pre-push` ejecuta:
-- `ggshield secret scan pre-push`: escanea commits en busca de secretos antes de hacer push (requiere `ggshield` instalado y configurado con `GITGUARDIAN_API_KEY`).
-- `cargo clippy`: valida advertencias de Rust (-D warnings).
-- `cargo test`: ejecuta la suite de pruebas del workspace.
+The `pre-push` hook runs:
+- `ggshield secret scan pre-push`: scans commits for secrets before pushing (requires `ggshield` installed and configured with `GITGUARDIAN_API_KEY`).
+- `cargo clippy`: validates Rust warnings (-D warnings).
+- `cargo test`: runs the workspace test suite.
 
-## Documentación
+## Documentation
 
 ```bash
-# Lint de markdown y validación del catálogo de skills
+# Markdown lint and skills catalog validation
 pnpm exec markdownlint-cli2 "docs/**/*.md" "*.md" ".agents/AGENTS.md" ".agents/contexts/*.md"
 node scripts/validate-skills.mjs
 
-# Verificar links internos
-# (usar herramienta preferida del equipo)
+# Verify internal links
+# (use team preferred tool)
 ```
 
-## Arquitectura y decisiones
+## Architecture and Decisions
 
-- [Arquitectura de Rook](rook/architecture.md)
-- [ADR Index](adr/README.md) — Decisiones generales
-- [ADRs de Huginn](huginn/adr/README.md) — Decisiones de Huginn
+- [Rook Architecture](rook/architecture.md)
+- [ADR Index](adr/README.md) — General decisions
+- [Huginn ADRs](huginn/adr/README.md) — Huginn decisions
 
-## Configs de CI/CD
+## CI/CD Configs
 
-Los workflows de GitHub están en `.github/workflows/`:
+GitHub workflows are located in `.github/workflows/`:
 
-- `ci.yml` — Tests, lint, seguridad
-- `release.yml` — Publicación de releases
-- `labeler.yml` — Auto-labeling de PRs
+- `ci.yml` — Tests, lint, security
+- `release.yml` — Release publishing
+- `labeler.yml` — PR auto-labeling
 
-### Requisitos externos de calidad: preparación y activación
+### External Quality Gates: Preparation and Activation
 
-La implementación local y la activación en GitHub son operaciones distintas.
-Este procedimiento no demuestra que el workflow actualizado esté publicado en
-`main` ni que los requisitos externos estén activos. La activación queda pendiente
-hasta que un administrador ejecute y verifique el cambio autorizado.
+Local implementation and GitHub activation are separate operations.
+This procedure does not prove that the updated workflow is published to
+`main` or that external requirements are active. Activation remains pending
+until an administrator executes and verifies the authorized change.
 
-El helper `.github/scripts/ci-quality-ruleset.cjs` está limitado a
-`dallay/cortex`, rama predeterminada `main`, ruleset `17001295`, de origen
-`Repository`, activo y de tipo `branch`. Antes de preparar el payload, compara
-la política editable completa con `.github/ci-quality-policy.json`: las cinco
-reglas, los doce checks originales con sus Apps y parámetros, las condiciones,
-los actores de bypass, el nombre y la política estricta. Rechaza cualquier
-protección ausente, alterada, duplicada o inesperada. La comparación de arrays
-conserva orden y multiplicidad; tampoco acepta reordenaciones del baseline.
-No fija metadata de respuesta como `updated_at` o `node_id`.
-Conserva toda esa política y permite añadir únicamente estas identidades:
+The helper `.github/scripts/ci-quality-ruleset.cjs` is restricted to
+`dallay/cortex`, default branch `main`, ruleset `17001295`, origin
+`Repository`, active, and of type `branch`. Before preparing the payload, it compares
+the full editable policy against `.github/ci-quality-policy.json`: the five
+rules, the twelve original checks with their Apps and parameters, conditions,
+bypass actors, name, and strict policy. It rejects any missing, altered,
+duplicated, or unexpected protection. Array comparison preserves order and
+multiplicity; baseline reorderings are also rejected. It does not fix response
+metadata like `updated_at` or `node_id`. It preserves all that policy and allows
+adding only these identities:
 
 - `CodeQL`: `integration_id=57789`, App `github-advanced-security`.
 - `SonarCloud Code Analysis`: `integration_id=12526`, App `sonarqubecloud`.
 
-No añade una regla `code_scanning` ni modifica umbrales de severidad. No se ha
-verificado aquí el umbral actual de CodeQL. Un nombre ya vinculado a otra App,
-sin App definida o duplicado bloquea la operación; no se sustituye silenciosamente.
-Repetir la preparación no duplica checks.
+It does not add a `code_scanning` rule or modify severity thresholds. The current
+CodeQL threshold has not been verified here. A name already linked to another App,
+lacking an App definition, or duplicated blocks the operation; it is not silently replaced.
+Repeating the preparation does not duplicate checks.
 
-Desde una copia local revisada y confiable, valida primero sin credenciales:
+From a reviewed and trusted local copy, validate first without credentials:
 
 ```bash
 node --test .github/scripts/ci-quality-ruleset.test.cjs
@@ -300,38 +299,38 @@ node --test .github/scripts/ci-*.test.cjs
 actionlint .github/workflows/ci.yml
 ```
 
-Para consultar el ruleset, autentica `gh` contra `github.com` con permisos de
-lectura. El comando predeterminado solo hace GET y muestra el payload permitido
-por la API y la lista de requisitos añadidos. No activa cambios:
+To query the ruleset, authenticate `gh` against `github.com` with read permissions.
+The default command only performs a GET and displays the allowed API payload
+and list of added requirements. It does not apply changes:
 
 ```bash
 node .github/scripts/ci-quality-ruleset.cjs
-# Equivalente explícito:
+# Explicit equivalent:
 node .github/scripts/ci-quality-ruleset.cjs --dry-run
 ```
 
-Antes de activar, publica y revisa el workflow y todos sus archivos CI asociados
-en `main`, confirma la configuración de SonarCloud y observa ambos checks
-externos en una PR real.
-El scan debe ejecutarse en toda PR, también de documentación, sin `sonar_exempt`,
-con `-Dsonar.qualitygate.wait=true` y `-Dsonar.qualitygate.timeout=300`.
-Analizar PRs de documentación añade consumo de runner, cobertura y análisis;
-la espera del quality gate también puede prolongar el job hasta su timeout.
-Los forks y Dependabot sin credenciales quedan bloqueados: no uses
-`pull_request_target` ni transfieras automáticamente código de forks a ramas
-internas para obtener secretos.
+Before activating, publish and review the workflow and all associated CI files
+in `main`, confirm SonarCloud configuration, and observe both external checks
+in a real PR.
+The scan must run on every PR, including documentation PRs, without `sonar_exempt`,
+with `-Dsonar.qualitygate.wait=true` and `-Dsonar.qualitygate.timeout=300`.
+Analyzing documentation PRs adds runner consumption, coverage, and analysis;
+waiting for the quality gate can also prolong the job until its timeout.
+Forks and Dependabot without credentials remain blocked: do not use
+`pull_request_target` or automatically transfer code from forks to internal
+branches to obtain secrets.
 
-**Advertencia:** el siguiente comando modifica GitHub. Úsalo solo con autorización
-de activación, permisos de administración y sin otro administrador editando el
-ruleset. No forma parte de la validación local:
+**Warning:** the following command modifies GitHub. Use only with activation
+authorization, admin permissions, and without another administrator editing the
+ruleset. It is not part of local validation:
 
 ```bash
 node .github/scripts/ci-quality-ruleset.cjs --apply
 ```
 
-El preflight resuelve `main` una sola vez a un SHA de commit inmutable. Compara
-SHA-256 del contenido de estos nueve archivos en ese mismo commit con la copia
-local revisada; un archivo ausente o distinto bloquea el PUT:
+The preflight resolves `main` once to an immutable commit SHA. It compares
+the SHA-256 of the contents of these nine files in that same commit with the
+reviewed local copy; a missing or differing file blocks the PUT:
 
 - `.github/workflows/ci.yml`
 - `.github/ci-path-filters.json`
@@ -343,16 +342,15 @@ local revisada; un archivo ausente o distinto bloquea el PUT:
 - `.github/scripts/ci-quality-ruleset.test.cjs`
 - `.github/ci-quality-policy.json`
 
-Publicar solo `ci.yml` no basta. Los archivos de documentación no son requisitos
-de ejecución. El dry-run sigue disponible aunque `main` conserve la CI anterior;
-no implica que `--apply` pueda superar la comprobación de publicación.
+Publishing only `ci.yml` is not sufficient. Documentation files are not execution
+requirements. Dry-run remains available even if `main` retains earlier CI;
+it does not imply that `--apply` can pass the publication check.
 
-Además comprueba marcadores de ejecución en toda PR y espera del quality gate.
-Es una comprobación conservadora del formato YAML en bloques usado aquí, no un
-intérprete YAML ni una prueba de ejecución del workflow; formatos o condiciones
-no admitidos requieren revisión, no un bypass. Lee los contenidos remotos como
-datos; nunca ejecuta código remoto o de una PR. Ejecuta `gh` con argumentos
-separados, sin shell.
+In addition, it checks execution markers across all PRs and quality gate waiting.
+It is a conservative check of the block YAML format used here, not a full YAML
+parser or workflow execution test; unsupported formats or conditions require review,
+not a bypass. It reads remote content as data; it never executes remote or PR code.
+It runs `gh` with separated arguments, without a shell.
 
 Before the PUT, the helper saves the original snapshot with restricted permissions
 under `opencode/ci-quality-ruleset-*` in the system temporary directory and prints
@@ -362,14 +360,14 @@ transactional: the API does not provide an atomic compare-and-write operation, a
 `main` can still advance between the final ref check and the PUT. Avoid concurrent
 publications and administrative edits during activation. After the PUT, the helper
 reads the ruleset again and compares all preserved fields and both new identities.
-Un error de escritura o verificación exige inspección manual con el snapshot;
-no hace rollback automático que pueda borrar cambios de otro administrador.
+A write or verification error requires manual inspection using the snapshot;
+it does not perform an automatic rollback that could erase changes from another administrator.
 
-### Troubleshooting de Docker
+### Docker Troubleshooting
 
-Para problemas específicos de E2E y Docker, consulta la sección **Troubleshooting** de [Dev Testing Guide](../dev/README.md).
+For specific E2E and Docker issues, refer to the **Troubleshooting** section in [Dev Testing Guide](../dev/README.md).
 
-### `just doctor` reporta herramientas faltantes
-- Instala manualmente lo que falte según la salida del comando; `just doctor` no instala herramientas.
-- Node.js y pnpm se verifican contra `package.json`; Rust y sus componentes contra `rust-toolchain.toml`.
-- Las herramientas Cargo opcionales corresponden a recetas del `justfile`. Para validar el diagnóstico, ejecuta `just doctor-test`.
+### `just doctor` Reports Missing Tools
+- Manually install what is missing according to the command output; `just doctor` does not install tools.
+- Node.js and pnpm are verified against `package.json`; Rust and its components against `rust-toolchain.toml`.
+- Optional Cargo tools correspond to recipes in `justfile`. To validate diagnostics, run `just doctor-test`.

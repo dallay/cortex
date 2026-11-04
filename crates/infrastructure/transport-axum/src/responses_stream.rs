@@ -1,4 +1,4 @@
-//! Codificador incremental con acumulación acotada para las instantáneas finales.
+//! Incremental encoder with bounded accumulation for final snapshots.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -73,8 +73,8 @@ impl ResponsesStream {
     }
 
     pub fn push(&mut self, chunk: StreamChunk) -> Result<Vec<Value>, &'static str> {
-        // Revertir únicamente el frame rechazado, no copiar la salida acumulada.
-        // Guardar longitudes evita copiar argumentos por cada delta recibido.
+        // Revert only the rejected frame, do not copy accumulated output.
+        // Storing lengths avoids copying arguments for each received delta.
         let previous_indices: HashSet<_> = self.tools.keys().copied().collect();
         let previous_tools: Vec<_> = self
             .tools
@@ -132,7 +132,7 @@ impl ResponsesStream {
             self.output_bytes = previous_output_bytes;
             self.argument_bytes = previous_argument_bytes;
             self.finish_reason = previous_finish;
-            // El uso observado sí pertenece al intento, aunque se rechace el contenido.
+            // Observed usage belongs to the attempt, even if content is rejected.
         }
         result
     }
@@ -200,7 +200,7 @@ impl ResponsesStream {
                 tool.id = Some(id);
             }
             if let Some(name) = delta.function.name.filter(|name| !name.is_empty()) {
-                // Anthropic repite la identidad completa en su resumen terminal.
+                // Anthropic repeats the full identity in its terminal summary.
                 let summary = chunk.finish_reason.is_some()
                     && coherent_id
                     && tool.name == name
@@ -226,7 +226,7 @@ impl ResponsesStream {
             }
             self.emit_tool(delta.index, chunk.finish_reason.is_some(), &mut events)?;
         }
-        // Un finish separado también materializa funciones sin argumentos.
+        // A separate finish also materializes functions without arguments.
         if matches!(
             chunk.finish_reason,
             Some(FinishReason::Length | FinishReason::ContentFilter)
@@ -254,7 +254,7 @@ impl ResponsesStream {
         events: &mut Vec<Value>,
     ) -> Result<(), &'static str> {
         if let Some(tool) = self.tools.get_mut(&tool_index) {
-            // Esperar al primer argumento permite ensamblar nombres fragmentados.
+            // Waiting for the first argument allows assembling fragmented names.
             if tool.output_index.is_none()
                 && !tool.name.is_empty()
                 && (!tool.arguments.is_empty() || finalizing)
@@ -348,7 +348,7 @@ impl ResponsesStream {
         if finish == FinishReason::Stop && !self.tools.is_empty() {
             return Err("Estado stop con funciones");
         }
-        // Validar todo antes de publicar eventos done: un fallo no debe anunciar éxito.
+        // Validate everything before publishing done events: failure must not advertise success.
         for tool in self.tools.values() {
             let Some(_) = tool.output_index else {
                 return Err("Llamada de función incompleta");

@@ -1,69 +1,69 @@
 # Rook — AI Proxy and Router
 
-Rook es el componente principal de Cortex: un proxy y router de IA de alto rendimiento escrito en Rust.
+Rook is the core component of Cortex: a high-performance AI proxy and router written in Rust.
 
-## Guía rápida
+## Quick Start
 
 ```bash
 # Run Rook
 cargo run -p rook
 
-# O con just
+# Or using just
 just run
 
 # Health check
 curl http://127.0.0.1:3773/health
 ```
 
-## Estructura de documentación
+## Documentation Structure
 
 ```
 rook/
-├── README.md              ← Este archivo
-├── architecture.md        ← Arquitectura interna
-├── api.md                 ← Referencia de API HTTP
-├── configuration.md       ← Guía de configuración
-├── providers.md           ← Configuración de proveedores
-├── deployment.md          ← Guía de despliegue
+├── README.md              ← This file
+├── architecture.md        ← Internal architecture
+├── api.md                 ← HTTP API reference
+├── configuration.md       ← Configuration guide
+├── providers.md           ← Provider configuration
+├── deployment.md          ← Deployment guide
 ├── product-requirements.md ← Product requirements
 └── adr/                   ← Architecture Decision Records
     └── README.md
 ```
 
-## Documentación
+## Documentation
 
 ### Product
 - [Product Requirements](product-requirements.md) — Product scope, requirements, and open questions
 
-### Primeros pasos
-1. [Configuración](configuration.md) — Cómo configurar Rook
-2. [API Reference](api.md) — Endpoints disponibles
-3. [Providers](providers.md) — Configurar modelos de IA
-4. [Dashboard](../../apps/rook/dashboard/README.md) — Interfaz visual de gestión
+### Getting Started
+1. [Configuration](configuration.md) — How to configure Rook
+2. [API Reference](api.md) — Available endpoints
+3. [Providers](providers.md) — Configure AI models
+4. [Dashboard](../../apps/rook/dashboard/README.md) — Visual management interface
 
-### Desarrollo
-- [Arquitectura](architecture.md) — Diseño interno y capas
-- [Despliegue](deployment.md) — Producción y contenedores
+### Development
+- [Architecture](architecture.md) — Internal design and layers
+- [Deployment](deployment.md) — Production and containers
 
-### Decisiones de arquitectura
-- [ADR Index](adr/README.md) — Decisiones técnicas de Rook
+### Architecture Decisions
+- [ADR Index](adr/README.md) — Technical decisions for Rook
 
-## Conceptos clave
+## Key Concepts
 
-### Proxy y Router
-Rook actúa como un proxy inteligente entre tu aplicación y múltiples proveedores de IA (OpenAI, Anthropic, Ollama, etc.). Permite:
-- Routing dinámico por modelo, proveedor o prioridad
-- Circuit breaker para resiliencia
-- Rate limiting por tier
+### Proxy and Router
+Rook acts as an intelligent proxy between your application and multiple AI providers (OpenAI, Anthropic, Ollama, etc.). It provides:
+- Dynamic routing by model, provider, or priority
+- Circuit breaker for resilience
+- Rate limiting by tier
 
-### API Compatible
-Rook expone una API OpenAI-compatible (`/v1/chat/completions`) que transparenta la complejidad de múltiples proveedores.
+### Compatible API
+Rook exposes an OpenAI-compatible API (`/v1/chat/completions`) that abstracts away the complexity of multiple providers.
 
 ### Dashboard
-El dashboard Vue SPA está embebido en el binario de Rook bajo `/dashboard/` y permite gestión visual de providers y API keys.
+The Vue SPA dashboard is embedded into the Rook binary under `/dashboard/` and enables visual management of providers and API keys.
 
-## Recursos adicionales
+## Additional Resources
 
-- [README principal](../../README.md) — Overview del proyecto Cortex
-- [Dashboard docs](../../apps/rook/dashboard/README.md) — Desarrollo del dashboard
-- [Desarrollo local](../development.md) — Setup y testing
+- [Main README](../../README.md) — Cortex project overview
+- [Dashboard docs](../../apps/rook/dashboard/README.md) — Dashboard development
+- [Local development](../development.md) — Setup and testing

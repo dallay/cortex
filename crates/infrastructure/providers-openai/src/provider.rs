@@ -485,8 +485,8 @@ impl OpenAIProvider {
                 Some(FinishReason::Length | FinishReason::ContentFilter)
             )
         {
-            // Responses conserva los argumentos parciales cuando el proveedor
-            // declara un finish incompleto; Chat y Messages mantienen su contrato.
+            // Responses preserves partial arguments when the provider
+            // declares an incomplete finish; Chat and Messages keep their contract.
             tool_call_validator.calls.clear();
             tool_call_validator.total_argument_bytes = 0;
         }

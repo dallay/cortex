@@ -33,24 +33,24 @@ is removed. Plugin-owned tasks and registrations are disposed during teardown.
 The concrete agent loop is replaceable without changing kernel implementation.
 First-party capabilities may be statically linked native Rust.
 
-## Decisión posterior — sustitución cooperativa de proveedores (2026-10-29)
+## Subsequent Decision — Cooperative Provider Substitution (2026-10-29)
 
-El supervisor puede sustituir un proveedor de servicio activo sin reiniciar el
-proceso. La alternativa debe seguir publicando todos los servicios del proveedor
-anterior. Puede añadir servicios solo si ningún otro plugin registrado declara
-esos IDs. Así se conserva el conjunto de servicios existente y se permite una
-extensión segura.
+The supervisor can substitute an active service provider without restarting the
+process. The alternative must continue publishing all services of the previous
+provider. It may add services only if no other registered plugin declares
+those IDs. This preserves the existing service set while allowing safe
+extension.
 
-Antes del commit, el supervisor cierra la admisión de leases para la generación
-anterior, ejecuta los hooks de drenaje disponibles y espera a que terminen las
-leases activas dentro de un único plazo finito. El plazo de los hooks y la espera
-de leases no cancelan operaciones válidas protegidas por leases.
-`RequireFullDrain` rechaza la solicitud si algún dependent activo de cualquier
-servicio de esa generación no tiene hook de drenaje. `ReportUndrained` permite
-esos dependientes y los registra. Si falla el drenaje, vence el plazo de leases o
-falla la activación alternativa, se reabre la generación anterior y se reanudan
-los dependientes cuyo drenaje se intentó. El kernel registra el resultado de la
-sustitución y los IDs de dependientes drenados y no drenados.
+Before commit, the supervisor closes lease admission for the previous
+generation, executes available drain hooks, and waits for active leases to finish
+within a single finite deadline. The hooks deadline and lease wait do not cancel
+valid operations protected by leases.
+`RequireFullDrain` rejects the request if any active dependent of any service
+in that generation lacks a drain hook. `ReportUndrained` permits those dependents
+and records them. If draining fails, the lease deadline expires, or alternative
+activation fails, the previous generation is reopened and dependents whose
+drain was attempted are resumed. The kernel records the substitution outcome
+and the IDs of drained and undrained dependents.
 
 If the substitution future is cancelled before commit, the supervisor reopens the
 previous gates and schedules cleanup of the alternative and resumption of attempted
@@ -68,52 +68,51 @@ retained handles cannot acquire new leases. The lifecycle order places the
 alternative after its required providers and before its existing dependents. The
 supervisor rejects a substitution when no position satisfies both constraints.
 
-Las leases son un contrato cooperativo de API, no una revocación fuerte. El
-consumidor debe mantener la lease durante toda la operación y no debe conservar
-una referencia interna al proveedor después de liberar la lease. El método
-heredado `resolve() -> Arc<T>` sigue disponible, pero no ofrece esta garantía.
-El kernel no garantiza revocar `Arc`s retenidos ni trabajo detached.
+Leases are a cooperative API contract, not strong revocation. The
+consumer must hold the lease throughout the entire operation and must not retain
+an internal reference to the provider after releasing the lease. The legacy
+`resolve() -> Arc<T>` method remains available, but does not provide this guarantee.
+The kernel does not guarantee revocation of retained `Arc` references or detached work.
 
-Esta decisión no añade comportamiento específico de capacidades a
-`huginn-core`, no cambia `huginn-plugin-api::v1` y no promete revocar referencias
-arbitrarias a proveedores. Refina el requisito previo de que los dependientes
-dejen de aceptar trabajo antes de retirar un proveedor requerido.
+This decision adds no capability-specific behavior to
+`huginn-core`, does not change `huginn-plugin-api::v1`, and does not promise to revoke
+arbitrary provider references. It refines the prerequisite that dependents
+stop accepting work before removing a required provider.
 
-## Decisión posterior — slots y rebind de loop en producción (2026-10-29)
+## Subsequent Decision — Slots and Production Loop Rebinding (2026-10-29)
 
-El kernel mantiene una tabla global de slots por `ServiceId`. Un
-`ServiceSlotHandle<T>` retiene la tabla y el ID; cada `acquire()` resuelve el
-valor y gate vigentes e incrementa su lease bajo la misma sincronización. El
-commit reemplaza todos los slots de la generación en una sección crítica. Un
-abort precommit restaura el provider anterior, reabre los gates y reanuda los
-dependientes cuyo drain se intentó. El timeout no cancela operaciones activas.
+The kernel maintains a global slot table by `ServiceId`. A
+`ServiceSlotHandle<T>` retains the table and ID; each `acquire()` resolves the
+active value and gate and increments its lease under the same synchronization.
+Commit replaces all slots of the generation in a critical section. A
+precommit abort restores the previous provider, reopens gates, and resumes
+dependents whose drain was attempted. The timeout does not cancel active operations.
 
-En producción, `huginn_application::composition::build` y los builders nativos
-de `huginn_runtime::composition` publican el adapter privado `LeasedAgentLoop`
-mediante la factory `leased_loop_plugin` y `LeasedLoopPlugin`. `run` y `compact`
-obtienen admisión y leases de model y session antes de producir efectos, y las
-mantienen hasta completar la operación. Todos los `save` de una operación usan
-el mismo store. El drain cierra la admisión y espera operaciones activas;
-`resume` la reabre tras abort o commit. Si falla la segunda lease, RAII libera
-la primera sin mutar session ni producir efectos. El tipo concreto de plugin
-sigue privado.
+In production, `huginn_application::composition::build` and native builders in
+`huginn_runtime::composition` publish the private `LeasedAgentLoop` adapter
+via the `leased_loop_plugin` factory and `LeasedLoopPlugin`. `run` and `compact`
+obtain admission and model/session leases before producing effects, and
+retain them until the operation completes. All `save` calls in an operation use
+the same store. Drain closes admission and awaits active operations;
+`resume` reopens admission after an abort or commit. If the second lease fails, RAII releases
+the first without mutating the session or producing effects. The concrete plugin type
+remains private.
 
-La compatibilidad pública prevalece sobre la conversión del loop legacy:
-`StandardLoop` conserva sus seis campos públicos, firmas y struct literals;
-`LoopPlugin(pub LoopConfig)` conserva su constructor. El uso directo de esos
-tipos publica el loop estático y no obtiene garantía de rebind. La garantía de
-producción pertenece a los builders que registran `LeasedLoopPlugin` mediante
+Public compatibility takes precedence over converting the legacy loop:
+`StandardLoop` preserves its six public fields, signatures, and struct literals;
+`LoopPlugin(pub LoopConfig)` preserves its constructor. Direct use of these
+types publishes the static loop and does not receive rebinding guarantees. The
+production guarantee belongs to builders registering `LeasedLoopPlugin` via
 `leased_loop_plugin`.
 
-La readiness de doctor, CLI y TUI adquiere el slot actual de `ModelService` en
-cada comprobación y falla cerrada si no se puede adquirir. No conserva un
-`Arc<ModelProvider>` ni una bool de readiness capturada. Esta lectura dinámica
-no amplía la garantía cooperativa de las leases.
+Doctor, CLI, and TUI readiness acquires the current `ModelService` slot on
+each check and fails closed if acquisition fails. It does not retain an
+`Arc<ModelProvider>` or a captured readiness boolean. This dynamic reading
+does not extend the cooperative guarantee of leases.
 
-`SqliteSessions::lease`, `load` y `list` siguen fuera de `SessionsService` y
-directos al adapter `SqliteSessions`. La sustitución no transfiere locks ni
-migra estado al store nuevo. No se añade migración de base de datos ni cambio
-de esquema.
+`SqliteSessions::lease`, `load`, and `list` remain outside `SessionsService` and
+connect directly to the `SqliteSessions` adapter. Substitution does not transfer locks or
+migrate state to the new store. No database migration or schema changes are added.
 
 Hot reload, dynamic native libraries, multiple scopes, provider fan-out and a
 public plugin SDK are outside the MVP.

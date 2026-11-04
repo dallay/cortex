@@ -1,173 +1,173 @@
-# Excepciones puntuales de rutas en Semgrep
+# Targeted Path Exceptions in Semgrep
 
-## Alcance y autorización
+## Scope and Authorization
 
-El usuario autorizó exactamente siete excepciones nuevas para la regla
-`rust.actix.path-traversal.tainted-path.tainted-path`, por expresión y no por
-archivo. Lens y Mirror aceptaron el triaje y la formulación del riesgo residual:
-`ses_e828d89f0ffeUAnQyVDAzESwf7` y `ses_e828d899bffegiooi6Zl3B671x`.
-Lens y Mirror dieron `VERDICT CLEAN` al árbol completo respaldado en `ee44ab8`.
-Esta unidad B1 reconstruye solo el scanner sobre `origin/main` (`5945002`), sin
-hooks ni guards F1/F2. Su evidencia se verifica por separado, no se hereda.
+The user authorized exactly seven new exceptions for the rule
+`rust.actix.path-traversal.tainted-path.tainted-path`, per expression rather than
+per file. Lens and Mirror accepted the triage and residual risk formulation:
+`ses_e828d89f0ffeUAnQyVDAzESwf7` and `ses_e828d899bffegiooi6Zl3B671x`.
+Lens and Mirror granted `VERDICT CLEAN` to the entire tree rooted at `ee44ab8`.
+This B1 unit rebuilds only the scanner on `origin/main` (`5945002`), without
+F1/F2 hooks or guards. Its evidence is verified independently, not inherited.
 
-No se cambian I/O, validadores, reglas, severidad, exclusiones ni baseline.
-Una anotación solo afecta a la expresión inmediatamente siguiente. Cambiar la
-expresión, función, razón, enlace o inventario requiere una nueva revisión.
-Estas excepciones no autorizan rutas arbitrarias suministradas por el modelo.
+No changes are made to I/O, validators, rules, severity, exclusions, or baseline.
+An annotation only affects the immediately following expression. Changing the
+expression, function, reason, link, or inventory requires a new review.
+These exceptions do not authorize arbitrary paths supplied by the model.
 
-En los cuatro casos del runtime, la validación canónica bloquea traversal por
-argumentos en un árbol estable. La sustitución concurrente de archivos o enlaces
-entre validación e I/O sigue siendo un riesgo residual **no resuelto**. No hay
-confinamiento atómico. Las comprobaciones de metadata y contenido
-obsoleto no eliminan esa carrera. Las excepciones no afirman lo contrario.
+In all four runtime cases, canonical validation blocks path traversal via
+arguments within a stable tree. Concurrent substitution of files or symlinks
+between validation and I/O remains an **unresolved** residual risk. There is
+no atomic confinement. Metadata and stale content checks do not eliminate
+that race condition. The exceptions do not claim otherwise.
 
 ## huginn-config
 
-- Archivo: `apps/huginn/src/config.rs`; función `Config::load`.
-- Expresión: `match std::fs::read_to_string(&resolved)`.
-- Origen: opción del operador `--config` o rutas fijas de configuración del host.
-  Leer fuera del workspace es intencional. No es una ruta de una tool/modelo.
-- `PathBuf` representa una ruta; no la sanea ni confiere autorización por sí mismo.
+- File: `apps/huginn/src/config.rs`; function `Config::load`.
+- Expression: `match std::fs::read_to_string(&resolved)`.
+- Origin: operator option `--config` or fixed host configuration paths.
+  Reading outside the workspace is intentional. Not a tool/model path.
+- `PathBuf` represents a path; it does not sanitize or grant authorization by itself.
 
 ## huginn-ui-settings
 
-- Archivo: `apps/huginn/src/ui_settings.rs`; función privada `load_or_init`.
-- Expresión: `fs::read_to_string(path)`.
-- `persist_seeded` recibe del host la ruta de guardado de configuración o la
-  configuración anterior como semilla de migración. La UI cambia valores `[ui]`,
-  no suministra un filepath. No se concede acceso a rutas del modelo.
+- File: `apps/huginn/src/ui_settings.rs`; private function `load_or_init`.
+- Expression: `fs::read_to_string(path)`.
+- `persist_seeded` receives from the host the configuration save path or the
+  prior configuration as a migration seed. The UI modifies `[ui]` values,
+  it does not supply a filepath. No access is granted to model-provided paths.
 
 ## rook-usage-db
 
-- Archivo: `apps/rook/src/di.rs`; función `RookContainer::build`.
-- Expresión: `SqliteUsageRepository::new(Path::new(&config.database.db_path))`.
-- `db_path` es configuración SQLite del operador en la composición del servidor,
-  no un argumento HTTP/modelo. Puede estar fuera de un workspace de Huginn.
-- `Path::new` solo convierte la representación; no valida, sanea ni hace I/O.
-  El constructor abre la base SQLite autorizada por esa configuración.
+- File: `apps/rook/src/di.rs`; function `RookContainer::build`.
+- Expression: `SqliteUsageRepository::new(Path::new(&config.database.db_path))`.
+- `db_path` is operator SQLite configuration in the server composition,
+  not an HTTP/model argument. It may reside outside a Huginn workspace.
+- `Path::new` only converts the representation; it does not validate, sanitize, or perform I/O.
+  The constructor opens the SQLite database authorized by that configuration.
 
 ## runtime-prepare
 
-- Archivo: `crates/huginn/runtime/src/tools.rs`; método `NativeTool::prepare`.
-- Expresión: `Some(tokio::fs::read_to_string(&resolved).await?)`.
-- `resolve_path` canonicaliza la raíz y el destino existente, o el padre para
-  nuevas escrituras; exige pertenencia a la raíz y rechaza enlaces colgantes.
-  La lectura original para la previsualización también comprueba tipo y tamaño.
-- Garantía limitada al árbol estable; sustitución concurrente no resuelta.
+- File: `crates/huginn/runtime/src/tools.rs`; method `NativeTool::prepare`.
+- Expression: `Some(tokio::fs::read_to_string(&resolved).await?)`.
+- `resolve_path` canonicalizes the root and existing destination, or parent for
+  new writes; requires root membership and rejects dangling symlinks.
+  Original preview read also checks type and size.
+- Guarantee limited to a stable tree; concurrent substitution unresolved.
 
 ## runtime-mutation
 
-- Archivo: `crates/huginn/runtime/src/tools.rs`; función privada `execute_mutation`.
-- Expresión: `let current = match tokio::fs::read_to_string(path).await`.
-- El caller `NativeTool::execute` vuelve a resolver y comprobar la ruta
-  contra la preparación antes de llamar a este helper. El helper comprueba tipo,
-  tamaño y contenido original para rechazar una aprobación obsoleta.
-- Garantía limitada al árbol estable; no hay confinamiento atómico ni solución
-  de la sustitución concurrente entre comprobación y lectura/escritura.
+- File: `crates/huginn/runtime/src/tools.rs`; private function `execute_mutation`.
+- Expression: `let current = match tokio::fs::read_to_string(path).await`.
+- The caller `NativeTool::execute` re-resolves and rechecks the path
+  against preparation before calling this helper. The helper verifies type,
+  size, and original content to reject stale approvals.
+- Guarantee limited to a stable tree; no atomic confinement or resolution
+  for concurrent substitution between check and read/write.
 
 ## runtime-read
 
-- Archivo: `crates/huginn/runtime/src/tools.rs`; función privada `execute_read`.
-- Expresión: `let text = tokio::fs::read_to_string(path).await?`.
-- El mismo caller privado de ejecución revalida la ruta del workspace antes de
-  despachar la lectura. El helper comprueba archivo regular y límite de tamaño.
-- Garantía limitada al árbol estable; sustitución concurrente no resuelta.
+- File: `crates/huginn/runtime/src/tools.rs`; private function `execute_read`.
+- Expression: `let text = tokio::fs::read_to_string(path).await?`.
+- The same private execution caller revalidates the workspace path before
+  dispatching the read. The helper verifies regular file and size limit.
+- Guarantee limited to a stable tree; concurrent substitution unresolved.
 
 ## runtime-search
 
-- Archivo: `crates/huginn/runtime/src/tools.rs`; función `execute_search`.
-- Expresión: `let Ok(text) = tokio::fs::read_to_string(&file).await`.
-- La raíz procede del caller validado. `workspace_files` enumera solo
-  entradas regulares/directorios, omite enlaces y directorios de dependencias,
-  sin seguir enlaces. Antes de leer, `execute_search` comprueba el límite de
-  tamaño. El archivo raíz directo también procede de la resolución canónica.
-- Garantía limitada al árbol estable; enumerar sin enlaces no impide una
-  sustitución concurrente posterior. No hay confinamiento atómico.
+- File: `crates/huginn/runtime/src/tools.rs`; function `execute_search`.
+- Expression: `let Ok(text) = tokio::fs::read_to_string(&file).await`.
+- The root originates from the validated caller. `workspace_files` enumerates only
+  regular entries/directories, omitting symlinks and dependency directories,
+  without following symlinks. Before reading, `execute_search` verifies the size
+  limit. Direct root file also originates from canonical resolution.
+- Guarantee limited to a stable tree; enumerating without symlinks does not prevent
+  subsequent concurrent substitution. No atomic confinement.
 
-## Inventario histórico separado
+## Separate Historical Inventory
 
-Siete anotaciones anteriores de la misma regla permanecen intactas. No se
-aprueban ni se reinterpretan en esta resolución. Líneas anteriores al cambio:
+Seven previous annotations of the same rule remain intact. They are neither
+approved nor reinterpreted in this resolution. Lines prior to change:
 
-- `apps/rook/src/di.rs:495`: `is_in_memory_sqlite_target` (anotación de función).
-- `apps/rook/src/di.rs:529`: `resolve_api_key_secret`, conversión con `replacen`.
-- `apps/rook/src/di.rs:531`: `resolve_api_key_secret`, conversión directa.
-- `apps/rook/src/di.rs:582`: `resolve_api_key_secret`, lectura del secreto.
-- `apps/rook/src/config.rs:453`: `RookConfig::load`, lectura de configuración.
-- `apps/rook/src/main.rs:328`: `load_config`, carga de configuración.
-- `apps/rook/src/main.rs:343`: `load_config_with_path`, carga de configuración.
+- `apps/rook/src/di.rs:495`: `is_in_memory_sqlite_target` (function annotation).
+- `apps/rook/src/di.rs:529`: `resolve_api_key_secret`, conversion with `replacen`.
+- `apps/rook/src/di.rs:531`: `resolve_api_key_secret`, direct conversion.
+- `apps/rook/src/di.rs:582`: `resolve_api_key_secret`, reading the secret.
+- `apps/rook/src/config.rs:453`: `RookConfig::load`, configuration read.
+- `apps/rook/src/main.rs:328`: `load_config`, configuration load.
+- `apps/rook/src/main.rs:343`: `load_config_with_path`, configuration load.
 
-El verificador compara identidades por archivo/función/expresión, no números de
-línea ni un total global de siete. Exige **7 nuevas y 7 históricas** por separado.
+The checker compares identities by file/function/expression, not line numbers
+or a global total of seven. It requires **7 new and 7 historical** separately.
 
-## Controles reproducibles
+## Reproducible Controls
 
-Ejecutar con el Semgrep instalado por CI:
+Run with the Semgrep installed by CI:
 
 ```sh
 python3 .github/scripts/check-semgrep-path-exceptions.py
 ```
 
-Para reproducir el motor de CI sin cambiar la instalación global, instala Semgrep
-1.126.0 con Python 3.12 y setuptools 80.9.0 en un entorno aislado. Luego ejecuta:
+To reproduce the CI engine without modifying the global installation, install Semgrep
+1.126.0 with Python 3.12 and setuptools 80.9.0 in an isolated environment. Then run:
 
 ```sh
 python3 .github/scripts/check-semgrep-path-exceptions.py \
   --output-dir "$EVIDENCE_DIR"
 ```
 
-El script invoca el ejecutable fijo `semgrep` desde `PATH`; no acepta un comando o
-argumentos alternativos. El directorio de evidencia debe estar fuera de fuentes.
-Sin `--output-dir`, conserva evidencia en un directorio temporal.
+The script invokes the fixed `semgrep` executable from `PATH`; it does not accept an alternative
+command or arguments. The evidence directory must reside outside source trees.
+Without `--output-dir`, it preserves evidence in a temporary directory.
 
-El script genera Rust deliberadamente inseguro solo en un temporal externo.
-Con `p/rust` y severidad ERROR comprueba JSON, archivos escaneados y códigos:
+The script generates deliberately unsafe Rust only in an external temporary location.
+With `p/rust` and severity ERROR it validates JSON, scanned files, and return codes:
 
-1. Lectura sin validar desde un argumento: un finding, salida 1.
-2. Lectura equivalente con la anotación exacta: cero findings activos, salida 0.
-3. La misma lectura con `--disable-nosem`: reaparece un resultado en JSON.
-   En 1.126.0 conserva `is_ignored=true` y salida 0 incluso con `--error`;
-   por eso no basta comprobar el código de salida.
-4. `Path::new` pasado a un validador sin lectura: cero findings en 1.126.0.
-   Esta observación del scanner no convierte `Path::new` en un saneador.
+1. Unvalidated read from an argument: one finding, return code 1.
+2. Equivalent read with the exact annotation: zero active findings, return code 0.
+3. The same read with `--disable-nosem`: finding reappears in JSON.
+   In 1.126.0 it retains `is_ignored=true` and return code 0 even with `--error`;
+   checking the return code alone is insufficient.
+4. `Path::new` passed to a validator without read: zero findings in 1.126.0.
+   This scanner observation does not make `Path::new` a sanitizer.
 
-Conserva JSON completo con versión/metadatos de regla y stderr por caso.
-Los rulesets remotos son mutables: los controles positivos deben fallar si deja
-de cargarse la regla. Semgrep local 1.182.0 añade tres avisos sobre conversiones
-`Path::new` que no reproduce CI 1.126.0; no tienen autorización de supresión.
-La regresión del scanner no sustituye los tests de límites nativos del runtime.
+Preserves full JSON with rule version/metadata and stderr per case.
+Remote rulesets are mutable: positive controls must fail if the rule ceases
+to load. Local Semgrep 1.182.0 adds three warnings about `Path::new` conversions
+not reproduced in CI 1.126.0; they have no suppression authorization.
+Scanner regression testing does not replace native runtime boundary tests.
 
-## Evidencia de aplicación
+## Implementation Evidence
 
-- RED, antes de anotar: escaneo completo con los tres rulesets de CI,
-  `--severity ERROR --error --json`: salida 1, siete findings originales.
-- RED del inventario, después de aprobar los cuatro controles del scanner:
-  salida 1, `authorized inventory mismatch: expected seven NEW exceptions`,
-  inventario nuevo vacío. Las siete anotaciones históricas ya coincidían.
-- GREEN: los cuatro controles dieron respectivamente 1, 0, 1 y 0 resultados;
-  sus códigos fueron 1, 0, 0 y 0. Inventario: 7 nuevas, 7 históricas sin cambios.
-- GREEN B1: Semgrep 1.126.0, tres rulesets de CI y
-  `--severity ERROR --error --json`: salida 0, cero findings, 226 targets
-  (177 Rust, 47 YAML, 2 Dockerfiles). RED: salida 1, siete findings sobre los
-  mismos targets. Ninguno pertenece a `target` o `node_modules`.
-- Persisten cuatro avisos `PartialParsing` en `release.yml:159,181`: dos reglas
-  intentan analizar fragmentos PowerShell como Bash. Coinciden exactamente con
-  RED. No se ocultan ni se presentan como parsing completo. Se conserva la
-  selección de archivos de CI, incluidas sus exclusiones preexistentes.
-- Metadatos de la regla positiva: `r_id=66114`, `rule_id=zdUJ10`,
-  `rv_id=1415500`, `version_id=44TbL2Y`, severidad ERROR.
-- Nueve regresiones Python del inventario pasan: identidad exacta, desaparición,
-  cambio de expresión/función/razón/enlace, anotación histórica eliminada,
-  anotación adicional y anotación sin regla explícita.
-- La décima prueba Python comprueba la invocación de unittest en CI. El mismo
-  paso ejecuta unittest y los controles reales antes del scan y su count gate.
-- B1 no modifica comportamiento Rust: solo siete bloques de comentarios.
-  No incorpora ni atribuye tests de guards F2. La validación local incluye fmt,
-  actionlint, markdownlint y cargo check del workspace mediante el hook obligatorio.
+- RED, before annotation: full scan with the three CI rulesets,
+  `--severity ERROR --error --json`: return code 1, seven original findings.
+- Inventory RED, after passing all four scanner controls:
+  return code 1, `authorized inventory mismatch: expected seven NEW exceptions`,
+  new inventory empty. Seven historical annotations already matched.
+- GREEN: the four controls yielded 1, 0, 1, and 0 results respectively;
+  return codes were 1, 0, 0, and 0. Inventory: 7 new, 7 historical unchanged.
+- GREEN B1: Semgrep 1.126.0, three CI rulesets and
+  `--severity ERROR --error --json`: return code 0, zero findings, 226 targets
+  (177 Rust, 47 YAML, 2 Dockerfiles). RED: return code 1, seven findings across
+  the same targets. None belong to `target` or `node_modules`.
+- Four `PartialParsing` warnings persist in `release.yml:159,181`: two rules
+  attempt to parse PowerShell snippets as Bash. They match RED exactly.
+  They are neither hidden nor presented as complete parsing. CI file selection
+  is preserved, including pre-existing exclusions.
+- Positive rule metadata: `r_id=66114`, `rule_id=zdUJ10`,
+  `rv_id=1415500`, `version_id=44TbL2Y`, severity ERROR.
+- Nine inventory Python regressions pass: exact identity, disappearance,
+  expression/function/reason/link alteration, deleted historical annotation,
+  additional annotation, and annotation without explicit rule.
+- The tenth Python test checks the unittest invocation in CI. The same
+  step runs unittest and real controls before the scan and count gate.
+- B1 does not alter Rust behavior: only seven comment blocks.
+  It does not incorporate or attribute F2 guard tests. Local validation includes fmt,
+  actionlint, markdownlint, and workspace cargo check via the required hook.
 
-Los JSON y logs B1 están fuera de fuentes, en `huginn-b1-evidence/` del temporal
-aprobado: `baseline-red.json`, `controls/`, `complete-green.json` y logs del runner.
-Para repetir las pruebas del inventario:
+B1 JSON and logs reside outside source trees, under `huginn-b1-evidence/` in the approved
+temporary location: `baseline-red.json`, `controls/`, `complete-green.json`, and runner logs.
+To repeat inventory tests:
 
 ```sh
 python3 .github/scripts/test-semgrep-path-exceptions.py

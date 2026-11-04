@@ -118,22 +118,22 @@ The `Supervisor` manages plugin lifecycle:
 The methods are asynchronous where lifecycle work requires it. See
 [`kernel.rs`](../../crates/huginn/core/src/kernel.rs) for exact signatures.
 
-### Sustitución de proveedores, drenaje y leases
+### Provider Substitution, Draining, and Leases
 
-`ServiceSlotHandle<T>` conserva la tabla global y un `ServiceId`, no el provider.
-Cada `acquire()` resuelve el valor y su gate actuales y aumenta el contador de
-leases bajo la misma sincronización. `Supervisor::substitute` stagea la
-alternativa, drena dependientes y publica todos los slots afectados en una sola
-sección crítica; los lectores no observan una generación parcial.
+`ServiceSlotHandle<T>` retains the global table and a `ServiceId`, not the provider.
+Each `acquire()` resolves the current value and gate and increments the lease
+counter under the same synchronization. `Supervisor::substitute` stages the
+alternative, drains dependents, and publishes all affected slots in a single
+critical section; readers do not observe a partial generation.
 
-La alternativa debe conservar todos los servicios publicados por el provider
-actual. Puede publicar servicios adicionales solo si ningún otro plugin
-registrado declara esos IDs. `RequireFullDrain` rechaza la solicitud antes de
-cerrar admisión si algún dependent no declara soporte de drenaje.
-`ReportUndrained` registra esos IDs y aun así espera las leases activas. Un fallo
-precommit o el vencimiento del plazo restaura los slots anteriores, reabre sus
-gates y reanuda los dependientes cuyo drenaje se intentó. El timeout no cancela
-operaciones válidas representadas por leases.
+The alternative must preserve all services published by the current provider.
+It may publish additional services only if no other registered plugin
+declares those IDs. `RequireFullDrain` rejects the request before closing
+admission if any dependent does not declare drain support.
+`ReportUndrained` records those IDs and still waits for active leases. A precommit
+failure or deadline expiration restores previous slots, reopens their gates,
+and resumes dependents whose drain was attempted. The timeout does not cancel
+valid operations represented by leases.
 
 If the substitution future is cancelled before commit, the supervisor reopens the
 previous gates and schedules cleanup of the alternative and resumption of attempted
@@ -151,41 +151,41 @@ The lifecycle order places the alternative after its required providers and befo
 its existing dependents. The supervisor rejects a substitution when no position
 satisfies both constraints.
 
-### Rebind del loop de producción
+### Production Loop Rebinding
 
-`huginn_application::composition::build` y los builders nativos de
-`huginn_runtime::composition` publican `LeasedAgentLoop` mediante la factory
-`leased_loop_plugin` y el plugin privado `LeasedLoopPlugin`. El tipo concreto del
-plugin sigue privado. El adapter mantiene handles dinámicos de `ModelService` y
-`SessionsService`, no `Arc`s de esos providers. Antes de mutar session, emitir
-eventos, cargar skills o llamar model/store, cada `run` y `compact` obtiene
-admisión y ambas leases. Las conserva durante la operación completa, de modo que
-todas las llamadas `save` usan el mismo store. Si falla la segunda lease, RAII
-libera la primera sin producir efectos. `drain` cierra la admisión y espera las
-operaciones activas; las operaciones nuevas fallan antes de efectos. `resume`
-reabre admisión después de un abort o commit.
+`huginn_application::composition::build` and native builders in
+`huginn_runtime::composition` publish `LeasedAgentLoop` via the factory
+`leased_loop_plugin` and the private `LeasedLoopPlugin`. The concrete type of the
+plugin remains private. The adapter maintains dynamic handles for `ModelService` and
+`SessionsService`, not `Arc`s of those providers. Before mutating sessions, emitting
+events, loading skills, or calling model/store, each `run` and `compact` obtains
+admission and both leases. It retains them throughout the full operation, ensuring
+all `save` calls use the same store. If the second lease fails, RAII
+releases the first without side effects. `drain` closes admission and awaits
+active operations; new operations fail prior to side effects. `resume`
+reopens admission after an abort or commit.
 
-La API legacy se mantiene compatible: `StandardLoop` conserva sus seis campos
-públicos, firmas y struct literals; `LoopPlugin(pub LoopConfig)` no cambia. El
-uso directo de `StandardLoop` o de `LoopPlugin` publica el loop estático y no
-obtiene garantía de rebind dinámico. La garantía aplica a los builders de
-producción que registran `LeasedLoopPlugin` mediante `leased_loop_plugin`.
+The legacy API remains compatible: `StandardLoop` preserves its six public
+fields, signatures, and struct literals; `LoopPlugin(pub LoopConfig)` does not change.
+Direct use of `StandardLoop` or `LoopPlugin` publishes the static loop and does
+not obtain dynamic rebinding guarantees. The guarantee applies to production
+builders registering `LeasedLoopPlugin` via `leased_loop_plugin`.
 
-### Readiness y límites de persistencia
+### Readiness and Persistence Boundaries
 
-`apps/huginn/src/main.rs` conserva `ServiceSlotHandle<ModelService>` y vuelve a
-adquirir el slot para doctor, readiness inicial y cada prompt de CLI, y para el
-callback de readiness y cada prompt TUI. No conserva un `Arc<ModelProvider>` ni
-una bool de readiness capturada. Si falla `acquire()`, la readiness falla
-cerrada. Los subprocess tests de CLI/TUI cubren su comportamiento normal; no
-prueban sustitución in-process.
+`apps/huginn/src/main.rs` holds `ServiceSlotHandle<ModelService>` and reacquires
+the slot for doctor checks, initial readiness, and each CLI prompt, as well as for the
+readiness callback and each TUI prompt. It does not retain an `Arc<ModelProvider>` or
+a captured readiness boolean. If `acquire()` fails, readiness fails
+closed. CLI/TUI subprocess tests cover normal behavior; they do not
+test in-process substitution.
 
-El contrato de lease es cooperativo. `resolve() -> Arc<T>` sigue disponible por
-compatibilidad, pero un `Arc` retenido fuera de una lease y el trabajo detached
-quedan fuera de la garantía. `SqliteSessions::lease`, `load` y `list` siguen
-directos a `SqliteSessions`, fuera de `SessionsService`. La sustitución no
-transfiere leases ni migra estado entre stores; no hay cambio de esquema ni
-migración.
+The lease contract is cooperative. `resolve() -> Arc<T>` remains available for
+compatibility, but an `Arc` retained outside a lease and detached work
+fall outside the guarantee. `SqliteSessions::lease`, `load`, and `list` still connect
+directly to `SqliteSessions`, outside `SessionsService`. Substitution does not
+transfer leases or migrate state across stores; there is no schema change or
+migration.
 
 ### Plugin States
 
@@ -266,19 +266,19 @@ pub trait ToolRegistry: Send + Sync {
 
 ### Puerto de registro de herramientas
 
-`huginn-core::tools` define el puerto `ToolRegistration` y el servicio
-`ToolRegistrationService`, reexportados por `huginn-plugin-api::v1::tools`.
-`RegistryPlugin` añade `agent:tool-registration@1` sin sustituir sus servicios
-anteriores ni cambiar sus tipos. El adaptador delega en el mismo registro de
-runtime y reutiliza sus leases, publicación en commit y revocación por generación.
-Core y plugin-api no dependen de runtime ni contienen el I/O de herramientas.
-El puerto no modifica `HostPolicy`, las aprobaciones ni los hooks restrict-only.
+`huginn-core::tools` defines the `ToolRegistration` port and the
+`ToolRegistrationService` service, re-exported by `huginn-plugin-api::v1::tools`.
+`RegistryPlugin` adds `agent:tool-registration@1` without replacing previous
+services or changing their types. The adapter delegates to the same runtime
+registry and reuses its leases, commit-time publication, and generation revocation.
+Core and plugin-api do not depend on runtime or contain tool I/O.
+The port does not modify `HostPolicy`, approvals, or restrict-only hooks.
 
 ### Tool hooks
 
-La [biblioteca de rutas y shell `huginn-guards`](guardrails.md) ofrece comprobaciones
-explícitas. La raíz CLI carga desde `session.workspace` una instantánea y selecciona
-el builder protegido para run/chat/resume, antes de bifurcar hacia línea o TUI.
+The [`huginn-guards` path and shell library](guardrails.md) provides explicit
+checks. The CLI root loads a snapshot from `session.workspace` and selects
+the guarded builder for run/chat/resume before branching to line mode or TUI.
 
 `huginn-core::hooks::ToolHooks` is a generation-owned registry published as
 `agent:tool-hooks@1`. The loop asks it about every tool call before

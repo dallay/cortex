@@ -1,45 +1,45 @@
 # Architecture Decision Records (ADRs)
 
-Los ADRs documentan decisiones significativas de arquitectura para el proyecto Cortex.
+ADRs document significant architecture decisions for the Cortex project.
 
-## ADRs generales
+## General ADRs
 
-> Los ADRs específicos de Huginn están en [docs/huginn/adr/](huginn/adr/README.md).
+> Huginn-specific ADRs are located in [docs/huginn/adr/](huginn/adr/README.md).
 
-Por ahora no hay ADRs generales pendientes. Los ADRs de productos y arquitectura
-específicos de cada componente viven en sus respectivos directorios:
+Currently there are no pending general ADRs. Product and architecture ADRs
+specific to each component reside in their respective directories:
 
-- [ADRs de Huginn](huginn/adr/) — Decisiones sobre el agente de coding
-- [ADR-0015: Separación de releases de producto y publicación Cargo](../huginn/adr/0015-separate-product-releases-from-cargo-publishing.md) — Política de distribución
+- [Huginn ADRs](huginn/adr/) — Decisions regarding the coding agent
+- [ADR-0015: Separate product releases from Cargo publishing](../huginn/adr/0015-separate-product-releases-from-cargo-publishing.md) — Distribution policy
 
-## Formato de ADR
+## ADR Format
 
-Los ADRs siguen el formato estándar:
+ADRs follow the standard format:
 
 ```markdown
-# ADR-XXXX: Título descriptivo
+# ADR-XXXX: Descriptive Title
 
-- **Estado:** [Aceptado|Rechazado|Propuesto|Deprecated]
-- **Fecha:** YYYY-MM-DD
-- **Alcance:** Contexto del ADR
+- **Status:** [Accepted|Rejected|Proposed|Deprecated]
+- **Date:** YYYY-MM-DD
+- **Scope:** Context of the ADR
 
-## Resumen
+## Summary
 
-Descripción breve del problema y la decisión.
+Brief description of the problem and the decision.
 
-## Contexto
+## Context
 
-El problema o situación que motiva esta decisión.
+The problem or situation motivating this decision.
 
-## Decisión
+## Decision
 
-La decisión tomada y su justificación.
+The decision taken and its justification.
 
-## Consecuencias
+## Consequences
 
-- Positivas
-- Negativas
-- Neutrales
+- Positive
+- Negative
+- Neutral
 ```
 
-Ver [template.md](template.md) para la plantilla completa.
+See [template.md](template.md) for the complete template.

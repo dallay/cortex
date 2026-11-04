@@ -1,78 +1,67 @@
-# huginn-status-bar — Especificación
+# huginn-status-bar — Specification
 
-## Propósito
+## Purpose
 
-Mostrar selección y estado reales de Huginn sin confundir configuración local
-con disponibilidad remota.
+Display real Huginn selection and status without confusing local configuration
+with remote availability.
 
 ## Requirements
 
-### Requirement: BAR-01 — Barra persistente
+### Requirement: BAR-01 — Persistent Status Bar
 
-La TUI MUST mostrar una barra compacta en cada frame, con y sin overlay,
-incluida `Approval`. MUST mostrar proveedor, modelo y modo actuales o su ausencia
-explícita. Un overlay MUST NOT ocultarla ni sustituirla por contenido conversacional.
-En terminales estrechos MAY abreviar etiquetas sin inventar valores ni estado.
+The TUI MUST display a compact status bar on every frame, with and without overlays,
+including `Approval`. It MUST display current provider, model, and mode or their explicit
+absence. An overlay MUST NOT hide it or substitute it with conversational content.
+On narrow terminals it MAY abbreviate labels without inventing values or state.
 
-#### Scenario: BAR-01-A — QA con todos los overlays
+#### Scenario: BAR-01-A — QA with all overlays
 
-- GIVEN una terminal con espacio para una línea de barra y una selección conocida
-- WHEN se renderiza sin overlay y con cada variante de `Overlay`, incluida `Approval`
-- THEN la barra sigue visible y muestra proveedor, modelo y modo correspondientes
-- AND cerrar el overlay no añade esos valores a conversación
+- GIVEN a terminal with space for a one-line bar and a known selection
+- WHEN rendered without overlay and with each `Overlay` variant, including `Approval`
+- THEN the bar remains visible and displays the corresponding provider, model, and mode
+- AND closing the overlay does not add those values to the conversation
 
-### Requirement: BAR-02 — Snapshot inicial y actualizaciones coherentes
+### Requirement: BAR-02 — Initial Snapshot and Coherent Updates
 
-El core MUST definir `Event::ConnectionChanged`; el servicio de conexiones MUST
-publicar la selección confirmada de proveedor/modelo/modo y aportar un snapshot
-inicial al conectar la UI. La barra MUST converger a la selección vigente sin
-depender de abrir `/providers`. Cada actualización MUST aplicarse como una unidad
-coherente. Resultados asíncronos obsoletos, duplicados o de una conexión/generación
-anterior MUST NOT sobrescribir la selección más reciente. Fallos o cancelaciones
-previos a confirmar un cambio MUST NOT publicar una selección ficticia.
+Core MUST define `Event::ConnectionChanged`; the connections service MUST
+publish confirmed provider/model/mode selection and provide an initial snapshot
+upon connecting the UI. The bar MUST converge to the active selection without
+relying on opening `/providers`. Each update MUST apply as a coherent unit.
+Stale asynchronous results, duplicates, or results from a previous connection/generation
+MUST NOT overwrite the most recent selection. Failures or cancellations prior to
+confirming a change MUST NOT publish a fictitious selection.
 
-#### Scenario: BAR-02-A — Arranque y ausencia de selección
+#### Scenario: BAR-02-A — Startup and selection absence
 
-- GIVEN una selección persistida utilizable, o ninguna selección en un caso separado
-- WHEN se conecta la UI y recibe el snapshot inicial
-- THEN la barra muestra la selección efectiva o ausencia explícita sin interacción adicional
-- AND un cambio confirmado posterior actualiza conjuntamente proveedor, modelo y modo
+- GIVEN a usable persisted selection, or no selection in a separate case
+- WHEN the UI connects and receives the initial snapshot
+- THEN the bar displays the effective selection or explicit absence without additional interaction
+- AND a subsequent confirmed change jointly updates provider, model, and mode
 
-#### Scenario: BAR-02-B — Actualización fuera de orden
+#### Scenario: BAR-02-B — Stale results and cancellation
 
-- GIVEN cambios confirmados A y después B y la barra ya mostrando B
-- WHEN llega tarde una actualización de A o un snapshot inicial anterior a B
-- THEN la barra conserva B sin mezclar proveedor de A y modelo/modo de B
-- AND una duplicación de B no produce avisos ni conversación adicional
+- GIVEN an active selection S1 and a change in flight to S2
+- WHEN S2 fails or is cancelled, or a delayed message from S1 arrives after confirming S2
+- THEN the bar preserves the confirmed selection and never displays a transitional cancelled state as active
 
-#### Scenario: BAR-02-C — Fallo, revocación y reconexión
+### Requirement: BAR-03 — Ephemeral Mode and Unavailability Indicators
 
-- GIVEN una selección A y un intento de cambiar a B
-- WHEN falla o se cancela B, o se revoca A, en casos separados
-- THEN el fallo/cancelación no anuncia B como selección confirmada
-- AND la revocación refleja la selección efectiva restante o su ausencia
-- AND tras reconectar la UI, eventos de la generación anterior no revierten el snapshot vigente
+The bar MUST visibly distinguish ephemeral mode from durable persistence, and
+unconfigured state from unavailable credentials. The provider indicator MUST
+NOT claim remote availability when only the local configuration exists.
+If the terminal lacks space for all indicators, it MUST preserve mode and the
+active unconfigured/unavailable indicator ahead of decorative text.
 
-### Requirement: BAR-03 — Evidencia de conexión, no inferencia local
+#### Scenario: BAR-03-A — Storage mode and unconfigured state
 
-Seleccionar proveedor/modelo o recuperar credenciales MUST NOT bastar para mostrar
-`Connected` ni equivalente de disponibilidad remota verificada. La UI MUST
-distinguir selección/preparación local de evidencia remota. Un éxito remoto MAY
-describirse como tal únicamente para la conexión y operación verificadas; cambiar
-selección, revocar credenciales o recibir un fallo MUST NOT conservar una afirmación
-engañosa de conexión vigente. La barra MUST reflejar actividad, aprobación pendiente
-y errores sin convertirlos en mensajes de conversación.
+- GIVEN an ephemeral connection, a durable connection, and an unconfigured state
+- WHEN each is active
+- THEN the bar explicitly displays ephemeral mode when applicable
+- AND unconfigured state displays no fictitious provider name
 
-#### Scenario: BAR-03-A — QA sin evidencia remota
+#### Scenario: BAR-03-B — Narrow terminal degradation
 
-- GIVEN un proveedor/modelo seleccionado localmente sin llamadas remotas satisfactorias
-- WHEN se abre la TUI o se completa `/model`
-- THEN se muestra la selección local sin `Connected` ni otra promesa de disponibilidad remota
-- AND un modelo candidato no se describe como descubierto o validado remotamente
-
-#### Scenario: BAR-03-B — Evidencia obsoleta y error
-
-- GIVEN evidencia remota satisfactoria de A
-- WHEN se selecciona B sin verificar, se revoca A o falla una operación remota vigente, en casos separados
-- THEN la barra no atribuye a la selección vigente la disponibilidad previa de A
-- AND el error o estado pendiente sigue observable incluso con un overlay abierto
+- GIVEN a terminal width of 40 columns
+- WHEN the bar renders
+- THEN it abbreviates labels while preserving mode and provider/model identity
+- AND no visual clipping or layout corruption occurs

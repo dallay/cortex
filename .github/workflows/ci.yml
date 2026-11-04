@@ -378,7 +378,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: changes
-    # Se analiza todo el rango de la PR, sin límite de commits ni filtros por ruta.
+    # Full PR range is analyzed, without commit limits or path filters.
     permissions:
       contents: read
       security-events: write
@@ -541,7 +541,7 @@ jobs:
     timeout-minutes: 60
     needs: [changes, test, test-frontend, build-dashboard]
     # Toda PR requiere análisis. Los push conservan los filtros por rutas.
-    # Sin credenciales, también se bloquean forks y Dependabot.
+    # Without credentials, forks and Dependabot are also blocked.
     if: |
       always() &&
       needs.changes.result == 'success' &&
@@ -561,12 +561,12 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           if [ -z "$SONAR_TOKEN" ]; then
-            echo "::error::SONAR_TOKEN es obligatorio para el análisis de SonarCloud."
+            echo "::error::SONAR_TOKEN is required for SonarCloud analysis."
             exit 1
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # Historial completo: lo exige Sonar para blame y decoracion de PRs
+          fetch-depth: 0 # Full history: required by Sonar for blame and PR decoration
           persist-credentials: false
       - name: Cache SonarQube packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

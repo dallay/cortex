@@ -232,7 +232,7 @@ function toggleWidgetState() {
 
 #### DON'Ts
 
-- **Don't use clichéd prefixes**: Avoid "Image of..." or "Picture of...".
+- **Don't use cliched prefixes**: Avoid "Image of..." or "Picture of...".
 - **Don't use underscores in filenames**: Use dashes if the filename might be announced as fallback.
 
 ### Code Examples

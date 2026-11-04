@@ -1,12 +1,12 @@
-// gateway_perf — baseline reproducible de overhead del gateway (domingo, sin optimizar).
+// gateway_perf — reproducible baseline of gateway overhead (unoptimized).
 //
-// Mide overhead in-process con provider instantáneo (aisla gateway, sin red upstream):
-// - RPI-201: N=200 secuenciales POST /v1/chat/completions → p50/p95 (assert p95 < 25ms local)
-// - RPI-202: N=50 concurrentes → req/s + VmRSS desde /proc/self/status (solo reporte)
-// - RPI-203: cancelación — dropear stream tras 1er chunk decrementa in-flight a 0
-// - RPI-204: backpressure — 100 concurrentes todas 200 OK (documenta: sin semaphore hoy)
+// Measures in-process overhead with instant provider (isolates gateway, no upstream network):
+// - RPI-201: N=200 sequential POST /v1/chat/completions -> p50/p95 (assert p95 < 25ms local)
+// - RPI-202: N=50 concurrent -> req/s + VmRSS from /proc/self/status (report only)
+// - RPI-203: cancellation — dropping stream after 1st chunk decrements in-flight to 0
+// - RPI-204: backpressure — 100 concurrent all 200 OK (documents: no semaphore today)
 //
-// No usa wiremock ni credenciales reales. Router + RouteRequest + axum REALES.
+// Does not use wiremock or real credentials. REAL Router + RouteRequest + axum.
 
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -38,7 +38,7 @@ use transport_axum::authz::AuthzConfig;
 use transport_axum::format_registry::{DomainPivotTranslator, FormatRegistry};
 
 // ---------------------------------------------------------------------------
-// Instant provider — respuesta inmediata, aisla overhead del gateway
+// Instant provider — immediate response, isolates gateway overhead
 // ---------------------------------------------------------------------------
 
 struct InstantProvider {
@@ -159,7 +159,7 @@ impl ProviderPort for InstantProvider {
 }
 
 // ---------------------------------------------------------------------------
-// Fakes mínimos (misma forma que gateway_e2e)
+// Minimal fakes (same shape as gateway_e2e)
 // ---------------------------------------------------------------------------
 
 struct NoopCache;
@@ -586,7 +586,7 @@ async fn streaming_cancel_drops_in_flight() {
     assert_eq!(
         in_flight.load(Ordering::SeqCst),
         0,
-        "cancel no liberó in-flight tras drop del body SSE"
+        "cancel did not release in-flight after dropping SSE body"
     );
     println!("PERF cancel_ok in_flight=0 tras drop via gateway");
 }

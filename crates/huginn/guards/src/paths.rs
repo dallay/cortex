@@ -56,7 +56,7 @@ pub fn starts_with_ascii_case_insensitive(path: &Path, prefix: &Path) -> bool {
     })
 }
 
-/// Resuelve también el padre de un destino nuevo. Los enlaces colgantes fallan.
+/// Also resolves the parent of a new destination. Dangling symlinks fail.
 pub fn resolve_nearest(path: &Path) -> Result<PathBuf, &'static str> {
     let mut ancestor = path;
     let mut missing = Vec::new();

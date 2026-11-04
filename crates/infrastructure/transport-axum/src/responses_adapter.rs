@@ -1,4 +1,4 @@
-//! Adaptación stateless de texto y funciones; no implementa estado nativo de Responses.
+//! Stateless adaptation of text and functions; does not implement native Responses state.
 
 use std::collections::HashSet;
 
@@ -325,7 +325,7 @@ fn text_message(role: &str, text: String) -> OpenAIMessage {
     }
 }
 
-/// Metadatos estables de la respuesta, independientes de los IDs del proveedor.
+/// Stable response metadata, independent of provider IDs.
 #[derive(Clone)]
 pub struct ResponseContext {
     pub id: String,
@@ -411,7 +411,7 @@ impl ResponseContext {
             ));
         }
         let mut calls = response.tool_calls.clone();
-        // Anthropic conserva las llamadas en ambas representaciones del dominio.
+        // Anthropic preserves calls in both domain representations.
         if calls.is_empty() {
             calls.extend(response.content_blocks.iter().filter_map(|b| match b {
                 MessageContent::ToolUse { id, name, input } => Some(rook_core::MessageToolCall {

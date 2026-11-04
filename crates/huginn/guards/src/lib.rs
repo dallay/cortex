@@ -1,4 +1,4 @@
-//! Protecciones restrictivas para herramientas nativas; no constituyen un sandbox.
+//! Restrictive protections for native tools; they do not constitute a sandbox.
 mod paths;
 mod plugin;
 mod shell;
@@ -18,8 +18,8 @@ struct Configuration {
     block_paths: Vec<String>,
 }
 impl Guardrails {
-    /// Construye restricciones aditivas desde texto; no lee un archivo de proyecto.
-    /// Acepta `block_paths` y `block_commands`; los campos desconocidos producen un error.
+    /// Builds additive restrictions from text; does not read a project file.
+    /// Accepts `block_paths` and `block_commands`; unknown fields produce an error.
     pub fn from_toml(text: &str) -> std::result::Result<Self, &'static str> {
         if text.len() > 65_536 {
             return Err("guardrails: configuration exceeds 64 KiB");
@@ -81,9 +81,9 @@ impl Guardrails {
         }
         Ok(())
     }
-    /// Comprueba nombres sensibles y prefijos del proyecto, sin conceder acceso.
-    /// Resuelve aliases y el ancestro existente de destinos nuevos.
-    /// Los enlaces colgantes fallan; no ofrece confinamiento atómico frente a carreras.
+    /// Checks sensitive names and project prefixes, without granting access.
+    /// Resolves aliases and the existing ancestor of new destinations.
+    /// Dangling symlinks fail; does not offer atomic confinement against races.
     pub fn check_path(
         &self,
         workspace: &Path,

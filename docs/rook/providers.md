@@ -59,18 +59,18 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 **Implementation status:**
 
 - `complete()` — ✅ Implemented
-- `stream()` — ✅ Implementado, incluidos los deltas estructurados `tool_calls`
+- `stream()` — ✅ Implemented, including structured `tool_calls` deltas
 
-> **Nota de compatibilidad:** Las pruebas del provider y del adaptador OpenAI
-> verifican que los argumentos fragmentados sobreviven el modelo de streaming de
-> Rook y salen como deltas compatibles con OpenAI. Esto no valida de extremo a
-> extremo Huginn contra un gateway Rook en ejecución; `docs/huginn/validation.md`
-> sigue marcando Rook como no compatible hasta que pase esa prueba. La issue #279
-> define este trabajo como no requerido para el MVP del agente personal.
+> **Compatibility note:** Provider and OpenAI adapter tests verify that
+> fragmented arguments survive Rook's streaming model and are emitted as
+> OpenAI-compatible deltas. This does not validate end-to-end Huginn against
+> a running Rook gateway; `docs/huginn/validation.md` continues marking Rook
+> as unsupported until that test passes. Issue #279 defines this work as not
+> required for the personal agent MVP.
 >
-> Los streams OpenAI aceptan hasta 64 tool calls, 1 MiB de argumentos agregados
-> y 2 MiB por evento SSE. Si se supera un límite o el stream termina con un
-> evento incompleto, el provider emite un error.
+> OpenAI streams accept up to 64 tool calls, 1 MiB of aggregated arguments,
+> and 2 MiB per SSE event. If a limit is exceeded or the stream terminates
+> with an incomplete event, the provider returns an error.
 
 ---
 

@@ -1,29 +1,29 @@
-# Rook perf baseline — 2026-10-15 (cerrar plan hoy, sin optimizar)
+# Rook Perf Baseline — 2026-10-15 (close plan today, unoptimized)
 
-Harness: `crates/infrastructure/transport-axum/tests/gateway_perf.rs` — router + RouteRequest + FallbackRouter REALES, provider instantáneo in-process (aisla overhead gateway, sin red upstream). Repro: `cargo test -p transport-axum --test gateway_perf -- --nocapture`.
+Harness: `crates/infrastructure/transport-axum/tests/gateway_perf.rs` — REAL router + RouteRequest + FallbackRouter, instant in-process provider (isolates gateway overhead, without upstream network). Repro: `cargo test -p transport-axum --test gateway_perf -- --nocapture`.
 
-## Resultados (este entorno, debug build)
+## Results (this environment, debug build)
 
-| Medición | Resultado |
+| Measurement | Result |
 |---|---|
-| Overhead secuencial N=200 `POST /v1/chat/completions` | p50 **529µs**, p95 **807µs**, p99 **915µs** (assert p95 < 25ms ✅) |
-| Concurrentes N=50 | wall **0.026s**, **1901.7 r/s** ✅ (>20 r/s baseline) |
-| RSS durante tests (`/proc/self/status` VmRSS) | **~15.4–15.7 MB** (solo test harness + gateway in-process) |
-| Cancelación streaming | drop del body SSE tras 1er frame vía gateway → in-flight **1→0** ✅ (Drop guard; sin CancellationToken explícito, depende de drop tokio) |
-| Backpressure N=100 concurrentes | **100/100 OK** — sin `Semaphore`/límite hoy (gap documentado, no implementado) |
+| Sequential overhead N=200 `POST /v1/chat/completions` | p50 **529µs**, p95 **807µs**, p99 **915µs** (assert p95 < 25ms ✅) |
+| Concurrent N=50 | wall **0.026s**, **1901.7 r/s** ✅ (>20 r/s baseline) |
+| RSS during tests (`/proc/self/status` VmRSS) | **~15.4–15.7 MB** (only test harness + in-process gateway) |
+| Streaming cancellation | SSE body drop after 1st frame via gateway → in-flight **1→0** ✅ (Drop guard; no explicit CancellationToken, relies on tokio drop) |
+| Backpressure N=100 concurrent | **100/100 OK** — no `Semaphore`/limit today (documented gap, not implemented) |
 
-## Cancelación y backpressure (código)
+## Cancellation and Backpressure (Code)
 
-- Combo: per-step **10s** (`COMBO_STEP_TIMEOUT`), total **60s** (`route_request.rs:684-687`). Streaming: fallback solo **antes del primer evento SSE** (`architecture.md:104-105`); después solo error del protocolo, sin concatenar modelos.
-- No hay `CancellationToken` ni `Semaphore` de concurrencia en gateway; cancelación = drop de future/stream de tokio + timeouts reqwest por provider. Suficiente para local, gap si se expone con muchos clientes concurrentes.
-- Circuit breaker: 3 fallos → 30s cooldown (`router_impl.rs:25-28`).
+- Combo: per-step **10s** (`COMBO_STEP_TIMEOUT`), total **60s** (`route_request.rs:684-687`). Streaming: fallback only **before the first SSE event** (`architecture.md:104-105`); afterwards protocol error only, without concatenating models.
+- No `CancellationToken` or concurrency `Semaphore` in gateway; cancellation = drop of tokio future/stream + reqwest timeouts per provider. Sufficient for local, gap if exposed to many concurrent clients.
+- Circuit breaker: 3 failures → 30s cooldown (`router_impl.rs:25-28`).
 
-## Veredicto 0.1.0
+## Verdict 0.1.0
 
-**Sí, justifica avanzar a `0.1.0`** con alcance actual (2 protocolos, combos virtuales `rook/*` + legacy header, fallback ordenado, `/v1/models` dinámico, tool-calling Anthropic, E2E determinista). Condiciones antes del tag:
+**Yes, justifies proceeding to `0.1.0`** with current scope (2 protocols, `rook/*` virtual combos + legacy header, ordered fallback, dynamic `/v1/models`, Anthropic tool-calling, deterministic E2E). Conditions before tagging:
 
-1. `cargo test -p transport-axum --test gateway_e2e` 12/12 + `gateway_perf` 4/4 en verde (este turno).
-2. No ampliar proveedores ni routing strategies para el tag; lo que falta es operativo (límites/backpressure, dashboard cuotas #132) y va fuera del 0.1.0.
-3. Probar local resto de semana como planeaste: 1 key local, 2 conexiones autorizadas, 1 combo, ambos protocolos, streaming + fallback, revocación.
+1. `cargo test -p transport-axum --test gateway_e2e` 12/12 + `gateway_perf` 4/4 passing (this turn).
+2. Do not expand providers or routing strategies for the tag; remaining items are operational (limits/backpressure, quota dashboard #132) and remain outside 0.1.0.
+3. Test locally the rest of the week as planned: 1 local key, 2 authorized connections, 1 combo, both protocols, streaming + fallback, revocation.
 
-Gaps aceptados para 0.1.0: sin rate-limit global documentado como backpressure, Gemini/Groq stream stub, sin CancellationToken explícito.
+Accepted gaps for 0.1.0: no global rate-limit documented as backpressure, Gemini/Groq stream stub, no explicit CancellationToken.

@@ -119,9 +119,9 @@ impl FormatRegistry {
         req: CompletionRequest,
     ) -> CortexResult<CompletionRequest> {
         let mut req = req;
-        // Responses normaliza funciones al contrato OpenAI. La traducción al
-        // formato Anthropic ocurre en el límite de formato existente, no en routing.
-        // Los contratos de los endpoints anteriores permanecen sin cambios.
+        // Responses normalizes functions to the OpenAI contract. Translation to
+        // Anthropic format occurs at the existing format boundary, not in routing.
+        // Contracts for previous endpoints remain unchanged.
         if req.metadata.origin == "responses"
             && from == ApiFormat::OpenAI
             && to == ApiFormat::Anthropic

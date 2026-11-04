@@ -24,20 +24,20 @@ check_pnpm_version() {
     local actual
 
     if ! command -v pnpm >/dev/null 2>&1; then
-        doctor_fail "pnpm $expected: no se encontró 'pnpm'."
+        doctor_fail "pnpm $expected: 'pnpm' not found."
         return 1
     fi
 
     if actual="$(read_pnpm_actual 2>&1)"; then
         if [[ "$actual" == "$expected" ]]; then
-            doctor_ok "pnpm $actual (versión fijada en package.json)."
+            doctor_ok "pnpm $actual (pinned version in package.json)."
         else
-            doctor_fail "pnpm $actual no coincide con pnpm $expected de package.json."
+            doctor_fail "pnpm $actual does not match pnpm $expected in package.json."
             return 1
         fi
     else
         actual="${actual%%$'\n'*}"
-        doctor_fail "No se pudo verificar pnpm $expected sin acceso de red de Corepack: ${actual:-versión no disponible}."
+        doctor_fail "Could not verify pnpm $expected without Corepack network access: ${actual:-version not available}."
         return 1
     fi
 }
@@ -90,7 +90,7 @@ doctor_ok() {
 
 doctor_fail() {
     DOCTOR_FAILURES=$((DOCTOR_FAILURES + 1))
-    printf '[FALTA] %s\n' "$1"
+    printf '[MISSING] %s\n' "$1"
 }
 
 doctor_warn() {
@@ -105,13 +105,13 @@ check_command() {
     local version
 
     if ! command -v "$binary" >/dev/null 2>&1; then
-        doctor_fail "$label: no se encontró '$binary'."
+        doctor_fail "$label: '$binary' not found."
         return 1
     fi
 
     if ! version="$("$binary" "$version_arg" 2>&1)"; then
         version="${version%%$'\n'*}"
-        doctor_fail "$label: falló '$binary $version_arg': ${version:-sin detalles}."
+        doctor_fail "$label: '$binary $version_arg' failed: ${version:-no details}."
         return 1
     fi
     version="${version%%$'\n'*}"
@@ -123,9 +123,9 @@ check_optional_command() {
     local recipe="$2"
 
     if command -v "$binary" >/dev/null 2>&1; then
-        doctor_ok "$binary está disponible."
+        doctor_ok "$binary is available."
     else
-        doctor_warn "$binary falta; solo se necesita para '$recipe'."
+        doctor_warn "$binary missing; only needed for '$recipe'."
     fi
 }
 
@@ -137,8 +137,8 @@ main() {
     local node_minimum pnpm_expected rust_channel rust_components component installed_components
     local node_actual
 
-    printf 'Diagnóstico local de Cortex (no instala ni modifica nada)\n\n'
-    printf 'Herramientas base\n'
+    printf 'Local Cortex Diagnostics (does not install or modify anything)\n\n'
+    printf 'Base Tools\n'
     check_command "just" "just" || true
     check_command "Rustup" "rustup" || true
     check_command "Cargo" "cargo" || true
@@ -147,21 +147,21 @@ main() {
 
     node_minimum="$(read_node_minimum)"
     if [[ -z "$node_minimum" ]]; then
-        doctor_fail "No pude leer el mínimo de Node.js desde package.json."
+        doctor_fail "Could not read Node.js minimum from package.json."
     elif ! command -v node >/dev/null 2>&1; then
-        doctor_fail "Node.js >= $node_minimum: no se encontró 'node'."
+        doctor_fail "Node.js >= $node_minimum: 'node' not found."
     else
         node_actual="$(node --version 2>&1)" || node_actual=""
         if version_at_least "$node_actual" "$node_minimum"; then
-            doctor_ok "Node.js $node_actual (mínimo requerido: >= $node_minimum)."
+            doctor_ok "Node.js $node_actual (minimum required: >= $node_minimum)."
         else
-            doctor_fail "Node.js $node_actual no cumple el mínimo >= $node_minimum de package.json."
+            doctor_fail "Node.js $node_actual does not meet the minimum >= $node_minimum in package.json."
         fi
     fi
 
     pnpm_expected="$(read_pnpm_version)"
     if [[ -z "$pnpm_expected" ]]; then
-        doctor_fail "No pude leer packageManager desde package.json."
+        doctor_fail "Could not read packageManager from package.json."
     else
         check_pnpm_version "$pnpm_expected" || true
     fi
@@ -172,49 +172,49 @@ main() {
         doctor_fail "No pude leer el canal Rust desde rust-toolchain.toml."
     elif command -v rustup >/dev/null 2>&1; then
         if rustup run "$rust_channel" rustc --version >/dev/null 2>&1; then
-            doctor_ok "Toolchain Rust '$rust_channel' está instalada."
+            doctor_ok "Rust toolchain '$rust_channel' is installed."
             rust_components="$(read_rust_components)"
             installed_components="$(rustup component list --installed --toolchain "$rust_channel" 2>/dev/null)" || installed_components=""
             for component in $rust_components; do
                 if printf '%s\n' "$installed_components" | grep -Eq "^${component}(-|$)"; then
-                    doctor_ok "Componente Rust '$component' está instalado."
+                    doctor_ok "Rust component '$component' is installed."
                 else
-                    doctor_fail "Falta el componente Rust '$component' de rust-toolchain.toml (instálalo con rustup)."
+                    doctor_fail "Missing Rust component '$component' from rust-toolchain.toml (install it with rustup)."
                 fi
             done
         else
-            doctor_fail "No está instalada la toolchain Rust '$rust_channel' indicada en rust-toolchain.toml."
+            doctor_fail "Rust toolchain '$rust_channel' from rust-toolchain.toml is not installed."
         fi
     else
-        doctor_fail "No puedo verificar la toolchain Rust '$rust_channel' sin rustup."
+        doctor_fail "Cannot verify Rust toolchain '$rust_channel' without rustup."
     fi
 
     printf '\nWorkspace\n'
     if [[ -f "$ROOT_DIR/pnpm-lock.yaml" && -f "$ROOT_DIR/pnpm-workspace.yaml" ]]; then
-        doctor_ok "Workspace pnpm y lockfile de raíz están presentes."
+        doctor_ok "pnpm workspace and root lockfile are present."
     else
-        doctor_fail "Falta pnpm-lock.yaml o pnpm-workspace.yaml en la raíz; ejecuta la instalación desde el workspace raíz."
+        doctor_fail "Missing pnpm-lock.yaml or pnpm-workspace.yaml in root; run installation from the root workspace."
     fi
     if [[ ! -e "$ROOT_DIR/apps/rook/dashboard/pnpm-lock.yaml" && ! -e "$ROOT_DIR/apps/rook/dashboard/pnpm-workspace.yaml" ]]; then
-        doctor_ok "El dashboard usa el workspace pnpm de la raíz."
+        doctor_ok "The dashboard uses the root pnpm workspace."
     else
-        doctor_fail "El dashboard contiene un lockfile o workspace pnpm local; CI requiere un único workspace raíz."
+        doctor_fail "The dashboard contains a local pnpm lockfile or workspace; CI requires a single root workspace."
     fi
     if [[ -d "$ROOT_DIR/apps/rook/dashboard/node_modules" ]]; then
-        doctor_ok "Dependencias del dashboard instaladas."
+        doctor_ok "Dashboard dependencies installed."
     else
-        doctor_warn "Faltan dependencias del dashboard; ejecuta 'just setup'."
+        doctor_warn "Missing dashboard dependencies; run 'just setup'."
     fi
 
-    printf '\nHerramientas opcionales\n'
+    printf '\nOptional Tools\n'
     if command -v docker >/dev/null 2>&1; then
         if docker info >/dev/null 2>&1; then
-            doctor_ok "Docker está instalado y el daemon responde."
+            doctor_ok "Docker is installed and daemon is responding."
         else
-            doctor_warn "Docker está instalado, pero el daemon no responde; se requiere para E2E y contenedores."
+            doctor_warn "Docker is installed, but daemon is not responding; required for E2E and containers."
         fi
     else
-        doctor_warn "Docker no está instalado; se requiere solo para E2E y recetas de contenedores."
+        doctor_warn "Docker is not installed; required only for E2E and container recipes."
     fi
 
     check_optional_command "cargo-watch" "just dev"
@@ -228,7 +228,7 @@ main() {
     printf '\nResumen: %s requisito(s) obligatorio(s) faltante(s), %s aviso(s) opcional(es).\n' \
         "$DOCTOR_FAILURES" "$DOCTOR_WARNINGS"
     if (( DOCTOR_FAILURES > 0 )); then
-        printf 'Faltan requisitos obligatorios. Revisa los mensajes [FALTA] antes de continuar.\n'
+        printf 'Mandatory requirements are missing. Review [MISSING] messages before continuing.\n'
         return 1
     fi
 

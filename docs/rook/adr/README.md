@@ -1,12 +1,12 @@
 # Rook Architecture Decision Records
 
-Los ADRs documentan decisiones significativas de arquitectura específicas de Rook.
+ADRs document significant architecture decisions specific to Rook.
 
-Por ahora no hay ADRs específicos de Rook. Las decisiones de arquitectura
-compartidas entre productos viven en:
+Currently there are no Rook-specific ADRs. Architecture decisions
+shared across products reside in:
 
-- [ADR general index](../adr/README.md)
-- [ADRs de Huginn](../huginn/adr/README.md)
+- [General ADR index](../adr/README.md)
+- [Huginn ADRs](../huginn/adr/README.md)
 
-Los ADRs de Rook de la era pre-MVP fueron absorbidos en las decisiones de Huginn
-o en la documentación de arquitectura.
+Pre-MVP Rook ADRs were consolidated into Huginn decisions
+or into architecture documentation.
