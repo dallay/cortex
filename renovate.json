@@ -69,6 +69,19 @@
       "groupName": "vue",
       "semanticCommitScope": "deps-js",
       "labels": ["area/dependencies"]
+    },
+    {
+      "description": "TypeScript 7 removed the typescript/lib/tsc export that vue-tsc resolves, so the dashboard type-check and build fail. Remove this rule once vue-tsc supports TypeScript 7.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["typescript"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "pnpm trustPolicy no-downgrade rejects lefthook 2.2.2 as a possible package takeover, so the lockfile cannot be regenerated. Remove this rule once the package restores its trust evidence.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["lefthook"],
+      "allowedVersions": "<2.2.2"
     }
   ]
 }
