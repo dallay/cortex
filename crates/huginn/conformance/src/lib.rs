@@ -1609,6 +1609,54 @@ async fn compaction_keeps_turn_boundary(
 pub mod broken {
     use super::*;
 
+    /// Runs one turn against the collaborators a fixture resolved.
+    ///
+    /// The fixtures differ only in how they obtain the provider and the session store, so the
+    /// turn body lives here once instead of being copied per fixture.
+    async fn turn(
+        model: &dyn ModelProvider,
+        sessions: Option<&dyn SessionStore>,
+        session: &mut Session,
+        prompt: String,
+        events: &dyn EventSink,
+        cancel: CancellationToken,
+    ) -> Result<()> {
+        let turn = session.allocate_turn()?;
+        session.events.push(Event::TurnStarted {
+            session_id: session.id.clone(),
+            turn,
+        });
+        session.messages.push(Message::text(Role::User, prompt));
+        if let Some(sessions) = sessions {
+            sessions.save(session).await?;
+        }
+        let mut stream = model
+            .stream(
+                ModelRequest {
+                    messages: session.messages.clone(),
+                    tools: vec![],
+                    max_tokens: 64,
+                },
+                cancel,
+            )
+            .await?;
+        let mut answer = String::new();
+        while let Some(delta) = stream.next().await {
+            if let ModelDelta::Text(text) = delta? {
+                answer.push_str(&text);
+            }
+        }
+        session
+            .messages
+            .push(Message::text(Role::Assistant, answer.clone()));
+        events.emit(Event::Text {
+            step: StepId(1),
+            text: answer,
+        });
+        session.events.push(Event::TurnFinished { turn });
+        Ok(())
+    }
+
     pub struct ReplayingLoop {
         model: Arc<dyn ModelProvider>,
         tools: Arc<dyn ToolRegistry>,
@@ -1729,38 +1777,7 @@ pub mod broken {
             events: &dyn EventSink,
             cancel: CancellationToken,
         ) -> Result<()> {
-            let turn = session.allocate_turn()?;
-            session.events.push(Event::TurnStarted {
-                session_id: session.id.clone(),
-                turn,
-            });
-            session.messages.push(Message::text(Role::User, prompt));
-            let mut stream = self
-                .model
-                .stream(
-                    ModelRequest {
-                        messages: session.messages.clone(),
-                        tools: vec![],
-                        max_tokens: 64,
-                    },
-                    cancel,
-                )
-                .await?;
-            let mut answer = String::new();
-            while let Some(delta) = stream.next().await {
-                if let ModelDelta::Text(text) = delta? {
-                    answer.push_str(&text);
-                }
-            }
-            session
-                .messages
-                .push(Message::text(Role::Assistant, answer.clone()));
-            events.emit(Event::Text {
-                step: StepId(1),
-                text: answer,
-            });
-            session.events.push(Event::TurnFinished { turn });
-            Ok(())
+            turn(self.model.as_ref(), None, session, prompt, events, cancel).await
         }
     }
 
@@ -1820,40 +1837,16 @@ pub mod broken {
             events: &dyn EventSink,
             cancel: CancellationToken,
         ) -> Result<()> {
-            let turn = session.allocate_turn()?;
-            session.events.push(Event::TurnStarted {
-                session_id: session.id.clone(),
-                turn,
-            });
-            session.messages.push(Message::text(Role::User, prompt));
-            self.sessions.save(session).await?;
             let lease = self.model.acquire()?;
-            let model = &lease.0;
-            let mut stream = model
-                .stream(
-                    ModelRequest {
-                        messages: session.messages.clone(),
-                        tools: vec![],
-                        max_tokens: 64,
-                    },
-                    cancel,
-                )
-                .await?;
-            let mut answer = String::new();
-            while let Some(delta) = stream.next().await {
-                if let ModelDelta::Text(text) = delta? {
-                    answer.push_str(&text);
-                }
-            }
-            session
-                .messages
-                .push(Message::text(Role::Assistant, answer.clone()));
-            events.emit(Event::Text {
-                step: StepId(1),
-                text: answer,
-            });
-            session.events.push(Event::TurnFinished { turn });
-            Ok(())
+            turn(
+                lease.0.as_ref(),
+                Some(self.sessions.as_ref()),
+                session,
+                prompt,
+                events,
+                cancel,
+            )
+            .await
         }
     }
 
@@ -1924,38 +1917,15 @@ pub mod broken {
                 }
             };
             let store = self.sessions.acquire()?.0.clone();
-            let turn = session.allocate_turn()?;
-            session.events.push(Event::TurnStarted {
-                session_id: session.id.clone(),
-                turn,
-            });
-            session.messages.push(Message::text(Role::User, prompt));
-            store.save(session).await?;
-            let mut stream = model
-                .stream(
-                    ModelRequest {
-                        messages: session.messages.clone(),
-                        tools: vec![],
-                        max_tokens: 64,
-                    },
-                    cancel,
-                )
-                .await?;
-            let mut answer = String::new();
-            while let Some(delta) = stream.next().await {
-                if let ModelDelta::Text(text) = delta? {
-                    answer.push_str(&text);
-                }
-            }
-            session
-                .messages
-                .push(Message::text(Role::Assistant, answer.clone()));
-            events.emit(Event::Text {
-                step: StepId(1),
-                text: answer,
-            });
-            session.events.push(Event::TurnFinished { turn });
-            Ok(())
+            turn(
+                model.as_ref(),
+                Some(store.as_ref()),
+                session,
+                prompt,
+                events,
+                cancel,
+            )
+            .await
         }
     }
 
