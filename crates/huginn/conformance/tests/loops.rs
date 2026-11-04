@@ -3,7 +3,8 @@
 use async_trait::async_trait;
 use huginn_application::{composition, loop_engine::StandardLoop};
 use huginn_conformance::{
-    broken::ReplayingLoop, hook_plugin, inference_hook_plugin, run, Capabilities, UnderTest,
+    broken::{pinned_provider_plugin, PinnedProviderLoop, ReplayingLoop},
+    hook_plugin, inference_hook_plugin, run, Capabilities, Host, Status, UnderTest,
 };
 use huginn_core::{
     kernel::{SubstitutionPolicy, Supervisor},
@@ -244,43 +245,55 @@ async fn admission_is_held_through_final_persistence() {
 
 /// The production adapter: a leased loop published by the composition kernel.
 fn leased() -> UnderTest {
-    UnderTest::new("LeasedAgentLoop", Capabilities::FULL, |host| {
-        Box::pin(async move {
-            let mut supervisor = composition::build(
-                host.script.clone(),
-                host.tools(),
-                host.sessions.clone(),
-                host.kernel_config(),
-                host.instructions(),
-            )
-            .await
+    UnderTest::rebinding(
+        "LeasedAgentLoop",
+        Capabilities::REBINDING,
+        |host| {
+            Box::pin(async move {
+                let supervisor = Arc::new(leased_supervisor(host).await);
+                let inner = supervisor
+                    .resolve::<LoopService>(&composition::loop_id())
+                    .unwrap()
+                    .0
+                    .clone();
+                Arc::new(Supervised {
+                    _supervisor: supervisor,
+                    inner,
+                }) as Arc<dyn AgentLoop>
+            })
+        },
+        |host| Box::pin(async move { Ok(composition::leased_loop_plugin(host.kernel_config())) }),
+    )
+}
+
+/// A started supervisor that already owns every service the production loop requires,
+/// so a case can substitute `agent:model` under it.
+async fn leased_supervisor(host: &Host) -> Supervisor {
+    let mut supervisor = composition::build(
+        host.script.clone(),
+        host.tools(),
+        host.sessions.clone(),
+        host.kernel_config(),
+        host.instructions(),
+    )
+    .await
+    .unwrap();
+    // The composition kernel owns the hook registry: a supervisor-based
+    // implementation must be given the host hook here, not through the config.
+    let tool_hook = host.hook();
+    let inference_hook = host.inference_hook();
+    if let Some(hook) = &tool_hook {
+        supervisor.register(hook_plugin(hook.clone())).unwrap();
+    }
+    if let Some(hook) = &inference_hook {
+        supervisor
+            .register(inference_hook_plugin(hook.clone()))
             .unwrap();
-            // The composition kernel owns the hook registry: a supervisor-based
-            // implementation must be given the host hook here, not through the config.
-            let tool_hook = host.hook();
-            let inference_hook = host.inference_hook();
-            if let Some(hook) = &tool_hook {
-                supervisor.register(hook_plugin(hook.clone())).unwrap();
-            }
-            if let Some(hook) = &inference_hook {
-                supervisor
-                    .register(inference_hook_plugin(hook.clone()))
-                    .unwrap();
-            }
-            if tool_hook.is_some() || inference_hook.is_some() {
-                supervisor.start().await.unwrap();
-            }
-            let inner = supervisor
-                .resolve::<LoopService>(&composition::loop_id())
-                .unwrap()
-                .0
-                .clone();
-            Arc::new(Supervised {
-                _supervisor: Arc::new(supervisor),
-                inner,
-            }) as Arc<dyn AgentLoop>
-        })
-    })
+    }
+    if tool_hook.is_some() || inference_hook.is_some() {
+        supervisor.start().await.unwrap();
+    }
+    supervisor
 }
 
 fn replaying() -> UnderTest {
@@ -290,6 +303,21 @@ fn replaying() -> UnderTest {
             Arc::new(implementation) as Arc<dyn AgentLoop>
         })
     })
+}
+
+/// Declares rebind awareness while keeping the provider it was constructed with.
+fn pinned_provider() -> UnderTest {
+    UnderTest::rebinding(
+        "PinnedProviderLoop",
+        Capabilities::REBINDING,
+        |host| {
+            Box::pin(async move {
+                let implementation = PinnedProviderLoop::new(host.script.clone());
+                Arc::new(implementation) as Arc<dyn AgentLoop>
+            })
+        },
+        |host| Box::pin(async move { Ok(pinned_provider_plugin(host.script.clone())) }),
+    )
 }
 
 #[tokio::test]
@@ -308,8 +336,14 @@ async fn standard_loop_passes_the_suite() {
     );
     assert_eq!(
         report.outcomes.len(),
-        17,
+        18,
         "the suite must run every case:\n{}",
+        report.describe()
+    );
+    assert_eq!(
+        report.status("substitution_rebinds_the_model"),
+        Some(Status::Skipped),
+        "a loop that pins its providers is not certified for rebinding:\n{}",
         report.describe()
     );
 }
@@ -320,6 +354,23 @@ async fn production_leased_loop_passes_the_same_suite() {
     assert!(
         report.failures().is_empty(),
         "the production loop must pass every case:\n{}",
+        report.describe()
+    );
+    assert!(
+        report.passed("substitution_rebinds_the_model"),
+        "the production loop leases its model, so it must be certified for rebinding:\n{}",
+        report.describe()
+    );
+}
+
+/// A loop that keeps the provider it was constructed with cannot be certified for
+/// rebinding, even when it declares the capability.
+#[tokio::test]
+async fn a_loop_that_pins_its_provider_fails_the_rebinding_case() {
+    let report = run(&pinned_provider()).await;
+    assert!(
+        report.failed("substitution_rebinds_the_model"),
+        "the suite must catch a loop that keeps the retired provider:\n{}",
         report.describe()
     );
 }
