@@ -296,6 +296,7 @@ struct Driver {
     model_configured: bool,
     readiness: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     guard: Arc<TerminalGuard>,
+    steering: Option<Arc<huginn_core::SteeringQueue>>,
     ui: Arc<Ui>,
     _done: Completion,
 }
@@ -332,6 +333,8 @@ pub struct Ratatui {
     pub readiness: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     pub ui_config: Option<Arc<crate::settings::UiConfig>>,
     pub save_ui_config: Option<crate::settings::SaveUiConfig>,
+    /// Host mailbox the composer writes into while a turn is busy.
+    pub steering: Option<Arc<huginn_core::SteeringQueue>>,
 }
 #[async_trait]
 impl Presentation for Ratatui {
@@ -446,6 +449,7 @@ impl Ratatui {
             standalone,
             model_configured: self.model_configured,
             readiness: self.readiness.clone(),
+            steering: self.steering.clone(),
             _done: Completion(done),
         };
         // The driver is the ONLY reader, after stock inline cursor initialization.
@@ -484,6 +488,7 @@ pub async fn login(
         readiness: None,
         ui_config: None,
         save_ui_config: None,
+        steering: None,
     };
     // An in-memory rendering context only; never persisted or passed to inference.
     let mut connection = terminal
@@ -1444,9 +1449,33 @@ Enter save Esc close"
                     return;
                 }
                 let mut state = self.ui.lock();
-                // UI commands remain usable during a turn, but a conversation
-                // draft must wait until that turn finishes.
+                // UI commands remain usable during a turn. A conversation draft becomes
+                // a steering message the loop drains at its next step boundary; it is
+                // never queued as a turn of its own.
                 if state.busy {
+                    let Some(steering) = &self.steering else {
+                        state.status.set_diagnostic(
+                            "Steering is unavailable; the draft waits for the turn to end".into(),
+                        );
+                        return;
+                    };
+                    if let Err(error) = steering.push(&line) {
+                        // The draft stays in the composer: a refused message must never
+                        // look delivered. The loop's own wording is kept, without the
+                        // internal error taxonomy, because this line is UI copy.
+                        let reason = match &error {
+                            huginn_core::AgentError::Configuration(message) => message.clone(),
+                            other => other.to_string(),
+                        };
+                        state
+                            .status
+                            .set_diagnostic(format!("Steering refused: {reason}"));
+                        return;
+                    }
+                    state.clear_editor();
+                    state
+                        .status
+                        .set_notice("Steering queued; delivered at the next step".into());
                     return;
                 }
                 if prompts.try_send(line).is_ok() {

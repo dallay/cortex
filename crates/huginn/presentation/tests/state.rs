@@ -1270,6 +1270,31 @@ fn a_retry_drops_the_partial_answer_of_the_failed_attempt() {
 }
 
 #[test]
+fn a_steered_event_reports_how_many_messages_were_delivered() {
+    let mut state = UiState::default();
+    state.project(
+        Event::Steered {
+            turn: TurnId(1),
+            step: StepId(1),
+            count: 1,
+        },
+        "Tool",
+        "Tool error",
+    );
+    assert_eq!(state.status.notice, "Delivered 1 steering message");
+    state.project(
+        Event::Steered {
+            turn: TurnId(1),
+            step: StepId(2),
+            count: 2,
+        },
+        "Tool",
+        "Tool error",
+    );
+    assert_eq!(state.status.notice, "Delivered 2 steering messages");
+}
+
+#[test]
 fn a_retry_keeps_tool_output_from_earlier_steps() {
     let mut state = UiState::default();
     state.project(
