@@ -729,6 +729,13 @@ pub async fn run(under_test: &UnderTest) -> Report {
         )
         .await,
     );
+    record(
+        guarded(
+            "completed_results_survive_a_resume",
+            completed_results_survive_a_resume(under_test).await,
+        )
+        .await,
+    );
     record(if under_test.capabilities.compaction {
         guarded(
             "compaction_keeps_turn_boundary",
@@ -1497,6 +1504,85 @@ async fn retry_repeats_inference_only(under_test: &UnderTest) -> std::result::Re
     }
     if strict.script.calls() != 1 {
         return Err("a zero retry budget must not repeat the request".into());
+    }
+    Ok(())
+}
+
+async fn completed_results_survive_a_resume(
+    under_test: &UnderTest,
+) -> std::result::Result<(), String> {
+    let host = Host::new(vec![Reply::Text("done")]).await;
+    let implementation = (under_test.build)(&host).await;
+    let mut session = Session::new(host.workspace.clone());
+    session
+        .messages
+        .push(Message::text(Role::User, "earlier request"));
+    session.messages.push(Message {
+        role: Role::Assistant,
+        content: String::new(),
+        tool_calls: vec![write_call("answered")],
+        tool_call_id: None,
+    });
+    session
+        .messages
+        .push(Message::tool("answered".into(), "EFFECT RESULT".into()));
+    session.messages.push(Message {
+        role: Role::Assistant,
+        content: String::new(),
+        tool_calls: vec![write_call("pending")],
+        tool_call_id: None,
+    });
+    host.sessions.save(&session).await.unwrap();
+    let mut resumed = host.sessions.load(&session.id).await.unwrap();
+
+    let approval = host.approval(true);
+    implementation
+        .run(
+            &mut resumed,
+            "continue".into(),
+            &*approval,
+            &Events::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .map_err(|error| format!("resuming failed: {error}"))?;
+
+    // Recovery may only close what is missing; a completed result is real output.
+    let kept = resumed.messages.iter().any(|message| {
+        message.tool_call_id.as_deref() == Some("answered") && message.content == "EFFECT RESULT"
+    });
+    if !kept {
+        return Err("a completed tool result must survive recovery".into());
+    }
+    // Every call needs exactly one result, or a provider rejects the history.
+    for call in resumed
+        .messages
+        .iter()
+        .flat_map(|message| message.tool_calls.iter())
+    {
+        let results = resumed
+            .messages
+            .iter()
+            .filter(|message| message.tool_call_id.as_deref() == Some(call.id.as_str()))
+            .count();
+        if results != 1 {
+            return Err(format!(
+                "call {} must have exactly one result, found {results}",
+                call.id
+            ));
+        }
+    }
+    if host.effects.executed() != 0 {
+        return Err("recovery must not replay a call that already ran".into());
+    }
+    let seen = host.script.requests().first().is_some_and(|request| {
+        request
+            .messages
+            .iter()
+            .any(|message| message.content == "EFFECT RESULT")
+    });
+    if !seen {
+        return Err("the model must still receive the completed tool result".into());
     }
     Ok(())
 }

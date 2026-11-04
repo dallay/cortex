@@ -187,6 +187,9 @@ pub struct UiState {
     completion_editor: Option<(String, usize, bool)>,
     completion_catalog: Vec<(String, u64)>,
     pub tail: String,
+    /// Length of `tail` after the last completed tool result. A retried attempt may only
+    /// drop what it produced, not output from earlier steps of the same turn.
+    tail_after_tool: usize,
     pub status: crate::status_bar::StatusSnapshot,
     pub widgets: Vec<(String, View)>,
 
@@ -615,6 +618,8 @@ impl UiState {
                 let view = view.unwrap_or_else(|| fallback(output, *is_error));
                 self.tail
                     .push_str(&format!("\n{}\n", safe(&view.plain_text())));
+                // A retry may roll the tail back to here, never further.
+                self.tail_after_tool = self.tail.len();
                 if *is_error || view.is_error {
                     self.status.set_diagnostic(if view.title.is_empty() {
                         "Tool error".into()
@@ -630,6 +635,7 @@ impl UiState {
                 .status
                 .set_notice(if *approved { "Approved" } else { "Denied" }.into()),
             Event::TurnStarted { .. } => {
+                self.tail_after_tool = 0;
                 self.status.set_notice("Thinking…".into());
             }
             Event::TurnFinished { .. } => {
@@ -646,9 +652,9 @@ impl UiState {
                 .set_diagnostic(format!("Model call blocked by {hook}: {reason}")),
             Event::ContextPinned { .. } => {}
             Event::ModelRetried { attempt, .. } => {
-                // The failed attempt's deltas were already rendered; drop them so they do
-                // not splice into the answer of the retry.
-                self.tail.clear();
+                // The failed attempt's deltas were already rendered; drop only those, so
+                // earlier tool output stays visible and nothing splices into the retry.
+                self.tail.truncate(self.tail_after_tool);
                 self.status
                     .set_notice(format!("Retrying after an incomplete answer ({attempt})"));
             }
@@ -702,6 +708,7 @@ impl UiState {
         }
         self.message_count = session.messages.len();
         self.tail.clear();
+        self.tail_after_tool = 0;
         self.busy = false;
         self.turn_cancel = None;
         if session.interrupted {

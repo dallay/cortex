@@ -131,7 +131,7 @@ async fn standard_loop_passes_the_suite() {
     );
     assert_eq!(
         report.outcomes.len(),
-        15,
+        16,
         "the suite must run every case:\n{}",
         report.describe()
     );

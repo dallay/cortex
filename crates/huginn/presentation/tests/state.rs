@@ -1261,6 +1261,50 @@ fn a_retry_drops_the_partial_answer_of_the_failed_attempt() {
 }
 
 #[test]
+fn a_retry_keeps_tool_output_from_earlier_steps() {
+    let mut state = UiState::default();
+    state.project(
+        Event::ToolFinished {
+            step: StepId(1),
+            id: "c1".into(),
+            output: "EARLIER TOOL OUTPUT".into(),
+            is_error: false,
+        },
+        "Tool",
+        "Tool error",
+    );
+    state.project(
+        Event::Text {
+            step: StepId(2),
+            text: "partial answer".into(),
+        },
+        "Tool",
+        "Tool error",
+    );
+
+    state.project(
+        Event::ModelRetried {
+            turn: TurnId(1),
+            step: StepId(2),
+            attempt: 1,
+        },
+        "Tool",
+        "Tool error",
+    );
+
+    assert!(
+        state.tail.contains("EARLIER TOOL OUTPUT"),
+        "earlier tool output must stay visible: {:?}",
+        state.tail
+    );
+    assert!(
+        !state.tail.contains("partial answer"),
+        "the failed attempt must be dropped: {:?}",
+        state.tail
+    );
+}
+
+#[test]
 fn projected_text_cannot_emit_terminal_escape_sequences() {
     let ui = ui();
     ui.emit(Event::Text {

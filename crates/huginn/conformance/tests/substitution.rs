@@ -222,3 +222,111 @@ async fn substituting_the_loop_runs_only_the_plugin_implementation() {
     );
     supervisor.shutdown().await;
 }
+
+/// A turn-level guard installed after substituting the registry must be the one that runs.
+#[tokio::test]
+async fn a_substituted_hook_registry_is_the_one_that_runs() {
+    let counts = Arc::new(Counts::default());
+    let mut supervisor = composition::build(
+        Arc::new(CountingModel(counts.clone())),
+        Arc::new(NoTools),
+        Arc::new(Memory::default()),
+        LoopConfig::default(),
+        Arc::new(Instructions),
+    )
+    .await
+    .unwrap();
+
+    supervisor
+        .substitute(
+            &huginn_core::hooks::inference_hooks_id(),
+            Box::new(ReplacementHooks(Arc::new(
+                huginn_core::hooks::InferenceHooks::default(),
+            ))),
+            SubstitutionPolicy::ReportUndrained,
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+    supervisor.register(Box::new(BlockInferencePlugin)).unwrap();
+    supervisor.start().await.unwrap();
+
+    let slot = supervisor.resolve::<LoopService>(&agent_loop_id()).unwrap();
+    let mut session = Session::new("/nonexistent/substitution".into());
+    let outcome = slot
+        .0
+        .run(
+            &mut session,
+            "hello".into(),
+            &NoApproval,
+            &Events::default(),
+            CancellationToken::new(),
+        )
+        .await;
+
+    assert!(
+        matches!(&outcome, Err(AgentError::Model(message)) if message.contains("blocked by hook")),
+        "the substituted registry must gate the call, got {outcome:?}"
+    );
+    assert_eq!(
+        counts.model.load(Ordering::SeqCst),
+        0,
+        "a blocked step must not reach the model"
+    );
+    supervisor.shutdown().await;
+}
+
+struct BlockInference;
+#[async_trait]
+impl huginn_core::hooks::InferenceHook for BlockInference {
+    async fn before(
+        &self,
+        _: huginn_core::TurnId,
+        _: StepId,
+        _: &huginn_core::ToolContext,
+    ) -> Result<huginn_core::hooks::InferenceVerdict> {
+        Ok(huginn_core::hooks::InferenceVerdict::Block(
+            "installed after substitution".into(),
+        ))
+    }
+}
+
+struct BlockInferencePlugin;
+#[async_trait]
+impl Plugin for BlockInferencePlugin {
+    fn manifest(&self) -> Manifest {
+        Manifest {
+            id: "test.block-inference".into(),
+            provides: vec![],
+            requires: vec![huginn_core::hooks::inference_hooks_id()],
+        }
+    }
+    async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+        let hooks = ctx
+            .resolve::<huginn_core::hooks::InferenceHooksService>(
+                &huginn_core::hooks::inference_hooks_id(),
+            )?
+            .0
+            .clone();
+        hooks.register(ctx, "test.block-inference".into(), Arc::new(BlockInference))
+    }
+}
+
+/// Provides the same service under a new plugin id, as any alternative would.
+struct ReplacementHooks(Arc<huginn_core::hooks::InferenceHooks>);
+#[async_trait]
+impl Plugin for ReplacementHooks {
+    fn manifest(&self) -> Manifest {
+        Manifest {
+            id: "test.replacement-hooks".into(),
+            provides: vec![huginn_core::hooks::inference_hooks_id()],
+            requires: vec![],
+        }
+    }
+    async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+        ctx.provide(
+            huginn_core::hooks::inference_hooks_id(),
+            huginn_core::hooks::InferenceHooksService(self.0.clone()),
+        )
+    }
+}

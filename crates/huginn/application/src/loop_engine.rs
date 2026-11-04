@@ -101,6 +101,20 @@ pub(crate) async fn skill_commands(
         .collect())
 }
 /// Host-owned decision points for a whole turn.
+/// The output budget for a request: the configured limit, capped by what the turn has
+/// left. Without a turn budget it is just the configured limit.
+impl LoopExecution<'_> {
+    fn remaining_output_tokens(&self, spent: u64) -> u32 {
+        self.config
+            .max_turn_tokens
+            .map_or(self.config.max_output_tokens, |budget| {
+                u32::try_from(budget.saturating_sub(spent))
+                    .unwrap_or(u32::MAX)
+                    .min(self.config.max_output_tokens)
+            })
+    }
+}
+
 struct TurnHost<'a> {
     approvals: &'a dyn ApprovalPolicy,
     sink: &'a dyn EventSink,
@@ -674,7 +688,7 @@ impl<'a> LoopExecution<'a> {
                 let request = ModelRequest {
                     messages: context.clone(),
                     tools: tools.clone(),
-                    max_tokens: self.config.max_output_tokens,
+                    max_tokens: self.remaining_output_tokens(spent),
                 };
                 match self
                     .collect_response(model, request, session, &scope, &mut spent)
@@ -728,10 +742,19 @@ impl<'a> LoopExecution<'a> {
                     }
                     if response.content.len().saturating_add(annotations.len()) > MAX_RESPONSE_BYTES
                     {
-                        let room = MAX_RESPONSE_BYTES.saturating_sub(response.content.len());
-                        response
-                            .content
-                            .push_str(&crate::output::bounded_text_with_limit(annotations, room));
+                        // Reserve the marker: the bound must hold after it is appended.
+                        const MARKER: usize = 32;
+                        let room = MAX_RESPONSE_BYTES
+                            .saturating_sub(response.content.len())
+                            .saturating_sub(MARKER);
+                        if room > MARKER {
+                            response
+                                .content
+                                .push_str(&crate::output::bounded_text_with_limit(
+                                    annotations,
+                                    room,
+                                ));
+                        }
                     } else {
                         response.content.push_str(&annotations);
                     }

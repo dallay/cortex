@@ -270,6 +270,9 @@ impl Drop for LoopAdmissionLease {
 struct LeasedAgentLoop {
     model: ServiceSlotHandle<ModelService>,
     sessions: ServiceSlotHandle<SessionsService>,
+    /// Acquired per operation: a substituted registry must be the one evaluated.
+    hooks: ServiceSlotHandle<ToolHooksService>,
+    inference_hooks: ServiceSlotHandle<huginn_core::hooks::InferenceHooksService>,
     tools: Arc<dyn ToolRegistry>,
     instructions: Arc<dyn InstructionSource>,
     config: LoopConfig,
@@ -282,15 +285,32 @@ impl LeasedAgentLoop {
         &'a self,
         model: &'a ModelService,
         sessions: &'a SessionsService,
+        config: &'a LoopConfig,
     ) -> LoopExecution<'a> {
         LoopExecution::new(
             model.0.as_ref(),
             self.tools.as_ref(),
             sessions.0.as_ref(),
             self.instructions.as_ref(),
-            &self.config,
+            config,
             &self.lifecycle,
         )
+    }
+
+    /// Resolves the registries this run must evaluate.
+    ///
+    /// The config copy taken at activation is not authoritative: `Substitute` can replace
+    /// either service, and a loop that kept the retired registry would silently skip a
+    /// blocking hook installed afterwards.
+    fn live_config(
+        &self,
+        hooks: &ToolHooksService,
+        inference_hooks: &huginn_core::hooks::InferenceHooksService,
+    ) -> LoopConfig {
+        let mut config = self.config.clone();
+        config.hooks = Some(hooks.0.clone());
+        config.inference_hooks = Some(inference_hooks.0.clone());
+        config
     }
 }
 
@@ -315,7 +335,10 @@ impl AgentLoop for LeasedAgentLoop {
         let _admission = self.admission.enter()?;
         let model = self.model.acquire()?;
         let sessions = self.sessions.acquire()?;
-        self.execution(&model, &sessions)
+        let hooks = self.hooks.acquire()?;
+        let inference_hooks = self.inference_hooks.acquire()?;
+        let config = self.live_config(&hooks, &inference_hooks);
+        self.execution(&model, &sessions, &config)
             .run(session, prompt, approvals, events, cancellation)
             .await
     }
@@ -329,7 +352,10 @@ impl AgentLoop for LeasedAgentLoop {
         let _admission = self.admission.enter()?;
         let model = self.model.acquire()?;
         let sessions = self.sessions.acquire()?;
-        self.execution(&model, &sessions)
+        let hooks = self.hooks.acquire()?;
+        let inference_hooks = self.inference_hooks.acquire()?;
+        let config = self.live_config(&hooks, &inference_hooks);
+        self.execution(&model, &sessions, &config)
             .compact(session, events, cancellation)
             .await
     }
@@ -369,6 +395,10 @@ impl Plugin for LeasedLoopPlugin {
         let implementation = LeasedAgentLoop {
             model,
             sessions,
+            hooks: ctx.service_slot_handle::<ToolHooksService>(&tool_hooks_id())?,
+            inference_hooks: ctx.service_slot_handle::<huginn_core::hooks::InferenceHooksService>(
+                &huginn_core::hooks::inference_hooks_id(),
+            )?,
             tools: ctx.resolve::<ToolsService>(&tools_id())?.0.clone(),
             instructions: ctx
                 .resolve::<InstructionsService>(&instructions_id())?

@@ -89,27 +89,39 @@ impl StepLoop {
             .iter()
             .flat_map(|message| message.tool_calls.iter().map(|call| call.id.clone()))
             .collect();
-        let mut answered: BTreeSet<String> = session
+        // Stored results are kept and re-inserted in call order; only a call without a
+        // result gets a placeholder. Dropping the results would lose completed tool
+        // output and leave an assistant call that no provider will accept unpaired.
+        let mut existing: std::collections::BTreeMap<String, Message> = session
             .messages
             .iter()
-            .filter_map(|message| message.tool_call_id.clone())
-            .filter(|id| known.contains(id))
+            .filter_map(|message| {
+                message
+                    .tool_call_id
+                    .as_ref()
+                    .filter(|id| known.contains(*id))
+                    .map(|id| (id.clone(), message.clone()))
+            })
             .collect();
         let mut repaired = Vec::with_capacity(session.messages.len() + known.len());
         for message in std::mem::take(&mut session.messages) {
-            if message.tool_call_id.is_some() {
+            if message
+                .tool_call_id
+                .as_ref()
+                .is_some_and(|id| known.contains(id))
+            {
                 continue;
             }
             let calls = message.tool_calls.clone();
             repaired.push(message);
             for call in calls {
-                if answered.remove(&call.id) {
-                    continue;
-                }
-                repaired.push(Message::tool(
-                    call.id,
-                    "Interrupted operation: completion is unknown. Nothing was replayed.".into(),
-                ));
+                repaired.push(existing.remove(&call.id).unwrap_or_else(|| {
+                    Message::tool(
+                        call.id,
+                        "Interrupted operation: completion is unknown. Nothing was replayed."
+                            .into(),
+                    )
+                }));
             }
         }
         session.messages = repaired;
@@ -119,46 +131,47 @@ impl StepLoop {
         &self,
         context: Vec<Message>,
         tools: Vec<ToolDefinition>,
-        sink: &dyn EventSink,
-        step: StepId,
-        max_tokens: u32,
-        cancel: CancellationToken,
-    ) -> Result<(Message, u64)> {
+        call: &Call<'_>,
+        spent: &mut u64,
+    ) -> Result<Message> {
         let mut stream = tokio::select! {
             biased;
-            _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+            _ = call.cancel.cancelled() => return Err(AgentError::Cancelled),
             result = self.model.stream(
                 ModelRequest {
                     messages: context,
                     tools,
-                    max_tokens,
+                    max_tokens: call.max_tokens,
                 },
-                cancel.clone(),
+                call.cancel.clone(),
             ) => result?,
         };
         let mut response = Message::text(Role::Assistant, "");
         let mut finished = false;
-        let mut tokens = 0_u64;
         loop {
             let item = tokio::select! {
                 biased;
-                _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+                _ = call.cancel.cancelled() => return Err(AgentError::Cancelled),
                 item = stream.next() => item,
             };
             let Some(delta) = item else { break };
             match delta? {
                 ModelDelta::Text(text) => {
                     response.content.push_str(&text);
-                    sink.emit(Event::Text { step, text });
+                    call.sink.emit(Event::Text {
+                        step: call.step,
+                        text,
+                    });
                 }
                 ModelDelta::ToolCall(call) => response.tool_calls.push(call),
                 ModelDelta::Usage {
                     input_tokens,
                     output_tokens,
                 } => {
-                    tokens = tokens.saturating_add(input_tokens.saturating_add(output_tokens));
-                    sink.emit(Event::Usage {
-                        step,
+                    // Counted even if the attempt ends incomplete: the provider spent them.
+                    *spent = spent.saturating_add(input_tokens.saturating_add(output_tokens));
+                    call.sink.emit(Event::Usage {
+                        step: call.step,
                         input_tokens,
                         output_tokens,
                     });
@@ -174,7 +187,7 @@ impl StepLoop {
                 "model returned an incomplete turn".into(),
             ));
         }
-        Ok((response, tokens))
+        Ok(response)
     }
 
     async fn dispatch(
@@ -244,7 +257,8 @@ impl StepLoop {
                 execute(tool.as_ref(), action, &context).await
             }
             .await;
-            let (mut output, is_error) = match attempt {
+            let mut annotations = String::new();
+            let (output, is_error) = match attempt {
                 Ok(output) => (output, false),
                 Err(AgentError::Cancelled) => return Err(AgentError::Cancelled),
                 Err(error) => (error.to_string(), true),
@@ -261,18 +275,24 @@ impl StepLoop {
                     )
                     .await;
                 for note in notes {
-                    output.push_str(&format!("\n\n[hook {}] {}", note.hook, note.text));
+                    annotations.push_str(&format!("\n\n[hook {}] {}", note.hook, note.text));
                 }
             }
-            Ok::<_, AgentError>((output, is_error))
+            Ok::<_, AgentError>((output, is_error, annotations))
         };
         let outcome = tokio::select! {
             biased;
             _ = cancel.cancelled() => return Err(AgentError::Cancelled),
             outcome = work => outcome,
         };
-        let (output, is_error) = outcome?;
-        let output = bounded(output);
+        let (output, is_error, annotations) = outcome?;
+        // Budget the notes first: bounding the body afterwards would drop them.
+        let reserve = annotations
+            .len()
+            .saturating_add(1)
+            .min(MAX_OUTPUT_BYTES / 4);
+        let mut output = bounded(output, MAX_OUTPUT_BYTES - reserve);
+        output.push_str(&annotations);
         session
             .messages
             .push(Message::tool(call.id.clone(), output.clone()));
@@ -366,25 +386,35 @@ impl StepLoop {
                 }
             }
             let mut attempt = 0_u32;
-            let (mut response, tokens) = loop {
+            let mut response = loop {
                 let request = context.clone();
                 let tools = self.tools.definitions();
                 match self
                     .collect(
                         request,
                         tools,
-                        sink,
-                        step,
-                        self.config.max_output_tokens,
-                        cancel.clone(),
+                        &Call {
+                            sink,
+                            step,
+                            max_tokens: self.config.max_output_tokens,
+                            cancel: cancel.clone(),
+                        },
+                        &mut spent,
                     )
                     .await
                 {
-                    Ok(pair) => break pair,
+                    Ok(response) => break response,
                     Err(error)
                         if attempt < self.config.max_model_retries
                             && error.is_retryable_inference() =>
                     {
+                        if let Some(budget) = self.config.max_turn_tokens {
+                            if spent >= budget {
+                                return Err(AgentError::Model(format!(
+                                    "turn budget exhausted ({spent}/{budget} tokens) before a retry"
+                                )));
+                            }
+                        }
                         attempt += 1;
                         self.record(
                             session,
@@ -411,7 +441,6 @@ impl StepLoop {
                 }
             }
 
-            spent = spent.saturating_add(tokens);
             if let Some(budget) = self.config.max_turn_tokens {
                 if spent > budget {
                     return Err(AgentError::Model(format!(
@@ -466,22 +495,29 @@ impl StepLoop {
     }
 }
 
+/// Host-facing I/O for one model call inside a turn.
+struct Call<'a> {
+    sink: &'a dyn EventSink,
+    step: StepId,
+    max_tokens: u32,
+    cancel: CancellationToken,
+}
+
 /// Largest tool result kept in history. The contract does not export the host limit, so
 /// every implementation states its own.
 pub const MAX_OUTPUT_BYTES: usize = 65_536;
 
-fn bounded(output: String) -> String {
-    if output.len() <= MAX_OUTPUT_BYTES {
+/// Truncates to `limit` bytes on a character boundary, keeping the marker inside it.
+fn bounded(output: String, limit: usize) -> String {
+    const MARKER: &str = "\n[output truncated]";
+    if output.len() <= limit {
         return output;
     }
-    let mut end = MAX_OUTPUT_BYTES;
-    while !output.is_char_boundary(end) {
+    let mut end = limit.saturating_sub(MARKER.len());
+    while end > 0 && !output.is_char_boundary(end) {
         end -= 1;
     }
-    format!(
-        "{}\n[output truncated at {MAX_OUTPUT_BYTES} bytes]",
-        &output[..end]
-    )
+    format!("{}{MARKER}", &output[..end])
 }
 
 /// Local helper so the dispatch closure borrows the tool only once.
@@ -563,14 +599,18 @@ impl AgentLoop for StepLoop {
             tools: vec![],
             max_tokens: 1024,
         };
-        let (summary, _) = self
+        let mut spent = 0_u64;
+        let summary = self
             .collect(
                 request.messages,
                 request.tools,
-                events,
-                StepId(1),
-                request.max_tokens,
-                cancellation,
+                &Call {
+                    sink: events,
+                    step: StepId(1),
+                    max_tokens: request.max_tokens,
+                    cancel: cancellation,
+                },
+                &mut spent,
             )
             .await?;
         if summary.content.trim().is_empty() || !summary.tool_calls.is_empty() {
