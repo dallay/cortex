@@ -16,11 +16,12 @@ use huginn_core::{
         inference_hooks_id, tool_hooks_id, InferenceHook, InferenceHooks, InferenceHooksService,
         InferenceVerdict, ToolHook, ToolHooks, ToolHooksService,
     },
-    kernel::{Manifest, Plugin, PluginContext, SubstitutionPolicy, Supervisor},
-    model_id, AgentError, AgentLoop, ApprovalPolicy, ApprovalRequest, CancellationToken, Event,
-    EventSink, InstructionSource, LoopService, Message, ModelDelta, ModelProvider, ModelRequest,
-    ModelService, PreparedAction, Result, Role, Session, SessionInfo, SessionStore, StepId, Tool,
-    ToolCall, ToolContext, ToolDefinition, ToolRegistry, TurnId,
+    kernel::{Manifest, Plugin, PluginContext, ServiceSlotHandle, SubstitutionPolicy, Supervisor},
+    model_id, sessions_id, AgentError, AgentLoop, ApprovalPolicy, ApprovalRequest,
+    CancellationToken, Event, EventSink, InstructionSource, LoopService, Message, ModelDelta,
+    ModelProvider, ModelRequest, ModelService, PreparedAction, Result, Role, Session, SessionInfo,
+    SessionStore, SessionsService, StepId, Tool, ToolCall, ToolContext, ToolDefinition,
+    ToolRegistry, TurnId,
 };
 use std::{
     collections::VecDeque,
@@ -902,6 +903,26 @@ async fn guarded(name: &'static str, outcome: std::result::Result<(), String>) -
 
 /// Provides `agent:model` alone, so a substitution can replace the provider under the
 /// same service id without touching the catalog services the host router also owns.
+/// A uniquely identified session store, so the rebinding case can substitute it under a loop
+/// without colliding with the store it replaced.
+struct SessionSlotPlugin {
+    plugin_id: &'static str,
+    sessions: Arc<dyn SessionStore>,
+}
+#[async_trait]
+impl Plugin for SessionSlotPlugin {
+    fn manifest(&self) -> Manifest {
+        Manifest {
+            id: self.plugin_id.into(),
+            provides: vec![sessions_id()],
+            requires: vec![],
+        }
+    }
+    async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+        ctx.provide(sessions_id(), SessionsService(self.sessions.clone()))
+    }
+}
+
 struct ModelSlotPlugin {
     plugin_id: &'static str,
     model: Arc<dyn ModelProvider>,
@@ -933,7 +954,7 @@ fn last_answer(session: &Session) -> &str {
 /// The kernel substitutes `agent:model` between two turns. A loop that leases the slot
 /// serves the second turn from the new provider; a loop that pinned its `Arc` cannot,
 /// because the retired provider is the only one it can reach.
-async fn substitution_rebinds_the_model(under_test: &UnderTest) -> std::result::Result<(), String> {
+async fn substitution_rebinds_services(under_test: &UnderTest) -> std::result::Result<(), String> {
     let publish = under_test.publish.as_ref().ok_or_else(|| {
         "the implementation declares rebind awareness without being published into a supervisor"
             .to_string()
@@ -1014,6 +1035,21 @@ async fn substitution_rebinds_the_model(under_test: &UnderTest) -> std::result::
         .await
         .map_err(|error| format!("substituting the model failed: {error}"))?;
 
+    let replacement_store = Arc::new(MemorySessions::default());
+    let retired_saves = host.sessions.saves();
+    supervisor
+        .substitute(
+            &sessions_id(),
+            Box::new(SessionSlotPlugin {
+                plugin_id: "conformance.sessions.second",
+                sessions: replacement_store.clone(),
+            }),
+            SubstitutionPolicy::ReportUndrained,
+            Duration::from_secs(1),
+        )
+        .await
+        .map_err(|error| format!("substituting the session store failed: {error}"))?;
+
     let mut next = Session::new(host.workspace.clone());
     implementation
         .run(
@@ -1041,6 +1077,22 @@ async fn substitution_rebinds_the_model(under_test: &UnderTest) -> std::result::
         return Err(format!(
             "the retired provider must not serve another turn, it was called {} times",
             host.script.calls()
+        ));
+    }
+    // The declaration covers the session store too, so a loop that leased only the model
+    // would still have written the second turn into the retired store.
+    if replacement_store.saves() == 0 {
+        return Err("the second turn must persist to the substituted session store".into());
+    }
+    if replacement_store.snapshot().map(|saved| saved.id) != Some(next.id.clone()) {
+        return Err(
+            "the substituted session store must hold the session the second turn wrote".into(),
+        );
+    }
+    if host.sessions.saves() != retired_saves {
+        return Err(format!(
+            "the retired session store must not receive another save, it went from {retired_saves} to {}",
+            host.sessions.saves()
         ));
     }
     Ok(())
@@ -1408,14 +1460,14 @@ async fn rebinding_case(under_test: &UnderTest) -> CaseOutcome {
     let implementation = (under_test.build)(&host).await;
     if !implementation.capabilities().rebinds_services {
         return CaseOutcome {
-            case: "substitution_rebinds_the_model",
+            case: "substitution_rebinds_services",
             status: Status::Skipped,
             detail: "the implementation does not declare rebind awareness".into(),
         };
     }
     guarded(
-        "substitution_rebinds_the_model",
-        substitution_rebinds_the_model(under_test).await,
+        "substitution_rebinds_services",
+        substitution_rebinds_services(under_test).await,
     )
     .await
 }
@@ -1665,6 +1717,100 @@ pub mod broken {
     /// Publishes the pinned implementation under `agent:loop@1`.
     pub fn pinned_provider_plugin(model: Arc<dyn ModelProvider>) -> Box<dyn Plugin> {
         Box::new(PinnedProviderPlugin(model))
+    }
+
+    /// Declares rebind awareness while leasing only the model: the session store stays the
+    /// one it was constructed with, so the rebinding case must catch the half-done claim.
+    pub struct PinnedSessionsLoop {
+        model: ServiceSlotHandle<ModelService>,
+        sessions: Arc<dyn SessionStore>,
+    }
+    impl PinnedSessionsLoop {
+        pub fn new(
+            model: ServiceSlotHandle<ModelService>,
+            sessions: Arc<dyn SessionStore>,
+        ) -> Self {
+            Self { model, sessions }
+        }
+    }
+
+    #[async_trait]
+    impl AgentLoop for PinnedSessionsLoop {
+        fn capabilities(&self) -> huginn_core::AgentLoopCapabilities {
+            huginn_core::AgentLoopCapabilities {
+                compaction: false,
+                skill_commands: false,
+                rebinds_services: true,
+            }
+        }
+
+        async fn run(
+            &self,
+            session: &mut Session,
+            prompt: String,
+            _approvals: &dyn ApprovalPolicy,
+            events: &dyn EventSink,
+            cancel: CancellationToken,
+        ) -> Result<()> {
+            let turn = session.allocate_turn()?;
+            session.events.push(Event::TurnStarted {
+                session_id: session.id.clone(),
+                turn,
+            });
+            session.messages.push(Message::text(Role::User, prompt));
+            self.sessions.save(session).await?;
+            let lease = self.model.acquire()?;
+            let model = &lease.0;
+            let mut stream = model
+                .stream(
+                    ModelRequest {
+                        messages: session.messages.clone(),
+                        tools: vec![],
+                        max_tokens: 64,
+                    },
+                    cancel,
+                )
+                .await?;
+            let mut answer = String::new();
+            while let Some(delta) = stream.next().await {
+                if let ModelDelta::Text(text) = delta? {
+                    answer.push_str(&text);
+                }
+            }
+            session
+                .messages
+                .push(Message::text(Role::Assistant, answer.clone()));
+            events.emit(Event::Text {
+                step: StepId(1),
+                text: answer,
+            });
+            session.events.push(Event::TurnFinished { turn });
+            Ok(())
+        }
+    }
+
+    struct PinnedSessionsPlugin(Arc<dyn SessionStore>);
+    #[async_trait]
+    impl Plugin for PinnedSessionsPlugin {
+        fn manifest(&self) -> Manifest {
+            Manifest {
+                id: "conformance.pinned-sessions".into(),
+                provides: vec![agent_loop_id()],
+                requires: vec![model_id()],
+            }
+        }
+        async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
+            let model = ctx.service_slot_handle::<ModelService>(&model_id())?;
+            ctx.provide(
+                agent_loop_id(),
+                LoopService(Arc::new(PinnedSessionsLoop::new(model, self.0.clone()))),
+            )
+        }
+    }
+
+    /// Publishes a loop that leases the model but pins its session store.
+    pub fn pinned_sessions_plugin(sessions: Arc<dyn SessionStore>) -> Box<dyn Plugin> {
+        Box::new(PinnedSessionsPlugin(sessions))
     }
 }
 

@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use huginn_application::{composition, loop_engine::StandardLoop};
 use huginn_conformance::{
-    broken::{pinned_provider_plugin, PinnedProviderLoop, ReplayingLoop},
+    broken::{pinned_provider_plugin, pinned_sessions_plugin, PinnedProviderLoop, ReplayingLoop},
     hook_plugin, inference_hook_plugin, run, Host, Status, UnderTest,
 };
 use huginn_core::{
@@ -343,7 +343,7 @@ async fn standard_loop_passes_the_suite() {
         report.describe()
     );
     assert_eq!(
-        report.status("substitution_rebinds_the_model"),
+        report.status("substitution_rebinds_services"),
         Some(Status::Skipped),
         "a loop that pins its providers is not certified for rebinding:\n{}",
         report.describe()
@@ -359,7 +359,7 @@ async fn production_leased_loop_passes_the_same_suite() {
         report.describe()
     );
     assert!(
-        report.passed("substitution_rebinds_the_model"),
+        report.passed("substitution_rebinds_services"),
         "the production loop leases its model, so it must be certified for rebinding:\n{}",
         report.describe()
     );
@@ -367,11 +367,35 @@ async fn production_leased_loop_passes_the_same_suite() {
 
 /// A loop that keeps the provider it was constructed with cannot be certified for
 /// rebinding, even when it declares the capability.
+/// Leases the model but keeps its session store, so it must fail for the half it pinned.
+fn pinned_sessions() -> UnderTest {
+    UnderTest::rebinding(
+        "PinnedSessionsLoop",
+        |host| {
+            Box::pin(async move {
+                let implementation = PinnedProviderLoop::new(host.script.clone());
+                Arc::new(implementation) as Arc<dyn AgentLoop>
+            })
+        },
+        |host| Box::pin(async move { Ok(pinned_sessions_plugin(host.sessions.clone())) }),
+    )
+}
+
+#[tokio::test]
+async fn a_loop_that_pins_only_the_session_store_fails_the_rebinding_case() {
+    let report = run(&pinned_sessions()).await;
+    assert!(
+        report.failed("substitution_rebinds_services"),
+        "the suite must catch a loop that keeps writing into the retired session store:\n{}",
+        report.describe()
+    );
+}
+
 #[tokio::test]
 async fn a_loop_that_pins_its_provider_fails_the_rebinding_case() {
     let report = run(&pinned_provider()).await;
     assert!(
-        report.failed("substitution_rebinds_the_model"),
+        report.failed("substitution_rebinds_services"),
         "the suite must catch a loop that keeps the retired provider:\n{}",
         report.describe()
     );
@@ -466,7 +490,7 @@ async fn extension_loop_passes_the_same_suite() {
         report.describe()
     );
     assert!(
-        report.passed("substitution_rebinds_the_model"),
+        report.passed("substitution_rebinds_services"),
         "an external loop must be able to lease the kernel services:\n{}",
         report.describe()
     );

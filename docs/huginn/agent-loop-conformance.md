@@ -38,7 +38,7 @@ A run certifies three implementations: `StandardLoop`, the production `LeasedAge
 | C15 | A transient inference failure may be repeated; an effect never is | `retry_repeats_inference_only` | loop |
 | C16 | Compaction stops at a complete-turn boundary and never splits a tool pair | `compaction_keeps_turn_boundary` | loop |
 | C17 | One in-process operation per session; overlapping turns and supported compaction reject before effects, without queueing | `concurrent_session_admission_is_bounded` | loop + shared `SessionOperation` |
-| C18 | A loop that leases `agent:model` serves the next turn from the substituted provider; one that pins it never does | `substitution_rebinds_the_model` | loop + `Capabilities::rebinds_services` |
+| C18 | A loop that leases `agent:model` and `agent:sessions` serves the next turn from the substituted provider and persists into the substituted store; one that pins either never does | `substitution_rebinds_services` | loop + `AgentLoopCapabilities::rebinds_services` |
 
 The host owns authorization in every clause: a loop may *ask* `ApprovalPolicy`, and no clause
 lets a loop grant itself a decision.
@@ -90,8 +90,11 @@ behavior is unchanged.
 
 `StandardLoop` and `LeasedAgentLoop` declare compaction and declare skill commands only
 when `LoopConfig::skills` is present. `StepLoop` declares compaction but no skill commands.
-Only the leased production adapter declares `rebinds_services`, because it acquires its
-model and session store from the kernel on every turn. The suite reads the actual
+`LeasedAgentLoop` and the leased `StepLoop` (`StepLoop::leasing`) declare `rebinds_services`,
+because each acquires its model and session store from the kernel on every turn. The pinned
+`StepLoop` does not: it keeps the services it was constructed with. C18 substitutes both
+`agent:model` and `agent:sessions` and proves the next turn uses each replacement, so the
+declaration cannot be claimed by rebinding only half of what it describes. The suite reads the actual
 implementation built for each optional case instead of a separate harness declaration, so a
 loop cannot pass a case it does not declare and cannot declare a case it was never asked to
 prove.
@@ -117,7 +120,7 @@ copy host code or cannot express a guarantee at all.
 | --- | --- | --- | --- |
 | G1 | The complete-turn boundary rule is not part of the contract | The rule is implemented twice, in `huginn_application::loop_engine::complete_turn_ends` and in `StepLoop::complete_turn_end` | Every implementation must reimplement compaction boundaries and can silently disagree |
 | G4 | Transient transport failures are not classified by the adapters | Only a truncated stream yields `AgentError::Inference`; HTTP failures still surface as `Model` | The retry budget added here never engages for a real provider |
-| G5 (resolved) | Capabilities are part of `AgentLoop` | `AgentLoopCapabilities` is read by the host and suite | One declaration per implementation/configuration; conservative default |
+| G5 (resolved) | Capabilities are part of `AgentLoop` | `AgentLoopCapabilities` is read by the conformance suite; no production host reads it yet | One declaration per implementation/configuration; conservative default |
 | G6 (resolved) | `Event::Error` carries a defaulted turn identity | Old JSON loads as unknown; new errors round-trip with their turn | Additive persisted schema, no positional inference for new turn errors |
 | G7 | Steering has no producer in the terminal | `LoopConfig::steering` is honored, the TUI composer still drops a draft while busy | The capability exists but no user can reach it |
 | G9 | Tool-output bounding is not part of the contract | `StepLoop` had to define its own `MAX_OUTPUT_BYTES`; the host limit lives in `huginn_application::output`, unexported | Two loops can persist wildly different history sizes for the same tool |
