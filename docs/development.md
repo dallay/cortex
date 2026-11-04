@@ -237,9 +237,23 @@ lefthook run pre-push
 ```
 
 El hook `pre-push` ejecuta:
-- `ggshield secret scan pre-push`: escanea commits en busca de secretos antes de hacer push. Si `ggshield` no está instalado en la máquina, el hook se salta de forma segura (graceful fallback).
+- `bash scripts/pre-push-secret-scan.sh`: escanea los commits en busca de secretos con
+  `ggshield secret scan pre-push`. El script distingue tres resultados, porque un push
+  bloqueado tiene que nombrar la causa real:
+  - **La auditoría encontró secretos**: bloquea el push con
+    `GitGuardian secret scan found potential secrets. Inspect findings before pushing.`
+    El hallazgo viene del propio `ggshield`, que imprime el detalle arriba.
+  - **La auditoría no pudo ejecutarse**: bloquea el push con un diagnóstico que dice que
+    no se escaneó nada y cómo arreglarlo. Cubre `ggshield` sin autenticar (exit status 3),
+    errores de uso (2), servidor de GitGuardian no disponible (4) y cualquier otro fallo.
+    Nunca informa "secretos encontrados" cuando el escáner no llegó a correr.
+  - **`ggshield` no está instalado**: se salta el escaneo con un aviso. Si la política
+    exige el escaneo, exportá `CORTEX_SECRET_SCAN_REQUIRED=1` (o cualquier valor distinto
+    de `0`, `false`, `no`, `off`) y el hook falla cerrado en su lugar.
   - Para instalarlo: `pip install ggshield`
   - Para autenticarlo: `ggshield auth login` o exportando la variable `GITGUARDIAN_API_KEY`.
+  - La regresión de este comportamiento está cubierta por
+    `bash scripts/pre-push-secret-scan.test.sh`, que también corre en `just ci-lint`.
 - `cargo clippy`: valida advertencias de Rust (-D warnings).
 - `cargo test`: ejecuta la suite de pruebas del workspace.
 
