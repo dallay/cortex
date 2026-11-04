@@ -95,15 +95,22 @@ copy host code or cannot express a guarantee at all.
 | G4 | Transient transport failures are not classified by the adapters | Only a truncated stream yields `AgentError::Inference`; HTTP failures still surface as `Model` | The retry budget added here never engages for a real provider |
 | G5 | Capabilities are declared out of band | The suite needs `Capabilities { compaction }` because `AgentLoop::compact` has a default `Err` | Nothing in the trait says what an implementation supports |
 | G6 | `Event::Error` carries no turn identity | Kept as-is for schema compatibility | A consumer must infer the turn positionally |
-| G7 | Steering has no producer in the terminal | `LoopConfig::steering` is honored, the TUI composer still drops a draft while busy | The capability exists but no user can reach it |
 | G9 | Tool-output bounding is not part of the contract | `StepLoop` had to define its own `MAX_OUTPUT_BYTES`; the host limit lives in `huginn_application::output`, unexported | Two loops can persist wildly different history sizes for the same tool |
 
 G1 and G4 are the ones that would change the contract; the rest are either additive or
 adoption work. They are tracked as follow-up issues rather than folded into this change.
 
-G2 and G3 are closed. The hook-registry rule is one rule with one owner: the kernel owns
+G2, G3 and G7 are closed. The hook-registry rule is one rule with one owner: the kernel owns
 `agent:tool-hooks@1` and `agent:inference-hooks@1`, refuses a loop that supplies a foreign
 registry, and says so in `v1::agent`. Rebinding is authorable rather than host-only:
 `v1::agent` exports `ServiceSlotHandle`, `ServiceId`, `ModelService`, `SessionsService`,
 `model_id()` and `sessions_id()`, and `C18` proves a substituted provider is the one the next
 turn uses. The reference extension exercises both from the SDK alone.
+
+Steering now has a producer. `huginn_runtime::composition::shared_steering` installs the host's
+single `SteeringQueue` in `LoopConfig` and returns the same handle, which the host passes to
+`RatatuiPlugin::with_steering`. While a turn is busy the composer submits its draft to that
+queue instead of dropping it, clears the editor, and reports the delivery the loop already
+announces through `Event::Steered`. A full mailbox (8 messages, 4 KiB each) is refused with a
+visible diagnostic and the draft stays in the composer. Steering stays a message on the running
+turn: it is never a queued turn, and approval and permission handling are unchanged.
