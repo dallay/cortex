@@ -159,6 +159,7 @@ async fn seed_admin(config_path: Option<PathBuf>, password: String) -> anyhow::R
 }
 
 async fn start_server() -> anyhow::Result<()> {
+    rook::banner::print_banner();
     let config = load_config()?;
 
     // Run pending migrations (fail-fast — server doesn't start if migrations fail)
