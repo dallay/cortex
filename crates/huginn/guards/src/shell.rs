@@ -260,7 +260,7 @@ fn push_word(
     Ok(())
 }
 
-fn start_redirect(command: &Command, redirect: bool) -> Result<()> {
+const fn start_redirect(command: &Command, redirect: bool) -> Result<()> {
     if command.args.is_empty() || redirect {
         return Err("guardrails: unsupported shell redirection position");
     }

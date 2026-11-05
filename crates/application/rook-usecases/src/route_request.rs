@@ -156,7 +156,7 @@ struct ComboPreparedStep {
 
 /// What the combo loop must do after one step.
 enum ComboStepOutcome {
-    Completed(CompletionResponse),
+    Completed(Box<CompletionResponse>),
     Retry,
     Failed(CortexError),
 }
@@ -193,7 +193,7 @@ struct EligibleAttempt {
 /// Outcome of selecting and preparing the next candidate.
 enum AttemptPreparation {
     /// Candidate is ready; the caller performs the attempt.
-    Ready(EligibleAttempt),
+    Ready(Box<EligibleAttempt>),
     /// Candidate must be excluded and the loop must try again.
     Retry(ProviderId),
     /// No attempt is possible; the request ends with this error.
@@ -203,7 +203,7 @@ enum AttemptPreparation {
 /// What the failover loop must do after one attempt.
 enum AttemptStep {
     Retry,
-    Done(Result<CompletionResponse, CortexError>),
+    Done(Box<Result<CompletionResponse, CortexError>>),
 }
 
 /// The failing attempt the loop must settle before it can try another provider.
@@ -594,7 +594,7 @@ impl RouteRequest {
                 break;
             }
             if let AttemptStep::Done(result) = self.attempt_once(&context, &mut cursor).await {
-                return result;
+                return *result;
             }
         }
 
@@ -613,7 +613,7 @@ impl RouteRequest {
                 cursor.excluded.push(provider_id);
                 return AttemptStep::Retry;
             }
-            AttemptPreparation::Stop(error) => return AttemptStep::Done(Err(error)),
+            AttemptPreparation::Stop(error) => return AttemptStep::Done(Box::new(Err(error))),
         };
 
         cursor.provider_attempts += 1;
@@ -652,7 +652,7 @@ impl RouteRequest {
                         latency_ms,
                     })
                     .await;
-                return AttemptStep::Done(response);
+                return AttemptStep::Done(Box::new(response));
             }
             AttemptOutcome::LocalBackpressure(error) => {
                 // Local admission pressure releases the half-open reservation
@@ -776,7 +776,7 @@ impl RouteRequest {
             }
         };
 
-        AttemptPreparation::Ready(EligibleAttempt {
+        AttemptPreparation::Ready(Box::new(EligibleAttempt {
             provider,
             provider_id,
             connection_id,
@@ -784,7 +784,7 @@ impl RouteRequest {
             provider_req,
             trial_permit,
             admission,
-        })
+        }))
     }
 
     /// Capability and upstream-quota preflight; true when this candidate must be skipped.
@@ -890,7 +890,7 @@ impl RouteRequest {
             self.record_failure_audit_usage(req, &provider_id, connection_id, latency_ms, &error)
                 .await;
             self.record_failure_observation(provider_id, latency_ms, ObservationStatus::Failure);
-            return AttemptStep::Done(Err(error));
+            return AttemptStep::Done(Box::new(Err(error)));
         }
 
         tracing::warn!(
@@ -930,7 +930,7 @@ impl RouteRequest {
     ) -> AttemptStep {
         if !cursor.provider_attempt_failed {
             if let Some(backpressure) = cursor.local_backpressure.take() {
-                return AttemptStep::Done(Err(backpressure));
+                return AttemptStep::Done(Box::new(Err(backpressure)));
             }
         }
         tracing::error!(
@@ -946,7 +946,7 @@ impl RouteRequest {
         self.record_failure_audit_usage(req, &provider_id, connection_id, latency_ms, &error)
             .await;
         self.record_failure_observation(provider_id, latency_ms, status);
-        AttemptStep::Done(Err(CortexError::all_providers_exhausted()))
+        AttemptStep::Done(Box::new(Err(CortexError::all_providers_exhausted())))
     }
 
     fn finish_provider_attempts(
@@ -1128,7 +1128,7 @@ impl RouteRequest {
             if provider_attempts >= max_attempts {
                 break;
             }
-            let provider = match self.router.select_excluding(&req, &excluded).await {
+            let provider = match self.router.select_excluding(req, &excluded).await {
                 Ok(provider) => provider,
                 Err(error) => {
                     return Err(local_backpressure.unwrap_or(error));
@@ -1144,7 +1144,7 @@ impl RouteRequest {
                 }
                 return Err(RestrictionViolation::ProviderNotAllowed(provider_id.clone()).into());
             }
-            if rook_core::RequiredCapabilities::from_request(&req)
+            if rook_core::RequiredCapabilities::from_request(req)
                 .check(&provider.model_capabilities(&req.model))
                 .is_err()
             {
@@ -1188,7 +1188,7 @@ impl RouteRequest {
                 continue;
             };
             let admission = match self
-                .admit_spending_budget(provider.as_ref(), &provider_req, &req)
+                .admit_spending_budget(provider.as_ref(), &provider_req, req)
                 .await
             {
                 Ok(admission) => admission,
@@ -1759,7 +1759,7 @@ impl RouteRequest {
 
             let prepared = self
                 .prepare_combo_step(
-                    &step,
+                    step,
                     *combo_id,
                     step_index,
                     &req,
@@ -1780,7 +1780,7 @@ impl RouteRequest {
                 )
                 .await?
             {
-                ComboStepOutcome::Completed(resp) => return Ok(resp),
+                ComboStepOutcome::Completed(resp) => return Ok(*resp),
                 ComboStepOutcome::Retry => continue,
                 ComboStepOutcome::Failed(error) => return Err(error),
             }
@@ -1973,7 +1973,7 @@ impl RouteRequest {
                 self.record_combo_success(&step_context, latency_ms, &step_req, &resp)
                     .await;
 
-                Ok(ComboStepOutcome::Completed(resp))
+                Ok(ComboStepOutcome::Completed(Box::new(resp)))
             }
             AttemptOutcome::LocalBackpressure(error) => {
                 drop(trial_permit);

@@ -10,7 +10,7 @@ pub enum Activity {
 }
 
 /// Picks the narrow or the full label for the same state.
-fn compact_label<'a>(narrow: bool, short: &'a str, full: &'a str) -> &'a str {
+const fn compact_label<'a>(narrow: bool, short: &'a str, full: &'a str) -> &'a str {
     if narrow {
         short
     } else {

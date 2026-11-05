@@ -250,8 +250,8 @@ fn read_document(
     let (name, description) = parse_frontmatter(text, directory)?;
     Ok((
         SkillEntry {
-            name: name.into(),
-            description: description.into(),
+            name,
+            description,
             source_scope: scope,
             logical_path: logical,
             canonical_path: canonical,

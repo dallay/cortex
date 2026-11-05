@@ -167,7 +167,7 @@ impl Payload {
         Effect::None
     }
 
-    fn settings_input(
+    const fn settings_input(
         dialog: &mut crate::settings::SettingsDialog,
         key: KeyEvent,
         settings_pending: bool,
