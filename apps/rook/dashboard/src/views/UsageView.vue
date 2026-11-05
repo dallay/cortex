@@ -37,7 +37,7 @@ onMounted(() => void fetch());
 <template>
 	<div class="space-y-6">
 		<PageHeader :title="t('usage.title')" :description="t('usage.description')" />
-		<div v-if="availability === 'unavailable'" class="rounded-lg border bg-muted p-4" role="status">{{ t("usage.unavailable") }}</div>
+		<output v-if="availability === 'unavailable'" class="block rounded-lg border bg-muted p-4">{{ t("usage.unavailable") }}</output>
 		<ErrorBanner v-else-if="error" :message="error" />
 		<div v-if="summary && availability === 'available'" class="grid gap-4 md:grid-cols-4">
 			<div class="rounded-lg border p-4"><p class="text-sm text-muted-foreground">{{ t("usage.requests") }}</p><p class="text-2xl font-semibold">{{ summary.total_requests }}</p></div>
