@@ -16,132 +16,138 @@ fn anthropic_initial_usage() -> String {
 async fn responses_openai_omitted_ids_generate_unique_stable_replayable_calls() {
     for stream in [false, true] {
         for combo in [false, true] {
-            let calls = json!([
-                {"index":0,"function":{"name":"lookup","arguments":"{\"key\":\"one\"}"}},
-                {"index":1,"function":{"name":"search","arguments":"{\"key\":\"two\"}"}}
-            ]);
-            let usage = json!({"prompt_tokens":3,"completion_tokens":2,"total_tokens":5});
-            let upstream = if stream {
-                let first = json!({"model":"gpt-4o","choices":[{"delta":{"tool_calls":calls},"finish_reason":null}]});
-                // Nullable IDs and neutral names in continuations must not change identity.
-                let last = json!({"model":"gpt-4o","choices":[{"delta":{"tool_calls":[
+            assert_generated_ids_are_stable(stream, combo).await;
+        }
+    }
+}
+
+/// One transport/combo case: generated tool ids must stay unique and replayable.
+async fn assert_generated_ids_are_stable(stream: bool, combo: bool) {
+    let calls = json!([
+        {"index":0,"function":{"name":"lookup","arguments":"{\"key\":\"one\"}"}},
+        {"index":1,"function":{"name":"search","arguments":"{\"key\":\"two\"}"}}
+    ]);
+    let usage = json!({"prompt_tokens":3,"completion_tokens":2,"total_tokens":5});
+    let upstream = if stream {
+        let first = json!({"model":"gpt-4o","choices":[{"delta":{"tool_calls":calls},"finish_reason":null}]});
+        // Nullable IDs and neutral names in continuations must not change identity.
+        let last = json!({"model":"gpt-4o","choices":[{"delta":{"tool_calls":[
                     {"index":0,"id":null,"function":{"name":"","arguments":""}},
                     {"index":1,"id":null,"function":{"name":null,"arguments":""}}
                 ]},"finish_reason":"tool_calls"}],"usage":usage});
-                UpstreamMock::Sse(format!("data: {first}\n\ndata: {last}\n\ndata: [DONE]\n\n"))
-            } else {
-                UpstreamMock::Json(
-                    json!({"model":"gpt-4o","choices":[{"message":{"tool_calls":calls},"finish_reason":"tool_calls"}],"usage":usage}),
-                )
-            };
-            let g = build_gateway_planned(vec![], upstream, UpstreamMock::Fail500).await;
-            let model = if combo { "rook/e2e" } else { "gpt-4o" };
-            let request = json!({"model":model,"input":"hi","stream":stream});
-            let body = if stream {
-                let (status, _, sse) = post_sse(g.app.clone(), "/v1/responses", request).await;
-                assert_eq!(status, StatusCode::OK, "{sse}");
-                let events = sse_json(&sse);
-                let terminal = events.last().unwrap();
-                assert_eq!(terminal["type"], "response.completed", "{sse}");
-                let output = terminal["response"]["output"].as_array().unwrap();
-                for event in &events {
-                    if let Some(index) = event["output_index"].as_u64() {
-                        let call = &output[index as usize];
-                        if event.get("item").is_some() {
-                            assert_eq!(event["item"]["id"], call["id"]);
-                            assert_eq!(event["item"]["call_id"], call["call_id"]);
-                        }
-                        if event.get("item_id").is_some() {
-                            assert_eq!(event["item_id"], call["id"]);
-                        }
-                    }
+        UpstreamMock::Sse(format!("data: {first}\n\ndata: {last}\n\ndata: [DONE]\n\n"))
+    } else {
+        UpstreamMock::Json(
+            json!({"model":"gpt-4o","choices":[{"message":{"tool_calls":calls},"finish_reason":"tool_calls"}],"usage":usage}),
+        )
+    };
+    let g = build_gateway_planned(vec![], upstream, UpstreamMock::Fail500).await;
+    let model = if combo { "rook/e2e" } else { "gpt-4o" };
+    let request = json!({"model":model,"input":"hi","stream":stream});
+    let body = if stream {
+        let (status, _, sse) = post_sse(g.app.clone(), "/v1/responses", request).await;
+        assert_eq!(status, StatusCode::OK, "{sse}");
+        let events = sse_json(&sse);
+        let terminal = events.last().unwrap();
+        assert_eq!(terminal["type"], "response.completed", "{sse}");
+        let output = terminal["response"]["output"].as_array().unwrap();
+        for event in &events {
+            if let Some(index) = event["output_index"].as_u64() {
+                let call = &output[index as usize];
+                if event.get("item").is_some() {
+                    assert_eq!(event["item"]["id"], call["id"]);
+                    assert_eq!(event["item"]["call_id"], call["call_id"]);
                 }
-                super::responses::fixture(&format!("openai-generated-ids-{combo}.sse"), &sse);
-                terminal["response"].clone()
-            } else {
-                let (status, body) = post_json(g.app.clone(), "/v1/responses", request, &[]).await;
-                assert_eq!(status, StatusCode::OK, "{body}");
-                super::responses::fixture(
-                    &format!("openai-generated-ids-{combo}.json"),
-                    &body.to_string(),
-                );
-                body
-            };
-            assert_eq!(body["status"], "completed");
-            assert_eq!(body["usage"]["total_tokens"], 5);
-            let calls = body["output"].as_array().unwrap();
-            assert_eq!(calls.len(), 2);
-            assert_ne!(calls[0]["id"], calls[1]["id"]);
-            assert_ne!(calls[0]["call_id"], calls[1]["call_id"]);
-            for (call, name, key) in [(&calls[0], "lookup", "one"), (&calls[1], "search", "two")] {
-                assert!(call["call_id"].as_str().unwrap().starts_with("call_"));
-                assert_eq!(call["name"], name);
-                assert_eq!(
-                    serde_json::from_str::<serde_json::Value>(call["arguments"].as_str().unwrap())
-                        .unwrap(),
-                    json!({"key":key})
-                );
+                if event.get("item_id").is_some() {
+                    assert_eq!(event["item_id"], call["id"]);
+                }
             }
-            {
-                let audit = g.accounting.audit.lock().unwrap();
-                let usage = g.accounting.usage.lock().unwrap();
-                assert_eq!(audit.len(), 1);
-                assert_eq!(usage.len(), 1);
-                assert_eq!(audit[0].status, RequestStatus::Success);
-                assert_eq!(usage[0].status, RequestStatus::Success);
-                assert_eq!(audit[0].combo_id.is_some(), combo);
-                assert_eq!(audit[0].request_id, usage[0].request_id);
-                assert_eq!(audit[0].usage.as_ref().unwrap().total_tokens, 5);
-                assert!((usage[0].cost_usd.unwrap() - 7.0 / 1_000_000.0).abs() < 1e-12);
-            }
-            let mut input = calls.clone();
-            input.extend(calls.iter().map(|call| json!({"type":"function_call_output","call_id":call["call_id"],"output":"found"})));
-            // Replay through the same provider and mode so generated IDs cross the wire.
-            if stream {
-                let (_, _, replay) = post_sse(
-                    g.app,
-                    "/v1/responses",
-                    json!({"model":model,"input":input,"stream":true}),
-                )
-                .await;
-                assert_eq!(
-                    sse_json(&replay).last().unwrap()["type"],
-                    "response.completed",
-                    "{replay}"
-                );
-            } else {
-                let (status, replay) = post_json(
-                    g.app,
-                    "/v1/responses",
-                    json!({"model":model,"input":input}),
-                    &[],
-                )
-                .await;
-                assert_eq!(status, StatusCode::OK, "{replay}");
-            }
-            let requests = g.upstreams.openai.received_requests().await.unwrap();
-            assert_eq!(requests.len(), 2);
-            let sent: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
-            for (index, call) in calls.iter().enumerate() {
-                assert_eq!(
-                    sent["messages"][0]["tool_calls"][index]["id"],
-                    call["call_id"]
-                );
-                assert_eq!(
-                    sent["messages"][0]["tool_calls"][index]["function"]["name"],
-                    call["name"]
-                );
-                assert_eq!(sent["messages"][index + 1]["tool_call_id"], call["call_id"]);
-            }
-            assert!(g
-                .upstreams
-                .anthropic
-                .received_requests()
-                .await
-                .unwrap()
-                .is_empty());
         }
+        super::responses::fixture(&format!("openai-generated-ids-{combo}.sse"), &sse);
+        terminal["response"].clone()
+    } else {
+        let (status, body) = post_json(g.app.clone(), "/v1/responses", request, &[]).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        super::responses::fixture(
+            &format!("openai-generated-ids-{combo}.json"),
+            &body.to_string(),
+        );
+        body
+    };
+    assert_eq!(body["status"], "completed");
+    assert_eq!(body["usage"]["total_tokens"], 5);
+    let calls = body["output"].as_array().unwrap();
+    assert_eq!(calls.len(), 2);
+    assert_ne!(calls[0]["id"], calls[1]["id"]);
+    assert_ne!(calls[0]["call_id"], calls[1]["call_id"]);
+    for (call, name, key) in [(&calls[0], "lookup", "one"), (&calls[1], "search", "two")] {
+        assert!(call["call_id"].as_str().unwrap().starts_with("call_"));
+        assert_eq!(call["name"], name);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(call["arguments"].as_str().unwrap()).unwrap(),
+            json!({"key":key})
+        );
     }
+    {
+        let audit = g.accounting.audit.lock().unwrap();
+        let usage = g.accounting.usage.lock().unwrap();
+        assert_eq!(audit.len(), 1);
+        assert_eq!(usage.len(), 1);
+        assert_eq!(audit[0].status, RequestStatus::Success);
+        assert_eq!(usage[0].status, RequestStatus::Success);
+        assert_eq!(audit[0].combo_id.is_some(), combo);
+        assert_eq!(audit[0].request_id, usage[0].request_id);
+        assert_eq!(audit[0].usage.as_ref().unwrap().total_tokens, 5);
+        assert!((usage[0].cost_usd.unwrap() - 7.0 / 1_000_000.0).abs() < 1e-12);
+    }
+    let mut input = calls.clone();
+    input.extend(calls.iter().map(
+        |call| json!({"type":"function_call_output","call_id":call["call_id"],"output":"found"}),
+    ));
+    // Replay through the same provider and mode so generated IDs cross the wire.
+    if stream {
+        let (_, _, replay) = post_sse(
+            g.app,
+            "/v1/responses",
+            json!({"model":model,"input":input,"stream":true}),
+        )
+        .await;
+        assert_eq!(
+            sse_json(&replay).last().unwrap()["type"],
+            "response.completed",
+            "{replay}"
+        );
+    } else {
+        let (status, replay) = post_json(
+            g.app,
+            "/v1/responses",
+            json!({"model":model,"input":input}),
+            &[],
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{replay}");
+    }
+    let requests = g.upstreams.openai.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2);
+    let sent: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
+    for (index, call) in calls.iter().enumerate() {
+        assert_eq!(
+            sent["messages"][0]["tool_calls"][index]["id"],
+            call["call_id"]
+        );
+        assert_eq!(
+            sent["messages"][0]["tool_calls"][index]["function"]["name"],
+            call["name"]
+        );
+        assert_eq!(sent["messages"][index + 1]["tool_call_id"], call["call_id"]);
+    }
+    assert!(g
+        .upstreams
+        .anthropic
+        .received_requests()
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]
@@ -1146,65 +1152,70 @@ async fn responses_anthropic_fixes_keep_chat_and_messages_legacy_contracts() {
     for messages in [false, true] {
         for stream in [false, true] {
             for case in ["missing", "unknown", "malformed", "pending", "no_id"] {
-                let mut delta = json!({"stop_reason":"end_turn"});
-                if case == "missing" {
-                    delta = json!({});
-                }
-                if case == "unknown" {
-                    delta = json!({"stop_reason":"unknown"});
-                }
-                let mut upstream = json!({"model":"claude-e2e","content":[{"type":"text","text":"previo"}],"usage":{"input_tokens":3,"output_tokens":2}});
-                if let Some(reason) = delta.get("stop_reason") {
-                    upstream["stop_reason"] = reason.clone();
-                }
-                let sse = if case == "no_id" {
-                    super::responses::initial_anthropic_tool_stream(json!({}))
-                        .replace("\"id\":\"call_initial\",", "")
-                } else {
-                    anthropic_text_stream(delta)
-                        + match case {
-                            "malformed" => "data: {bad}\n\n",
-                            "pending" => "data: {\"type\":\"error\",\"error\":{",
-                            _ => "",
-                        }
-                };
-                let g = build_gateway_planned(
-                    vec![],
-                    UpstreamMock::Fail500,
-                    if stream {
-                        UpstreamMock::Sse(sse)
-                    } else {
-                        UpstreamMock::Json(upstream)
-                    },
-                )
-                .await;
-                let (uri, request) = if messages {
-                    ("/v1/messages", anthropic_body("claude-e2e", stream))
-                } else {
-                    ("/v1/chat/completions", openai_body("claude-e2e", stream))
-                };
-                if stream {
-                    let (status, _, body) = post_sse(g.app, uri, request).await;
-                    assert_eq!(
-                        status,
-                        StatusCode::OK,
-                        "case={case}, messages={messages}: {body}"
-                    );
-                    assert!(
-                        sse_json(&body).iter().all(|e| e.get("error").is_none()),
-                        "case={case}, messages={messages}: {body}"
-                    );
-                    assert!(body.ends_with("data: [DONE]\n\n"));
-                } else {
-                    let (status, body) = post_json(g.app, uri, request, &[]).await;
-                    assert_eq!(status, StatusCode::OK, "{body}");
-                    if messages {
-                        assert_eq!(body["stop_reason"], "end_turn");
-                    } else {
-                        assert_eq!(body["choices"][0]["finish_reason"], "stop");
-                    }
-                }
+                assert_legacy_contract_case(messages, stream, case).await;
             }
+        }
+    }
+}
+
+/// One (transport, body, case) cell of the legacy contract matrix.
+async fn assert_legacy_contract_case(messages: bool, stream: bool, case: &str) {
+    let mut delta = json!({"stop_reason":"end_turn"});
+    if case == "missing" {
+        delta = json!({});
+    }
+    if case == "unknown" {
+        delta = json!({"stop_reason":"unknown"});
+    }
+    let mut upstream = json!({"model":"claude-e2e","content":[{"type":"text","text":"previo"}],"usage":{"input_tokens":3,"output_tokens":2}});
+    if let Some(reason) = delta.get("stop_reason") {
+        upstream["stop_reason"] = reason.clone();
+    }
+    let sse = if case == "no_id" {
+        super::responses::initial_anthropic_tool_stream(json!({}))
+            .replace("\"id\":\"call_initial\",", "")
+    } else {
+        anthropic_text_stream(delta)
+            + match case {
+                "malformed" => "data: {bad}\n\n",
+                "pending" => "data: {\"type\":\"error\",\"error\":{",
+                _ => "",
+            }
+    };
+    let g = build_gateway_planned(
+        vec![],
+        UpstreamMock::Fail500,
+        if stream {
+            UpstreamMock::Sse(sse)
+        } else {
+            UpstreamMock::Json(upstream)
+        },
+    )
+    .await;
+    let (uri, request) = if messages {
+        ("/v1/messages", anthropic_body("claude-e2e", stream))
+    } else {
+        ("/v1/chat/completions", openai_body("claude-e2e", stream))
+    };
+    if stream {
+        let (status, _, body) = post_sse(g.app, uri, request).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "case={case}, messages={messages}: {body}"
+        );
+        assert!(
+            sse_json(&body).iter().all(|e| e.get("error").is_none()),
+            "case={case}, messages={messages}: {body}"
+        );
+        assert!(body.ends_with("data: [DONE]\n\n"));
+    } else {
+        let (status, body) = post_json(g.app, uri, request, &[]).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        if messages {
+            assert_eq!(body["stop_reason"], "end_turn");
+        } else {
+            assert_eq!(body["choices"][0]["finish_reason"], "stop");
         }
     }
 }

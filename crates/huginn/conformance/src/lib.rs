@@ -1607,7 +1607,14 @@ async fn compaction_keeps_turn_boundary(
 /// A loop that must fail this suite: it executes effects without asking the host and
 /// replays a call whose outcome is unknown.
 pub mod broken {
-    use super::*;
+    use super::{
+        agent_loop_id, model_id, sessions_id, AgentLoop, ApprovalPolicy, Arc, CancellationToken,
+        Event, EventSink, HashMap, LoopService, Manifest, Message, ModelDelta, ModelProvider,
+        ModelRequest, ModelService, Mutex, Plugin, PluginContext, Result, Role, ServiceSlotHandle,
+        Session, SessionStore, SessionsService, StepId, ToolCall, ToolContext, ToolRegistry,
+    };
+    use async_trait::async_trait;
+    use futures::StreamExt;
 
     /// Runs one turn against the collaborators a fixture resolved.
     ///

@@ -37,10 +37,20 @@ export function usdToMicros(value: string): number | null {
 
 export function microsToUsd(value: number): string {
 	const whole = Math.floor(value / MICRO_USD_PER_USD);
-	const fraction = String(value % MICRO_USD_PER_USD)
-		.padStart(6, "0")
-		.replace(/0+$/, "");
+	const fraction = stripTrailingZeros(
+		String(value % MICRO_USD_PER_USD).padStart(6, "0"),
+	);
 	return fraction ? `${whole}.${fraction}` : String(whole);
+}
+
+// `/0+$/` has no start anchor, so a backtracking engine retries the end anchor from
+// every offset. A single backwards scan is linear and does the same thing.
+function stripTrailingZeros(digits: string): string {
+	let end = digits.length;
+	while (end > 0 && digits[end - 1] === "0") {
+		end -= 1;
+	}
+	return digits.slice(0, end);
 }
 
 export interface ApiKeyRecordResponse {
@@ -163,6 +173,13 @@ export interface CreateModelAliasRequest {
 }
 
 export type RateLimitScope = "api-key" | "ip-address" | "global";
+
+/** Path segment the rate-limit status endpoint expects for each scope. */
+const RATE_LIMIT_SCOPE_SEGMENT: Record<RateLimitScope, string> = {
+	"api-key": "api_key",
+	"ip-address": "ip_address",
+	global: "global",
+};
 
 export interface RateLimitRuleResponse {
 	id: string;
@@ -1171,12 +1188,7 @@ function createApiClient() {
 			scope: RateLimitScope,
 			target: string,
 		): Promise<RateLimitStatusResponse> {
-			const pathScope =
-				scope === "api-key"
-					? "api_key"
-					: scope === "ip-address"
-						? "ip_address"
-						: scope;
+			const pathScope = RATE_LIMIT_SCOPE_SEGMENT[scope];
 			return request<RateLimitStatusResponse>(
 				`/api/rate-limits/${pathScope}/${encodeURIComponent(target)}/status`,
 			);

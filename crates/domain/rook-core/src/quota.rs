@@ -166,7 +166,7 @@ impl Default for QuotaEligibilityPolicy {
             exhausted_remaining: DEFAULT_EXHAUSTED_REMAINING,
             applicable_metrics: DEFAULT_APPLICABLE_METRICS
                 .iter()
-                .map(|metric| metric.to_string())
+                .map(ToString::to_string)
                 .collect(),
         }
     }

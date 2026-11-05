@@ -140,13 +140,16 @@ impl PromptTemplates for FilesystemPrompts {
                 ));
                 continue;
             }
-            paths.sort_by_key(|p| p.file_name());
+            paths.sort_by_key(fs::DirEntry::file_name);
             for child in paths {
                 let path = child.path();
-                if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                if path.extension().and_then(std::ffi::OsStr::to_str) != Some("md") {
                     continue;
                 }
-                let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                let name = path
+                    .file_stem()
+                    .and_then(std::ffi::OsStr::to_str)
+                    .unwrap_or("");
                 if !prompts::valid_name(name) {
                     catalog
                         .diagnostics
