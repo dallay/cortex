@@ -99,14 +99,51 @@ fn transport_builder(
     Ok(builder)
 }
 
+/// Whether the failure identifies a permanent TLS configuration or protocol problem.
+///
+/// `reqwest` exposes no typed TLS cause, and a certificate failure also reports as
+/// `is_connect()`, so inspect specific cause descriptions. Generic TLS and handshake errors
+/// include transient network failures such as an EOF and must remain retryable.
+fn is_tls_failure(error: &reqwest::Error) -> bool {
+    let mut cause = std::error::Error::source(error);
+    while let Some(error) = cause {
+        let detail = error.to_string().to_ascii_lowercase();
+        if [
+            "certificate",
+            "received fatal alert: unknownca",
+            "peer is incompatible",
+            "received corrupt message of type invalidcontenttype",
+            "received corrupt message of type unknownprotocolversion",
+            "received fatal alert: protocolversion",
+            "received fatal alert: noapplicationprotocol",
+            "peer doesn't support any known protocol",
+        ]
+        .iter()
+        .any(|marker| detail.contains(marker))
+        {
+            return true;
+        }
+        cause = std::error::Error::source(error);
+    }
+    false
+}
+
 /// Whether a request that never produced response headers can plausibly reach the provider
 /// on the next attempt.
 ///
-/// A refused or reset connection, a timeout, and a body that failed to upload are transport
-/// conditions that may clear on their own. Redirect and client builder failures describe the
-/// request itself and never will.
+/// A timeout is always worth repeating, because the connection may simply be slow. A refused
+/// or reset connection, and a body that failed to upload, are transport conditions that may
+/// clear on their own, including an EOF during a TLS handshake. Certificate and protocol
+/// incompatibility failures indicate an endpoint or configuration problem. Redirect and
+/// client builder failures describe the request itself and are also permanent.
 fn is_transient_request(error: &reqwest::Error) -> bool {
-    error.is_timeout() || error.is_connect() || error.is_body() || error.is_request()
+    if error.is_timeout() {
+        return true;
+    }
+    if is_tls_failure(error) {
+        return false;
+    }
+    error.is_connect() || error.is_body() || error.is_request()
 }
 
 /// Whether a response body that started arriving and then broke is worth repeating.

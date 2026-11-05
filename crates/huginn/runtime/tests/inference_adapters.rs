@@ -1019,21 +1019,6 @@ async fn stream_error(model: &Arc<dyn ModelProvider>) -> AgentError {
     panic!("the stream must fail instead of ending cleanly");
 }
 
-/// A failure the transport may report at the request or inside the stream: a connection
-/// reset can cost the response headers as well as the body.
-async fn any_error(model: &Arc<dyn ModelProvider>) -> AgentError {
-    let mut stream = match model.stream(request(), CancellationToken::new()).await {
-        Ok(stream) => stream,
-        Err(error) => return error,
-    };
-    while let Some(item) = stream.next().await {
-        if let Err(error) = item {
-            return error;
-        }
-    }
-    panic!("the response must fail instead of ending cleanly");
-}
-
 fn assert_transient(error: &AgentError, mode: &str) {
     assert!(
         matches!(error, AgentError::Inference(_)),
@@ -1151,29 +1136,48 @@ async fn truncated_sse_event_is_retryable_inference() {
 
 #[tokio::test]
 async fn reset_body_stream_is_retryable_inference() {
+    // The reset is released only after the test has read the first delta, so headers and
+    // part of the body are known to have arrived: the failure is a body failure.
+    let released = Arc::new(tokio::sync::Notify::new());
     let router = catalog(Router::new()).route(
         "/v1/chat/completions",
-        post(|| async {
-            (
-                [("content-type", "text/event-stream")],
-                Body::from_stream(
-                    futures::stream::iter(vec![Ok(bytes::Bytes::from(PARTIAL_TEXT))]).chain(
-                        futures::stream::once(async {
-                            // Let the headers and the first delta reach the client so the reset
-                            // lands inside the body instead of costing the whole response.
-                            tokio::time::sleep(Duration::from_millis(100)).await;
-                            Err(std::io::Error::new(
-                                std::io::ErrorKind::ConnectionReset,
-                                "connection reset by peer",
-                            ))
-                        }),
-                    ),
-                ),
-            )
+        post({
+            let released = released.clone();
+            move || {
+                let released = released.clone();
+                async move {
+                    let first = futures::stream::once(async {
+                        Ok::<_, std::io::Error>(bytes::Bytes::from(PARTIAL_TEXT))
+                    });
+                    let reset = futures::stream::once(async move {
+                        released.notified().await;
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::ConnectionReset,
+                            "connection reset by peer",
+                        ))
+                    });
+                    (
+                        [("content-type", "text/event-stream")],
+                        Body::from_stream(futures::StreamExt::chain(first, reset)),
+                    )
+                }
+            }
         }),
     );
     let (model, task) = streaming_model("openai", router, 2).await;
-    assert_transient(&any_error(&model).await, "a reset body stream");
+    let mut stream = model
+        .stream(request(), CancellationToken::new())
+        .await
+        .expect("the response headers must arrive before the failure under test");
+    assert!(
+        matches!(stream.next().await, Some(Ok(ModelDelta::Text(text))) if text == "partial"),
+        "the first delta must arrive before the reset"
+    );
+    released.notify_one();
+    match stream.next().await {
+        Some(Err(error)) => assert_transient(&error, "a reset body stream"),
+        other => panic!("the stream must fail with the reset, got {other:?}"),
+    }
     task.abort();
 }
 
