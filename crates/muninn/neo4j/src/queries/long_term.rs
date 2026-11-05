@@ -532,6 +532,55 @@ CREATE (e1)-[r:SAME_AS {
 RETURN r
 ";
 
+/// The documented enrichment properties, and nothing else
+/// (`enrichment/background.py::_update_entity` and the reference
+/// `_ENRICHMENT_PROPERTY_MAP`).
+///
+/// `enriched_description`, `enriched_summary`, `enrichment_provider` and
+/// `enriched_at` are replaced on every successful enrichment; the
+/// provider-specific surfaces keep a previously stored value when the new
+/// answer does not carry one, exactly like upstream's `coalesce`.
+pub const SET_ENTITY_ENRICHMENT: &str = "
+MATCH (e:Entity {id: $id})
+SET e.enriched_description = $enriched_description,
+    e.enriched_summary = $enriched_summary,
+    e.enrichment_provider = $enrichment_provider,
+    e.enriched_at = datetime($enriched_at),
+    e.wikipedia_url = coalesce($wikipedia_url, e.wikipedia_url),
+    e.wikidata_id = coalesce($wikidata_id, e.wikidata_id),
+    e.diffbot_uri = coalesce($diffbot_uri, e.diffbot_uri),
+    e.image_url = coalesce($image_url, e.image_url)
+RETURN e.id AS id
+";
+
+/// `(:Entity).location` for a geocoded `LOCATION`, using the same
+/// `point({latitude, longitude})` expression as [`create_entity_query`].
+pub const SET_ENTITY_LOCATION: &str = "
+MATCH (e:Entity {id: $id})
+SET e.location = point({latitude: $latitude, longitude: $longitude})
+RETURN e.id AS id
+";
+
+/// Redacted prerequisite error for the coordinate write. Naming the object and
+/// the remedy is enough to act on; no credential, URL or payload can appear.
+pub const LOCATION_INDEX_REQUIRED: &str = "entity location coordinates require the \
+     entity_location_idx point index on (:Entity {location}); run schema setup; no schema was \
+     changed";
+
+/// Point index the coordinate write depends on (`schema.POINT_INDEXES`).
+pub const ENTITY_LOCATION_INDEX_NAME: &str = "entity_location_idx";
+pub const ENTITY_LOCATION_INDEX_LABEL: &str = "Entity";
+pub const ENTITY_LOCATION_INDEX_PROPERTY: &str = "location";
+
+/// Live-catalog definition of that index. Read-only: the writer verifies the
+/// prerequisite and refuses the write when it is absent or unusable, and never
+/// creates, repairs or drops schema.
+pub const ENTITY_LOCATION_INDEX: &str = "
+SHOW INDEXES YIELD name, type, entityType, labelsOrTypes, properties, state
+WHERE name = $name
+RETURN type, entityType, labelsOrTypes, properties, state
+";
+
 pub const UPDATE_SAME_AS_STATUS: &str = "
 MATCH (e1:Entity {id: $source_id})-[r:SAME_AS]-(e2:Entity {id: $target_id})
 SET r.status = $status, r.updated_at = datetime()
@@ -545,7 +594,12 @@ MERGE (m)-[r:MENTIONS]->(e)
 ON CREATE SET
     r.confidence = $confidence,
     r.start_pos = $start_pos,
-    r.end_pos = $end_pos
+    r.end_pos = $end_pos,
+    r.derived = $derived,
+    r.extractor = $extractor,
+    r.support = $support,
+    r.source_message_ids = $source_message_ids,
+    r.evidence = $evidence
 RETURN r
 ";
 
@@ -808,5 +862,98 @@ mod tests {
         assert!(GET_ENTITY_GRAPH.contains("WHERE e.merged_into IS NULL"));
         assert!(LIST_ENTITIES.contains("WHERE e.merged_into IS NULL"));
         assert!(!GET_ENTITY.contains("merged_into"));
+    }
+
+    /// The enrichment writer may touch exactly the documented property set and
+    /// nothing else: no ontology label, embedding, alias, metadata blob, vector,
+    /// credential or provider payload.
+    #[test]
+    fn set_entity_enrichment_writes_only_documented_properties() {
+        const DOCUMENTED: [&str; 8] = [
+            "e.enriched_description =",
+            "e.enriched_summary =",
+            "e.enrichment_provider =",
+            "e.enriched_at = datetime($enriched_at)",
+            "e.wikipedia_url = coalesce($wikipedia_url, e.wikipedia_url)",
+            "e.wikidata_id = coalesce($wikidata_id, e.wikidata_id)",
+            "e.diffbot_uri = coalesce($diffbot_uri, e.diffbot_uri)",
+            "e.image_url = coalesce($image_url, e.image_url)",
+        ];
+        for property in DOCUMENTED {
+            assert!(
+                SET_ENTITY_ENRICHMENT.contains(property),
+                "missing documented write: {property}"
+            );
+        }
+        // One MATCH on identity, one SET list, one RETURN: no MERGE, no labels.
+        assert_eq!(SET_ENTITY_ENRICHMENT.matches("SET ").count(), 1);
+        assert!(SET_ENTITY_ENRICHMENT
+            .trim_start()
+            .starts_with("MATCH (e:Entity {id: $id})"));
+        assert!(SET_ENTITY_ENRICHMENT
+            .trim_end()
+            .ends_with("RETURN e.id AS id"));
+        assert_eq!(
+            SET_ENTITY_ENRICHMENT.matches(" = ").count(),
+            DOCUMENTED.len()
+        );
+        for forbidden in [
+            "enrichment_data",
+            "enrichment_metadata",
+            "SET e:",
+            "embedding",
+            "aliases",
+            "metadata",
+            "created_at",
+            "updated_at",
+            "MATCH (n)",
+        ] {
+            assert!(
+                !SET_ENTITY_ENRICHMENT.contains(forbidden),
+                "unexpected write or scope: {forbidden}"
+            );
+        }
+    }
+
+    /// The coordinate write reuses the entity point pattern already used by
+    /// `create_entity_query`, and performs no schema mutation.
+    #[test]
+    fn set_entity_location_uses_the_existing_point_pattern() {
+        assert!(SET_ENTITY_LOCATION.contains("point({latitude: $latitude, longitude: $longitude})"));
+        assert!(SET_ENTITY_LOCATION
+            .trim_start()
+            .starts_with("MATCH (e:Entity {id: $id})"));
+        assert_eq!(SET_ENTITY_LOCATION.matches("SET ").count(), 1);
+        for forbidden in ["CREATE INDEX", "DROP INDEX", "CREATE CONSTRAINT", "MERGE"] {
+            assert!(!SET_ENTITY_LOCATION.contains(forbidden));
+        }
+        // Same point expression the entity upsert already uses for LOCATION.
+        assert!(create_entity_query("LOCATION", None)
+            .contains("point({latitude: $location.latitude, longitude: $location.longitude})"));
+    }
+
+    /// The prerequisite index is read from the live catalog; the writer never
+    /// creates or repairs schema.
+    #[test]
+    fn entity_location_index_is_read_from_the_live_catalog() {
+        assert!(ENTITY_LOCATION_INDEX.contains("SHOW INDEXES"));
+        assert!(ENTITY_LOCATION_INDEX.contains("WHERE name = $name"));
+        for column in ["type", "entityType", "labelsOrTypes", "properties", "state"] {
+            assert!(
+                ENTITY_LOCATION_INDEX.contains(column),
+                "missing index column: {column}"
+            );
+        }
+        assert_eq!(
+            LOCATION_INDEX_REQUIRED,
+            "entity location coordinates require the entity_location_idx point index on \
+             (:Entity {location}); run schema setup; no schema was changed"
+        );
+        assert_eq!(ENTITY_LOCATION_INDEX_NAME, "entity_location_idx");
+        assert_eq!(ENTITY_LOCATION_INDEX_LABEL, "Entity");
+        assert_eq!(ENTITY_LOCATION_INDEX_PROPERTY, "location");
+        for forbidden in ["CREATE", "DROP"] {
+            assert!(!ENTITY_LOCATION_INDEX.contains(forbidden));
+        }
     }
 }

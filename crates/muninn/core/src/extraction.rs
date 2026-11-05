@@ -19,6 +19,40 @@ pub struct ExtractedEntity {
     pub extractor: Option<String>,
 }
 
+impl ExtractedEntity {
+    /// Validate untrusted extraction evidence before provider calls or writes.
+    /// spaCy offsets count Unicode characters, not UTF-8 bytes.
+    pub fn validate(&self, text: &str) -> MemoryResult<()> {
+        let invalid = || crate::MemoryError::provider("extraction invalid entity");
+        if self.name.trim().is_empty()
+            || !self.confidence.is_finite()
+            || !(0.0..=1.0).contains(&self.confidence)
+            || !["PERSON", "OBJECT", "LOCATION", "EVENT", "ORGANIZATION"]
+                .contains(&self.entity_type.as_str())
+        {
+            return Err(invalid());
+        }
+        match (self.start_pos, self.end_pos) {
+            (None, None) if self.extractor.as_deref() != Some("spacy") => {}
+            (Some(start), Some(end)) if 0 <= start && start < end => {
+                let start = usize::try_from(start).map_err(|_| invalid())?;
+                let end = usize::try_from(end).map_err(|_| invalid())?;
+                if end > text.chars().count() {
+                    return Err(invalid());
+                }
+                if self.extractor.as_deref() == Some("spacy") {
+                    let surface: String = text.chars().skip(start).take(end - start).collect();
+                    if surface.trim() != self.name {
+                        return Err(invalid());
+                    }
+                }
+            }
+            _ => return Err(invalid()),
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExtractedRelation {
     pub source: String,
@@ -62,6 +96,43 @@ pub struct ExtractOptions {
 pub trait EntityExtractor: Send + Sync {
     async fn extract(&self, text: &str, options: &ExtractOptions)
         -> MemoryResult<ExtractionResult>;
+}
+
+/// Opt-in message ingestion mode. Absence preserves legacy no-extraction behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExtractionMode {
+    Auto,
+    Skip,
+    Explicit,
+}
+
+/// Evidence recorded by the single MENTIONS writer, never private reasoning.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MentionProvenance {
+    pub confidence: f64,
+    pub start_pos: Option<i64>,
+    pub end_pos: Option<i64>,
+    pub derived: bool,
+    pub extractor: Option<String>,
+    pub support: i64,
+    pub source_message_ids: Vec<uuid::Uuid>,
+    pub evidence: Option<String>,
+}
+
+impl Default for MentionProvenance {
+    fn default() -> Self {
+        Self {
+            confidence: 1.0,
+            start_pos: None,
+            end_pos: None,
+            derived: false,
+            extractor: None,
+            support: 1,
+            source_message_ids: Vec::new(),
+            evidence: None,
+        }
+    }
 }
 
 /// One chat message sent to an LLM.

@@ -300,7 +300,7 @@ fn parse_status(value: Option<String>) -> Result<ToolCallStatus, BridgeError> {
     })
 }
 
-fn parse_entity_refs(
+pub fn parse_entity_refs(
     value: Option<&Value>,
 ) -> Result<Vec<muninn_core::model::EntityRef>, BridgeError> {
     use muninn_core::model::EntityRef;

@@ -37,6 +37,8 @@ pub async fn dispatch(state: &BridgeState, method: &str, args: &Args) -> Option<
         "get_entity_history" => get_entity_history(state, args).await,
         "merge_entities" => merge_entities(state, args).await,
         "get_entity_graph" => get_entity_graph(state, args).await,
+        "enrich_entity" => enrich_entity(state, args).await,
+        "geocode_entity" => geocode_entity(state, args).await,
         _ => return None,
     };
     Some(result)
@@ -375,4 +377,33 @@ async fn get_entity_graph(state: &BridgeState, args: &Args) -> BridgeResult {
         .unwrap_or(muninn_application::long_term::DEFAULT_GRAPH_LIMIT);
     let graph = state.memory.long_term().get_entity_graph(limit).await?;
     Ok(Reply::Json(wire::entity_graph(&graph)))
+}
+
+/// Opt-in enrichment control. Disabled, unconfigured or unwritable enrichment is
+/// an explicit refusal, never a silent success; provider failures return 200 with
+/// their status and no properties written.
+async fn enrich_entity(state: &BridgeState, args: &Args) -> BridgeResult {
+    let id = args.uuid("entity_id")?;
+    let outcome = state.memory.long_term().enrich_entity(id).await?;
+    let mut value = serde_json::to_value(&outcome).map_err(|_| {
+        BridgeError::Memory(MemoryError::storage(
+            "enrichment outcome is not serializable",
+        ))
+    })?;
+    value["entity_id"] = json!(id);
+    Ok(Reply::Json(value))
+}
+
+/// Opt-in geocoding control. The coordinate write needs a store adapter that
+/// owns the `(:Entity).location` point property; without one this fails closed.
+async fn geocode_entity(state: &BridgeState, args: &Args) -> BridgeResult {
+    let id = args.uuid("entity_id")?;
+    let outcome = state.memory.long_term().geocode_entity(id).await?;
+    let mut value = serde_json::to_value(&outcome).map_err(|_| {
+        BridgeError::Memory(MemoryError::storage(
+            "geocoding outcome is not serializable",
+        ))
+    })?;
+    value["entity_id"] = json!(id);
+    Ok(Reply::Json(value))
 }

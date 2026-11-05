@@ -19,6 +19,10 @@ pub struct AddMessageOptions {
     pub generate_embedding: bool,
     pub metadata: Metadata,
     pub user_identifier: Option<String>,
+    pub extraction_mode: Option<muninn_core::extraction::ExtractionMode>,
+    pub explicit_mentions: Vec<muninn_core::model::EntityRef>,
+    pub extract_entities: Option<bool>,
+    pub extract_relations: bool,
 }
 
 impl Default for AddMessageOptions {
@@ -29,6 +33,10 @@ impl Default for AddMessageOptions {
             generate_embedding: true,
             metadata: Metadata::new(),
             user_identifier: None,
+            extraction_mode: None,
+            explicit_mentions: Vec::new(),
+            extract_entities: None,
+            extract_relations: true,
         }
     }
 }
@@ -59,6 +67,7 @@ pub struct ShortTermMemory {
     store: Arc<dyn ShortTermStore>,
     embedder: Option<Arc<dyn Embedder>>,
     multi_tenant: bool,
+    pub(crate) ingestion: Option<crate::extraction::IngestionExtraction>,
 }
 
 impl ShortTermMemory {
@@ -71,6 +80,7 @@ impl ShortTermMemory {
             store,
             embedder,
             multi_tenant,
+            ingestion: None,
         }
     }
 
@@ -94,20 +104,39 @@ impl ShortTermMemory {
         options: AddMessageOptions,
     ) -> MemoryResult<Message> {
         let scope = self.enforce_multi_tenant(options.user_identifier.as_deref())?;
-        let conversation_id = self
-            .store
-            .ensure_conversation(session_id, options.conversation_id, &scope)
-            .await?;
+        let configured = options.extraction_mode.is_some()
+            || options.extract_entities.is_some()
+            || !options.explicit_mentions.is_empty();
+        // Preserve the legacy payload byte-for-byte when extraction is unconfigured.
         let operation_payload = options.operation_key.as_ref().map(|_| {
-            serde_json::json!({
+            let mut payload = serde_json::json!({
                 "role": role.as_str(), "content": content,
                 "metadata": options.metadata, "generate_embedding": options.generate_embedding,
-            })
-            .to_string()
+            });
+            if configured {
+                payload["extraction"] = serde_json::json!({"mode":options.extraction_mode,
+                    "mentions":options.explicit_mentions,"entities":options.extract_entities,
+                    "relations":options.extract_relations});
+            }
+            payload.to_string()
         });
-        if let (Some(operation_key), Some(payload)) = (
+        // Opt-in retries look up an existing conversation without creating one.
+        let existing_conversation = if configured {
+            self.store
+                .get_conversation(session_id, options.conversation_id, &scope, Some(1))
+                .await?
+                .map(|c| c.id)
+        } else {
+            Some(
+                self.store
+                    .ensure_conversation(session_id, options.conversation_id, &scope)
+                    .await?,
+            )
+        };
+        if let (Some(operation_key), Some(payload), Some(conversation_id)) = (
             options.operation_key.as_deref(),
             operation_payload.as_deref(),
+            existing_conversation,
         ) {
             if let Some(mut existing) = self
                 .store
@@ -125,6 +154,15 @@ impl ShortTermMemory {
                 return Ok(existing.message);
             }
         }
+        let plan = if configured {
+            let ingestion = self
+                .ingestion
+                .as_ref()
+                .ok_or_else(|| MemoryError::NotSupported("message extraction wiring".into()))?;
+            Some(ingestion.prepare(content, &options).await?)
+        } else {
+            None
+        };
         let embedding_identity = match (&self.embedder, options.generate_embedding) {
             (Some(embedder), true) => Some(checked_identity(embedder.as_ref())?),
             _ => None,
@@ -132,6 +170,14 @@ impl ShortTermMemory {
         let embedding = match (&self.embedder, options.generate_embedding) {
             (Some(embedder), true) => Some(embedder.embed(content).await?),
             _ => None,
+        };
+        let conversation_id = match existing_conversation {
+            Some(id) => id,
+            None => {
+                self.store
+                    .ensure_conversation(session_id, options.conversation_id, &scope)
+                    .await?
+            }
         };
         let record = MessageRecord {
             operation_key: options.operation_key,
@@ -144,9 +190,14 @@ impl ShortTermMemory {
             metadata: options.metadata,
             timestamp: None,
         };
-        self.store
+        let message = self
+            .store
             .append_message(conversation_id, &scope, &record)
-            .await
+            .await?;
+        if let (Some(ingestion), Some(plan)) = (&self.ingestion, plan) {
+            ingestion.persist(message.id, content, plan).await?;
+        }
+        Ok(message)
     }
 
     /// `add_messages_batch`: one transaction per `batch_size` messages.

@@ -2,6 +2,8 @@
 //! `MemoryClient` and its `short_term`, `long_term` and `reasoning` tiers.
 
 pub mod client;
+pub mod enrichment;
+pub mod extraction;
 pub mod long_term;
 pub mod reasoning;
 pub mod reasoning_observer;

@@ -496,6 +496,17 @@ pub trait LongTermStore: Send + Sync {
         confidence: f64,
     ) -> MemoryResult<bool>;
 
+    /// Additive evidence-aware entry point. Legacy implementations must not
+    /// silently discard ingestion provenance. Implementations reuse their writer.
+    async fn link_message_to_entity_with_provenance(
+        &self,
+        _message_id: Uuid,
+        _entity_id: Uuid,
+        _provenance: &crate::extraction::MentionProvenance,
+    ) -> MemoryResult<bool> {
+        Err(MemoryError::NotSupported("MENTIONS provenance".into()))
+    }
+
     /// Every message that mentions the entity; `None` when it does not exist.
     async fn entity_mentions(&self, id: Uuid) -> MemoryResult<Option<Vec<EntityMention>>>;
 

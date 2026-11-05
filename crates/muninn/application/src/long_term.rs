@@ -1,7 +1,9 @@
 //! Long-term memory use cases (`memory/long_term.py`).
 //!
-//! Entity resolution is opt-in. Geocoding and enrichment remain outside this service.
-//! Without resolution options, entity creation preserves its original upsert behavior.
+//! Entity resolution, enrichment and geocoding are opt-in. Without their
+//! configuration, entity creation preserves its original upsert behavior and
+//! every existing call, payload, stored property, counter and vector is
+//! unchanged.
 
 use std::sync::Arc;
 
@@ -159,10 +161,13 @@ impl Default for AddFactOptions {
     }
 }
 
+#[derive(Clone)]
 pub struct LongTermMemory {
     store: Arc<dyn LongTermStore>,
     embedder: Option<Arc<dyn Embedder>>,
     multi_tenant: bool,
+    enrichment: Option<Arc<crate::enrichment::EnrichmentService>>,
+    geocoding: Option<Arc<crate::enrichment::GeocodingService>>,
 }
 
 fn require_text(value: &str, what: &str) -> MemoryResult<()> {
@@ -188,10 +193,59 @@ impl LongTermMemory {
             store,
             embedder,
             multi_tenant,
+            enrichment: None,
+            geocoding: None,
         }
     }
 
-    async fn embed(&self, enabled: bool, text: &str) -> MemoryResult<Option<Vec<f64>>> {
+    /// Opt in to entity enrichment. Without this call, no enrichment port is
+    /// reachable and every existing behavior is unchanged.
+    pub fn with_enrichment(mut self, service: Arc<crate::enrichment::EnrichmentService>) -> Self {
+        self.enrichment = Some(service);
+        self
+    }
+
+    /// Opt in to geocoding. Without this call, no geocoder is reachable.
+    pub fn with_geocoding(mut self, service: Arc<crate::enrichment::GeocodingService>) -> Self {
+        self.geocoding = Some(service);
+        self
+    }
+
+    /// Enrich one stored entity through the configured service.
+    pub async fn enrich_entity(
+        &self,
+        entity_id: Uuid,
+    ) -> MemoryResult<crate::enrichment::EnrichmentOutcome> {
+        let service = self
+            .enrichment
+            .as_ref()
+            .ok_or_else(|| MemoryError::NotSupported("enrichment is not configured".into()))?;
+        let entity = self
+            .store
+            .get_entity(entity_id)
+            .await?
+            .ok_or_else(|| MemoryError::not_found(format!("entity {entity_id}")))?;
+        service.enrich(&entity).await
+    }
+
+    /// Geocode one stored `LOCATION` entity through the configured service.
+    pub async fn geocode_entity(
+        &self,
+        entity_id: Uuid,
+    ) -> MemoryResult<crate::enrichment::GeocodingOutcome> {
+        let service = self
+            .geocoding
+            .as_ref()
+            .ok_or_else(|| MemoryError::NotSupported("geocoding is not configured".into()))?;
+        let entity = self
+            .store
+            .get_entity(entity_id)
+            .await?
+            .ok_or_else(|| MemoryError::not_found(format!("entity {entity_id}")))?;
+        service.geocode(&entity).await
+    }
+
+    pub(crate) async fn embed(&self, enabled: bool, text: &str) -> MemoryResult<Option<Vec<f64>>> {
         match (&self.embedder, enabled) {
             (Some(embedder), true) => Ok(Some(embedder.embed(text).await?)),
             _ => Ok(None),
@@ -210,12 +264,30 @@ impl LongTermMemory {
         options: AddEntityOptions,
     ) -> MemoryResult<(Entity, DeduplicationResult)> {
         require_text(name, "entity name")?;
-        let (kind, parsed_subtype) = parse_entity_type(entity_type);
+        let (kind, _) = parse_entity_type(entity_type);
         require_text(&kind, "entity type")?;
         if let Some(config) = &options.resolution {
             config.validate()?;
         }
         let embedding = self.embed(options.generate_embedding, name).await?;
+        self.add_entity_prepared(name, entity_type, options, embedding)
+            .await
+    }
+
+    /// Same entity policy and writer after ingestion has preflighted all providers.
+    pub(crate) async fn add_entity_prepared(
+        &self,
+        name: &str,
+        entity_type: &str,
+        options: AddEntityOptions,
+        embedding: Option<Vec<f64>>,
+    ) -> MemoryResult<(Entity, DeduplicationResult)> {
+        require_text(name, "entity name")?;
+        let (kind, parsed_subtype) = parse_entity_type(entity_type);
+        require_text(&kind, "entity type")?;
+        if let Some(config) = &options.resolution {
+            config.validate()?;
+        }
         let deduplication = if let Some(config) = &options.resolution {
             let candidates = self
                 .store
@@ -517,6 +589,35 @@ impl LongTermMemory {
         self.store
             .link_message_to_entity(message_id, entity_id, confidence)
             .await
+    }
+
+    pub async fn link_entity_to_message_with_provenance(
+        &self,
+        entity_id: Uuid,
+        message_id: Uuid,
+        provenance: &muninn_core::extraction::MentionProvenance,
+    ) -> MemoryResult<bool> {
+        self.store
+            .link_message_to_entity_with_provenance(message_id, entity_id, provenance)
+            .await
+    }
+
+    /// Only exact surface candidates count; two matches are ambiguous.
+    pub(crate) async fn unique_mention_entity(&self, name: &str) -> MemoryResult<Option<Uuid>> {
+        let candidates = self
+            .store
+            .resolution_candidates(&ResolutionQuery {
+                name,
+                entity_type: None,
+                embedding: None,
+                limit: 2,
+            })
+            .await?;
+        let mut exact = candidates
+            .into_iter()
+            .filter(|hit| muninn_core::resolution::matches_surface(&hit.item, name));
+        let first = exact.next().map(|hit| hit.item.id);
+        Ok(if exact.next().is_none() { first } else { None })
     }
 
     /// Every message, across conversations, that mentions the entity.

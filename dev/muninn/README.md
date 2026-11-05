@@ -576,3 +576,25 @@ same tests, same messages and byte-identical GM05 modules, so they are pre-exist
 failures, not a regression of this candidate.
 No provider-private reasoning is ingested. H2/A4 and all reference pins remain unchanged.
 H3 acceptance remains a human decision; these runs record evidence, not acceptance.
+
+## H4 U2 local extraction sidecar
+
+The opt-in spaCy HTTP stage and ingestion controls are documented in
+[Message extraction](../../docs/muninn/extraction.md). That guide includes the
+exact cached model-wheel installation input, offline runtime prerequisites,
+foreground lifecycle, Rust registration, errors, provenance and compatibility
+deviations. The cached model wheel alone does not establish a usable spaCy
+runtime. No runtime installation, model execution, download or image pull is
+performed by the deterministic tests:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover \
+  -s dev/muninn/tests -p 'test_spacy*' -v
+cargo test -p muninn-providers --locked spacy
+cargo test -p muninn-bridge --locked --test bridge_router extraction_
+```
+
+The sidecar binds loopback only and has no database credentials. Do not expose it
+as a public service. Silver38, live Neo4j and live model checks are NOT_RUN in U2;
+they remain integrated U6 evidence, not implied by these test results. H3 remains
+accepted/committed with its existing proof limits. No H2 A4 retry is introduced.

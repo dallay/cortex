@@ -232,6 +232,8 @@ impl ShortTermStore for UnreachableStore {
             unreachable!()
         };
         assert_eq!(id, *conversation_id);
+        let mut record = record.clone();
+        record.timestamp = Some(chrono::Utc::now());
         calls
             .lock()
             .unwrap()
@@ -242,9 +244,9 @@ impl ShortTermStore for UnreachableStore {
             role: muninn_core::model::MessageRole::User,
             conversation_id: Some(id),
             content: record.content.clone(),
-            created_at: chrono::Utc::now(),
-            metadata: record.metadata.clone(),
-            embedding: record.embedding.clone(),
+            created_at: record.timestamp.unwrap(),
+            metadata: record.metadata,
+            embedding: record.embedding,
         })
     }
     async fn append_messages(
@@ -257,12 +259,27 @@ impl ShortTermStore for UnreachableStore {
     }
     async fn get_conversation(
         &self,
-        _: &str,
+        session: &str,
         _: Option<Uuid>,
-        _: &OwnerScope,
+        scope: &OwnerScope,
         _: Option<i64>,
     ) -> MemoryResult<Option<Conversation>> {
-        unreachable!()
+        let Self::Add {
+            calls,
+            conversation_id,
+        } = self
+        else {
+            unreachable!()
+        };
+        let calls = calls.lock().unwrap();
+        assert!(calls.appended.iter().all(|(_, stored, _)| stored == scope));
+        Ok(if calls.ensured.is_empty() {
+            None
+        } else {
+            let mut conversation = Conversation::empty(session);
+            conversation.id = *conversation_id;
+            Some(conversation)
+        })
     }
     async fn get_conversation_by_id(
         &self,
@@ -1281,6 +1298,444 @@ async fn short_term_context_preserves_exact_owner_in_search() {
         .is_ok());
 }
 
+struct IngestExtractor {
+    calls: AtomicUsize,
+    fail: bool,
+}
+#[async_trait]
+impl muninn_core::extraction::EntityExtractor for IngestExtractor {
+    async fn extract(
+        &self,
+        text: &str,
+        options: &muninn_core::extraction::ExtractOptions,
+    ) -> MemoryResult<muninn_core::extraction::ExtractionResult> {
+        use muninn_core::extraction::{ExtractedEntity, ExtractionResult};
+        assert_eq!(text, "Alice in Paris");
+        assert_eq!(options.extract_relations, Some(false));
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(MemoryError::provider("synthetic extraction unavailable"));
+        }
+        Ok(ExtractionResult {
+            entities: [0.849999, 0.85]
+                .into_iter()
+                .map(|confidence| ExtractedEntity {
+                    name: "Alice".into(),
+                    entity_type: "PERSON".into(),
+                    subtype: None,
+                    start_pos: Some(0),
+                    end_pos: Some(5),
+                    confidence,
+                    extractor: Some("spacy".into()),
+                })
+                .collect(),
+            ..Default::default()
+        })
+    }
+}
+
+fn ingest_state(
+    calls: Arc<Mutex<AddCalls>>,
+    store: Arc<RecordingLongTerm>,
+    extractor: Arc<dyn muninn_core::extraction::EntityExtractor>,
+    embedder: Option<Arc<dyn muninn_core::ports::Embedder>>,
+) -> Arc<BridgeState> {
+    let memory = MemoryClient::new(
+        MemoryPorts {
+            short_term: Arc::new(UnreachableStore::Add {
+                calls,
+                conversation_id: Uuid::from_u128(42),
+            }),
+            long_term: store,
+            reasoning: Arc::new(UnreachableReasoning),
+            embedder,
+            cypher_query: None,
+        },
+        &MemoryOptions::default(),
+    )
+    .with_extractor(extractor);
+    Arc::new(BridgeState {
+        memory: Arc::new(memory),
+        maintenance: None,
+    })
+}
+
+async fn ingest_post(
+    state: Arc<BridgeState>,
+    extra: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let mut args = serde_json::json!({"session_id":"ingest", "role":"user", "content":"Alice in Paris", "generate_embedding":false, "extract_relations":false});
+    args.as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    let response = request(state, "add_message", &args.to_string()).await;
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap())
+}
+
+#[tokio::test]
+async fn extraction_auto_populates_provenance_and_replay_is_idempotent() {
+    let calls = Arc::new(Mutex::new(AddCalls::default()));
+    let store = Arc::new(RecordingLongTerm::default());
+    let extractor = Arc::new(IngestExtractor {
+        calls: AtomicUsize::new(0),
+        fail: false,
+    });
+    let state = ingest_state(calls.clone(), store.clone(), extractor.clone(), None);
+    let args = serde_json::json!({"extraction_mode":"auto", "operation_key":"once"});
+    let (status, message) = ingest_post(state.clone(), args.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(store.entities.lock().unwrap().len(), 1);
+    let mentions = store.mentions.lock().unwrap().clone();
+    assert_eq!(mentions.len(), 1);
+    assert_eq!(mentions[0].0.to_string(), message["id"]);
+    assert_eq!(mentions[0].1, store.entities.lock().unwrap()[0].id);
+    assert_eq!(
+        mentions[0].2,
+        serde_json::json!({"confidence":0.85,"start_pos":0,"end_pos":5,
+        "derived":true,"extractor":"spacy","support":1,"source_message_ids":[message["id"]],
+        "evidence":"Alice in Paris"})
+    );
+    let (_, replay) = ingest_post(state.clone(), args).await;
+    assert_eq!(message, replay);
+    assert_eq!(calls.lock().unwrap().appended.len(), 1);
+    assert_eq!(extractor.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(store.mentions.lock().unwrap().len(), 1);
+    let (status, _) = ingest_post(
+        state,
+        serde_json::json!({"extraction_mode":"skip","operation_key":"once"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(calls.lock().unwrap().appended.len(), 1);
+    assert_eq!(store.mentions.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn extraction_explicit_only_links_supplied_references_with_existing_precedence() {
+    let calls = Arc::new(Mutex::new(AddCalls::default()));
+    let store = Arc::new(RecordingLongTerm::default());
+    let existing = target_entity(Uuid::new_v4());
+    store.entities.lock().unwrap().push(existing.clone());
+    let extractor = Arc::new(IngestExtractor {
+        calls: AtomicUsize::new(0),
+        fail: true,
+    });
+    let state = ingest_state(calls.clone(), store.clone(), extractor.clone(), None);
+    let (status, _) = ingest_post(
+        state,
+        serde_json::json!({"extraction_mode":"explicit", "explicit_mentions":[
+        {"id":existing.id,"name":"ignored","type":"EVENT"}, {"name":"Typed","type":"PERSON"},
+        {"name":"unknown"}, {"id":Uuid::new_v4()}]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(extractor.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(store.entities.lock().unwrap().len(), 2);
+    let mentions = store.mentions.lock().unwrap();
+    assert_eq!(mentions.len(), 2);
+    assert_eq!(mentions[0].1, existing.id);
+    assert!(mentions.iter().all(|(_, _, data)| data["derived"] == false));
+    drop(mentions);
+    assert_eq!(calls.lock().unwrap().appended.len(), 1);
+}
+
+#[tokio::test]
+async fn extraction_skip_disabled_and_unconfigured_preserve_no_extraction() {
+    for extra in [
+        serde_json::json!({"extraction_mode":"skip","explicit_mentions":[{"name":"Typed","type":"PERSON"}]}),
+        serde_json::json!({"extraction_mode":"auto","extract_entities":false}),
+        serde_json::json!({}),
+    ] {
+        let calls = Arc::new(Mutex::new(AddCalls::default()));
+        let store = Arc::new(RecordingLongTerm::default());
+        let extractor = Arc::new(IngestExtractor {
+            calls: AtomicUsize::new(0),
+            fail: true,
+        });
+        let (status, _) = ingest_post(
+            ingest_state(calls.clone(), store.clone(), extractor.clone(), None),
+            extra,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(extractor.calls.load(Ordering::SeqCst), 0);
+        assert!(store.entities.lock().unwrap().is_empty());
+        assert!(store.mentions.lock().unwrap().is_empty());
+        assert_eq!(calls.lock().unwrap().appended.len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn extraction_failure_and_invalid_controls_leave_all_state_unchanged() {
+    for (extra, status, error) in [
+        (
+            serde_json::json!({"extraction_mode":"auto"}),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "provider error: synthetic extraction unavailable",
+        ),
+        (
+            serde_json::json!({"extraction_mode":"bogus"}),
+            StatusCode::BAD_REQUEST,
+            "'extraction_mode' must be auto, skip or explicit",
+        ),
+        (
+            serde_json::json!({"extract_entities":"true"}),
+            StatusCode::BAD_REQUEST,
+            "'extract_entities' must be a boolean",
+        ),
+        (
+            serde_json::json!({"extract_relations":"false"}),
+            StatusCode::BAD_REQUEST,
+            "'extract_relations' must be a boolean",
+        ),
+        (
+            serde_json::json!({"extraction_mode":"explicit","explicit_mentions":[{}]}),
+            StatusCode::BAD_REQUEST,
+            "missing argument 'name'",
+        ),
+    ] {
+        let calls = Arc::new(Mutex::new(AddCalls::default()));
+        let store = Arc::new(RecordingLongTerm::default());
+        let extractor = Arc::new(IngestExtractor {
+            calls: AtomicUsize::new(0),
+            fail: true,
+        });
+        let (actual, body) = ingest_post(
+            ingest_state(calls.clone(), store.clone(), extractor, None),
+            extra,
+        )
+        .await;
+        assert_eq!(actual, status);
+        assert_eq!(body, serde_json::json!({"error":error}));
+        let calls = calls.lock().unwrap();
+        assert!(calls.ensured.is_empty() && calls.appended.is_empty());
+        drop(calls);
+        assert!(store.entities.lock().unwrap().is_empty());
+        assert!(store.mentions.lock().unwrap().is_empty());
+        assert!(store.same_as.lock().unwrap().is_empty());
+        assert!(store.candidate_requests.lock().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn extraction_embedding_failure_precedes_conversations_nodes_edges_and_vectors() {
+    let calls = Arc::new(Mutex::new(AddCalls::default()));
+    let store = Arc::new(RecordingLongTerm::default());
+    let extractor = Arc::new(IngestExtractor {
+        calls: AtomicUsize::new(0),
+        fail: false,
+    });
+    let embedding_calls = Arc::new(AtomicUsize::new(0));
+    let state = ingest_state(
+        calls.clone(),
+        store.clone(),
+        extractor,
+        Some(Arc::new(FailOnSecondEmbedder(embedding_calls.clone()))),
+    );
+    let (status, body) = ingest_post(
+        state,
+        serde_json::json!({"extraction_mode":"auto","generate_embedding":true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        body,
+        serde_json::json!({"error":"provider error: embedding provider unavailable"})
+    );
+    assert_eq!(embedding_calls.load(Ordering::SeqCst), 2);
+    assert!(calls.lock().unwrap().ensured.is_empty());
+    assert!(calls.lock().unwrap().appended.is_empty());
+    assert!(store.entities.lock().unwrap().is_empty());
+    assert!(store.mentions.lock().unwrap().is_empty());
+    assert!(store.same_as.lock().unwrap().is_empty());
+    assert!(store.candidate_requests.lock().unwrap().is_empty());
+}
+
+struct FrozenExtraction(muninn_core::extraction::ExtractionResult);
+#[async_trait]
+impl muninn_core::extraction::EntityExtractor for FrozenExtraction {
+    async fn extract(
+        &self,
+        _: &str,
+        _: &muninn_core::extraction::ExtractOptions,
+    ) -> MemoryResult<muninn_core::extraction::ExtractionResult> {
+        Ok(self.0.clone())
+    }
+}
+
+fn extracted_alice() -> muninn_core::extraction::ExtractedEntity {
+    muninn_core::extraction::ExtractedEntity {
+        name: "Alice".into(),
+        entity_type: "PERSON".into(),
+        subtype: None,
+        start_pos: Some(0),
+        end_pos: Some(5),
+        confidence: 0.85,
+        extractor: Some("spacy".into()),
+    }
+}
+
+async fn assert_rejected_extraction(entity: muninn_core::extraction::ExtractedEntity) {
+    let calls = Arc::new(Mutex::new(AddCalls::default()));
+    let store = Arc::new(RecordingLongTerm::default());
+    let state = ingest_state(
+        calls.clone(),
+        store.clone(),
+        Arc::new(FrozenExtraction(
+            muninn_core::extraction::ExtractionResult {
+                entities: vec![entity],
+                ..Default::default()
+            },
+        )),
+        None,
+    );
+    let (status, body) = ingest_post(state, serde_json::json!({"extraction_mode":"auto"})).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        body,
+        serde_json::json!({"error":"provider error: extraction invalid entity"})
+    );
+    assert!(calls.lock().unwrap().ensured.is_empty());
+    assert!(calls.lock().unwrap().appended.is_empty());
+    assert!(store.entities.lock().unwrap().is_empty());
+    assert!(store.mentions.lock().unwrap().is_empty());
+    assert!(store.same_as.lock().unwrap().is_empty());
+    assert!(store.candidate_requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn extraction_invalid_provider_type_is_rejected_before_writes() {
+    let mut entity = extracted_alice();
+    entity.entity_type = "PERSON) SET malicious=true".into();
+    assert_rejected_extraction(entity).await;
+}
+
+#[tokio::test]
+async fn extraction_invalid_provider_span_is_rejected_before_writes() {
+    for (start, end) in [
+        (Some(-1), Some(5)),
+        (Some(5), Some(0)),
+        (Some(0), Some(99)),
+        (None, Some(5)),
+    ] {
+        let mut entity = extracted_alice();
+        entity.start_pos = start;
+        entity.end_pos = end;
+        assert_rejected_extraction(entity).await;
+    }
+}
+
+#[tokio::test]
+async fn extraction_invalid_provider_confidence_is_rejected_before_writes() {
+    for confidence in [f64::NAN, f64::INFINITY, -0.1, 1.1] {
+        let mut entity = extracted_alice();
+        entity.confidence = confidence;
+        assert_rejected_extraction(entity).await;
+    }
+}
+
+#[tokio::test]
+async fn extraction_explicit_ambiguity_missing_ids_and_name_only_never_fall_back() {
+    for count in [0, 1, 2] {
+        let calls = Arc::new(Mutex::new(AddCalls::default()));
+        let store = Arc::new(RecordingLongTerm::default());
+        for i in 0..count {
+            let mut entity = target_entity(Uuid::new_v4());
+            entity.name = format!("canonical-{i}");
+            entity.canonical_name = Some(entity.name.clone());
+            entity.aliases = vec!["Alice".into()];
+            store.entities.lock().unwrap().push(entity);
+        }
+        let before = serde_json::to_value(&*store.entities.lock().unwrap()).unwrap();
+        let extractor = Arc::new(IngestExtractor {
+            calls: AtomicUsize::new(0),
+            fail: true,
+        });
+        let state = ingest_state(calls.clone(), store.clone(), extractor.clone(), None);
+        let (status, _) = ingest_post(
+            state,
+            serde_json::json!({"extraction_mode":"explicit","explicit_mentions":[
+                {"id":Uuid::new_v4(),"name":"Alice","type":"PERSON"},
+                {"id":"malformed-id","name":"Alice"}, {"name":" alice "}, {"name":"unknown"}
+            ]}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(extractor.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            serde_json::to_value(&*store.entities.lock().unwrap()).unwrap(),
+            before
+        );
+        assert_eq!(
+            store.mentions.lock().unwrap().len(),
+            usize::from(count == 1)
+        );
+        assert!(store.same_as.lock().unwrap().is_empty());
+        assert_eq!(calls.lock().unwrap().appended.len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn extraction_unconfigured_preserves_operation_payload_metadata_owner_and_vectors() {
+    for configured in [false, true] {
+        let calls = Arc::new(Mutex::new(AddCalls::default()));
+        let store = Arc::new(RecordingLongTerm::default());
+        let stage = Arc::new(IngestExtractor {
+            calls: AtomicUsize::new(0),
+            fail: true,
+        });
+        let embedder_calls = Arc::new(AtomicUsize::new(0));
+        let ports = MemoryPorts {
+            short_term: Arc::new(UnreachableStore::Add {
+                calls: calls.clone(),
+                conversation_id: Uuid::from_u128(42),
+            }),
+            long_term: store.clone(),
+            reasoning: Arc::new(UnreachableReasoning),
+            embedder: Some(Arc::new(FailOnSecondEmbedder(embedder_calls.clone()))),
+            cypher_query: None,
+        };
+        let mut memory = MemoryClient::new(ports, &MemoryOptions::default());
+        if configured {
+            memory = memory.with_extractor(stage.clone());
+        }
+        let state = Arc::new(BridgeState {
+            memory: Arc::new(memory),
+            maintenance: None,
+        });
+        let args = serde_json::json!({"operation_key":"legacy", "session_id":"ingest",
+            "role":"user","content":"Alice in Paris","metadata":{"synthetic":true},"user_identifier":" owner "});
+        let mut responses = Vec::new();
+        for _ in 0..2 {
+            let response = request(state.clone(), "add_message", &args.to_string()).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            responses.push(serde_json::from_slice::<serde_json::Value>(&bytes).unwrap());
+        }
+        let first = &responses[0];
+        assert_eq!(first, &responses[1]);
+        assert_eq!(first["embedding"], serde_json::json!([1.0]));
+        assert_eq!(first["metadata"], serde_json::json!({"synthetic":true}));
+        assert_eq!(stage.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(embedder_calls.load(Ordering::SeqCst), 1);
+        assert!(store.entities.lock().unwrap().is_empty());
+        assert!(store.mentions.lock().unwrap().is_empty());
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.appended.len(), 1);
+        assert_eq!(calls.ensured.len(), 2);
+        assert_eq!(calls.appended[0].1.as_str(), Some(" owner "));
+        assert_eq!(calls.appended[0].2.operation_payload,Some(serde_json::json!({
+            "role":"user","content":"Alice in Paris","metadata":{"synthetic":true},"generate_embedding":true
+        }).to_string()));
+    }
+}
+
 type SameAsRecord = (Uuid, Uuid, f64, String, String);
 
 /// Long-term store that records what the bridge actually forwards.
@@ -1298,6 +1753,7 @@ struct RecordingLongTerm {
     preference_as_of: Mutex<Option<chrono::DateTime<chrono::Utc>>>,
     entities: Mutex<Vec<Entity>>,
     same_as: Mutex<Vec<SameAsRecord>>,
+    mentions: Mutex<Vec<(Uuid, Uuid, serde_json::Value)>>,
     candidate_score: f64,
     candidate_requests: Mutex<Vec<i64>>,
 }
@@ -1693,6 +2149,22 @@ impl LongTermStore for RecordingLongTerm {
         }
         drop(edges);
         Ok(())
+    }
+    async fn link_message_to_entity_with_provenance(
+        &self,
+        message: Uuid,
+        entity: Uuid,
+        provenance: &muninn_core::extraction::MentionProvenance,
+    ) -> MemoryResult<bool> {
+        let mut mentions = self.mentions.lock().unwrap();
+        if !mentions
+            .iter()
+            .any(|(m, e, _)| *m == message && *e == entity)
+        {
+            mentions.push((message, entity, serde_json::to_value(provenance).unwrap()));
+        }
+        drop(mentions);
+        Ok(true)
     }
     async fn set_entity_feedback(&self, _: Uuid, _: f64, _: bool) -> MemoryResult<bool> {
         unreachable!()

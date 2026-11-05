@@ -34,7 +34,15 @@ pub struct MemoryClient {
 
 impl MemoryClient {
     pub fn new(ports: MemoryPorts, options: &MemoryOptions) -> Self {
-        Self {
+        let ingestion = crate::extraction::IngestionExtraction {
+            long_term: LongTermMemory::new(
+                ports.long_term.clone(),
+                ports.embedder.clone(),
+                options.multi_tenant,
+            ),
+            extractor: None,
+        };
+        let mut client = Self {
             short_term: ShortTermMemory::new(
                 ports.short_term,
                 ports.embedder.clone(),
@@ -47,7 +55,32 @@ impl MemoryClient {
             ),
             reasoning: ReasoningMemory::new(ports.reasoning, ports.embedder, options.multi_tenant),
             cypher_query: ports.cypher_query,
+        };
+        client.short_term.ingestion = Some(ingestion);
+        client
+    }
+
+    /// Configure the trusted extraction port without changing legacy defaults.
+    pub fn with_extractor(
+        mut self,
+        extractor: Arc<dyn muninn_core::extraction::EntityExtractor>,
+    ) -> Self {
+        if let Some(ingestion) = &mut self.short_term.ingestion {
+            ingestion.extractor = Some(extractor);
         }
+        self
+    }
+
+    /// Opt in to entity enrichment and geocoding controls. Both stay unreachable
+    /// until a caller wires the services here.
+    pub fn with_enrichment(mut self, service: Arc<crate::enrichment::EnrichmentService>) -> Self {
+        self.long_term = self.long_term.clone().with_enrichment(service);
+        self
+    }
+
+    pub fn with_geocoding(mut self, service: Arc<crate::enrichment::GeocodingService>) -> Self {
+        self.long_term = self.long_term.clone().with_geocoding(service);
+        self
     }
 
     pub const fn short_term(&self) -> &ShortTermMemory {

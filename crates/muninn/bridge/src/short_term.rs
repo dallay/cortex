@@ -176,7 +176,22 @@ async fn add_message(state: &BridgeState, args: &Args) -> BridgeResult {
     let session_id = args.string("session_id")?;
     let role = parse_role(&args.string("role")?)?;
     let content = args.string("content")?;
+    let extraction_mode = args
+        .opt_string("extraction_mode")?
+        .map(|mode| match mode.as_str() {
+            "auto" => Ok(muninn_core::extraction::ExtractionMode::Auto),
+            "skip" => Ok(muninn_core::extraction::ExtractionMode::Skip),
+            "explicit" => Ok(muninn_core::extraction::ExtractionMode::Explicit),
+            _ => Err(BridgeError::BadRequest(
+                "'extraction_mode' must be auto, skip or explicit".into(),
+            )),
+        })
+        .transpose()?;
     let options = AddMessageOptions {
+        extraction_mode,
+        explicit_mentions: crate::reasoning::parse_entity_refs(args.raw("explicit_mentions"))?,
+        extract_entities: args.opt_bool("extract_entities")?,
+        extract_relations: args.opt_bool("extract_relations")?.unwrap_or(true),
         operation_key: args.opt_string("operation_key")?,
         metadata: args.object("metadata")?,
         user_identifier: args.opt_string("user_identifier")?,

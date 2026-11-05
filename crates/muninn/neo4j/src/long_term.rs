@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use muninn_core::codec::{deserialize_metadata, python_json_dumps, serialize_metadata};
+use muninn_core::enrichment::{EnrichmentAttributes, EntityEnrichmentStore, GeoCoordinates};
 use muninn_core::model::{
     Entity, EntityGraph, EntityGraphEdge, EntityGraphNode, EntityMention, Fact, Metadata,
     Preference, Relationship,
@@ -12,7 +13,7 @@ use neo4rs::{BoltNull, BoltType, Row};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::bolt::{column, opt_string, opt_vector, row_values, Props};
+use crate::bolt::{column, opt_string, opt_vector, row_values, to_json, Props};
 use crate::client::{Neo4jClient, Params};
 use crate::queries::long_term as q;
 
@@ -166,6 +167,37 @@ impl Neo4jLongTermStore {
         match self.client.execute(cypher, params).await {
             Err(MemoryError::Storage(message)) if message.contains(index) => Ok(Vec::new()),
             other => other,
+        }
+    }
+
+    /// Verify the point index from the live catalog. The writer never creates,
+    /// repairs or drops schema: a missing, foreign or offline index refuses the
+    /// write instead of persisting an unindexed shape.
+    async fn require_entity_location_index(&self) -> MemoryResult<()> {
+        let rows = self
+            .client
+            .execute(
+                q::ENTITY_LOCATION_INDEX,
+                vec![("name", q::ENTITY_LOCATION_INDEX_NAME.into())],
+            )
+            .await?;
+        let mut usable = false;
+        for row in &rows {
+            let matches = |key: &str, expected: &str| -> MemoryResult<bool> {
+                Ok(to_json(&column(row, key)?) == Value::String(expected.to_owned()))
+            };
+            usable |= matches("type", "POINT")?
+                && matches("entityType", "NODE")?
+                && matches("state", "ONLINE")?
+                && to_json(&column(row, "labelsOrTypes")?)
+                    == serde_json::json!([q::ENTITY_LOCATION_INDEX_LABEL])
+                && to_json(&column(row, "properties")?)
+                    == serde_json::json!([q::ENTITY_LOCATION_INDEX_PROPERTY]);
+        }
+        if usable {
+            Ok(())
+        } else {
+            Err(MemoryError::storage(q::LOCATION_INDEX_REQUIRED))
         }
     }
 
@@ -542,6 +574,23 @@ impl LongTermStore for Neo4jLongTermStore {
         entity_id: Uuid,
         confidence: f64,
     ) -> MemoryResult<bool> {
+        self.link_message_to_entity_with_provenance(
+            message_id,
+            entity_id,
+            &muninn_core::extraction::MentionProvenance {
+                confidence,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    async fn link_message_to_entity_with_provenance(
+        &self,
+        message_id: Uuid,
+        entity_id: Uuid,
+        provenance: &muninn_core::extraction::MentionProvenance,
+    ) -> MemoryResult<bool> {
         let rows = self
             .client
             .execute(
@@ -549,9 +598,22 @@ impl LongTermStore for Neo4jLongTermStore {
                 vec![
                     ("message_id", id_param(message_id)),
                     ("entity_id", id_param(entity_id)),
-                    ("confidence", confidence.into()),
-                    ("start_pos", NULL),
-                    ("end_pos", NULL),
+                    ("confidence", provenance.confidence.into()),
+                    ("start_pos", provenance.start_pos.map_or(NULL, Into::into)),
+                    ("end_pos", provenance.end_pos.map_or(NULL, Into::into)),
+                    ("derived", provenance.derived.into()),
+                    ("extractor", opt_string(provenance.extractor.as_deref())),
+                    ("support", provenance.support.into()),
+                    (
+                        "source_message_ids",
+                        provenance
+                            .source_message_ids
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .into(),
+                    ),
+                    ("evidence", opt_string(provenance.evidence.as_deref())),
                 ],
             )
             .await?;
@@ -905,5 +967,73 @@ impl LongTermStore for Neo4jLongTermStore {
         rows.iter()
             .map(|row| fact_from_value(&column(row, "f")?))
             .collect()
+    }
+}
+
+/// Documented enrichment and geocoding writes. Both reuse the entity identity
+/// (`id`) and the existing parameter helpers; neither creates schema.
+#[async_trait]
+impl EntityEnrichmentStore for Neo4jLongTermStore {
+    async fn write_enrichment(
+        &self,
+        entity_id: Uuid,
+        attributes: &EnrichmentAttributes,
+    ) -> MemoryResult<bool> {
+        let rows = self
+            .client
+            .execute(
+                q::SET_ENTITY_ENRICHMENT,
+                vec![
+                    ("id", id_param(entity_id)),
+                    (
+                        "enriched_description",
+                        opt_string(attributes.enriched_description.as_deref()),
+                    ),
+                    (
+                        "enriched_summary",
+                        opt_string(attributes.enriched_summary.as_deref()),
+                    ),
+                    (
+                        "wikipedia_url",
+                        opt_string(attributes.wikipedia_url.as_deref()),
+                    ),
+                    ("wikidata_id", opt_string(attributes.wikidata_id.as_deref())),
+                    ("diffbot_uri", opt_string(attributes.diffbot_uri.as_deref())),
+                    ("image_url", opt_string(attributes.image_url.as_deref())),
+                    (
+                        "enrichment_provider",
+                        attributes.enrichment_provider.as_str().into(),
+                    ),
+                    (
+                        "enriched_at",
+                        attributes.enrichment_timestamp.to_rfc3339().into(),
+                    ),
+                ],
+            )
+            .await?;
+        Ok(!rows.is_empty())
+    }
+
+    async fn write_location(
+        &self,
+        entity_id: Uuid,
+        coordinates: GeoCoordinates,
+    ) -> MemoryResult<bool> {
+        // Re-validate before writing: a hand-built coordinate pair must not reach
+        // the point literal.
+        let coordinates = GeoCoordinates::new(coordinates.latitude, coordinates.longitude)?;
+        self.require_entity_location_index().await?;
+        let rows = self
+            .client
+            .execute(
+                q::SET_ENTITY_LOCATION,
+                vec![
+                    ("id", id_param(entity_id)),
+                    ("latitude", coordinates.latitude.into()),
+                    ("longitude", coordinates.longitude.into()),
+                ],
+            )
+            .await?;
+        Ok(!rows.is_empty())
     }
 }

@@ -9,6 +9,7 @@
 //! [`neo4j-labs/agent-memory`]: https://github.com/neo4j-labs/agent-memory
 
 pub mod codec;
+pub mod enrichment;
 pub mod error;
 pub mod extraction;
 pub mod model;
