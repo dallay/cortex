@@ -19,8 +19,8 @@ impl SqliteProviderRepository {
     pub fn new(db_path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let mut conn = Connection::open(&db_path)?;
         conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             PRAGMA busy_timeout = 5000;
+            "PRAGMA busy_timeout = 5000;
+             PRAGMA journal_mode = WAL;
              PRAGMA foreign_keys = ON;",
         )?;
         if db_path.as_ref().to_str() == Some(":memory:") {
