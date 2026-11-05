@@ -2,7 +2,7 @@
 # Runtime image - expects pre-built rook binary in the same directory
 # Uses TARGETARCH to select the correct binary (amd64 or arm64)
 # =============================================================================
-FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 
 LABEL maintainer="Yuniel Acosta <info@yunielacosta.com>"
 LABEL org.opencontainers.image.source="https://github.com/dallay/cortex"
