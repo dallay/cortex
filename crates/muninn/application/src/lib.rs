@@ -6,6 +6,7 @@ pub mod long_term;
 pub mod reasoning;
 pub mod reasoning_observer;
 pub mod recorder;
+pub mod resolution;
 pub mod short_term;
 
 pub use client::{MemoryClient, MemoryOptions, MemoryPorts};

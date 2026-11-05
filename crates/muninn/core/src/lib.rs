@@ -14,5 +14,6 @@ pub mod extraction;
 pub mod model;
 pub mod ports;
 pub mod query;
+pub mod resolution;
 
 pub use error::{MemoryError, MemoryResult};

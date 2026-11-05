@@ -183,6 +183,32 @@ SET {}",
     query
 }
 
+/// Single-entity textual blocking. Active, optionally same-type, bounded before
+/// returning to the application. Lookup surfaces use the existing entity shape.
+pub const RESOLUTION_LEXICAL_CANDIDATES: &str = "
+MATCH (e:Entity)
+WHERE e.merged_into IS NULL AND ($type IS NULL OR e.type = $type)
+WITH e, [form IN [e.name, e.canonical_name] + coalesce(e.aliases, [])
+    WHERE form IS NOT NULL | toLower(trim(form))] AS forms
+WITH e, forms, CASE WHEN toLower(trim($name)) IN forms THEN 1.0 ELSE 0.0 END AS score
+WHERE score = 1.0 OR any(form IN forms WHERE any(token IN split(toLower(trim($name)), ' ')
+    WHERE token <> '' AND token IN split(form, ' ')))
+RETURN e, score
+ORDER BY score DESC, e.id ASC
+LIMIT $limit
+";
+
+/// The vector bucket follows the pinned FIND_SIMILAR_ENTITIES_BY_EMBEDDING
+/// shape, without swallowing index/dimension failures as an empty match set.
+pub const RESOLUTION_VECTOR_CANDIDATES: &str = "
+CALL db.index.vector.queryNodes('entity_embedding_idx', $limit, $embedding)
+YIELD node, score
+WHERE node.merged_into IS NULL AND ($type IS NULL OR node.type = $type)
+RETURN node AS e, score
+ORDER BY score DESC, node.id ASC
+LIMIT $limit
+";
+
 pub const GET_ENTITY: &str = "
 MATCH (e:Entity {id: $id})
 RETURN e

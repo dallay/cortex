@@ -419,6 +419,19 @@ impl Default for TraceQuery {
 /// fact) memory.
 #[async_trait]
 pub trait LongTermStore: Send + Sync {
+    /// Return at most `limit` active candidates, exact surfaces first, then
+    /// lexical/vector candidates. Apply the optional type restriction before
+    /// limiting; an absent vector must still allow textual matching.
+    /// Legacy adapters fail explicitly rather than silently resolving distinct.
+    async fn resolution_candidates(
+        &self,
+        _query: &crate::resolution::ResolutionQuery<'_>,
+    ) -> MemoryResult<Vec<Scored<Entity>>> {
+        Err(MemoryError::NotSupported(
+            "entity resolution candidates".into(),
+        ))
+    }
+
     /// Create an entity, or update the existing `(name, type)` node.
     async fn upsert_entity(&self, entity: &Entity) -> MemoryResult<Entity>;
 

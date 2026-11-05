@@ -194,6 +194,61 @@ fn search_params(embedding: &[f64], limit: i64, threshold: f64) -> Params {
 
 #[async_trait]
 impl LongTermStore for Neo4jLongTermStore {
+    async fn resolution_candidates(
+        &self,
+        query: &muninn_core::resolution::ResolutionQuery<'_>,
+    ) -> MemoryResult<Vec<Scored<Entity>>> {
+        if query.limit < 1 {
+            return Err(MemoryError::invalid("candidate_limit must be at least 1"));
+        }
+        let mut rows = self
+            .client
+            .execute(
+                q::RESOLUTION_LEXICAL_CANDIDATES,
+                vec![
+                    ("name", query.name.into()),
+                    ("type", opt_string(query.entity_type)),
+                    ("limit", query.limit.into()),
+                ],
+            )
+            .await?;
+        if let Some(embedding) = query.embedding {
+            rows.extend(
+                self.client
+                    .execute(
+                        q::RESOLUTION_VECTOR_CANDIDATES,
+                        vec![
+                            ("embedding", embedding.to_vec().into()),
+                            ("type", opt_string(query.entity_type)),
+                            ("limit", query.limit.into()),
+                        ],
+                    )
+                    .await?,
+            );
+        }
+        let mut candidates = rows
+            .iter()
+            .map(|row| {
+                Ok(Scored {
+                    item: entity_from_value(&column(row, "e")?)?,
+                    score: score(row)?,
+                })
+            })
+            .collect::<MemoryResult<Vec<_>>>()?;
+        candidates.sort_by(|a, b| {
+            muninn_core::resolution::matches_surface(&b.item, query.name)
+                .cmp(&muninn_core::resolution::matches_surface(
+                    &a.item, query.name,
+                ))
+                .then(b.score.total_cmp(&a.score))
+                .then(a.item.id.cmp(&b.item.id))
+        });
+        let mut seen = std::collections::HashSet::new();
+        candidates.retain(|hit| seen.insert(hit.item.id));
+        candidates.truncate(usize::try_from(query.limit).unwrap_or(usize::MAX));
+        Ok(candidates)
+    }
+
     async fn upsert_entity(&self, entity: &Entity) -> MemoryResult<Entity> {
         let cypher = q::create_entity_query(&entity.entity_type, entity.subtype.as_deref());
         let aliases: Vec<BoltType> = entity

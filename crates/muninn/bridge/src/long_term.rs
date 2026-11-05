@@ -50,19 +50,34 @@ fn entities(items: &[muninn_core::model::Entity]) -> Reply {
     Reply::Json(Value::Array(items.iter().map(wire::entity).collect()))
 }
 
-/// The TCK reference adapter maps this onto
-/// `add_entity(resolve=False, deduplicate=False, geocode=False, enrich=False)`.
+/// Existing callers opt out by default, like the TCK adapter. Explicit
+/// resolve/deduplicate requests use one policy; entity fields stay top-level.
 async fn add_entity(state: &BridgeState, args: &Args) -> BridgeResult {
+    let resolve = args.opt_bool("resolve")?.unwrap_or(false);
+    let deduplicate = args.opt_bool("deduplicate")?.unwrap_or(false);
+    let config: muninn_core::resolution::ResolutionConfig = args
+        .raw("resolution")
+        .map(|value| serde_json::from_value(value.clone()))
+        .transpose()
+        .map_err(|_| {
+            BridgeError::BadRequest("'resolution' must be a resolution configuration object".into())
+        })?
+        .unwrap_or_default();
+    config.validate()?;
     let options = AddEntityOptions {
         description: args.opt_string("description")?,
+        generate_embedding: args.opt_bool("generate_embedding")?.unwrap_or(true),
+        resolution: (resolve || deduplicate).then_some(config),
         ..AddEntityOptions::default()
     };
-    let entity = state
+    let (entity, deduplication) = state
         .memory
         .long_term()
         .add_entity(&args.string("name")?, &args.string("entity_type")?, options)
         .await?;
-    Ok(Reply::Json(wire::entity(&entity)))
+    let mut value = wire::entity(&entity);
+    value["deduplication"] = json!(deduplication);
+    Ok(Reply::Json(value))
 }
 
 async fn add_preference(state: &BridgeState, args: &Args) -> BridgeResult {

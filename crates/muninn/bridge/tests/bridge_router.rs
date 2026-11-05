@@ -1281,6 +1281,8 @@ async fn short_term_context_preserves_exact_owner_in_search() {
         .is_ok());
 }
 
+type SameAsRecord = (Uuid, Uuid, f64, String, String);
+
 /// Long-term store that records what the bridge actually forwards.
 #[derive(Default)]
 struct RecordingLongTerm {
@@ -1295,6 +1297,9 @@ struct RecordingLongTerm {
     preference_target: Mutex<Option<Uuid>>,
     preference_as_of: Mutex<Option<chrono::DateTime<chrono::Utc>>>,
     entities: Mutex<Vec<Entity>>,
+    same_as: Mutex<Vec<SameAsRecord>>,
+    candidate_score: f64,
+    candidate_requests: Mutex<Vec<i64>>,
 }
 
 impl RecordingLongTerm {
@@ -1339,6 +1344,245 @@ impl RecordingLongTerm {
     }
 }
 
+// Resolution fixtures are test-only: controlled scores are not semantic-quality evidence.
+async fn resolution_post(
+    store: Arc<RecordingLongTerm>,
+    args: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let response = request(state_with_long_term(store), "add_entity", &args.to_string()).await;
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap())
+}
+
+fn resolution_store(score: f64) -> Arc<RecordingLongTerm> {
+    let store = Arc::new(RecordingLongTerm {
+        candidate_score: score,
+        ..Default::default()
+    });
+    let mut candidate = target_entity(Uuid::new_v4());
+    candidate.name = "zzzzzzzzzzzzzzzzzzzz".into();
+    candidate.canonical_name = Some(candidate.name.clone());
+    candidate.entity_type = "PERSON".into();
+    store.entities.lock().unwrap().push(candidate);
+    store
+}
+
+async fn assert_resolution_band(score: f64, action: &str, nodes: usize, edges: usize) {
+    let store = resolution_store(score);
+    let original = store.entities.lock().unwrap()[0].clone();
+    let (status, value) = resolution_post(store.clone(), serde_json::json!({"name":"abcdefghijklmnopqrst", "entity_type":"PERSON", "deduplicate":true})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(value["deduplication"]["action"], action);
+    assert_eq!(value["deduplication"]["is_duplicate"], action != "none");
+    assert_eq!(store.entities.lock().unwrap().len(), nodes);
+    assert_eq!(store.same_as.lock().unwrap().len(), edges);
+    assert_eq!(*store.candidate_requests.lock().unwrap(), vec![12]);
+    if action == "merged" {
+        assert_eq!(value["id"], original.id.to_string());
+        assert_eq!(value["deduplication"]["similarity_score"], score);
+        assert_eq!(
+            store.entities.lock().unwrap()[0].aliases,
+            vec!["abcdefghijklmnopqrst"]
+        );
+    } else {
+        assert_ne!(value["id"], original.id.to_string());
+        assert_eq!(
+            serde_json::to_value(&store.entities.lock().unwrap()[0]).unwrap(),
+            serde_json::to_value(&original).unwrap()
+        );
+    }
+    if action == "flagged" {
+        let edge = store.same_as.lock().unwrap()[0].clone();
+        assert_eq!(edge.0.to_string(), value["id"].as_str().unwrap());
+        assert_eq!(edge.1, original.id);
+        assert_eq!(edge.2, score);
+        assert_eq!(edge.3, "embedding");
+        assert_eq!(edge.4, "pending");
+        let (_, repeated) = resolution_post(store.clone(), serde_json::json!({"name":"abcdefghijklmnopqrst", "entity_type":"PERSON", "deduplicate":true})).await;
+        assert_eq!(repeated["id"], value["id"]);
+        assert_eq!(store.entities.lock().unwrap().len(), 2);
+        assert_eq!(store.same_as.lock().unwrap().len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn resolution_at_review_boundary_flags() {
+    assert_resolution_band(0.85, "flagged", 2, 1).await;
+}
+#[tokio::test]
+async fn resolution_at_auto_merge_boundary_merges() {
+    assert_resolution_band(0.90, "merged", 1, 0).await;
+}
+#[tokio::test]
+async fn resolution_below_review_is_distinct() {
+    assert_resolution_band(0.849999, "none", 2, 0).await;
+}
+#[tokio::test]
+async fn resolution_below_auto_merge_stays_pending() {
+    assert_resolution_band(0.899999, "flagged", 2, 1).await;
+}
+
+#[tokio::test]
+async fn resolution_exact_and_token_sort_work_without_an_embedder() {
+    for name in ["zzzzzzzzzzzzzzzzzzzz", "Mary Jane"] {
+        let store = resolution_store(0.0);
+        let candidate_name = if name == "Mary Jane" {
+            "Jane Mary"
+        } else {
+            name
+        };
+        let mut candidate = store.entities.lock().unwrap()[0].clone();
+        candidate.name = candidate_name.into();
+        candidate.canonical_name = Some(candidate_name.into());
+        store.entities.lock().unwrap()[0] = candidate.clone();
+        let (status, value) = resolution_post(store.clone(), serde_json::json!({"name":name,"entity_type":"PERSON","resolve":true,"generate_embedding":false})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(value["deduplication"]["action"], "merged");
+        assert_eq!(value["id"], candidate.id.to_string());
+        assert_eq!(value["deduplication"]["similarity_score"], 1.0);
+        assert_eq!(store.entities.lock().unwrap().len(), 1);
+        assert!(store.same_as.lock().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn resolution_invalid_flags_reject_before_dependencies() {
+    for key in ["resolve", "deduplicate", "generate_embedding"] {
+        let store = resolution_store(1.0);
+        let mut args = serde_json::json!({"name":"incoming","entity_type":"PERSON"});
+        args[key] = "false".into();
+        let (status, value) = resolution_post(store.clone(), args).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(value["error"], format!("'{key}' must be a boolean"));
+        assert_eq!(store.entities.lock().unwrap().len(), 1);
+        assert!(store.same_as.lock().unwrap().is_empty());
+        assert!(store.candidate_requests.lock().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn resolution_configuration_rejects_before_nodes_edges_or_candidate_calls() {
+    for (config, message) in [
+        (serde_json::json!({"review_threshold":0.91}), "resolution.review_threshold must be <= resolution.auto_merge_threshold (got 0.91 > 0.9)"),
+        (serde_json::json!({"candidate_limit":0}), "candidate_limit must be at least 1"),
+        (serde_json::json!({"fuzzy_threshold":1.1}), "fuzzy_threshold must be between 0 and 1"),
+        (serde_json::json!({"auto_merge_threshold":-0.1}), "auto_merge_threshold must be between 0 and 1"),
+        (serde_json::json!({"semantic_threshold":1.1}), "semantic_threshold must be between 0 and 1"),
+        (serde_json::json!({"exact_threshold":1.1}), "exact_threshold must be between 0 and 1"),
+    ] {
+        let store = resolution_store(1.0);
+        let before = serde_json::to_value(&*store.entities.lock().unwrap()).unwrap();
+        let (status, value) = resolution_post(store.clone(), serde_json::json!({"name":"incoming", "entity_type":"PERSON", "deduplicate":true, "resolution":config})).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(value["error"], format!("invalid input: {message}"));
+        assert_eq!(serde_json::to_value(&*store.entities.lock().unwrap()).unwrap(), before);
+        assert!(store.same_as.lock().unwrap().is_empty());
+        assert!(store.candidate_requests.lock().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn resolution_same_type_and_candidate_budget_are_enforced() {
+    let store = resolution_store(0.90);
+    store.entities.lock().unwrap()[0].entity_type = "OBJECT".into();
+    let (_, value) = resolution_post(store.clone(), serde_json::json!({"name":"incoming", "entity_type":"PERSON", "resolve":true, "resolution":{"candidate_limit":1}})).await;
+    assert_eq!(value["deduplication"]["action"], "none");
+    assert_eq!(*store.candidate_requests.lock().unwrap(), vec![1]);
+    assert_eq!(store.entities.lock().unwrap().len(), 2);
+    assert!(store.same_as.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn resolution_candidate_budget_excludes_later_candidates() {
+    for (limit, expected) in [(1, "none"), (12, "merged")] {
+        let store = resolution_store(0.0);
+        let mut later = target_entity(Uuid::new_v4());
+        later.entity_type = "PERSON".into();
+        later.name = "different candidate".into();
+        later.aliases = vec!["incoming".into()];
+        store.entities.lock().unwrap().push(later);
+        let (status, value) = resolution_post(store.clone(), serde_json::json!({"name":"incoming","entity_type":"PERSON","deduplicate":true,"resolution":{"candidate_limit":limit}})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(value["deduplication"]["action"], expected);
+        assert_eq!(*store.candidate_requests.lock().unwrap(), vec![limit]);
+        assert!(store.same_as.lock().unwrap().is_empty());
+        assert_eq!(
+            store.entities.lock().unwrap().len(),
+            if limit == 1 { 3 } else { 2 }
+        );
+    }
+}
+
+#[tokio::test]
+async fn resolution_exact_alias_beats_an_equal_vector_score() {
+    let store = resolution_store(1.0);
+    let mut exact = target_entity(Uuid::new_v4());
+    exact.entity_type = "PERSON".into();
+    exact.name = "canonical candidate".into();
+    exact.aliases = vec!["incoming".into()];
+    store.entities.lock().unwrap().push(exact.clone());
+    let (status, result) = resolution_post(
+        store.clone(),
+        serde_json::json!({"name":"incoming","entity_type":"PERSON","resolve":true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(result["id"], exact.id.to_string());
+    assert_eq!(result["deduplication"]["match_type"], "exact");
+    assert_eq!(store.entities.lock().unwrap().len(), 2);
+    assert!(store.same_as.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn resolution_legacy_adapter_fails_explicitly_instead_of_distinct() {
+    let response = request(
+        state(None, None),
+        "add_entity",
+        r#"{"name":"incoming","entity_type":"PERSON","resolve":true}"#,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+        serde_json::json!({"error":"not supported: entity resolution candidates"})
+    );
+}
+
+#[tokio::test]
+async fn resolution_opt_out_preserves_top_level_fields_and_existing_upsert() {
+    for controls in [
+        serde_json::json!({}),
+        serde_json::json!({"resolve":false,"deduplicate":false}),
+        serde_json::json!({"resolve":null,"deduplicate":null}),
+    ] {
+        let store = resolution_store(1.0);
+        let mut args = controls;
+        args["name"] = "incoming".into();
+        args["entity_type"] = "person".into();
+        args["description"] = "original contract".into();
+        let (status, first) = resolution_post(store.clone(), args.clone()).await;
+        let (_, second) = resolution_post(store.clone(), args).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(first["id"], second["id"]);
+        assert_eq!(first["name"], "incoming");
+        assert_eq!(first["type"], "PERSON");
+        assert_eq!(first["description"], "original contract");
+        assert_eq!(
+            first["deduplication"],
+            serde_json::json!({"is_duplicate":false,"action":"none","matched_entity_id":null,"matched_entity_name":null,"similarity_score":0.0,"match_type":null})
+        );
+        assert_eq!(store.entities.lock().unwrap().len(), 2);
+        assert!(store.same_as.lock().unwrap().is_empty());
+        assert!(store.candidate_requests.lock().unwrap().is_empty());
+    }
+}
+
 fn timestamp(text: &str) -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::parse_from_rfc3339(text)
         .unwrap()
@@ -1347,8 +1591,40 @@ fn timestamp(text: &str) -> chrono::DateTime<chrono::Utc> {
 
 #[async_trait]
 impl LongTermStore for RecordingLongTerm {
-    async fn upsert_entity(&self, _: &Entity) -> MemoryResult<Entity> {
-        unreachable!()
+    async fn resolution_candidates(
+        &self,
+        query: &muninn_core::resolution::ResolutionQuery<'_>,
+    ) -> MemoryResult<Vec<Scored<Entity>>> {
+        self.candidate_requests.lock().unwrap().push(query.limit);
+        let mut candidates = self.entities.lock().unwrap().clone();
+        candidates.sort_by_key(|entity| entity.name != query.name);
+        Ok(candidates
+            .into_iter()
+            .filter(|e| query.entity_type.is_none_or(|kind| kind == e.entity_type))
+            .take(usize::try_from(query.limit).unwrap())
+            .map(|item| Scored {
+                item,
+                score: self.candidate_score,
+            })
+            .collect())
+    }
+    async fn upsert_entity(&self, incoming: &Entity) -> MemoryResult<Entity> {
+        let mut entities = self.entities.lock().unwrap();
+        if let Some(stored) = entities
+            .iter_mut()
+            .find(|e| e.name == incoming.name && e.entity_type == incoming.entity_type)
+        {
+            stored.description.clone_from(&incoming.description);
+            for alias in &incoming.aliases {
+                if !stored.aliases.contains(alias) {
+                    stored.aliases.push(alias.clone());
+                }
+            }
+            return Ok(stored.clone());
+        }
+        entities.push(incoming.clone());
+        drop(entities);
+        Ok(incoming.clone())
     }
     async fn get_entity(&self, id: Uuid) -> MemoryResult<Option<Entity>> {
         Ok(self
@@ -1370,8 +1646,16 @@ impl LongTermStore for RecordingLongTerm {
     ) -> MemoryResult<Vec<Scored<Entity>>> {
         unreachable!()
     }
-    async fn list_entities(&self, _: Option<&str>, _: i64) -> MemoryResult<Vec<Entity>> {
-        unreachable!()
+    async fn list_entities(&self, kind: Option<&str>, limit: i64) -> MemoryResult<Vec<Entity>> {
+        Ok(self
+            .entities
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| kind.is_none_or(|k| k == e.entity_type))
+            .take(usize::try_from(limit).unwrap())
+            .cloned()
+            .collect())
     }
     async fn update_entity(&self, _: Uuid, _: &EntityUpdate) -> MemoryResult<Option<Entity>> {
         unreachable!()
@@ -1380,7 +1664,7 @@ impl LongTermStore for RecordingLongTerm {
         unreachable!()
     }
     async fn related_entities(&self, _: Uuid, _: u8) -> MemoryResult<Vec<RelatedEntity>> {
-        unreachable!()
+        Ok(vec![])
     }
     async fn upsert_relationship(
         &self,
@@ -1392,8 +1676,23 @@ impl LongTermStore for RecordingLongTerm {
     async fn merge_entities(&self, _: Uuid, _: Uuid) -> MemoryResult<Option<(Entity, Entity)>> {
         unreachable!()
     }
-    async fn link_same_as(&self, _: Uuid, _: Uuid, _: f64, _: &str, _: &str) -> MemoryResult<()> {
-        unreachable!()
+    async fn link_same_as(
+        &self,
+        source: Uuid,
+        target: Uuid,
+        score: f64,
+        kind: &str,
+        status: &str,
+    ) -> MemoryResult<()> {
+        let mut edges = self.same_as.lock().unwrap();
+        if !edges
+            .iter()
+            .any(|e| (e.0 == source && e.1 == target) || (e.1 == source && e.0 == target))
+        {
+            edges.push((source, target, score, kind.into(), status.into()));
+        }
+        drop(edges);
+        Ok(())
     }
     async fn set_entity_feedback(&self, _: Uuid, _: f64, _: bool) -> MemoryResult<bool> {
         unreachable!()

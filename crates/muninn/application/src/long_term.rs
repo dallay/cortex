@@ -1,8 +1,7 @@
 //! Long-term memory use cases (`memory/long_term.py`).
 //!
-//! Entity resolution, deduplication of entities, geocoding and enrichment
-//! are not ported: `add_entity` behaves like upstream
-//! `add_entity(resolve=False, deduplicate=False, geocode=False, enrich=False)`.
+//! Entity resolution is opt-in. Geocoding and enrichment remain outside this service.
+//! Without resolution options, entity creation preserves its original upsert behavior.
 
 use std::sync::Arc;
 
@@ -11,6 +10,9 @@ use muninn_core::model::{
     parse_entity_type, Entity, EntityGraph, EntityMention, Fact, Metadata, Preference, Relationship,
 };
 use muninn_core::ports::{Embedder, EntityUpdate, LongTermStore, RelatedEntity, Scored};
+use muninn_core::resolution::{
+    DeduplicationAction, DeduplicationResult, ResolutionConfig, ResolutionQuery,
+};
 use muninn_core::{MemoryError, MemoryResult};
 use serde_json::Value;
 use tracing::warn;
@@ -34,6 +36,9 @@ pub struct AddEntityOptions {
     pub aliases: Vec<String>,
     pub generate_embedding: bool,
     pub metadata: Metadata,
+    /// None preserves resolve=False/deduplicate=False behavior. Ingest wiring
+    /// is separate; `resolve_on_ingest` does not activate this API implicitly.
+    pub resolution: Option<ResolutionConfig>,
 }
 
 impl Default for AddEntityOptions {
@@ -44,6 +49,7 @@ impl Default for AddEntityOptions {
             aliases: Vec::new(),
             generate_embedding: true,
             metadata: Metadata::new(),
+            resolution: None,
         }
     }
 }
@@ -202,11 +208,59 @@ impl LongTermMemory {
         name: &str,
         entity_type: &str,
         options: AddEntityOptions,
-    ) -> MemoryResult<Entity> {
+    ) -> MemoryResult<(Entity, DeduplicationResult)> {
         require_text(name, "entity name")?;
         let (kind, parsed_subtype) = parse_entity_type(entity_type);
         require_text(&kind, "entity type")?;
+        if let Some(config) = &options.resolution {
+            config.validate()?;
+        }
         let embedding = self.embed(options.generate_embedding, name).await?;
+        let deduplication = if let Some(config) = &options.resolution {
+            let candidates = self
+                .store
+                .resolution_candidates(&ResolutionQuery {
+                    name,
+                    entity_type: config.match_same_type_only.then_some(kind.as_str()),
+                    embedding: if config.use_embedding_blocking {
+                        embedding.as_deref()
+                    } else {
+                        None
+                    },
+                    limit: config.candidate_limit,
+                })
+                .await?;
+            crate::resolution::resolve(name, &kind, candidates, config)
+        } else {
+            DeduplicationResult::default()
+        };
+        // Upstream add_entity returns early for a merged different surface;
+        // it does not create a throwaway node or run the manual merge path.
+        if deduplication.action == DeduplicationAction::Merged {
+            if let Some(id) = deduplication.matched_entity_id {
+                let mut existing = self
+                    .store
+                    .get_entity(id)
+                    .await?
+                    .ok_or_else(|| MemoryError::not_found(format!("entity {id}")))?;
+                if existing.name != name {
+                    if !existing.aliases.iter().any(|alias| alias == name) {
+                        existing.aliases.push(name.to_owned());
+                    }
+                    if let Some(vector) = &embedding {
+                        if existing
+                            .embedding
+                            .as_ref()
+                            .is_none_or(|current| current.len() != vector.len())
+                        {
+                            existing.embedding = Some(vector.clone());
+                        }
+                    }
+                    let stored = self.store.upsert_entity(&existing).await?;
+                    return Ok((stored, deduplication));
+                }
+            }
+        }
         let entity = Entity {
             id: Uuid::new_v4(),
             name: name.to_owned(),
@@ -221,7 +275,24 @@ impl LongTermMemory {
             updated_at: None,
             metadata: options.metadata,
         };
-        self.store.upsert_entity(&entity).await
+        let stored = self.store.upsert_entity(&entity).await?;
+        if deduplication.action == DeduplicationAction::Flagged {
+            if let Some(target) = deduplication
+                .matched_entity_id
+                .filter(|id| *id != stored.id)
+            {
+                self.store
+                    .link_same_as(
+                        stored.id,
+                        target,
+                        deduplication.similarity_score,
+                        deduplication.match_type.as_deref().unwrap_or("embedding"),
+                        "pending",
+                    )
+                    .await?;
+            }
+        }
+        Ok((stored, deduplication))
     }
 
     pub async fn get_entity(&self, id: Uuid) -> MemoryResult<Option<Entity>> {
