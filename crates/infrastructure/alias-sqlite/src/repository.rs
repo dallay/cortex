@@ -18,12 +18,8 @@ pub struct SqliteModelAliasRepository {
 impl SqliteModelAliasRepository {
     pub fn new(db_path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let mut conn = Connection::open(&db_path)?;
-        conn.execute_batch(
-            "PRAGMA busy_timeout = 5000;
-             PRAGMA journal_mode = WAL;
-             PRAGMA synchronous = NORMAL;
-             PRAGMA foreign_keys = ON;",
-        )?;
+        db_migration::connection::configure_connection(&conn)?;
+        conn.execute_batch("PRAGMA synchronous = NORMAL;")?;
 
         // Run migrations for in-memory databases
         if db_path.as_ref().to_str() == Some(":memory:") {
