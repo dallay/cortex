@@ -2136,3 +2136,103 @@ async fn malformed_function_tool_choice_returns_request_error_before_sending() {
     }
     assert!(server.received_requests().await.unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn stream_request_tools_are_normalized_to_native_anthropic_shape() {
+    use serde_json::json;
+    use wiremock::matchers::body_partial_json;
+
+    let server = MockServer::start().await;
+    let events = [
+        json!({"type":"message_start","message":{"usage":{"input_tokens":1,"output_tokens":0}}}),
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}),
+        json!({"type":"content_block_stop","index":0}),
+        json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":1,"output_tokens":1}}),
+    ];
+    let body = events
+        .iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect::<String>();
+    // The streaming request builder is a separate code path from `complete`;
+    // it must observe the same native tool declaration shape.
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(body_partial_json(json!({
+            "stream": true,
+            "tools": [{
+                "name": "lookup",
+                "description": "Find things",
+                "input_schema": {"type": "object"}
+            }],
+            "tool_choice": {"type": "auto"}
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut req = make_test_request("claude-3-5-sonnet");
+    req.metadata.origin = "openai".into();
+    req.stream = true;
+    req.tools = Some(json!([{
+        "type": "function",
+        "function": {"name": "lookup", "description": "Find things", "parameters": {"type": "object"}}
+    }]));
+    req.tool_choice = Some(json!("auto"));
+
+    let chunks = test_provider(&server)
+        .stream(&req)
+        .await
+        .expect("stream must start against the native-tool matcher")
+        .collect::<Vec<_>>()
+        .await;
+    assert!(chunks.iter().all(Result::is_ok), "{chunks:?}");
+}
+
+#[tokio::test]
+async fn stream_request_named_tool_choice_maps_to_native_tool_selection() {
+    use serde_json::json;
+    use wiremock::matchers::body_partial_json;
+
+    let server = MockServer::start().await;
+    let events = [
+        json!({"type":"message_start","message":{"usage":{"input_tokens":1,"output_tokens":0}}}),
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}),
+        json!({"type":"content_block_stop","index":0}),
+        json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":1,"output_tokens":1}}),
+    ];
+    let body = events
+        .iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect::<String>();
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(body_partial_json(json!({
+            "stream": true,
+            "tools": [{"name": "lookup", "input_schema": {"type": "object"}}],
+            "tool_choice": {"type": "tool", "name": "lookup"}
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut req = make_test_request("claude-3-5-sonnet");
+    req.metadata.origin = "responses".into();
+    req.stream = true;
+    req.tools = Some(json!([{
+        "type": "function",
+        "function": {"name": "lookup", "parameters": {"type": "object"}}
+    }]));
+    req.tool_choice = Some(json!({"type": "function", "function": {"name": "lookup"}}));
+
+    let chunks = test_provider(&server)
+        .stream(&req)
+        .await
+        .expect("stream must start against the native tool_choice matcher")
+        .collect::<Vec<_>>()
+        .await;
+    assert!(chunks.iter().all(Result::is_ok), "{chunks:?}");
+}

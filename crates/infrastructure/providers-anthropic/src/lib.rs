@@ -481,13 +481,17 @@ impl AnthropicProvider {
 
     /// Convert domain `tool_choice` (string or OpenAI function form) into the
     /// native Anthropic wire shape. Native objects pass through unchanged.
+    ///
+    /// A function-form choice without a valid name is a malformed request and
+    /// fails with a structured invalid-request error instead of reaching the
+    /// upstream.
     fn normalize_tool_choice(
         choice: Option<serde_json::Value>,
     ) -> CortexResult<Option<serde_json::Value>> {
         let Some(choice) = choice else {
             return Ok(None);
         };
-        Ok(Some(match &choice {
+        let native = match &choice {
             serde_json::Value::String(s) => match s.as_str() {
                 "auto" => serde_json::json!({"type": "auto"}),
                 "none" => serde_json::json!({"type": "none"}),
@@ -498,21 +502,22 @@ impl AnthropicProvider {
                 if obj.get("type").and_then(|t| t.as_str()) == Some("function") {
                     let name = obj
                         .get("function")
-                        .and_then(|function| function.as_object())
-                        .and_then(|function| function.get("name"))
-                        .and_then(|name| name.as_str())
-                        .ok_or_else(|| {
-                            CortexError::invalid_request(
-                                "function tool_choice requires a function object with a string name",
-                            )
-                        })?;
-                    serde_json::json!({"type": "tool", "name": name})
+                        .and_then(|f| f.get("name"))
+                        .and_then(|n| n.as_str())
+                        .filter(|n| !n.is_empty());
+                    let Some(name) = name else {
+                        return Err(CortexError::invalid_request(
+                            "tool_choice function form requires a non-empty function name",
+                        ));
+                    };
+                    serde_json::json!({ "type": "tool", "name": name })
                 } else {
                     choice
                 }
             }
             _ => choice,
-        }))
+        };
+        Ok(Some(native))
     }
 
     fn build_stream_request(req: &CompletionRequest) -> CortexResult<AnthropicStreamRequest> {
