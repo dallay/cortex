@@ -1204,8 +1204,14 @@ async fn assert_legacy_contract_case(messages: bool, stream: bool, case: &str) {
             StatusCode::OK,
             "case={case}, messages={messages}: {body}"
         );
+        let events = sse_json(&body);
+        // A stream carrying only the [DONE] marker would make the no-error check vacuous.
         assert!(
-            sse_json(&body).iter().all(|e| e.get("error").is_none()),
+            !events.is_empty(),
+            "case={case}, messages={messages}: no event reached the client: {body}"
+        );
+        assert!(
+            events.iter().all(|e| e.get("error").is_none()),
             "case={case}, messages={messages}: {body}"
         );
         assert!(body.ends_with("data: [DONE]\n\n"));

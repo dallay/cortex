@@ -7,6 +7,8 @@ describe("spending budget amount conversion", () => {
 		expect(usdToMicros("12.340001")).toBe(12_340_001);
 		expect(usdToMicros("0.000001")).toBe(1);
 		expect(microsToUsd(12_340_001)).toBe("12.340001");
+		expect(microsToUsd(12_340_000)).toBe("12.34");
+		expect(microsToUsd(5_000_000)).toBe("5");
 	});
 
 	it.each(["0", "-1", "1.0000001", "1e2", "01.2", "NaN"])(
