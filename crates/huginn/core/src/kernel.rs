@@ -62,6 +62,14 @@ pub struct SubstitutionDiagnostic {
     pub undrained: Vec<String>,
 }
 
+/// The validated shape of a substitution, before anything is staged.
+struct SubstitutionTarget {
+    previous_owner: String,
+    previous_provides: BTreeSet<ServiceId>,
+    dependents: Vec<String>,
+    undrained: Vec<String>,
+}
+
 struct SubstitutionAbort<'a> {
     service: &'a ServiceId,
     previous_owner: &'a str,
@@ -688,14 +696,12 @@ impl Supervisor {
     /// can interrupt retired-plugin cleanup or dependent resumption, and prevents the
     /// substitution diagnostic from being recorded. No background task completes this
     /// post-commit finalization.
-    pub async fn substitute(
-        &mut self,
+    /// Validates that `alternative` may replace the current provider of `service`.
+    fn plan_substitution(
+        &self,
         service: &ServiceId,
-        alternative: Box<dyn Plugin>,
-        policy: SubstitutionPolicy,
-        timeout: Duration,
-    ) -> Result<()> {
-        self.finish_pending_rollback().await;
+        manifest: &Manifest,
+    ) -> Result<SubstitutionTarget> {
         let previous_owner = self
             .plugins
             .iter()
@@ -707,7 +713,6 @@ impl Supervisor {
             .ok_or_else(|| {
                 AgentError::Composition(format!("no active provider for {}", service.0))
             })?;
-        let manifest = alternative.manifest();
         if manifest.id.is_empty()
             || !manifest.provides.contains(service)
             || self.plugins.contains_key(&manifest.id)
@@ -769,6 +774,28 @@ impl Supervisor {
             })
             .collect();
         let undrained = self.undrained_dependents(&dependents);
+        Ok(SubstitutionTarget {
+            previous_owner,
+            previous_provides,
+            dependents,
+            undrained,
+        })
+    }
+
+    pub async fn substitute(
+        &mut self,
+        service: &ServiceId,
+        alternative: Box<dyn Plugin>,
+        policy: SubstitutionPolicy,
+        timeout: Duration,
+    ) -> Result<()> {
+        self.finish_pending_rollback().await;
+        let manifest = alternative.manifest();
+        let target = self.plan_substitution(service, &manifest)?;
+        let previous_owner = target.previous_owner;
+        let previous_provides = target.previous_provides;
+        let dependents = target.dependents;
+        let undrained = target.undrained;
         if policy == SubstitutionPolicy::RequireFullDrain && !undrained.is_empty() {
             self.substitutions.push(SubstitutionDiagnostic {
                 service: service.clone(),

@@ -250,40 +250,10 @@ async fn validate_output(
     let mut offsets = Vec::with_capacity(entries.len() * 2);
     // These are structural checks, not authentication of guest semantic metadata.
     for entry in entries {
-        let start = entry["range"]["start_byte"]
-            .as_u64()
-            .and_then(|n| usize::try_from(n).ok());
-        let end = entry["range"]["end_byte"]
-            .as_u64()
-            .and_then(|n| usize::try_from(n).ok());
-        let (Some(start), Some(end)) = (start, end) else {
+        let Some((start, end)) = declaration_range(entry, source) else {
             return Err(error("invalid source range"));
         };
-        let valid_range = start < end && source.get(start..end).is_some();
-        if !valid_range
-            || ["name", "signature"].iter().any(|field| {
-                entry[field]
-                    .as_str()
-                    .is_none_or(|text| text.len() > MAX_OUTPUT_BYTES || text.trim().is_empty())
-            })
-            || !matches!(
-                entry["kind"].as_str(),
-                Some(
-                    "function"
-                        | "struct"
-                        | "enum"
-                        | "module"
-                        | "trait"
-                        | "impl"
-                        | "method"
-                        | "type"
-                        | "const"
-                        | "static"
-                        | "union"
-                )
-            )
-            || !(entry["container"].is_null() || entry["container"].is_string())
-        {
+        if !valid_declaration(entry) {
             return Err(error("invalid declaration or source signature"));
         }
         ranges.push((start, end));
@@ -300,44 +270,101 @@ async fn validate_output(
             content_start: source.len(),
         })
         .collect();
-    if let Some(last) = positions.last() {
-        let last_offset = last.offset;
-        let (mut next, mut pending) = (0, 0);
-        let (mut line, mut column) = (1, 1);
-        let mut next_yield = 16 * 1024;
-        // Resolve only requested positions and leading whitespace in one pass.
-        // Each position is updated once, even for duplicate or overlapping ranges.
-        for (offset, character) in source[..last_offset]
-            .char_indices()
-            .map(|(offset, character)| (offset, Some(character)))
-            .chain(std::iter::once((last_offset, None)))
-        {
-            if offset >= next_yield {
-                yield_validation(cancel, deadline).await?;
-                next_yield = offset + 16 * 1024;
+    resolve_positions(source, &mut positions, cancel, deadline).await?;
+    verify_entry_positions(entries, &ranges, &positions, source, cancel, deadline).await?;
+    check_invocation(cancel, deadline)
+}
+
+/// The declaration kinds a component may report.
+const DECLARATION_KINDS: &[&str] = &[
+    "function", "struct", "enum", "module", "trait", "impl", "method", "type", "const", "static",
+    "union",
+];
+
+/// Parses the byte range of one declaration, rejecting an out-of-source or empty range.
+fn declaration_range(entry: &serde_json::Value, source: &str) -> Option<(usize, usize)> {
+    let start = entry["range"]["start_byte"]
+        .as_u64()
+        .and_then(|n| usize::try_from(n).ok())?;
+    let end = entry["range"]["end_byte"]
+        .as_u64()
+        .and_then(|n| usize::try_from(n).ok())?;
+    (start < end && source.get(start..end).is_some()).then_some((start, end))
+}
+
+/// Rejects a declaration whose text, kind or container shape is unsupported.
+fn valid_declaration(entry: &serde_json::Value) -> bool {
+    let text_ok = ["name", "signature"].iter().all(|field| {
+        entry[field]
+            .as_str()
+            .is_some_and(|text| text.len() <= MAX_OUTPUT_BYTES && !text.trim().is_empty())
+    });
+    let kind_ok = entry["kind"]
+        .as_str()
+        .is_some_and(|kind| DECLARATION_KINDS.contains(&kind));
+    let container_ok = entry["container"].is_null() || entry["container"].is_string();
+    text_ok && kind_ok && container_ok
+}
+
+/// Resolves line, column and content start for every requested offset in one pass.
+async fn resolve_positions(
+    source: &str,
+    positions: &mut [SourcePosition],
+    cancel: &CancellationToken,
+    deadline: tokio::time::Instant,
+) -> Result<()> {
+    let Some(last) = positions.last() else {
+        return Ok(());
+    };
+    let last_offset = last.offset;
+    let (mut next, mut pending) = (0, 0);
+    let (mut line, mut column) = (1, 1);
+    let mut next_yield = 16 * 1024;
+    // Resolve only requested positions and leading whitespace in one pass.
+    // Each position is updated once, even for duplicate or overlapping ranges.
+    for (offset, character) in source[..last_offset]
+        .char_indices()
+        .map(|(offset, character)| (offset, Some(character)))
+        .chain(std::iter::once((last_offset, None)))
+    {
+        if offset >= next_yield {
+            yield_validation(cancel, deadline).await?;
+            next_yield = offset + 16 * 1024;
+        }
+        while next < positions.len() && positions[next].offset == offset {
+            positions[next].line = line;
+            positions[next].column = column;
+            next += 1;
+        }
+        let Some(character) = character else {
+            continue;
+        };
+        if !character.is_whitespace() {
+            for position in &mut positions[pending..next] {
+                position.content_start = offset;
             }
-            while next < positions.len() && positions[next].offset == offset {
-                positions[next].line = line;
-                positions[next].column = column;
-                next += 1;
-            }
-            if let Some(character) = character {
-                if !character.is_whitespace() {
-                    for position in &mut positions[pending..next] {
-                        position.content_start = offset;
-                    }
-                    pending = next;
-                }
-                if character == '\n' {
-                    line += 1;
-                    column = 1;
-                } else {
-                    column += 1;
-                }
-            }
+            pending = next;
+        }
+        if character == '\n' {
+            line += 1;
+            column = 1;
+        } else {
+            column += 1;
         }
     }
-    for (index, (entry, &(start, end))) in entries.iter().zip(&ranges).enumerate() {
+    Ok(())
+}
+
+/// Rejects declarations whose reported positions or leading signature disagree with the source.
+async fn verify_entry_positions(
+    entries: &[serde_json::Value],
+    ranges: &[(usize, usize)],
+    positions: &[SourcePosition],
+    source: &str,
+    cancel: &CancellationToken,
+    deadline: tokio::time::Instant,
+) -> Result<()> {
+    for (index, (entry, &(start, end))) in entries.iter().zip(ranges).enumerate() {
         if index % 32 == 0 {
             yield_validation(cancel, deadline).await?;
         }
@@ -359,8 +386,9 @@ async fn validate_output(
             }
         }
     }
-    check_invocation(cancel, deadline)
+    Ok(())
 }
+
 pub(super) fn error(message: &str) -> AgentError {
     AgentError::Tool(format!("experimental WASM: {message}"))
 }
