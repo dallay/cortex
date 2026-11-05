@@ -126,7 +126,6 @@ fn build_rate_limiter_config_maps_tiers_correctly() {
         TierConfig {
             requests_per_minute: 60,
             requests_per_day: Some(500),
-            tokens_per_minute: Some(5000),
         },
     );
     tiers.insert(
@@ -134,7 +133,6 @@ fn build_rate_limiter_config_maps_tiers_correctly() {
         TierConfig {
             requests_per_minute: 600,
             requests_per_day: Some(5000),
-            tokens_per_minute: Some(50000),
         },
     );
 
@@ -157,7 +155,6 @@ fn build_rate_limiter_config_maps_tiers_correctly() {
         .expect("Free tier exists");
     assert_eq!(free_tier.requests_per_minute, 60);
     assert_eq!(free_tier.requests_per_day, Some(500));
-    assert_eq!(free_tier.tokens_per_minute, Some(5000));
 
     let pro_tier = result.tiers.get(&ApiKeyTier::Pro).expect("Pro tier exists");
     assert_eq!(pro_tier.requests_per_minute, 600);

@@ -455,7 +455,6 @@ pub fn build_rate_limiter_config(
             TierConfig {
                 requests_per_minute: tier_cfg.requests_per_minute,
                 requests_per_day: tier_cfg.requests_per_day,
-                tokens_per_minute: tier_cfg.tokens_per_minute,
             },
         );
     }

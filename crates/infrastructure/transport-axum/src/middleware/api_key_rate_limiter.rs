@@ -27,7 +27,6 @@ pub struct RateLimiterConfig {
 pub struct TierConfig {
     pub requests_per_minute: u32,
     pub requests_per_day: Option<u32>, // reserved: daily request quota (not yet enforced in token-bucket)
-    pub tokens_per_minute: Option<u32>, // reserved: token-weighted rate (not yet enforced in token-bucket)
 }
 
 impl Default for RateLimiterConfig {
@@ -39,7 +38,6 @@ impl Default for RateLimiterConfig {
             TierConfig {
                 requests_per_minute: 100, // 100 capacity, ~1.67/s refill (100 rpm ÷ 60)
                 requests_per_day: Some(1000),
-                tokens_per_minute: Some(10000),
             },
         );
         tiers.insert(
@@ -47,7 +45,6 @@ impl Default for RateLimiterConfig {
             TierConfig {
                 requests_per_minute: 1000, // 1000 capacity, ~16.67/s refill (1000 rpm ÷ 60)
                 requests_per_day: Some(100000),
-                tokens_per_minute: Some(100000),
             },
         );
         tiers.insert(
@@ -55,7 +52,6 @@ impl Default for RateLimiterConfig {
             TierConfig {
                 requests_per_minute: 10000, // 10000 capacity, ~166.67/s refill (10000 rpm ÷ 60)
                 requests_per_day: Some(10000000),
-                tokens_per_minute: Some(1000000),
             },
         );
         Self {

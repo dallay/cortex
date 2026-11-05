@@ -415,7 +415,6 @@ impl Default for RateLimiterConfig {
             TierConfig {
                 requests_per_minute: 100, // 100 capacity, ~1.67/s refill (original: 100 cap, 10/s)
                 requests_per_day: Some(1000),
-                tokens_per_minute: Some(10000),
             },
         );
         tiers.insert(
@@ -423,7 +422,6 @@ impl Default for RateLimiterConfig {
             TierConfig {
                 requests_per_minute: 1000, // 1000 capacity, ~16.67/s refill (original: 1000 cap, 100/s)
                 requests_per_day: Some(100000),
-                tokens_per_minute: Some(100000),
             },
         );
         tiers.insert(
@@ -431,7 +429,6 @@ impl Default for RateLimiterConfig {
             TierConfig {
                 requests_per_minute: 10000, // 10000 capacity, ~166.67/s refill (original: 10000 cap, 1000/s)
                 requests_per_day: Some(10000000),
-                tokens_per_minute: Some(1000000),
             },
         );
         Self {
@@ -455,7 +452,6 @@ fn default_tier() -> ApiKeyTier {
 pub struct TierConfig {
     pub requests_per_minute: u32,
     pub requests_per_day: Option<u32>,
-    pub tokens_per_minute: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
