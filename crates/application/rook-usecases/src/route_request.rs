@@ -1254,13 +1254,11 @@ impl RouteRequest {
         Err(RestrictionViolation::ModelNotAllowed(req.model.clone()).into())
     }
 
-    /// Execute a virtual combo request (`model: "rook/*"`).
+    /// Executes a streamed request, on either of two paths.
     ///
-    /// Single policy: lookup alias -> verify combo exists -> fail-closed
-    /// authorization -> execute with `requested_model` preserved for the client
-    /// and physical step models sent upstream. Unknown alias maps to HTTP 404
-    /// (`CortexError::not_found`); any unauthorized step rejects the whole
-    /// combo with 403 — steps are never silently pruned.
+    /// A virtual combo (`model: "rook/*"`) or a request that already carries a combo id is
+    /// forwarded to the combo path unchanged. Every other request checks the model allowlist
+    /// and then selects the provider whose stream is forwarded to the caller.
     pub async fn execute_stream(
         &self,
         req: CompletionRequest,
