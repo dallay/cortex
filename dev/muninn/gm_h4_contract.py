@@ -1,4 +1,4 @@
-"""GM-02/03/04 fail-closed comparison contract for H4.
+"""GM-02/03/04/06/07 fail-closed comparison contract for H4.
 
 Every rule and the single numeric epsilon are declared here, before any
 measurement runs, and disclosed by `declarations_sha256()` in the runner
@@ -23,10 +23,21 @@ Measured surfaces:
   `ExtractedEntity` also exposes `context`, `attributes` and `id`, which are
   declared reference-only and never compared: the Muninn stage does not emit
   them and H4 claims no parity for them.
-* GM-04 — the resolution/deduplication decision: observed band, matched
+* GM-04 - the resolution/deduplication decision: observed band, matched
   candidate, resulting canonical identity, returned deduplication result and
   the pending `SAME_AS` versus merged graph effects. Similarity scores are the
   only numeric values and are compared with an absolute epsilon of `1e-9`.
+* GM-06 - enrichment and geocoding from recorded provider answers: the written
+  enrichment properties, the stored geocode point, warm-cache replay and the
+  rate-limit spacing between recorded provider requests. Providers answer from
+  local recorded fixtures only; no live Wikipedia, Diffbot or Nominatim call
+  exists. Declared product-only surface (closed failure vocabulary, the point
+  index prerequisite, no background worker, no fuzzy fallback) is validated
+  per side and never compared across servers.
+* GM-07 - text, vector and graph search plus the fused `get_context` document:
+  returned ids, ranking order (compared, never sorted), the context document
+  and one declared owner-scope isolation case. Entity-message similarity scores
+  use the same declared `1e-9` epsilon as GM-04.
 
 Random UUIDs are never compared: node, message and candidate identities are
 mapped bijectively to the fixture-derived `name|type` token or to the declared
@@ -59,6 +70,27 @@ RELATION_FIELDS = ('source', 'target', 'type', 'confidence', 'extra_columns')
 ATTEMPT_FIELDS = ('key', 'name', 'entity_type', 'action', 'is_duplicate', 'matched',
                   'similarity_score', 'match_type', 'entity', 'canonical_name')
 LINK_FIELDS = ('source', 'target', 'status', 'match_type', 'confidence')
+GM06_COMPARED = ('enriched_description', 'enrichment_provider', 'wikipedia_url',
+                 'wikidata_id', 'image_url')
+GM06_REFERENCE_ONLY = ('enrichment_data',)
+GM06_PRODUCT_ONLY = ('enriched_summary', 'diffbot_uri')
+GM06_UNCOMPARED = ('enriched_at',)
+GM06_STATUSES = ('success', 'not_found', 'error', 'rate_limited', 'skipped')
+GM06_FAILURES = ('timeout', 'transport', 'service', 'credential', 'response',
+                 'rate_limited', 'unsupported_type')
+GM06_OPERATIONS = ('enrich', 'geocode')
+GM07_RESULT_FIELDS = ('id', 'score')
+GM06_DIVERGENCES = {
+    'reference': frozenset(),
+    'product': frozenset({'gm06-closed-failure-vocabulary',
+                          'gm06-geocode-requires-point-index',
+                          'gm06-no-background-worker',
+                          'gm06-no-fuzzy-fallback'}),
+}
+GM07_DIVERGENCES = {
+    'reference': frozenset({'gm07-reference-search-unscoped'}),
+    'product': frozenset(),
+}
 
 DECLARATIONS = {
     'GM02-01': ('auto, skip and explicit are captured once each, in fixture order, on the '
@@ -108,6 +140,45 @@ DECLARATIONS = {
                  'identity is ever normalized as a random UUID.'),
     'ORDER': ('API-derived lists keep capture order and are compared positionally; '
               'graph-derived lists are unordered and sorted by their declared token.'),
+    'GM06-01': ('the enrichment property document carries exactly the declared compared, '
+                'reference-only, product-only and uncompared names; a dropped or unknown '
+                'property key fails and no value is inferred from the other server.'),
+    'GM06-02': ('only enriched_description, enrichment_provider, wikipedia_url, '
+                'wikidata_id and image_url are cross-side values; the reference-only '
+                'enrichment_data blob, the product-only enriched_summary and diffbot_uri '
+                'and the server-stamped enriched_at are validated per side only.'),
+    'GM06-03': ('a successful enrichment writes every declared compared value exactly as '
+                'the frozen provider answer declares it; a failure, absence or skipped '
+                'answer writes none of them and reports its status.'),
+    'GM06-04': ('the geocode point is the recorded provider coordinate and uses the '
+                'declared 1e-9 epsilon; a missing, earlier or foreign point fails.'),
+    'GM06-05': ('a warm-cache replay issues zero provider requests and repeats the '
+                'properties of the attempt it replays; a changed value or one extra '
+                'request fails.'),
+    'GM06-06': ('consecutive recorded requests to one provider are at least '
+                'rate_limit_seconds - clock_slack_seconds apart, both declared in the '
+                'frozen fixture; provider request totals match the declared per-side '
+                'count and an unmatched provider answer fails before any write.'),
+    'GM06-07': ('the closed failure vocabulary is product-only: a value outside it, a '
+                'failure on the reference side or an undeclared enrichment status fails; '
+                'the declared product divergences are the only authorized differences '
+                'and an undeclared divergence fails.'),
+    'GM07-01': ('vector and text results are compared positionally in the returned order; '
+                'a reordered ranking fails even when both sides contain the same ids.'),
+    'GM07-02': ('entity and message similarity scores are the only GM-07 numeric values and '
+                'use the declared absolute epsilon of 1e-9; ranking order itself is exact.'),
+    'GM07-03': ('every returned identity must be a declared token and every ranked score '
+                'must be finite, non-increasing along the list and duplicate-free.'),
+    'GM07-04': ('the declared RELATED_TO inventory read through Cypher is the same on both '
+                'sides and contains every frozen edge; an absent edge fails.'),
+    'GM07-05': ('the fused get_context document is compared character for character and '
+                'carries the declared sections in the declared order.'),
+    'GM07-06': ('the owner-scoped message search is validated per side: the product result '
+                'contains no foreign-owner message, the reference result contains exactly '
+                'the declared foreign-owner key, and neither the result nor the context '
+                'document leaks foreign content into the compared values.'),
+    'GM07-07': ('the declared per-side divergences are the only authorized differences; an '
+                'undeclared divergence id fails.'),
 }
 
 
@@ -447,11 +518,305 @@ def _gm04(document, fixture):
                                                      item['status']))}
 
 
+def _divergences(section, side, declared, path):
+    """Per-side declared differences; an undeclared or missing id fails closed."""
+    value = section['divergences']
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ContractError(path + '.divergences: list of declared ids required')
+    if len(set(value)) != len(value):
+        raise ContractError(path + '.divergences: duplicate declaration')
+    unknown = set(value) - declared[side]
+    if unknown:
+        raise ContractError(path + '.divergences: undeclared divergence ' + str(sorted(unknown)))
+    missing = declared[side] - set(value)
+    if missing:
+        raise ContractError(path + '.divergences: declared divergence absent '
+                            + str(sorted(missing)))
+
+
+def _gm06(document, fixture):
+    spec, side = fixture['gm06'], document['side']
+    section, path = document['gm06'], 'gm06'
+    fields(section, {'attempts', 'spacing', 'attempt_requests', 'divergences'},
+           {'attempts', 'spacing', 'attempt_requests', 'divergences'}, path)
+    if tuple(spec['compared_properties']) != GM06_COMPARED or \
+            tuple(spec['reference_only_properties']) != GM06_REFERENCE_ONLY or \
+            tuple(spec['product_only_properties']) != GM06_PRODUCT_ONLY or \
+            tuple(spec['uncompared_properties']) != GM06_UNCOMPARED:
+        raise ContractError('fixture.gm06: the property declaration differs from the contract')
+    names = set(GM06_COMPARED) | set(GM06_REFERENCE_ONLY) | set(GM06_PRODUCT_ONLY) | set(
+        GM06_UNCOMPARED)
+    frozen = {item['key']: item for item in spec['attempts']}
+    if [item.get('key') for item in section['attempts']] != [item['key'] for item in
+                                                             spec['attempts']]:
+        raise ContractError(path + '.attempts: attempts must be captured once, in fixture order')
+    attempts, compared = [], {}
+    for index, attempt in enumerate(section['attempts']):
+        location = f'{path}.attempts[{index}]'
+        fields(attempt, {'key', 'operation', 'status', 'failure', 'properties', 'location'},
+               {'key', 'operation', 'status', 'failure', 'properties', 'location'}, location)
+        declaration = frozen[attempt['key']]
+        if attempt['operation'] not in GM06_OPERATIONS:
+            raise ContractError(location + '.operation: undeclared enrichment operation')
+        if attempt['operation'] != declaration['operation']:
+            raise ContractError(location + '.operation: differs from the frozen attempt')
+        if attempt['status'] not in GM06_STATUSES:
+            raise ContractError(location + '.status: undeclared enrichment status')
+        properties = attempt['properties']
+        if not isinstance(properties, dict):
+            raise ContractError(location + '.properties: object required')
+        if set(properties) != names:
+            raise ContractError(location + '.properties: exactly the declared enrichment '
+                                'properties are required; missing='
+                                + str(sorted(names - set(properties))) + ' unknown='
+                                + str(sorted(set(properties) - names)))
+        for name in GM06_COMPARED:
+            value = properties[name]
+            if value is not None and (not isinstance(value, str) or not value):
+                raise ContractError(location + f'.properties.{name}: absent or a non-empty '
+                                               'string is required')
+        for name in GM06_REFERENCE_ONLY + GM06_UNCOMPARED:
+            if type(properties[name]) is not bool:
+                raise ContractError(location + f'.properties.{name}: presence flag required')
+        for name in GM06_PRODUCT_ONLY:
+            value = properties[name]
+            if value is not None and (not isinstance(value, str) or not value):
+                raise ContractError(location + f'.properties.{name}: absent or a non-empty '
+                                               'string is required')
+            if side == 'reference' and value is not None:
+                raise ContractError(location + f'.properties.{name}: product-only property on '
+                                               'the reference side')
+        if side == 'product' and any(properties[name] for name in GM06_REFERENCE_ONLY):
+            raise ContractError(location + '.properties: reference-only property on the '
+                                'product side')
+        if attempt['status'] == 'success':
+            if attempt['operation'] == 'enrich' and not properties['enriched_at']:
+                raise ContractError(location + '.properties.enriched_at: a successful '
+                                               'enrichment must be stamped')
+        elif any(properties[name] is not None for name in GM06_COMPARED):
+            raise ContractError(location + '.properties: a non-successful attempt writes no '
+                                           'enrichment property')
+        failure = attempt['failure']
+        if side == 'reference':
+            if failure is not None:
+                raise ContractError(location + '.failure: the reference exposes no closed '
+                                               'failure vocabulary')
+        elif failure is not None and failure not in GM06_FAILURES:
+            raise ContractError(location + '.failure: outside the closed failure vocabulary')
+        elif failure is None and attempt['status'] not in ('success', 'not_found', 'skipped'):
+            raise ContractError(location + '.failure: a failed attempt requires a declared '
+                                           'failure')
+        if declaration.get('expect_status') != attempt['status']:
+            raise ContractError(location + '.status: differs from the frozen status')
+        expected = declaration.get('expect_properties')
+        if expected is None and declaration.get('replay_of') is None:
+            expected = {name: None for name in GM06_COMPARED}
+        if expected is not None:
+            for name in GM06_COMPARED:
+                if properties[name] != expected[name]:
+                    raise ContractError(location + f'.properties.{name}: differs from the '
+                                                   'frozen provider answer')
+        if declaration.get('replay_of') is not None:
+            replayed = compared.get(declaration['replay_of'])
+            if replayed is None:
+                raise ContractError(location + '.replay_of: the replayed attempt is absent')
+            if {name: properties[name] for name in GM06_COMPARED} != replayed:
+                raise ContractError(location + '.properties: a warm-cache replay must repeat '
+                                               'the replayed properties')
+        point = attempt['location']
+        if point is not None:
+            fields(point, {'latitude', 'longitude'}, {'latitude', 'longitude'},
+                   location + '.location')
+            latitude = number(point['latitude'], location + '.location.latitude', -90.0, 90.0)
+            longitude = number(point['longitude'], location + '.location.longitude',
+                               -180.0, 180.0)
+            point = {'latitude': latitude, 'longitude': longitude}
+        if attempt['operation'] == 'geocode':
+            if (declaration.get('expect_location') is None) is not (point is None):
+                raise ContractError(location + '.location: the declared geocode point is '
+                                               'required')
+            if point is not None:
+                for name in ('latitude', 'longitude'):
+                    if abs(point[name] - declaration['expect_location'][name]) > EPSILON:
+                        raise ContractError(location + f'.location.{name}: differs from the '
+                                                       'frozen provider answer')
+        elif point is not None:
+            raise ContractError(location + '.location: an enrichment attempt stores no point')
+        compared[attempt['key']] = {name: properties[name] for name in GM06_COMPARED}
+        attempts.append({'key': attempt['key'], 'operation': attempt['operation'],
+                         'status': attempt['status'], 'properties': compared[attempt['key']],
+                         'location': point})
+    requests = section['attempt_requests']
+    if not isinstance(requests, dict) or set(requests) != set(frozen):
+        raise ContractError(path + '.attempt_requests: exactly the declared attempts are '
+                                   'required')
+    for key, value in requests.items():
+        if type(value) is not int or value < 0:
+            raise ContractError(f'{path}.attempt_requests.{key}: non-negative integer required')
+        if value != frozen[key]['requests'][side]:
+            raise ContractError(f'{path}.attempt_requests.{key}: differs from the declared '
+                                f'{side} count')
+    if frozen['enrich-replay']['replay_of'] is not None and requests['enrich-replay']:
+        raise ContractError(path + '.attempt_requests.enrich-replay: a warm-cache replay '
+                                   'issues no provider request')
+    spacing = section['spacing']
+    if not isinstance(spacing, dict) or set(spacing) != set(spec['spacing']):
+        raise ContractError(path + '.spacing: exactly the declared providers are required')
+    slack = number(spec['clock_slack_seconds'], 'fixture.gm06.clock_slack_seconds', 0.0, 1.0)
+    for provider, declared in spec['spacing'].items():
+        entry = spacing[provider]
+        location = f'{path}.spacing.{provider}'
+        fields(entry, {'requests', 'min_gap_seconds'}, {'requests', 'min_gap_seconds'},
+               location)
+        if type(entry['requests']) is not int or entry['requests'] < 0:
+            raise ContractError(location + '.requests: non-negative integer required')
+        expected = sum(requests[item['key']] for item in spec['attempts']
+                       if item['provider'] == provider)
+        if entry['requests'] != expected:
+            raise ContractError(location + '.requests: differs from the recorded attempt total')
+        if entry['requests'] < 2:
+            if entry['min_gap_seconds'] is not None:
+                raise ContractError(location + '.min_gap_seconds: absent below two requests')
+            continue
+        gap = number(entry['min_gap_seconds'], location + '.min_gap_seconds', 0.0, 3600.0)
+        if gap < declared['rate_limit_seconds'] - slack:
+            raise ContractError(location + '.min_gap_seconds: below the declared rate-limit '
+                                           'spacing')
+    _divergences(section, side, GM06_DIVERGENCES, path)
+    return {'attempts': attempts}
+
+
+def _ranking(value, path, allowed, limit=None):
+    fields(value, {'query', 'results'}, {'query', 'results'}, path)
+    if not isinstance(value['results'], list):
+        raise ContractError(path + '.results: list required')
+    if limit is not None and len(value['results']) > limit:
+        raise ContractError(path + '.results: more results than the frozen limit')
+    results, seen, previous = [], set(), None
+    for index, item in enumerate(value['results']):
+        location = f'{path}.results[{index}]'
+        fields(item, set(GM07_RESULT_FIELDS), set(GM07_RESULT_FIELDS), location)
+        if item['id'] not in allowed:
+            raise ContractError(location + '.id: undeclared identity')
+        if item['id'] in seen:
+            raise ContractError(location + '.id: duplicate ranked identity')
+        seen.add(item['id'])
+        score = number(item['score'], location + '.score')
+        if previous is not None and score > previous + EPSILON:
+            raise ContractError(path + '.results: ranking order must be non-increasing')
+        previous = score
+        results.append({'id': item['id'], 'score': score})
+    return {'query': value['query'], 'results': results}
+
+
+def _gm07(document, fixture):
+    spec, side = fixture['gm07'], document['side']
+    section, path = document['gm07'], 'gm07'
+    fields(section, {'entities', 'edges', 'vector', 'text', 'graph', 'context', 'isolation',
+                     'divergences'},
+           {'entities', 'edges', 'vector', 'text', 'graph', 'context', 'isolation',
+            'divergences'}, path)
+    entities = section['entities']
+    if not isinstance(entities, list) or not all(isinstance(item, str) for item in entities):
+        raise ContractError(path + '.entities: entity token list required')
+    for token in entities:
+        name, _, entity_type = token.partition('|')
+        if entity_key(name, entity_type) != token:
+            raise ContractError(path + '.entities: undeclared entity token')
+    if len(set(entities)) != len(entities):
+        raise ContractError(path + '.entities: duplicate entity inventory token')
+    declared = {entity_key(item['name'], item['type']) for item in spec['entities']}
+    if not declared <= set(entities):
+        raise ContractError(path + '.entities: a declared seed is absent from the inventory')
+    edges = []
+    for index, edge in enumerate(section['edges']):
+        location = f'{path}.edges[{index}]'
+        fields(edge, set(RELATION_FIELDS), set(RELATION_FIELDS), location)
+        for name in ('source', 'target'):
+            if edge[name] not in entities:
+                raise ContractError(location + f'.{name}: undeclared entity identity')
+        if not isinstance(edge['type'], str) or not edge['type']:
+            raise ContractError(location + '.type: non-empty string required')
+        if edge['extra_columns'] != []:
+            raise ContractError(location + '.extra_columns: undeclared relation column')
+        edges.append({'source': edge['source'], 'target': edge['target'], 'type': edge['type'],
+                      'confidence': number(edge['confidence'], location + '.confidence'),
+                      'extra_columns': []})
+    observed = {(edge['source'], edge['target'], edge['type']) for edge in edges}
+    for frozen in spec['edges']:
+        if (frozen['source'], frozen['target'], frozen['type']) not in observed:
+            raise ContractError(path + '.edges: the declared RELATED_TO edge is absent')
+    vector = _ranking(section['vector'], path + '.vector', set(entities),
+                      spec['vector']['limit'])
+    if vector['query'] != spec['vector']['query']:
+        raise ContractError(path + '.vector.query: differs from the frozen query')
+    keys = {item['key'] for item in spec['messages']}
+    text = _ranking(section['text'], path + '.text', keys, spec['text']['limit'])
+    if text['query'] != spec['text']['query']:
+        raise ContractError(path + '.text.query: differs from the frozen query')
+    declared_pairs = {(frozen['source'], frozen['target']) for frozen in spec['edges']}
+    graph = section['graph']
+    fields(graph, {'source', 'results'}, {'source', 'results'}, path + '.graph')
+    if graph['source'] != spec['graph']['source']:
+        raise ContractError(path + '.graph.source: differs from the frozen source')
+    for index, token in enumerate(graph['results']):
+        if token not in entities:
+            raise ContractError(f'{path}.graph.results[{index}]: undeclared entity identity')
+        if token == graph['source']:
+            raise ContractError(f'{path}.graph.results[{index}]: the source is not its own '
+                                'neighbour')
+        if (graph['source'], token) not in declared_pairs:
+            raise ContractError(f'{path}.graph.results[{index}]: no declared RELATED_TO edge '
+                                'reaches this neighbour')
+    context = section['context']
+    fields(context, {'query', 'document'}, {'query', 'document'}, path + '.context')
+    if context['query'] != spec['context']['query']:
+        raise ContractError(path + '.context.query: differs from the frozen query')
+    if not isinstance(context['document'], str) or not context['document'].strip():
+        raise ContractError(path + '.context.document: non-empty document required')
+    positions = []
+    for header in spec['context']['sections']:
+        found = context['document'].find(header)
+        if found < 0:
+            raise ContractError(path + '.context.document: the declared context section order '
+                                'is not reproduced')
+        positions.append(found)
+    if positions != sorted(positions):
+        raise ContractError(path + '.context.document: the declared context section order is '
+                            'not reproduced')
+    isolation = section['isolation']
+    fields(isolation, {'included'}, {'included'}, path + '.isolation')
+    included = isolation['included']
+    if not isinstance(included, list) or not all(isinstance(item, str) for item in included):
+        raise ContractError(path + '.isolation.included: message key list required')
+    for key in included:
+        if key not in keys:
+            raise ContractError(path + '.isolation.included: undeclared message identity')
+        if next(item for item in spec['messages'] if item['key'] == key)['owner'] == \
+                spec['scope']['owner']:
+            raise ContractError(path + '.isolation.included: a same-owner message is not a '
+                                'cross-owner leak')
+    if sorted(included) != sorted(spec['isolation'][side + '_included']):
+        raise ContractError(path + '.isolation.included: the declared cross-owner search result '
+                            'differs')
+    for item in spec['messages']:
+        if item['owner'] == spec['scope']['other'] and item['text'] in context['document']:
+            raise ContractError(path + '.context.document: a foreign-owner message leaked into '
+                                'the context document')
+    _divergences(section, side, GM07_DIVERGENCES, path)
+    return {'entities': sorted(entities),
+            'edges': sorted(edges, key=lambda item: (item['source'], item['type'],
+                                                     item['target'])),
+            'vector': vector, 'text': text,
+            'graph': {'source': graph['source'], 'results': sorted(graph['results'])},
+            'context': {'query': context['query'], 'document': context['document']}}
+
+
 def canonical_gm_h4(document):
     if not isinstance(document, dict):
         raise ContractError('capture: object required')
-    fields(document, {'schema', 'side', 'gm02', 'gm03', 'gm04'},
-           {'schema', 'side', 'gm02', 'gm03', 'gm04'}, 'capture')
+    fields(document, {'schema', 'side', 'gm02', 'gm03', 'gm04', 'gm06', 'gm07'},
+           {'schema', 'side', 'gm02', 'gm03', 'gm04', 'gm06', 'gm07'}, 'capture')
     if document['schema'] != SCHEMA:
         raise ContractError('capture.schema: unsupported capture')
     if document['side'] not in SIDES:
@@ -460,7 +825,8 @@ def canonical_gm_h4(document):
     if fixture['numeric_epsilon'] != EPSILON:
         raise ContractError('fixture.numeric_epsilon: differs from the declared epsilon')
     sections = {'gm02': _gm02(document, fixture), 'gm03': _gm03(document, fixture),
-                'gm04': _gm04(document, fixture)}
+                'gm04': _gm04(document, fixture), 'gm06': _gm06(document, fixture),
+                'gm07': _gm07(document, fixture)}
     _cross_section(sections, fixture)
     return sections
 
@@ -482,7 +848,9 @@ def _cross_section(container, fixture):
 
 
 def _numeric(key, path):
-    return key == 'similarity_score' or (key == 'confidence' and path.startswith('gm04.links'))
+    return (key == 'similarity_score'
+            or (key == 'confidence' and path.startswith('gm04.links'))
+            or (key == 'score' and path.startswith(('gm07.vector', 'gm07.text'))))
 
 
 def _diff(left, right, path, diffs, key=None):
@@ -529,7 +897,7 @@ def compare_gm_h4(expected, actual, epsilon=None):
     _diff(*canonical, '', diffs)
     errors.extend(diff['path'] + ': different value, type or presence' for diff in diffs)
     items = []
-    for name in ('gm02', 'gm03', 'gm04'):
+    for name in ('gm02', 'gm03', 'gm04', 'gm06', 'gm07'):
         item_diffs = [diff for diff in diffs if diff['path'].startswith(name)]
         items.append({'item': name, 'verdict': 'fail' if errors or item_diffs else 'pass',
                       'diffs': item_diffs})

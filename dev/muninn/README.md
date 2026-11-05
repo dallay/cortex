@@ -657,23 +657,25 @@ The last command compiles the live graph target and reports it as ignored:
 **NOT_RUN** until a new authenticated empty synthetic Neo4j fixture exists, with
 caller-owned teardown. No container, image pull or network access is performed.
 
-## H4 GM-02/03/04 harness (deterministic only; U6 measurement pending)
+## H4 GM-02/03/04/06/07 harness (deterministic only; U6 measurement pending)
 
 The H4 differential harness composes the accepted GM-05/GM-08 components; no
 `gm05*` or `gm08*` file is edited.
 
 | File | Role |
 | --- | --- |
-| `fixtures/gm_h4_v1.json` | frozen texts, extraction-mode scenarios, resolution seeds/attempts, thresholds and the declared `1e-9` |
-| `gm_h4_capture.py` | frozen GM-02/GM-04 operations and symmetric graph reads |
+| `fixtures/gm_h4_v1.json` | frozen texts, extraction-mode scenarios, resolution seeds/attempts, recorded provider answers, retrieval inventory, thresholds and the declared `1e-9` |
+| `gm_h4_capture.py` | frozen GM-02/GM-04/GM-06 operations, recorded provider transport and symmetric graph reads |
 | `gm_h4_extract.py` | GM-03 projection of both spaCy stage payloads |
+| `gm_h4_search.py` | GM-07 capture of text, vector and graph search plus `get_context` |
 | `gm_h4_contract.py` | fail-closed comparison and the disclosed rule digest |
 | `gm_h4_peer.py` | one per side, inside the H4 oracle image; reference client or source-bound bridge |
 | `gm_h4_runner.py` | offline source-bound build plus dory capture and verdict |
 
 The only numeric tolerance is an absolute `1e-9` on similarity scores;
 everything else is exact. The declaration digest is
-`33f20952b97fdd6ec5f49d788a7e21fc6ec9fc177f6236786b2a805cfb7533f8`.
+`557a76a869332d2339ede4d79ac7becaa0f03da4ebd8c51ed05677e5328ed95d` over the
+33 declared rules (the 19 carried rules plus `GM06-01..07` and `GM07-01..07`).
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover \
@@ -693,7 +695,10 @@ mentions depend on the product extraction stage being registered. Before the U2
 follow-up wiring described above, the `muninn` binary registered no
 extraction stage, so GM-02 `auto` failed closed on the product side; the binary
 now accepts `--extraction-provider spacy`/`NAM_EXTRACTION__*`, so the previously
-declared asymmetry must be re-measured, not assumed, in U6. No measurement is
-claimed here and the harness declaration digest is unchanged. GM-03 and GM-04
-remain measurable. Details, declared asymmetries and open limits:
+declared asymmetry must be re-measured, not assumed, in U6. GM-03 and GM-04
+remain measurable. GM-06 and GM-07 are captured and compared by the same
+runner, but the shipped binary still exposes no enrichment stage and no
+`get_context` method, so both fail closed on the product side until that surface
+exists; this is a disclosed product gap, not a tolerance. Details, declared
+asymmetries and open limits:
 [H4 measurement notes](../../docs/muninn/h4-measurement.md#u5b-gm-020304-harness).

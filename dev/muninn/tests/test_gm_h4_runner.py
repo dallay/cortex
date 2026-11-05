@@ -120,6 +120,18 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(skeleton['status'], 'fail')
         self.assertEqual(skeleton['stage'], 'prepare')
 
+    def test_summary_discloses_every_declared_rule_and_divergence(self):
+        from gm_h4_contract import (DECLARATIONS, GM06_DIVERGENCES, GM07_DIVERGENCES,
+                                    declarations_sha256)
+        skeleton = self.skeleton()
+        self.assertEqual(skeleton['declarations_rule_count'], len(DECLARATIONS))
+        self.assertEqual(skeleton['declarations_sha256'], declarations_sha256())
+        self.assertEqual(skeleton['declared_divergences'],
+                         {'gm06': sorted(GM06_DIVERGENCES['product']),
+                          'gm07': sorted(GM07_DIVERGENCES['reference'])})
+        for unit in ('GM06', 'GM07'):
+            self.assertTrue(any(key.startswith(unit) for key in DECLARATIONS))
+
     def test_every_measured_helper_exists_and_is_hashed(self):
         import gm_h4_runner
         from gm_h4_contract import declarations_sha256
@@ -206,12 +218,32 @@ class PeerTests(unittest.TestCase):
     def test_capture_document_is_schema_bound(self):
         import gm_h4_peer
         document = gm_h4_peer.capture_document('product', {'messages': []}, {'entities': []},
-                                               {'attempts': []})
-        self.assertEqual(set(document), {'schema', 'side', 'gm02', 'gm03', 'gm04'})
+                                               {'attempts': []}, {'attempts': []},
+                                               {'entities': []})
+        self.assertEqual(set(document), {'schema', 'side', 'gm02', 'gm03', 'gm04', 'gm06',
+                                        'gm07'})
         self.assertEqual(document['schema'], 'gm_h4-capture-v1')
         self.assertEqual(document['side'], 'product')
         with self.assertRaisesRegex(ValueError, 'unknown capture side'):
-            gm_h4_peer.capture_document('oracle', {}, {}, {})
+            gm_h4_peer.capture_document('oracle', {}, {}, {}, {}, {})
+
+    def test_recorded_providers_serve_only_frozen_answers(self):
+        import gm_h4_peer
+        records = json.loads((BASE / 'fixtures/gm_h4_v1.json').read_text())['gm06']['providers']
+        clock = iter([0.0, 0.5, 1.1, 1.7]).__next__
+        providers = gm_h4_peer.RecordedProviders(records, clock=clock)
+        status, body = providers.answer('/api/rest_v1/page/summary/Gm_H6_Atlas_Institute')
+        self.assertEqual(status, 200)
+        self.assertEqual(body['wikibase_item'], 'Q6106')
+        status, body = providers.answer('/search')
+        self.assertEqual(status, 200)
+        self.assertEqual(body[0]['type'], 'harbour')
+        self.assertEqual([item['provider'] for item in providers.requests()],
+                         ['wikimedia', 'nominatim'])
+        with self.assertRaisesRegex(RuntimeError, 'recorded provider fixture is absent'):
+            providers.answer('/live/provider')
+        self.assertEqual(json.loads(json.dumps(providers.requests()))[0],
+                         {'provider': 'wikimedia', 'fixture': 'wikimedia-success', 'at': 0.0})
 
     def test_peer_reuses_the_proven_database_and_binary_guards(self):
         source = (BASE / 'gm_h4_peer.py').read_text()

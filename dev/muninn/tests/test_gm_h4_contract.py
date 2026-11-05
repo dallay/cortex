@@ -1,4 +1,4 @@
-"""GM-02/03/04 frozen comparator rules; no Docker, provider, model or oracle.
+"""GM-02/03/04/06/07 frozen comparator rules; no Docker, provider, model or oracle.
 
 Every document here is synthetic contract unit data. Nothing in this file is a
 reference measurement, a capture of the pinned server or an accuracy result.
@@ -76,6 +76,89 @@ GM04_ATTEMPTS = [
      key('Gm H4 Candidate Alpine', 'OBJECT')),
     ('no-candidate', 'none', 0.0, None, key('Gm H4 Distant Sigma', 'ORGANIZATION')),
 ]
+GM06_SPEC = FIXTURE['gm06']
+GM06_COMPARED = GM06_SPEC['compared_properties']
+GM06_ALL = (GM06_COMPARED + GM06_SPEC['reference_only_properties']
+            + GM06_SPEC['product_only_properties'] + GM06_SPEC['uncompared_properties'])
+GM07_SPEC = FIXTURE['gm07']
+
+
+def gm06_attempts(side):
+    """Declared GM-06 outcomes: recorded provider answers, no live provider."""
+    frozen = {item['key']: item for item in GM06_SPEC['attempts']}
+    result = []
+    for key, attempt in frozen.items():
+        expected = dict(frozen[attempt.get('replay_of', key)].get('expect_properties', {}))
+        properties = {name: None for name in GM06_ALL}
+        properties['enriched_at'] = False
+        properties['enrichment_data'] = False
+        properties.update(expected)
+        if expected:
+            properties['enriched_at'] = True
+            if side == 'product':
+                properties['enriched_summary'] = (
+                    'The Gm H6 Atlas Institute is a synthetic fixture institute.')
+            else:
+                properties['enrichment_data'] = True
+        entry = {'key': key, 'operation': attempt['operation'],
+                 'status': attempt['expect_status'], 'failure': None,
+                 'properties': properties,
+                 'location': dict(attempt['expect_location'])
+                 if 'expect_location' in attempt else None}
+        if side == 'product' and key == 'enrich-failure':
+            entry['failure'] = 'service'
+        result.append(entry)
+    return result
+
+
+def gm06_section(side):
+    requests = {frozen['key']: frozen['requests'][side] for frozen in GM06_SPEC['attempts']}
+    spacing = {}
+    for provider, declared in GM06_SPEC['spacing'].items():
+        count = sum(requests[item['key']] for item in GM06_SPEC['attempts']
+                    if item['provider'] == provider)
+        spacing[provider] = {
+            'requests': count,
+            'min_gap_seconds': None if count < 2 else declared['rate_limit_seconds'],
+        }
+    return {'attempts': gm06_attempts(side), 'spacing': spacing,
+            'attempt_requests': requests,
+            'divergences': sorted(DIVERGENCES_GM06[side])}
+
+
+DIVERGENCES_GM06 = {'reference': (),
+                    'product': ('gm06-closed-failure-vocabulary',
+                                'gm06-geocode-requires-point-index',
+                                'gm06-no-background-worker',
+                                'gm06-no-fuzzy-fallback')}
+DIVERGENCES_GM07 = {'reference': ('gm07-reference-search-unscoped',), 'product': ()}
+
+GM07_ENTITY_TOKENS = sorted(key(item['name'], item['type']) for item in GM07_SPEC['entities'])
+
+
+def gm07_section(side):
+    """Declared GM-07 retrieval document; repository ids become tokens."""
+    isolated = GM07_SPEC['isolation']
+    return {
+        'entities': [key(item['name'], item['type']) for item in GM07_SPEC['entities']],
+        'edges': [dict(edge, extra_columns=[]) for edge in GM07_SPEC['edges']],
+        'vector': {'query': GM07_SPEC['vector']['query'],
+                   'results': [{'id': GM07_ENTITY_TOKENS[1], 'score': 0.91},
+                               {'id': GM07_ENTITY_TOKENS[0], 'score': 0.44}]},
+        'text': {'query': GM07_SPEC['text']['query'],
+                 'results': [{'id': 'gm07-beta', 'score': 0.83},
+                             {'id': 'gm07-alpha', 'score': 0.71}]},
+        'graph': {'source': GM07_ENTITY_TOKENS[0], 'results': [GM07_ENTITY_TOKENS[1]]},
+        'context': {'query': GM07_SPEC['context']['query'],
+                    'document': '## Conversation History\n### Relevant Past Messages\n'
+                                '- [assistant] Every inbound parcel leaves.\n\n'
+                                '## Relevant Knowledge\n### Relevant Entities\n'
+                                '- Gm H7 Northern Depot (LOCATION)'},
+        'isolation': {'included': list(isolated[side + '_included'])},
+        'divergences': sorted(DIVERGENCES_GM07[side]),
+    }
+
+
 GM04_ENTITIES = [{'key': key(seed['name'], seed['type']), 'name': seed['name'],
                   'type': seed['type']} for seed in GM04_SEEDS] + [
     {'key': key('Gm H4 Cypress Candidate', 'PERSON'), 'name': 'Gm H4 Cypress Candidate',
@@ -136,6 +219,8 @@ def document(side='reference'):
                  'links': [{'source': key('Gm H4 Cypress Candidate', 'OBJECT'),
                             'target': key('Gm H4 Candidate Boreal', 'OBJECT'),
                             'status': 'pending', 'match_type': 'fuzzy', 'confidence': 0.87}]},
+        'gm06': gm06_section(side),
+        'gm07': gm07_section(side),
     }
 
 
@@ -164,7 +249,7 @@ class ModuleTests(unittest.TestCase):
         self.assertEqual(verdict['errors'], [])
         self.assertEqual(verdict['diffs'], [])
         self.assertEqual([item['item'] for item in verdict['items']],
-                         ['gm02', 'gm03', 'gm04'])
+                         ['gm02', 'gm03', 'gm04', 'gm06', 'gm07'])
         self.assertTrue(all(item['verdict'] == 'pass' for item in verdict['items']))
         self.assertEqual(verdict['epsilon'], 1e-9)
 
@@ -294,6 +379,173 @@ class ModuleTests(unittest.TestCase):
         verdict = self.compare(reference, product)
         self.assertEqual(verdict['comparison'], 'fail')
         self.assertTrue(any('the declared minimum is 1' in error for error in verdict['errors']))
+
+    def test_a_capture_missing_a_measured_section_fails_closed(self):
+        reference, product = document('reference'), document('product')
+        del reference['gm06']
+        del product['gm07']
+        verdict = self.compare(reference, product)
+        self.assertEqual(verdict['comparison'], 'fail')
+        self.assertTrue(any('missing=' in error for error in verdict['errors']))
+        self.assertTrue(any("'gm06'" in error or 'gm07' in error for error in verdict['errors']))
+
+    def test_gm06_valid_pair_passes(self):
+        verdict = self.compare(document('reference'), document('product'))
+        self.assertEqual(verdict['comparison'], 'pass', verdict['errors'])
+        self.assertEqual(verdict['items'][3], {'item': 'gm06', 'verdict': 'pass', 'diffs': []})
+        self.assertEqual(verdict['items'][4], {'item': 'gm07', 'verdict': 'pass', 'diffs': []})
+
+    def test_gm06_dropped_enrichment_property_fails_on_both_sides(self):
+        reference, product = document('reference'), document('product')
+        for capture in (reference, product):
+            del capture['gm06']['attempts'][0]['properties']['wikidata_id']
+        verdict = self.compare(reference, product)
+        self.assertEqual(verdict['comparison'], 'fail')
+        self.assertTrue(any('wikidata_id' in error for error in verdict['errors']))
+
+    def test_gm06_property_value_differing_from_the_fixture_fails(self):
+        reference, product = document('reference'), document('product')
+        for capture in (reference, product):
+            capture['gm06']['attempts'][0]['properties']['image_url'] = 'https://example.invalid/x'
+        verdict = self.compare(reference, product)
+        self.assertEqual(verdict['comparison'], 'fail')
+        self.assertTrue(any('image_url' in error for error in verdict['errors']))
+
+    def test_gm06_undeclared_divergence_fails(self):
+        reference, product = document('reference'), document('product')
+        product['gm06']['divergences'] = ['gm06-unrecorded-exception']
+        verdict = self.compare(reference, product)
+        self.assertEqual(verdict['comparison'], 'fail')
+        self.assertTrue(any('undeclared divergence' in error for error in verdict['errors']))
+        reference, product = document('reference'), document('product')
+        reference['gm07']['divergences'] = []
+        verdict = self.compare(reference, product)
+        self.assertEqual(verdict['comparison'], 'fail')
+        self.assertTrue(any('gm07-reference-search-unscoped' in error
+                            for error in verdict['errors']))
+
+    def test_gm06_replay_must_repeat_properties_and_issue_no_request(self):
+        reference, product = document('reference'), document('product')
+        for capture in (reference, product):
+            capture['gm06']['attempts'][1]['properties']['wikipedia_url'] = None
+            capture['gm06']['attempt_requests']['enrich-replay'] = 1
+        verdict = self.compare(reference, product)
+        self.assertEqual(verdict['comparison'], 'fail')
+        self.assertTrue(any('replay' in error for error in verdict['errors']))
+
+    def test_gm06_spacing_below_the_declared_interval_fails(self):
+        reference, product = document('reference'), document('product')
+        for capture in (reference, product):
+            capture['gm06']['spacing']['wikimedia']['min_gap_seconds'] = 0.1
+        verdict = self.compare(reference, product)
+        self.assertEqual(verdict['comparison'], 'fail')
+        self.assertTrue(any('rate-limit spacing' in error for error in verdict['errors']))
+
+    def test_gm06_side_specific_properties_and_vocabulary_fail_closed(self):
+        reference, product = document('reference'), document('product')
+        reference['gm06']['attempts'][0]['properties']['enriched_summary'] = 'leak'
+        verdict = self.compare(reference, product)
+        self.assertEqual(verdict['comparison'], 'fail')
+        self.assertTrue(any('enriched_summary' in error for error in verdict['errors']))
+        reference, product = document('reference'), document('product')
+        product['gm06']['attempts'][3]['failure'] = 'ConnectionError: https://user@host'
+        verdict = self.compare(reference, product)
+        self.assertEqual(verdict['comparison'], 'fail')
+        self.assertTrue(any('closed failure vocabulary' in error for error in verdict['errors']))
+        reference, product = document('reference'), document('product')
+        for capture in (reference, product):
+            capture['gm06']['attempts'][0]['status'] = 'finished'
+        verdict = self.compare(reference, product)
+        self.assertEqual(verdict['comparison'], 'fail')
+        self.assertTrue(any('undeclared enrichment status' in error for error in verdict['errors']))
+
+    def test_gm07_reordered_ranking_fails(self):
+        reference, product = document('reference'), document('product')
+        product['gm07']['vector']['results'].reverse()
+        verdict = self.compare(reference, product)
+        self.assertEqual(verdict['comparison'], 'fail')
+        self.assertTrue(any('vector' in diff['path'] for diff in verdict['diffs']))
+        report, candidate = document('reference'), document('product')
+        candidate['gm07']['text']['results'] = list(reversed(candidate['gm07']['text']['results']))
+        verdict = self.compare(report, candidate)
+        self.assertEqual(verdict['comparison'], 'fail')
+        self.assertTrue(any('text' in diff['path'] for diff in verdict['diffs']))
+
+    def test_gm07_ranking_must_be_ordered_on_each_side(self):
+        reference, product = document('reference'), document('product')
+        for capture in (reference, product):
+            capture['gm07']['vector']['results'] = [
+                {'id': GM07_ENTITY_TOKENS[0], 'score': 0.2},
+                {'id': GM07_ENTITY_TOKENS[1], 'score': 0.9}]
+        verdict = self.compare(reference, product)
+        self.assertEqual(verdict['comparison'], 'fail')
+        self.assertTrue(any('ranking order' in error for error in verdict['errors']))
+
+    def test_gm07_scores_use_only_the_declared_epsilon(self):
+        reference, product = document('reference'), document('product')
+        product['gm07']['vector']['results'][0]['score'] = 0.91 + 5e-10
+        self.assertEqual(self.compare(reference, product)['comparison'], 'pass')
+        product['gm07']['vector']['results'][0]['score'] = 0.91 + 1e-6
+        verdict = self.compare(reference, product)
+        self.assertEqual(verdict['comparison'], 'fail')
+
+    def test_gm07_leaked_cross_owner_result_fails_on_both_sides(self):
+        reference, product = document('reference'), document('product')
+        product['gm07']['isolation']['included'] = ['gm07-owner-b']
+        verdict = self.compare(reference, product)
+        self.assertEqual(verdict['comparison'], 'fail')
+        self.assertTrue(any('cross-owner' in error for error in verdict['errors']))
+        report, candidate = document('reference'), document('product')
+        report['gm07']['isolation']['included'] = []
+        verdict = self.compare(report, candidate)
+        self.assertEqual(verdict['comparison'], 'fail')
+        self.assertTrue(any('cross-owner' in error for error in verdict['errors']))
+
+    def test_gm07_absent_edge_fails_on_both_sides(self):
+        reference, product = document('reference'), document('product')
+        for capture in (reference, product):
+            capture['gm07']['edges'] = []
+        verdict = self.compare(reference, product)
+        self.assertEqual(verdict['comparison'], 'fail')
+        self.assertTrue(any('declared RELATED_TO edge' in error for error in verdict['errors']))
+
+    def test_gm07_context_document_must_match_exactly(self):
+        reference, product = document('reference'), document('product')
+        product['gm07']['context']['document'] += ' '
+        verdict = self.compare(reference, product)
+        self.assertEqual(verdict['comparison'], 'fail')
+        self.assertTrue(any('document' in diff['path'] for diff in verdict['diffs']))
+        report, candidate = document('reference'), document('product')
+        for capture in (report, candidate):
+            capture['gm07']['context']['document'] = '## Relevant Knowledge\n- x'
+        verdict = self.compare(report, candidate)
+        self.assertEqual(verdict['comparison'], 'fail')
+        self.assertTrue(any('declared context section order' in error
+                            for error in verdict['errors']))
+
+    def test_gm07_ranked_results_respect_the_frozen_limit(self):
+        reference, product = document('reference'), document('product')
+        for capture in (reference, product):
+            capture['gm07']['vector']['results'] = [
+                {'id': GM07_ENTITY_TOKENS[index % 2], 'score': 0.9 - 0.1 * index}
+                for index in range(FIXTURE['gm07']['vector']['limit'] + 1)]
+        verdict = self.compare(reference, product)
+        self.assertEqual(verdict['comparison'], 'fail')
+        self.assertTrue(any('frozen limit' in error for error in verdict['errors']))
+
+    def test_gm07_undeclared_result_identity_fails(self):
+        reference, product = document('reference'), document('product')
+        for capture in (reference, product):
+            capture['gm07']['text']['results'][0]['id'] = 'message-0'
+        verdict = self.compare(reference, product)
+        self.assertEqual(verdict['comparison'], 'fail')
+        self.assertTrue(any('undeclared identity' in error for error in verdict['errors']))
+
+    def test_gm07_graph_results_are_unordered_and_compared_as_a_set(self):
+        reference, product = document('reference'), document('product')
+        product['gm07']['graph']['results'] = list(reversed(product['gm07']['graph']['results']))
+        verdict = self.compare(reference, product)
+        self.assertEqual(verdict['comparison'], 'pass', verdict['errors'])
 
     def test_one_capture_side_per_pair_is_required(self):
         verdict = self.compare(document('product'), document('product'))
@@ -456,7 +708,7 @@ class CaptureTests(unittest.TestCase):
         by_text = {item['text']: GM03_ENTITIES[item['key']] for item in texts}
         gm03 = capture_gm03(texts, lambda text: [dict(item) for item in by_text[text]], side)
         return {'schema': 'gm_h4-capture-v1', 'side': side, 'gm02': gm02, 'gm03': gm03,
-                'gm04': gm04}
+                'gm04': gm04, 'gm06': gm06_section(side), 'gm07': gm07_section(side)}
 
     def test_capture_and_contract_agree_end_to_end(self):
         from gm_h4_contract import compare_gm_h4
@@ -466,7 +718,7 @@ class CaptureTests(unittest.TestCase):
         verdict = compare_gm_h4(reference, product)
         self.assertEqual(verdict['comparison'], 'pass', verdict['errors'])
         self.assertEqual([item['verdict'] for item in verdict['items']],
-                         ['pass', 'pass', 'pass'])
+                         ['pass', 'pass', 'pass', 'pass', 'pass'])
 
     def test_capture_maps_every_identity_to_a_declared_token(self):
         document = self.build('product')
@@ -488,6 +740,124 @@ class CaptureTests(unittest.TestCase):
             if '-[r:MENTIONS]->' in statement else original(statement, parameters))
         with self.assertRaisesRegex(ContractError, 'undeclared identity'):
             asyncio.run(capture_gm02(adapter))
+
+
+class FakeEnrichmentAdapter:
+    """Side-specific stand-in for the enrichment and geocoding operations.
+
+    Provider answers are the frozen fixture payloads; no socket, provider or
+    model is involved. Timestamps advance by the declared spacing so the
+    capture observes a deterministic interval.
+    """
+
+    ANSWERS = {'Gm H6 Atlas Institute': ('wikimedia', 'success',
+                                         {'enriched_description': 'synthetic research institute',
+                                          'enrichment_provider': 'wikimedia',
+                                          'wikipedia_url':
+                                          'https://en.wikipedia.org/wiki/Gm_H6_Atlas_Institute',
+                                          'wikidata_id': 'Q6106',
+                                          'image_url':
+                                          'https://upload.example.invalid/gm-h6-atlas.png'}),
+               'Gm H6 Absent Figure': ('wikimedia', 'not_found', {}),
+               'Gm H6 Unstable Company': ('wikimedia', 'error', {})}
+
+    def __init__(self, side='reference', interval=0.6, drop=None):
+        self.side, self.interval, self.drop = side, interval, drop
+        self.records, self.identifiers, self.requests = {}, {}, []
+
+    def provider_requests(self):
+        return [dict(item) for item in self.requests]
+
+    def query(self, statement, parameters):
+        record = self.records[parameters['id']]
+        properties = dict(record['properties'])
+        if self.drop is not None:
+            properties.pop(self.drop, None)
+        return [{'properties': properties, 'latitude': record['latitude'],
+                 'longitude': record['longitude']}]
+
+    def _record(self, key):
+        if key not in self.identifiers:
+            identifier = 'e' + str(len(self.records))
+            self.identifiers[key] = identifier
+            self.records[identifier] = {'id': identifier, 'properties': {},
+                                        'latitude': None, 'longitude': None}
+        return self.records[self.identifiers[key]]
+
+    def _request(self, provider):
+        self.requests.append({'provider': provider,
+                              'at': self.interval * len(self.requests)})
+
+    async def call(self, operation, **arguments):
+        identifier = arguments['name'] + '|' + arguments['entity_type']
+        record = self._record(identifier)
+        if operation == 'enrich_entity':
+            if record['properties'].get('enrichment_provider') is None:
+                provider, status, values = self.ANSWERS[arguments['name']]
+                self._request(provider)
+                if values:
+                    record['properties'] = dict(values)
+                    record['properties']['enriched_at'] = True
+                    if self.side == 'reference':
+                        record['properties']['enrichment_data'] = True
+                    else:
+                        record['properties']['enriched_summary'] = 'fixture summary'
+            provider, status, values = self.ANSWERS[arguments['name']]
+            if status == 'not_found' and self.side == 'reference':
+                self._request(provider)
+            failure = None
+            if status == 'error' and self.side == 'product':
+                failure = 'service'
+            return {'entity': {'id': record['id']}, 'status': status, 'failure': failure}
+        if operation == 'geocode_entity':
+            self._request('nominatim')
+            record['latitude'], record['longitude'] = 51.5074, -0.1278
+            return {'entity': {'id': record['id']}, 'status': 'success', 'failure': None}
+        raise AssertionError(operation)
+
+
+def enrichment_pair(side='reference', **arguments):
+    from gm_h4_capture import capture_gm06
+    expected, actual = document('reference'), document('product')
+    expected['gm06'] = asyncio.run(capture_gm06(FakeEnrichmentAdapter('reference', **arguments)))
+    actual['gm06'] = asyncio.run(capture_gm06(FakeEnrichmentAdapter(side, **arguments)))
+    return expected, actual
+
+
+class EnrichmentCaptureTests(unittest.TestCase):
+    def test_capture_and_contract_agree_end_to_end(self):
+        from gm_h4_contract import compare_gm_h4
+        expected, actual = enrichment_pair('product')
+        self.assertEqual([item['key'] for item in actual['gm06']['attempts']],
+                         [item['key'] for item in FIXTURE['gm06']['attempts']])
+        self.assertEqual(actual['gm06']['attempt_requests']['enrich-replay'], 0)
+        self.assertEqual(expected['gm06']['spacing']['wikimedia']['requests'], 4)
+        self.assertEqual(actual['gm06']['spacing']['wikimedia']['requests'], 3)
+        verdict = compare_gm_h4(expected, actual)
+        self.assertEqual(verdict['comparison'], 'pass', verdict['errors'])
+        self.assertEqual(verdict['items'][3]['item'], 'gm06')
+
+    def test_the_capture_never_invents_a_dropped_property(self):
+        from gm_h4_contract import compare_gm_h4
+        expected, actual = enrichment_pair('product', drop='wikidata_id')
+        self.assertIsNone(actual['gm06']['attempts'][0]['properties']['wikidata_id'])
+        verdict = compare_gm_h4(expected, actual)
+        self.assertEqual(verdict['comparison'], 'fail')
+        self.assertTrue(any('wikidata_id' in error for error in verdict['errors']))
+
+    def test_the_capture_reports_the_observed_spacing(self):
+        from gm_h4_contract import compare_gm_h4
+        expected, actual = enrichment_pair('product', interval=0.1)
+        self.assertAlmostEqual(actual['gm06']['spacing']['wikimedia']['min_gap_seconds'], 0.1)
+        verdict = compare_gm_h4(expected, actual)
+        self.assertEqual(verdict['comparison'], 'fail')
+        self.assertTrue(any('rate-limit spacing' in error for error in verdict['errors']))
+
+    def test_a_capture_for_an_unknown_side_is_refused(self):
+        from gm_h4_capture import capture_gm06
+        from gm_h4_contract import ContractError
+        with self.assertRaisesRegex(ContractError, 'unknown capture side'):
+            asyncio.run(capture_gm06(FakeEnrichmentAdapter('oracle')))
 
 
 def self_pair():

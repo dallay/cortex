@@ -178,7 +178,8 @@ composing the accepted components rather than adding a framework: `gm05_build`
 for the source-bound offline build, `gm08_runner` for the dory lifecycle,
 preflight and faithful-copy helper, `gm08_peer` for the loopback bridge,
 binary-consume and fresh-database guards, and `gm08_contract` for the
-fail-closed comparison shape. No `gm05` or `gm08` file is modified.
+fail-closed comparison shape. No `gm05` or `gm08` file is modified. GM-06 and
+GM-07 extend the same modules in U5c (see the last section).
 
 ## Quick path (the U6 command)
 
@@ -209,17 +210,20 @@ Exit 0 is an offline comparison pass, exit 2 is invalid input or a difference.
 | GM-02 | scenario order, entity inventory, `MENTIONS` edges with `confidence`/`start_pos`/`end_pos`, `RELATED_TO` inventory | auto spans reproduce their entity name at 0.85, skip creates no mention and no entity, explicit links only the supplied references, replay does not duplicate nodes |
 | GM-03 | `name`, POLE+O `type`, `subtype`, `start_pos`, `end_pos`, constant `0.85`, `spacy` extractor, in document order | offsets in range and in character order, span reproduces the name, frozen texts verbatim, empty/whitespace text yields no entity, the stage stream is never shorter than the GM-02 mentions of the same text |
 | GM-04 | attempt order, observed band/action, matched candidate, score, match type, canonical identity, `SAME_AS` inventory | band derived from the observed score with the declared 0.90/0.85 thresholds, matched candidate inside the declared pool, merge returns the matched identity, a flagged mention keeps its own node with exactly one pending `SAME_AS` edge, a null match reports 0.0 |
+| GM-06 | the five shared enrichment properties, the stored geocode point, the observed enrichment status and the recorded provider request totals | the property document carries exactly the declared names, the recorded provider answer reproduces each value, a warm replay repeats them with zero requests, the geocode point is the recorded coordinate, spacing between recorded requests respects the declared rate limit, the closed failure vocabulary is product-only |
+| GM-07 | entity and message ids with their scores in the returned order, the `get_context` document, the `RELATED_TO` inventory and the declared graph neighbours | every id is a declared token, scores are finite and non-increasing along each ranked list, the declared edge exists, the context document reproduces the declared section order, and the scoped search returns no foreign-owner message |
 
 ## Declared tolerances and rules (disclosed by hash)
 
 The only numeric tolerance is an absolute **`1e-9`** applied to resolution
-similarity scores and `SAME_AS` confidence. Every other value — including
-`MENTIONS` confidence, band thresholds, spans and labels — is compared exactly.
-The declaration digest is
-`33f20952b97fdd6ec5f49d788a7e21fc6ec9fc177f6236786b2a805cfb7533f8`
-(SHA-256 over `gm_h4_contract.DECLARATIONS`, the sixteen pre-declared rules).
-Any observed difference that would need a wider tolerance is a finding to
-report, never a relaxation.
+similarity scores, `SAME_AS` confidence and the GM-07 entity/message scores.
+Every other value — including `MENTIONS` confidence, band thresholds, spans,
+labels, the geocode point and ranked order — is compared exactly. The
+declaration digest is
+`557a76a869332d2339ede4d79ac7becaa0f03da4ebd8c51ed05677e5328ed95d`
+(SHA-256 over `gm_h4_contract.DECLARATIONS`: the nineteen carried rules plus
+`GM06-01..07` and `GM07-01..07`, 33 in total). Any observed difference that
+would need a wider tolerance is a finding to report, never a relaxation.
 
 Two declared asymmetries, both recorded before measurement:
 
@@ -266,9 +270,88 @@ Two declared asymmetries, both recorded before measurement:
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 -B dev/muninn/tests/test_gm_h4_contract.py
 PYTHONDONTWRITEBYTECODE=1 python3 -B dev/muninn/tests/test_gm_h4_extract.py
+PYTHONDONTWRITEBYTECODE=1 python3 -B dev/muninn/tests/test_gm_h4_search.py
 PYTHONDONTWRITEBYTECODE=1 python3 -B dev/muninn/tests/test_gm_h4_runner.py
 ```
 
 Raw RED and GREEN streams, exits, per-file hashes and the declaration digest are
 retained under
-`.agents/rpi/plan/tasks/muninn-h4-extraction-connected-memory/evidence/u5b-harness/`.
+`.agents/rpi/plan/tasks/muninn-h4-extraction-connected-memory/evidence/u5b-harness/`
+and, for GM-06/GM-07, under `.../evidence/u5c-harness/`.
+
+## U5c GM-06 and GM-07 harness
+
+GM-06 (enrichment and geocoding) and GM-07 (text, vector and graph search plus
+`get_context`) are implemented in the same harness discipline and are
+**deterministic-tested only**. No live differential ran in U5c: the H4
+measurement belongs to U6. No live Wikipedia, Diffbot or Nominatim call, no
+network access and no model download exists in any test here.
+
+### GM-06 — recorded providers, no live call
+
+The frozen fixture holds the provider answers (`gm06.providers`) and the five
+attempts. The reference side builds its pinned chain
+`CachedEnrichmentProvider(WikimediaProvider)` through the pinned factory and
+binds `httpx.AsyncClient` to a recorded transport: every request is matched by
+path against the fixture, recorded with a timestamp, and an unmatched request
+fails closed before any write. The product side drives the bridge
+`enrich_entity` / `geocode_entity` controls. Recorded attempts:
+
+| Attempt | Operation | Reference answer | Product answer |
+| --- | --- | --- | --- |
+| `enrich-success` | enrich | `200` summary | same recorded payload |
+| `enrich-replay` | enrich | warm cache, zero requests | warm cache, zero requests |
+| `enrich-not-found` | enrich | `404` then the pinned fuzzy search (2 requests) | `404`, no fuzzy fallback (1 request) |
+| `enrich-failure` | enrich | `503`, `error` | `503`, `error` + `service` |
+| `geocode-success` | geocode | Nominatim `200`, point written | same recorded payload |
+
+Declared, hashed GM-06 divergences (product side only, never compared across
+servers): `gm06-closed-failure-vocabulary`, `gm06-geocode-requires-point-index`,
+`gm06-no-background-worker`, `gm06-no-fuzzy-fallback`. Any other divergence id
+fails.
+
+### GM-07 — ranked lists compared, never sorted
+
+Run order on the fresh database is GM-04, GM-07, GM-02, GM-06, so the search
+section sees only its own declared inventory and no earlier message corpus. The
+captured surfaces are `search_entities` (vector), `search_messages` (text),
+`get_related_entities` plus the symmetric `RELATED_TO` inventory (graph) and the
+fused `get_context` document. Ranked lists keep the returned order positionally;
+only graph results are sorted, by their token. Declared reference-only
+divergence: `gm07-reference-search-unscoped` (the pinned `SEARCH_MESSAGES_BY_EMBEDDING`
+has no owner filter, so a foreign-owner message can be returned; the product
+search is scoped and must not). The capture records the foreign-owner keys a
+scoped search returned and the contract requires exactly the declared value for
+each side, so a leak fails on either side.
+
+### Disclosed product gap (blocks the U6 measurement, not the harness)
+
+The shipped `muninn` binary builds no enrichment provider and exposes no
+enrichment-specific configuration, so `enrich_entity`/`geocode_entity` answer
+`501`; it also exposes no `get_context` bridge method. Observed from source:
+`apps/muninn/src/main.rs` has `Neo4jArgs`, `EmbeddingArgs`, `ExtractionArgs` and
+no enrichment/geocoding argument, and `crates/muninn/bridge/src` dispatches
+`enrich_entity`/`geocode_entity` only for a client that was built with those
+services. The harness therefore captures and compares GM-06/GM-07 correctly but
+fails closed on the product side until that surface is wired; no tolerance,
+exclusion or post-hoc deviation was introduced for it. This is a product gap of
+the same class as `H4-U5B-F1`, recorded here instead of being tolerated.
+
+### Known limits of GM-06/GM-07
+
+- **GM-06 provider answers are recorded, not live.** The differential measures
+  adapter and writer behaviour against the pinned payloads; it says nothing
+  about provider quality or upstream drift.
+- **Spacing is validated, not compared.** Wall-clock request gaps differ per
+  machine, so each side must satisfy `rate_limit_seconds - clock_slack_seconds`
+  (`0.5 - 0.05` for wikimedia, `1.0 - 0.05` for Nominatim) and only the recorded
+  request totals are compared with the declared per-side counts.
+- **The reference timestamp is not compared.** `enriched_at` is written with
+  `datetime()` by the pinned background writer and from the cached value by the
+  product; only its presence is captured (declared in `GM06-02`).
+- **Ranking ties are not resolvable by the contract.** Both sides receive the
+  same controlled vectors, so ties are not expected; if a real run produces a
+  tie the positional comparison fails and the finding is reported, never
+  smoothed by sorting.
+- **GM-06/GM-07 accuracy, Gold cross-memory, Silver38, live Neo4j and MiniLM
+  resolution remain NOT_RUN.**

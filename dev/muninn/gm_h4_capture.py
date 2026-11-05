@@ -1,4 +1,4 @@
-"""Frozen GM-02 and GM-04 operations, shared verbatim by both captured sides.
+"""Frozen GM-02, GM-04 and GM-06 operations, shared verbatim by both captured sides.
 
 The adapter owns its own API projection and its own database connection; this
 module only freezes the scenario, reads the graph symmetrically and maps every
@@ -9,8 +9,9 @@ from copy import deepcopy
 import json
 from pathlib import Path
 
-from gm_h4_contract import (ContractError, MENTIONS_PRODUCT_ONLY, MENTIONS_SHARED, SCHEMA,
-                            entity_key)
+from gm_h4_contract import (ContractError, GM06_COMPARED, GM06_DIVERGENCES, GM06_PRODUCT_ONLY,
+                             GM06_REFERENCE_ONLY, GM06_UNCOMPARED, MENTIONS_PRODUCT_ONLY,
+                             MENTIONS_SHARED, SCHEMA, entity_key)
 
 FIXTURE = Path(__file__).with_name('fixtures') / 'gm_h4_v1.json'
 
@@ -21,6 +22,10 @@ RELATIONS = ('MATCH (a:Entity)-[r:RELATED_TO]->(b:Entity) '
              'RETURN a.id AS source, b.id AS target, properties(r) AS properties')
 SAME_AS = ('MATCH (a:Entity)-[r:SAME_AS]->(b:Entity) '
            'RETURN a.id AS source, b.id AS target, properties(r) AS properties')
+ENTITY_STATE = ('MATCH (e:Entity {id: $id}) RETURN properties(e) AS properties, '
+                'e.location.latitude AS latitude, e.location.longitude AS longitude')
+GM06_PROPERTIES = (GM06_COMPARED + GM06_REFERENCE_ONLY + GM06_PRODUCT_ONLY
+                   + GM06_UNCOMPARED)
 
 
 def frozen_fixture():
@@ -170,6 +175,56 @@ async def capture_gm04(adapter, fixture=None):
             'entities': [{'key': entity['key'], 'name': entity['name'],
                           'type': entity['type']} for entity in entities],
             'links': links}
+
+
+def declared_divergences(adapter, declared):
+    """The declared per-side divergences; an unknown side is never guessed."""
+    side = getattr(adapter, 'side', None)
+    if side not in declared:
+        raise ContractError('divergences: unknown capture side')
+    return sorted(declared[side])
+
+
+async def capture_gm06(adapter, fixture=None):
+    """Enrich and geocode the declared entities from recorded provider answers.
+
+    `enrich_entity` and `geocode_entity` are the frozen operations; the adapter
+    owns how each side triggers them. Nothing is written by this module: the
+    properties and the point are read back from the graph after each attempt.
+    """
+    spec = _fixture(fixture)['gm06']
+    attempts, requests = [], {}
+    observed = adapter.provider_requests()
+    for attempt in spec['attempts']:
+        before = len(observed)
+        result = await adapter.call(attempt['operation'] + '_entity',
+                                    name=attempt['name'], entity_type=attempt['type'])
+        observed = adapter.provider_requests()
+        identifier = str(result['entity']['id'])
+        rows = adapter.query(ENTITY_STATE, {'id': identifier})
+        if not isinstance(rows, list) or len(rows) != 1:
+            raise ContractError(f'gm06.attempts[{attempt["key"]}]: entity state is absent')
+        row = rows[0]
+        properties = {name: row['properties'].get(name) for name in GM06_COMPARED}
+        for name in GM06_PRODUCT_ONLY:
+            properties[name] = row['properties'].get(name)
+        for name in GM06_REFERENCE_ONLY + GM06_UNCOMPARED:
+            properties[name] = name in row['properties']
+        point = None
+        if row['latitude'] is not None and row['longitude'] is not None:
+            point = {'latitude': row['latitude'], 'longitude': row['longitude']}
+        attempts.append({'key': attempt['key'], 'operation': attempt['operation'],
+                         'status': result['status'], 'failure': result.get('failure'),
+                         'properties': properties, 'location': point})
+        requests[attempt['key']] = len(observed) - before
+    spacing = {}
+    for provider in spec['spacing']:
+        points = [item['at'] for item in observed if item['provider'] == provider]
+        gaps = [second - first for first, second in zip(points, points[1:])]
+        spacing[provider] = {'requests': len(points),
+                             'min_gap_seconds': min(gaps) if gaps else None}
+    return {'attempts': attempts, 'spacing': spacing, 'attempt_requests': requests,
+            'divergences': declared_divergences(adapter, GM06_DIVERGENCES)}
 
 
 def capture_schema():

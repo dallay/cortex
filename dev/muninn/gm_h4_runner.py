@@ -27,7 +27,8 @@ from gm01_runner import _copy_file
 from gm05_build import digest, snapshot_sources
 from gm05_runner import NEO4J_IMAGE
 from gm08_runner import FAITHFUL, RUST, TOOLCHAIN, bind, preflight
-from gm_h4_contract import EPSILON, compare_gm_h4, declarations_sha256
+from gm_h4_contract import (DECLARATIONS, EPSILON, GM06_DIVERGENCES, GM07_DIVERGENCES,
+                            compare_gm_h4, declarations_sha256)
 from reference import materialize_sources
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -39,7 +40,8 @@ ORACLE_SPACY = 'muninn-h4-oracle-spacy:20261105'
 SIDES = ('reference', 'product')
 HELPERS = (
     'gm_h4_runner.py', 'gm_h4_peer.py', 'gm_h4_capture.py', 'gm_h4_contract.py',
-    'gm_h4_extract.py', 'gm08_peer.py', 'gm08_runner.py', 'gm08_capture.py',
+    'gm_h4_extract.py', 'gm_h4_search.py', 'gm08_peer.py', 'gm08_runner.py',
+    'gm08_capture.py',
     'gm05_adapters.py', 'gm05_capture.py', 'gm05_contract.py', 'gm05_runner.py',
     'gm05_build.py', 'gm01_runner.py', 'spacy_service.py', 'reference.py',
     'source-integrity.json', 'fixtures/gm_h4_v1.json',
@@ -62,11 +64,18 @@ def summary_skeleton(reference_commit, tck_commit, images):
         'epsilon_rules': declared_epsilon(),
         'deviations': [],
         'declarations_sha256': declarations_sha256(),
+        'declarations_rule_count': len(DECLARATIONS),
+        'declared_divergences': {'gm06': sorted(GM06_DIVERGENCES['product']),
+                                 'gm07': sorted(GM07_DIVERGENCES['reference'])},
+        'provider_mode': 'recorded local fixtures; no live provider, no network',
         'harness_sha256': {},
         'capture_surface': {
             'product': 'bridge HTTP wire (crates/muninn/bridge)',
             'reference': 'pinned neo4j-agent-memory native client',
             'extraction': 'dev/muninn/spacy_service.py vs pinned SpacyEntityExtractor',
+            'enrichment': 'recorded wikimedia/nominatim fixtures vs the product provider '
+                          'adapters',
+            'retrieval': 'search_messages/search_entities/get_related_entities/get_context',
             'graph_labels': ['Entity', 'Message', 'MENTIONS', 'RELATED_TO', 'SAME_AS'],
         },
         'images': images,
