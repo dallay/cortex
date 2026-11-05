@@ -470,6 +470,9 @@ impl AnthropicProvider {
                 if let Some(description) = function.get("description") {
                     out["description"] = description.clone();
                 }
+                if let Some(cache_control) = tool.get("cache_control") {
+                    out["cache_control"] = cache_control.clone();
+                }
                 out
             })
             .collect();
@@ -478,9 +481,13 @@ impl AnthropicProvider {
 
     /// Convert domain `tool_choice` (string or OpenAI function form) into the
     /// native Anthropic wire shape. Native objects pass through unchanged.
-    fn normalize_tool_choice(choice: Option<serde_json::Value>) -> Option<serde_json::Value> {
-        let choice = choice?;
-        Some(match &choice {
+    fn normalize_tool_choice(
+        choice: Option<serde_json::Value>,
+    ) -> CortexResult<Option<serde_json::Value>> {
+        let Some(choice) = choice else {
+            return Ok(None);
+        };
+        Ok(Some(match &choice {
             serde_json::Value::String(s) => match s.as_str() {
                 "auto" => serde_json::json!({"type": "auto"}),
                 "none" => serde_json::json!({"type": "none"}),
@@ -489,19 +496,28 @@ impl AnthropicProvider {
             },
             serde_json::Value::Object(obj) => {
                 if obj.get("type").and_then(|t| t.as_str()) == Some("function") {
-                    let name = obj["function"]["name"].clone();
+                    let name = obj
+                        .get("function")
+                        .and_then(|function| function.as_object())
+                        .and_then(|function| function.get("name"))
+                        .and_then(|name| name.as_str())
+                        .ok_or_else(|| {
+                            CortexError::invalid_request(
+                                "function tool_choice requires a function object with a string name",
+                            )
+                        })?;
                     serde_json::json!({"type": "tool", "name": name})
                 } else {
                     choice
                 }
             }
             _ => choice,
-        })
+        }))
     }
 
-    fn build_stream_request(req: &CompletionRequest) -> AnthropicStreamRequest {
+    fn build_stream_request(req: &CompletionRequest) -> CortexResult<AnthropicStreamRequest> {
         let system_text = Self::extract_system_messages(req);
-        AnthropicStreamRequest {
+        Ok(AnthropicStreamRequest {
             model: req.model.to_string(),
             messages: build_wire_messages(req),
             system: system_text,
@@ -509,8 +525,8 @@ impl AnthropicProvider {
             max_tokens: req.max_tokens.or(Some(4096)),
             temperature: req.temperature,
             tools: Self::normalize_tools(req.tools.clone()),
-            tool_choice: Self::normalize_tool_choice(req.tool_choice.clone()),
-        }
+            tool_choice: Self::normalize_tool_choice(req.tool_choice.clone())?,
+        })
     }
 
     fn extract_system_messages(req: &CompletionRequest) -> Option<String> {
@@ -991,7 +1007,7 @@ impl ProviderPort for AnthropicProvider {
             max_tokens: req.max_tokens.or(Some(4096)), // SC-08: default max_tokens
             temperature: req.temperature,
             tools: Self::normalize_tools(req.tools.clone()),
-            tool_choice: Self::normalize_tool_choice(req.tool_choice.clone()),
+            tool_choice: Self::normalize_tool_choice(req.tool_choice.clone())?,
         };
 
         let start = std::time::Instant::now();
@@ -1094,7 +1110,7 @@ impl ProviderPort for AnthropicProvider {
         &self,
         req: &CompletionRequest,
     ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
-        let body = Self::build_stream_request(req);
+        let body = Self::build_stream_request(req)?;
         let resp = self.send_stream_request(&body).await?;
 
         // Check HTTP status before processing the stream
