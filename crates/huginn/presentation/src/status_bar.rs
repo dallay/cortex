@@ -9,6 +9,15 @@ pub enum Activity {
     Approval,
 }
 
+/// Picks the narrow or the full label for the same state.
+fn compact_label<'a>(narrow: bool, short: &'a str, full: &'a str) -> &'a str {
+    if narrow {
+        short
+    } else {
+        full
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StatusSnapshot {
     pub notice: String,
@@ -117,27 +126,9 @@ impl StatusBar {
     pub fn summary(&self, width: u16) -> String {
         let narrow = width < 60;
         let activity = match self.activity {
-            Activity::Idle => {
-                if narrow {
-                    "I"
-                } else {
-                    "Idle"
-                }
-            }
-            Activity::Busy => {
-                if narrow {
-                    "B"
-                } else {
-                    "Busy"
-                }
-            }
-            Activity::Approval => {
-                if narrow {
-                    "A"
-                } else {
-                    "Approval"
-                }
-            }
+            Activity::Idle => compact_label(narrow, "I", "Idle"),
+            Activity::Busy => compact_label(narrow, "B", "Busy"),
+            Activity::Approval => compact_label(narrow, "A", "Approval"),
         };
         let selection = self
             .connection
@@ -149,39 +140,16 @@ impl StatusBar {
             |selection| {
                 let mode = match selection.mode {
                     SelectionMode::Managed(huginn_core::connections::SecretMode::Secure) => {
-                        if narrow {
-                            "S"
-                        } else {
-                            "Secure"
-                        }
+                        compact_label(narrow, "S", "Secure")
                     }
                     SelectionMode::Managed(huginn_core::connections::SecretMode::Ephemeral) => {
-                        if narrow {
-                            "E"
-                        } else {
-                            "Ephemeral"
-                        }
+                        compact_label(narrow, "E", "Ephemeral")
                     }
-                    SelectionMode::Unmanaged => {
-                        if narrow {
-                            "U"
-                        } else {
-                            "Unmanaged"
-                        }
-                    }
-                    SelectionMode::Legacy => {
-                        if narrow {
-                            "L"
-                        } else {
-                            "Legacy"
-                        }
-                    }
+                    SelectionMode::Unmanaged => compact_label(narrow, "U", "Unmanaged"),
+                    SelectionMode::Legacy => compact_label(narrow, "L", "Legacy"),
                 };
-                let budget = if narrow {
-                    usize::from(width).saturating_sub(10) / 2
-                } else {
-                    usize::from(width).saturating_sub(34) / 2
-                };
+                let reserved = if narrow { 10 } else { 34 };
+                let budget = usize::from(width).saturating_sub(reserved) / 2;
                 format!(
                     "{}/{} {mode}",
                     clip(&selection.provider, budget),
@@ -190,11 +158,7 @@ impl StatusBar {
             },
         );
         let error = if self.diagnostic {
-            if narrow {
-                "!"
-            } else {
-                "ERROR "
-            }
+            compact_label(narrow, "!", "ERROR ")
         } else {
             ""
         };
