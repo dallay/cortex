@@ -151,153 +151,12 @@ impl ResponsesRequest {
                     return Err("input requiere entre 1 y 1024 elementos".into());
                 }
                 for item in items {
-                    match item {
-                        InputItem::Message(message) => {
-                            validate_replay(&message.id, &message.status)?;
-                            if message.kind.as_deref().is_some_and(|t| t != "message")
-                                || !matches!(
-                                    message.role.as_str(),
-                                    "user" | "assistant" | "system" | "developer"
-                                )
-                            {
-                                return Err("Tipo o rol de mensaje no soportado".into());
-                            }
-                            let text = match message.content {
-                                TextContent::Text(text) => text,
-                                TextContent::Parts(parts) => {
-                                    let mut text = String::new();
-                                    for part in parts {
-                                        if !(part.kind == "input_text"
-                                            || (message.role == "assistant"
-                                                && part.kind == "output_text"))
-                                            || part.annotations.is_some_and(|a| !a.is_empty())
-                                            || part.logprobs.is_some_and(|a| !a.is_empty())
-                                        {
-                                            return Err(
-                                                "Solo se admiten partes de texto sin anotaciones"
-                                                    .into(),
-                                            );
-                                        }
-                                        text.push_str(&part.text);
-                                    }
-                                    text
-                                }
-                            };
-                            // Una llamada pendiente y su texto intercalado pertenecen
-                            // al mismo turno; resultados u otros roles lo delimitan.
-                            if message.role == "assistant"
-                                && messages.last().is_some_and(|m| {
-                                    m.role == "assistant" && !m.tool_calls.is_empty()
-                                })
-                            {
-                                let pending =
-                                    messages.last_mut().ok_or("Falta el mensaje assistant")?;
-                                if let Value::String(content) = &mut pending.content {
-                                    content.push_str(&text);
-                                }
-                            } else {
-                                messages.push(text_message(&message.role, text));
-                            }
-                        }
-                        InputItem::Call(call) => {
-                            validate_replay(&call.id, &call.status)?;
-                            let arguments: Value =
-                                serde_json::from_str(&call.arguments).map_err(|_| {
-                                    "Los argumentos de función deben ser un objeto JSON".to_string()
-                                })?;
-                            if call.kind != "function_call"
-                                || !valid_id(&call.call_id)
-                                || !valid_name(&call.name)
-                                || !arguments.is_object()
-                                || !calls.insert(call.call_id.clone())
-                            {
-                                return Err("Llamada de función inválida o duplicada".into());
-                            }
-                            if !messages
-                                .last()
-                                .is_some_and(|message| message.role == "assistant")
-                            {
-                                messages.push(text_message("assistant", String::new()));
-                            }
-                            let message =
-                                messages.last_mut().ok_or("Falta el mensaje assistant")?;
-                            message.tool_calls.push(OpenAIToolCall {
-                                id: call.call_id,
-                                call_type: "function".into(),
-                                function: OpenAIFunctionCall {
-                                    name: call.name,
-                                    arguments: call.arguments,
-                                },
-                            });
-                        }
-                        InputItem::Result(result) => {
-                            validate_replay(&result.id, &result.status)?;
-                            if result.kind != "function_call_output"
-                                || !calls.contains(&result.call_id)
-                                || !results.insert(result.call_id.clone())
-                            {
-                                return Err(
-                                    "Resultado de función sin llamada previa o duplicado".into()
-                                );
-                            }
-                            let mut message = text_message("tool", result.output);
-                            message.tool_call_id = Some(result.call_id);
-                            messages.push(message);
-                        }
-                    }
+                    push_input_item(&mut messages, item, &mut calls, &mut results)?;
                 }
             }
         }
-        let mut names = HashSet::new();
-        let tools = if let Some(tools) = self.tools {
-            if tools.len() > 64 {
-                return Err("Se admiten hasta 64 funciones".into());
-            }
-            let mut normalized = vec![];
-            for tool in tools {
-                if tool.kind != "function"
-                    || !valid_name(&tool.name)
-                    || tool.strict == Some(true)
-                    || !tool.parameters.is_object()
-                    || tool.parameters["type"] != "object"
-                    || !names.insert(tool.name.clone())
-                {
-                    return Err("Función no soportada: requiere nombre único, parameters de objeto y strict:false".into());
-                }
-                let mut function = json!({"name":tool.name,"parameters":tool.parameters});
-                if let Some(description) = tool.description {
-                    function["description"] = json!(description);
-                }
-                normalized.push(json!({"type":"function","function":function}));
-            }
-            Some(Value::Array(normalized))
-        } else {
-            None
-        };
-        let tool_choice = match self.tool_choice {
-            None => None,
-            Some(Value::String(choice))
-                if matches!(choice.as_str(), "auto" | "none" | "required") =>
-            {
-                if choice == "required" && names.is_empty() {
-                    return Err("tool_choice requiere funciones".into());
-                }
-                Some(json!(choice))
-            }
-            Some(Value::Object(choice))
-                if choice.len() == 2 && choice.get("type") == Some(&json!("function")) =>
-            {
-                let name = choice
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .ok_or("tool_choice inválido")?;
-                if !names.contains(name) {
-                    return Err("tool_choice debe seleccionar una función declarada".into());
-                }
-                Some(json!({"type":"function", "function":{"name":name}}))
-            }
-            _ => return Err("tool_choice no soportado".into()),
-        };
+        let (tools, names) = normalize_tools(self.tools)?;
+        let tool_choice = normalize_tool_choice(self.tool_choice, &names)?;
         let mut request = CompletionRequest::from(OpenAIChatRequest {
             model: self.model,
             messages,
@@ -313,6 +172,188 @@ impl ResponsesRequest {
         request.metadata.origin = "responses".into();
         request.metadata.cacheable = false;
         Ok(request)
+    }
+}
+
+/// Appends one replayed input item, rejecting unsupported or duplicated identities.
+fn push_input_item(
+    messages: &mut Vec<OpenAIMessage>,
+    item: InputItem,
+    calls: &mut HashSet<String>,
+    results: &mut HashSet<String>,
+) -> Result<(), String> {
+    match item {
+        InputItem::Message(message) => push_replayed_message(messages, message),
+        InputItem::Call(call) => push_replayed_call(messages, call, calls),
+        InputItem::Result(result) => push_replayed_result(messages, result, calls, results),
+    }
+}
+
+fn push_replayed_message(
+    messages: &mut Vec<OpenAIMessage>,
+    message: InputMessage,
+) -> Result<(), String> {
+    validate_replay(&message.id, &message.status)?;
+    if message.kind.as_deref().is_some_and(|t| t != "message")
+        || !matches!(
+            message.role.as_str(),
+            "user" | "assistant" | "system" | "developer"
+        )
+    {
+        return Err("Tipo o rol de mensaje no soportado".into());
+    }
+    let text = message_text(&message.role, message.content)?;
+    // Una llamada pendiente y su texto intercalado pertenecen
+    // al mismo turno; resultados u otros roles lo delimitan.
+    if message.role == "assistant"
+        && messages
+            .last()
+            .is_some_and(|m| m.role == "assistant" && !m.tool_calls.is_empty())
+    {
+        let pending = messages.last_mut().ok_or("Falta el mensaje assistant")?;
+        if let Value::String(content) = &mut pending.content {
+            content.push_str(&text);
+        }
+    } else {
+        messages.push(text_message(&message.role, text));
+    }
+    Ok(())
+}
+
+/// Flattens the message content, accepting only annotation-free text parts.
+fn message_text(role: &str, content: TextContent) -> Result<String, String> {
+    match content {
+        TextContent::Text(text) => Ok(text),
+        TextContent::Parts(parts) => {
+            let mut text = String::new();
+            for part in parts {
+                if !(part.kind == "input_text"
+                    || (role == "assistant" && part.kind == "output_text"))
+                    || part.annotations.is_some_and(|a| !a.is_empty())
+                    || part.logprobs.is_some_and(|a| !a.is_empty())
+                {
+                    return Err("Solo se admiten partes de texto sin anotaciones".into());
+                }
+                text.push_str(&part.text);
+            }
+            Ok(text)
+        }
+    }
+}
+
+fn push_replayed_call(
+    messages: &mut Vec<OpenAIMessage>,
+    call: FunctionCall,
+    calls: &mut HashSet<String>,
+) -> Result<(), String> {
+    validate_replay(&call.id, &call.status)?;
+    let arguments: Value = serde_json::from_str(&call.arguments)
+        .map_err(|_| "Los argumentos de función deben ser un objeto JSON".to_string())?;
+    if call.kind != "function_call"
+        || !valid_id(&call.call_id)
+        || !valid_name(&call.name)
+        || !arguments.is_object()
+        || !calls.insert(call.call_id.clone())
+    {
+        return Err("Llamada de función inválida o duplicada".into());
+    }
+    if !messages
+        .last()
+        .is_some_and(|message| message.role == "assistant")
+    {
+        messages.push(text_message("assistant", String::new()));
+    }
+    let message = messages.last_mut().ok_or("Falta el mensaje assistant")?;
+    message.tool_calls.push(OpenAIToolCall {
+        id: call.call_id,
+        call_type: "function".into(),
+        function: OpenAIFunctionCall {
+            name: call.name,
+            arguments: call.arguments,
+        },
+    });
+    Ok(())
+}
+
+fn push_replayed_result(
+    messages: &mut Vec<OpenAIMessage>,
+    result: FunctionResult,
+    calls: &HashSet<String>,
+    results: &mut HashSet<String>,
+) -> Result<(), String> {
+    validate_replay(&result.id, &result.status)?;
+    if result.kind != "function_call_output"
+        || !calls.contains(&result.call_id)
+        || !results.insert(result.call_id.clone())
+    {
+        return Err("Resultado de función sin llamada previa o duplicado".into());
+    }
+    let mut message = text_message("tool", result.output);
+    message.tool_call_id = Some(result.call_id);
+    messages.push(message);
+    Ok(())
+}
+
+/// Normalizes the declared functions and returns the names they declare.
+fn normalize_tools(
+    tools: Option<Vec<FunctionTool>>,
+) -> Result<(Option<Value>, HashSet<String>), String> {
+    let mut names = HashSet::new();
+    let Some(tools) = tools else {
+        return Ok((None, names));
+    };
+    if tools.len() > 64 {
+        return Err("Se admiten hasta 64 funciones".into());
+    }
+    let mut normalized = vec![];
+    for tool in tools {
+        if tool.kind != "function"
+            || !valid_name(&tool.name)
+            || tool.strict == Some(true)
+            || !tool.parameters.is_object()
+            || tool.parameters["type"] != "object"
+            || !names.insert(tool.name.clone())
+        {
+            return Err(
+                "Función no soportada: requiere nombre único, parameters de objeto y strict:false"
+                    .into(),
+            );
+        }
+        let mut function = json!({"name":tool.name,"parameters":tool.parameters});
+        if let Some(description) = tool.description {
+            function["description"] = json!(description);
+        }
+        normalized.push(json!({"type":"function","function":function}));
+    }
+    Ok((Some(Value::Array(normalized)), names))
+}
+
+/// Accepts only the tool_choice shapes this transport can honor.
+fn normalize_tool_choice(
+    tool_choice: Option<Value>,
+    names: &HashSet<String>,
+) -> Result<Option<Value>, String> {
+    match tool_choice {
+        None => Ok(None),
+        Some(Value::String(choice)) if matches!(choice.as_str(), "auto" | "none" | "required") => {
+            if choice == "required" && names.is_empty() {
+                return Err("tool_choice requiere funciones".into());
+            }
+            Ok(Some(json!(choice)))
+        }
+        Some(Value::Object(choice))
+            if choice.len() == 2 && choice.get("type") == Some(&json!("function")) =>
+        {
+            let name = choice
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or("tool_choice inválido")?;
+            if !names.contains(name) {
+                return Err("tool_choice debe seleccionar una función declarada".into());
+            }
+            Ok(Some(json!({"type":"function", "function":{"name":name}})))
+        }
+        _ => Err("tool_choice no soportado".into()),
     }
 }
 

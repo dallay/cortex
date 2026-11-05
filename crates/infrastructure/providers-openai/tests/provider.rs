@@ -146,82 +146,116 @@ async fn responses_tool_id_type_matrix_retains_usage_and_legacy_rejection() {
         json!({"nested":[{}, []]}),
     ] {
         for stream in [false, true] {
-            let server = wiremock::MockServer::start().await;
-            let call = json!({"index":0,"id":id,"function":{"name":"lookup","arguments":"{}"}});
-            let usage = json!({"prompt_tokens":3,"completion_tokens":2,"total_tokens":5});
-            // A nonterminal frame exposes normalization without finish-time validation.
-            let body = if stream {
-                format!(
-                    "data: {}\n\n",
-                    json!({"model":"gpt-4","choices":[{"delta":{"tool_calls":[call]},"finish_reason":null}],"usage":usage})
-                )
-            } else {
-                json!({"model":"gpt-4","choices":[{"message":{"tool_calls":[call]},"finish_reason":"tool_calls"}],"usage":usage}).to_string()
-            };
-            wiremock::Mock::given(wiremock::matchers::method("POST"))
-                .respond_with(wiremock::ResponseTemplate::new(200).set_body_raw(
-                    body,
-                    if stream {
-                        "text/event-stream"
-                    } else {
-                        "application/json"
-                    },
-                ))
-                .mount(&server)
-                .await;
-            let provider = OpenAIProvider::new(OpenAIProviderConfig {
-                id: ProviderId::new("openai-test"),
-                api_key: "test".into(),
-                base_url: server.uri(),
-                models: vec![ModelId::new("gpt-4")],
-                timeout_secs: 10,
-            })
-            .unwrap();
-            for origin in ["responses", "openai", "anthropic"] {
-                let mut req = stream_request();
-                req.stream = stream;
-                req.metadata.origin = origin.into();
-                if stream {
-                    let chunks = provider
-                        .stream(&req)
-                        .await
-                        .unwrap()
-                        .collect::<Vec<_>>()
-                        .await;
-                    if id.as_str().is_some_and(|id| id.len() > 256) {
-                        assert!(chunks[0].is_err());
-                        continue;
-                    }
-                    if origin != "responses" && !id.is_string() && !id.is_null() {
-                        assert!(chunks[0].is_err());
-                        continue;
-                    }
-                    let chunk = chunks[0].as_ref().unwrap();
-                    assert_eq!(chunk.usage.as_ref().unwrap().total_tokens, 5);
-                    assert_eq!(
-                        chunk.tool_calls[0].id.as_deref(),
-                        if id.is_null() {
-                            None
-                        } else {
-                            Some(id.as_str().unwrap_or_default())
-                        }
-                    );
-                } else {
-                    let response = provider.complete(&req).await;
-                    if origin != "responses" && !id.is_string() {
-                        assert!(response.is_err());
-                        continue;
-                    }
-                    let response = response.unwrap();
-                    assert_eq!(
-                        response.tool_calls[0].id.as_deref(),
-                        Some(id.as_str().unwrap_or_default())
-                    );
-                    assert_eq!(response.usage.total_tokens, 5);
-                }
-            }
+            assert_tool_id_case(&id, stream).await;
         }
     }
+}
+
+/// Every origin must agree on one tool-call identity for the same provider payload.
+async fn assert_tool_id_case(id: &serde_json::Value, stream: bool) {
+    use serde_json::json;
+    let server = wiremock::MockServer::start().await;
+    let call = json!({"index":0,"id":id,"function":{"name":"lookup","arguments":"{}"}});
+    let usage = json!({"prompt_tokens":3,"completion_tokens":2,"total_tokens":5});
+    // A nonterminal frame exposes normalization without finish-time validation.
+    let body = if stream {
+        format!(
+            "data: {}\n\n",
+            json!({"model":"gpt-4","choices":[{"delta":{"tool_calls":[call]},"finish_reason":null}],"usage":usage})
+        )
+    } else {
+        json!({"model":"gpt-4","choices":[{"message":{"tool_calls":[call]},"finish_reason":"tool_calls"}],"usage":usage}).to_string()
+    };
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_raw(
+            body,
+            if stream {
+                "text/event-stream"
+            } else {
+                "application/json"
+            },
+        ))
+        .mount(&server)
+        .await;
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("openai-test"),
+        api_key: "test".into(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+    for origin in ["responses", "openai", "anthropic"] {
+        assert_tool_id_for_origin(&provider, id, stream, origin).await;
+    }
+}
+
+/// One origin's expectation for the same wire payload.
+async fn assert_tool_id_for_origin(
+    provider: &OpenAIProvider,
+    id: &serde_json::Value,
+    stream: bool,
+    origin: &str,
+) {
+    let mut req = stream_request();
+    req.stream = stream;
+    req.metadata.origin = origin.into();
+    if stream {
+        assert_streamed_tool_id(provider, id, origin, &req).await;
+    } else {
+        assert_completed_tool_id(provider, id, origin, &req).await;
+    }
+}
+
+async fn assert_streamed_tool_id(
+    provider: &OpenAIProvider,
+    id: &serde_json::Value,
+    origin: &str,
+    req: &CompletionRequest,
+) {
+    let chunks = provider
+        .stream(req)
+        .await
+        .unwrap()
+        .collect::<Vec<_>>()
+        .await;
+    if id.as_str().is_some_and(|id| id.len() > 256) {
+        assert!(chunks[0].is_err());
+        return;
+    }
+    if origin != "responses" && !id.is_string() && !id.is_null() {
+        assert!(chunks[0].is_err());
+        return;
+    }
+    let chunk = chunks[0].as_ref().unwrap();
+    assert_eq!(chunk.usage.as_ref().unwrap().total_tokens, 5);
+    assert_eq!(
+        chunk.tool_calls[0].id.as_deref(),
+        if id.is_null() {
+            None
+        } else {
+            Some(id.as_str().unwrap_or_default())
+        }
+    );
+}
+
+async fn assert_completed_tool_id(
+    provider: &OpenAIProvider,
+    id: &serde_json::Value,
+    origin: &str,
+    req: &CompletionRequest,
+) {
+    let response = provider.complete(req).await;
+    if origin != "responses" && !id.is_string() {
+        assert!(response.is_err());
+        return;
+    }
+    let response = response.unwrap();
+    assert_eq!(
+        response.tool_calls[0].id.as_deref(),
+        Some(id.as_str().unwrap_or_default())
+    );
+    assert_eq!(response.usage.total_tokens, 5);
 }
 
 #[tokio::test]

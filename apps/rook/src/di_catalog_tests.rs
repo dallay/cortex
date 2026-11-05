@@ -1,6 +1,6 @@
 use super::{
     Arc, ConnectionId, CortexResult, DecryptedCredentials, DynamicProviderBuilder, ModelId,
-    ProviderBuildInput, ProviderId, ProviderKind, StaticModelCatalog,
+    ProviderBuildInput, ProviderBuilderPort, ProviderId, ProviderKind, StaticModelCatalog,
 };
 use async_trait::async_trait;
 use rook_core::{CapabilityState, ModelDeclaration, OAuthTokenPort};

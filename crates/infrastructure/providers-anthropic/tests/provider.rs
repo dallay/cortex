@@ -5,7 +5,7 @@ use providers_anthropic::{
 use reqwest::header::{HeaderMap, HeaderValue};
 use rook_core::{
     ApiKeyRestrictions, CompletionRequest, FinishReason, HealthStatus, MessageContent, ModelId,
-    ProviderPort, RequestMetadata, Role,
+    ProviderPort, RequestMetadata, Role, TokenUsage,
 };
 use shared_kernel::{ProviderId, RequestId};
 use wiremock::matchers::{method, path};
@@ -317,74 +317,102 @@ async fn responses_late_usage_does_not_repeat_tools_or_finish() {
 async fn responses_missing_or_unknown_finish_keeps_usage_without_inventing_stop() {
     for reason in [None, Some("unknown")] {
         for stream in [false, true] {
-            let server = MockServer::start().await;
-            let mut delta = serde_json::json!({});
-            if let Some(reason) = reason {
-                delta["stop_reason"] = serde_json::json!(reason);
-            }
-            let mut body = serde_json::json!({"model":"claude-3-5-sonnet","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":3,"output_tokens":2}});
-            if let Some(reason) = reason {
-                body["stop_reason"] = serde_json::json!(reason);
-            }
-            let template = if stream {
-                ResponseTemplate::new(200).set_body_string(format!(
-                    "data: {{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{{\"type\":\"text_delta\",\"text\":\"hi\"}}}}\n\ndata: {}\n\n",
-                    serde_json::json!({"type":"message_delta","delta":delta,"usage":{"input_tokens":3,"output_tokens":2}})
-                ))
-            } else {
-                ResponseTemplate::new(200).set_body_json(body)
-            };
-            Mock::given(method("POST"))
-                .and(path("/v1/messages"))
-                .respond_with(template)
-                .mount(&server)
-                .await;
-            for origin in ["responses", "openai", "anthropic"] {
-                let mut req = make_test_request("claude-3-5-sonnet");
-                req.metadata.origin = origin.into();
-                req.stream = stream;
-                let (finish, usage) = if stream {
-                    let chunks = test_provider(&server)
-                        .stream(&req)
-                        .await
-                        .unwrap()
-                        .collect::<Vec<_>>()
-                        .await;
-                    if origin == "responses" && reason.is_some() {
-                        let error = chunks.last().unwrap().as_ref().unwrap_err();
-                        assert_eq!(
-                            rook_core::StreamValidationError::usage(error)
-                                .unwrap()
-                                .total_tokens,
-                            5
-                        );
-                        continue;
-                    }
-                    let chunks = chunks.into_iter().collect::<Result<Vec<_>, _>>().unwrap();
-                    let last = chunks.last().unwrap();
-                    // Legacy parsing skipped message_delta when stop_reason was absent.
-                    if origin != "responses" && reason.is_none() {
-                        assert!(last.usage.is_none());
-                        continue;
-                    }
-                    (
-                        last.finish_reason,
-                        last.usage.clone().expect("terminal usage"),
-                    )
-                } else {
-                    let response = test_provider(&server).complete(&req).await.unwrap();
-                    assert_eq!(response.content, "hi");
-                    (response.finish_reason, response.usage)
-                };
-                assert_eq!(
-                    finish,
-                    (origin != "responses").then_some(FinishReason::Stop),
-                    "origin={origin}, reason={reason:?}, stream={stream}"
-                );
-                assert_eq!(usage.total_tokens, 5);
-            }
+            assert_missing_finish_keeps_usage(reason, stream).await;
         }
     }
+}
+
+/// One (stop_reason, transport) pair served for every origin.
+async fn assert_missing_finish_keeps_usage(reason: Option<&str>, stream: bool) {
+    let server = MockServer::start().await;
+    let mut delta = serde_json::json!({});
+    if let Some(reason) = reason {
+        delta["stop_reason"] = serde_json::json!(reason);
+    }
+    let mut body = serde_json::json!({"model":"claude-3-5-sonnet","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":3,"output_tokens":2}});
+    if let Some(reason) = reason {
+        body["stop_reason"] = serde_json::json!(reason);
+    }
+    let template = if stream {
+        ResponseTemplate::new(200).set_body_string(format!(
+            "data: {{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{{\"type\":\"text_delta\",\"text\":\"hi\"}}}}\n\ndata: {}\n\n",
+            serde_json::json!({"type":"message_delta","delta":delta,"usage":{"input_tokens":3,"output_tokens":2}})
+        ))
+    } else {
+        ResponseTemplate::new(200).set_body_json(body)
+    };
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(template)
+        .mount(&server)
+        .await;
+    for origin in ["responses", "openai", "anthropic"] {
+        assert_missing_finish_for_origin(&server, reason, stream, origin).await;
+    }
+}
+
+/// One origin's finish reason and usage for the same served payload.
+async fn assert_missing_finish_for_origin(
+    server: &MockServer,
+    reason: Option<&str>,
+    stream: bool,
+    origin: &str,
+) {
+    let mut req = make_test_request("claude-3-5-sonnet");
+    req.metadata.origin = origin.into();
+    req.stream = stream;
+    let observed = if stream {
+        streamed_finish_and_usage(server, reason, origin, &req).await
+    } else {
+        let response = test_provider(server).complete(&req).await.unwrap();
+        assert_eq!(response.content, "hi");
+        Some((response.finish_reason, response.usage))
+    };
+    let Some((finish, usage)) = observed else {
+        return;
+    };
+    assert_eq!(
+        finish,
+        (origin != "responses").then_some(FinishReason::Stop),
+        "origin={origin}, reason={reason:?}, stream={stream}"
+    );
+    assert_eq!(usage.total_tokens, 5);
+}
+
+/// Streamed finish reason and usage, or `None` when the expectation was already asserted.
+async fn streamed_finish_and_usage(
+    server: &MockServer,
+    reason: Option<&str>,
+    origin: &str,
+    req: &CompletionRequest,
+) -> Option<(Option<FinishReason>, TokenUsage)> {
+    let chunks = test_provider(server)
+        .stream(req)
+        .await
+        .unwrap()
+        .collect::<Vec<_>>()
+        .await;
+    if origin == "responses" && reason.is_some() {
+        let error = chunks.last().unwrap().as_ref().unwrap_err();
+        assert_eq!(
+            rook_core::StreamValidationError::usage(error)
+                .unwrap()
+                .total_tokens,
+            5
+        );
+        return None;
+    }
+    let chunks = chunks.into_iter().collect::<Result<Vec<_>, _>>().unwrap();
+    let last = chunks.last().unwrap();
+    // Legacy parsing skipped message_delta when stop_reason was absent.
+    if origin != "responses" && reason.is_none() {
+        assert!(last.usage.is_none());
+        return None;
+    }
+    Some((
+        last.finish_reason,
+        last.usage.clone().expect("terminal usage"),
+    ))
 }
 
 #[tokio::test]
