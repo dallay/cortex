@@ -279,7 +279,6 @@ pub struct RoutingConfig {
 pub enum StrategyConfig {
     Priority,
     RoundRobin,
-    ModelBased,
 }
 
 impl From<StrategyConfig> for RoutingStrategy {
@@ -287,7 +286,6 @@ impl From<StrategyConfig> for RoutingStrategy {
         match s {
             StrategyConfig::Priority => RoutingStrategy::Priority,
             StrategyConfig::RoundRobin => RoutingStrategy::RoundRobin,
-            StrategyConfig::ModelBased => RoutingStrategy::ModelBased,
         }
     }
 }
@@ -606,6 +604,27 @@ impl RookConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The routing strategy surface is exactly {priority, round-robin};
+    /// every other value must be rejected at parse time.
+    #[test]
+    fn routing_strategy_accepts_exactly_priority_and_round_robin() {
+        let accepted = ["priority", "round-robin"];
+        for value in accepted {
+            let parsed: Result<StrategyConfig, _> =
+                serde::Deserialize::deserialize(serde_json::Value::String(value.into()));
+            assert!(parsed.is_ok(), "{value} must be a configurable strategy");
+        }
+        let rejected = ["model-based", "weighted-random", "auto", "least-latency"];
+        for value in rejected {
+            let parsed: Result<StrategyConfig, _> =
+                serde::Deserialize::deserialize(serde_json::Value::String(value.into()));
+            assert!(
+                parsed.is_err(),
+                "{value} must not be a configurable strategy"
+            );
+        }
+    }
 
     #[test]
     fn default_config_path_lives_under_the_cortex_home() {
