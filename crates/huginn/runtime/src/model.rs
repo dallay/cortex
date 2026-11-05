@@ -99,19 +99,27 @@ fn transport_builder(
     Ok(builder)
 }
 
-/// Whether the failure came from the TLS handshake rather than the network.
+/// Whether the failure identifies a permanent TLS configuration or protocol problem.
 ///
 /// `reqwest` exposes no typed TLS cause, and a certificate failure also reports as
-/// `is_connect()`, so the cause chain is the only signal available. The heuristic is safe in
-/// both directions: a false negative costs only bounded retries of a connection that never
-/// opens, while a false positive refuses to retry a configuration error.
+/// `is_connect()`, so inspect specific cause descriptions. Generic TLS and handshake errors
+/// include transient network failures such as an EOF and must remain retryable.
 fn is_tls_failure(error: &reqwest::Error) -> bool {
     let mut cause = std::error::Error::source(error);
     while let Some(error) = cause {
         let detail = error.to_string().to_ascii_lowercase();
-        if ["certificate", "handshake", "tls"]
-            .iter()
-            .any(|marker| detail.contains(marker))
+        if [
+            "certificate",
+            "received fatal alert: unknownca",
+            "peer is incompatible",
+            "received corrupt message of type invalidcontenttype",
+            "received corrupt message of type unknownprotocolversion",
+            "received fatal alert: protocolversion",
+            "received fatal alert: noapplicationprotocol",
+            "peer doesn't support any known protocol",
+        ]
+        .iter()
+        .any(|marker| detail.contains(marker))
         {
             return true;
         }
@@ -125,9 +133,9 @@ fn is_tls_failure(error: &reqwest::Error) -> bool {
 ///
 /// A timeout is always worth repeating, because the connection may simply be slow. A refused
 /// or reset connection, and a body that failed to upload, are transport conditions that may
-/// clear on their own. A TLS handshake or certificate failure never will: the endpoint or the
-/// configuration is wrong, so repeating it only burns the retry budget. Redirect and client
-/// builder failures describe the request itself and are permanent for the same reason.
+/// clear on their own, including an EOF during a TLS handshake. Certificate and protocol
+/// incompatibility failures indicate an endpoint or configuration problem. Redirect and
+/// client builder failures describe the request itself and are also permanent.
 fn is_transient_request(error: &reqwest::Error) -> bool {
     if error.is_timeout() {
         return true;
