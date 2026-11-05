@@ -22,7 +22,7 @@ use huginn_core::{AgentError, CancellationToken, Result, Session};
 use ratatui::{
     backend::{Backend, ClearType, CrosstermBackend, WindowSize},
     buffer::Cell,
-    layout::{Constraint, Layout, Position, Size},
+    layout::{Constraint, Layout, Position, Rect, Size},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, List, ListItem, ListState, Paragraph},
@@ -797,7 +797,6 @@ impl Driver {
     }
 
     fn render_frame(frame: &mut Frame, view: &View) -> usize {
-        let mut last_scroll = 0;
         // Reserve the bar before any overlay's early return.
         let [area, status] =
             Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
@@ -809,303 +808,347 @@ impl Driver {
             }),
             status,
         );
-        if let Some(OverlayView::Help(scroll)) = &view.overlay {
-            let lines = wrapped(HELP, area.width.saturating_sub(2));
-            let height = usize::from(area.height.saturating_sub(2));
-            let scroll = (*scroll).min(lines.len().saturating_sub(height));
-            let visible = lines
-                .into_iter()
-                .skip(scroll)
-                .take(height)
-                .collect::<Vec<_>>();
-            frame.render_widget(
-                Paragraph::new(visible.join("\n"))
-                    .block(Block::bordered().title("Help — Esc closes")),
-                area,
-            );
-            return last_scroll;
+        if let Some(overlay @ OverlayView::Help(..)) = &view.overlay {
+            return Self::render_help(frame, area, overlay);
         }
-        if let Some(OverlayView::Approval(preview, number, code, typed, scroll)) = &view.overlay {
-            let [body, footer] =
-                Layout::vertical([Constraint::Min(1), Constraint::Length(2)]).areas(area);
-            let lines = wrapped(preview, body.width.saturating_sub(2));
-            let last = lines
-                .len()
-                .saturating_sub(usize::from(body.height.saturating_sub(2)));
-            last_scroll = last;
-            let visible: Vec<_> = lines
-                .into_iter()
-                .skip((*scroll).min(last))
-                .take(usize::from(body.height.saturating_sub(2)))
-                .collect();
-            frame.render_widget(
-                Paragraph::new(visible.join("\n")).block(
-                    Block::bordered()
-                        .title(format!("Permission #{} — full preview (PgUp/PgDn)", number)),
-                ),
-                body,
-            );
-            let instructions = if footer.width < 42 {
-                format!("Approve: {code}\nCode: {typed}")
-            } else {
-                format!("Type {code} then Enter to approve; Esc denies\nConfirmation: {typed}")
-            };
-            frame.render_widget(Paragraph::new(instructions), footer);
-            return last_scroll;
+        if let Some(overlay @ OverlayView::Approval(..)) = &view.overlay {
+            return Self::render_approval(frame, area, overlay);
         }
-        if let Some(OverlayView::Workflow(
-            title,
+        if let Some(overlay @ OverlayView::Workflow(..)) = &view.overlay {
+            return Self::render_workflow(frame, area, overlay);
+        }
+        if let Some(overlay @ OverlayView::Settings(..)) = &view.overlay {
+            return Self::render_settings(frame, area, overlay);
+        }
+        if let Some(overlay @ OverlayView::Dialog(..)) = &view.overlay {
+            return Self::render_dialog(frame, area, overlay);
+        }
+        Self::render_main(frame, area, view)
+    }
+
+    /// Renders the help overlay and returns the scroll position it owns.
+    fn render_help(frame: &mut Frame, area: Rect, overlay: &OverlayView) -> usize {
+        let OverlayView::Help(scroll) = overlay else {
+            return 0;
+        };
+
+        let lines = wrapped(HELP, area.width.saturating_sub(2));
+        let height = usize::from(area.height.saturating_sub(2));
+        let scroll = (*scroll).min(lines.len().saturating_sub(height));
+        let visible = lines
+            .into_iter()
+            .skip(scroll)
+            .take(height)
+            .collect::<Vec<_>>();
+        frame.render_widget(
+            Paragraph::new(visible.join("\n")).block(Block::bordered().title("Help — Esc closes")),
+            area,
+        );
+        0
+    }
+
+    /// Renders the approval overlay and returns the scroll position it owns.
+    fn render_approval(frame: &mut Frame, area: Rect, overlay: &OverlayView) -> usize {
+        let OverlayView::Approval(preview, number, code, typed, scroll) = overlay else {
+            return 0;
+        };
+
+        let [body, footer] =
+            Layout::vertical([Constraint::Min(1), Constraint::Length(2)]).areas(area);
+        let lines = wrapped(preview, body.width.saturating_sub(2));
+        let last = lines
+            .len()
+            .saturating_sub(usize::from(body.height.saturating_sub(2)));
+        let scroll_state = last;
+        let visible: Vec<_> = lines
+            .into_iter()
+            .skip((*scroll).min(last))
+            .take(usize::from(body.height.saturating_sub(2)))
+            .collect();
+        frame.render_widget(
+            Paragraph::new(visible.join("\n")).block(
+                Block::bordered()
+                    .title(format!("Permission #{} — full preview (PgUp/PgDn)", number)),
+            ),
             body,
-            fields,
-            selected,
-            pending,
-            error,
-            search,
-            searching,
-        )) = &view.overlay
-        {
-            let [heading, content, footer] = Layout::vertical([
-                Constraint::Length(2),
-                Constraint::Min(1),
-                Constraint::Length(2),
-            ])
-            .areas(area);
-            let rows = usize::from(content.height.saturating_sub(2)).max(1);
-            // A single-row viewport cannot show the error and the selected
-            // option. The heading carries the error so the option never leaves
-            // the viewport.
-            let cramped = rows < 2;
-            let mut title = safe(title);
-            let mut heading_text = safe(body);
-            if let Some(message) = error {
-                if cramped {
-                    // The block title is truncated in a cramped viewport, so
-                    // the message moves to the heading and the title only
-                    // marks the failure.
-                    title = format!("⚠ {title}");
-                    heading_text = safe(message);
-                }
+        );
+        let instructions = if footer.width < 42 {
+            format!("Approve: {code}\nCode: {typed}")
+        } else {
+            format!("Type {code} then Enter to approve; Esc denies\nConfirmation: {typed}")
+        };
+        frame.render_widget(Paragraph::new(instructions), footer);
+        scroll_state
+    }
+
+    /// Renders the workflow overlay and returns the scroll position it owns.
+    fn render_workflow(frame: &mut Frame, area: Rect, overlay: &OverlayView) -> usize {
+        let OverlayView::Workflow(title, body, fields, selected, pending, error, search, searching) =
+            overlay
+        else {
+            return 0;
+        };
+
+        let [heading, content, footer] = Layout::vertical([
+            Constraint::Length(2),
+            Constraint::Min(1),
+            Constraint::Length(2),
+        ])
+        .areas(area);
+        let rows = usize::from(content.height.saturating_sub(2)).max(1);
+        // A single-row viewport cannot show the error and the selected
+        // option. The heading carries the error so the option never leaves
+        // the viewport.
+        let cramped = rows < 2;
+        let mut title = safe(title);
+        let mut heading_text = safe(body);
+        if let Some(message) = error {
+            if cramped {
+                // The block title is truncated in a cramped viewport, so
+                // the message moves to the heading and the title only
+                // marks the failure.
+                title = format!("⚠ {title}");
+                heading_text = safe(message);
             }
-            frame.render_widget(Paragraph::new(heading_text), heading);
-            let mut lines: Vec<String> = Vec::new();
-            if let Some(message) = error {
-                if !cramped {
-                    // The error keeps its own lines: a long message never hides a field.
-                    lines.push(format!("Error: {}", safe(message)));
-                    lines.push("Correct the fields and submit again. Re-enter any API key.".into());
-                    lines.push(String::new());
-                }
-            }
-            // The header never takes the last row: the form or the selected
-            // option stays visible below it.
-            lines.truncate(lines.len().min(rows.saturating_sub(1)));
-            if *pending {
-                lines.push("Waiting… Esc cancels locally; completion may be unknown".into());
-            }
-            let header = lines.len();
-            // The option list belongs to the searchable field: it appears only
-            // while that field is active, so the selected field of another
-            // kind keeps the viewport.
-            let searchable = search.as_ref().filter(|_| !*pending && *searching);
-            let show_fields = !*pending && (searchable.is_none() || fields.len() != 1);
-            let mut remaining = rows.saturating_sub(header);
-            // The search line is context: it appears only when the selected
-            // option still keeps a visible row.
-            let mut show_search = false;
-            if searchable.is_some() && remaining >= 2 {
-                show_search = true;
-                remaining -= 1;
-            }
-            // A searchable form reserves one row for the selected option, so
-            // the choice never scrolls out of the viewport.
-            let field_budget = if searchable.is_some() {
-                remaining.saturating_sub(1)
-            } else {
-                remaining
-            };
-            let field_start = selected.saturating_sub(field_budget.saturating_sub(1));
-            if show_fields {
-                lines.extend(
-                    fields
-                        .iter()
-                        .enumerate()
-                        .skip(field_start)
-                        .take(field_budget)
-                        .map(|(i, field)| {
-                            format!("{} {}", if i == *selected { ">" } else { " " }, safe(field))
-                        }),
-                );
-            }
-            if let Some((query, options)) = searchable {
-                let rendered_fields = lines.len().saturating_sub(header);
-                let option_budget = remaining.saturating_sub(rendered_fields);
-                if show_search {
-                    lines.push(format!("Search: {}", safe(query)));
-                }
-                let selected = options
-                    .iter()
-                    .position(|(_, selected)| *selected)
-                    .unwrap_or(0);
-                let start = selected.saturating_sub(option_budget.saturating_sub(1));
-                if options.is_empty() {
-                    lines.push("No matching options".into());
-                }
-                for (label, selected) in options.iter().skip(start).take(option_budget) {
-                    lines.push(format!(
-                        "{} {}",
-                        if *selected { ">" } else { " " },
-                        safe(label)
-                    ));
-                }
-            }
-            let highlighted = lines
-                .iter()
-                .map(|line| {
-                    Line::styled(
-                        line.to_owned(),
-                        if line.starts_with("> ") {
-                            Style::default().reversed()
-                        } else {
-                            Style::default()
-                        },
-                    )
-                })
-                .collect::<Vec<_>>();
-            frame.render_widget(
-                Paragraph::new(highlighted).block(Block::bordered().title(title)),
-                content,
-            );
-            let hint = if fields.is_empty() {
-                "Enter submits · Esc back/cancel"
-            } else if *searching {
-                "Type filters searchable choices · ↑↓ choice · Tab field · Enter submits"
-            } else {
-                "Type enters the field · ↑↓ field · ←→ choice · Enter submits"
-            };
-            frame.render_widget(Paragraph::new(format!("{hint}\nEsc back/cancel · Ctrl+C cancels; secrets are never copied to history.")), footer);
-            return last_scroll;
         }
-        if let Some(OverlayView::Settings((tabs, active, items, selected, error))) = &view.overlay {
-            let toasts = *active == crate::settings::TAB_TOASTS;
-            let wide_hint = if toasts {
-                "Up/Down select · Tab section · Space value · Left/Right value · Enter save · Esc close"
-            } else {
-                "Up/Down select · Tab section · Space value · Enter save · Esc close"
-            };
-            let hints = if unicode_width::UnicodeWidthStr::width(wide_hint) <= area.width as usize {
-                wide_hint
-            } else if toasts {
-                "Space value
+        frame.render_widget(Paragraph::new(heading_text), heading);
+        let mut lines: Vec<String> = Vec::new();
+        if let Some(message) = error {
+            if !cramped {
+                // The error keeps its own lines: a long message never hides a field.
+                lines.push(format!("Error: {}", safe(message)));
+                lines.push("Correct the fields and submit again. Re-enter any API key.".into());
+                lines.push(String::new());
+            }
+        }
+        // The header never takes the last row: the form or the selected
+        // option stays visible below it.
+        lines.truncate(lines.len().min(rows.saturating_sub(1)));
+        if *pending {
+            lines.push("Waiting… Esc cancels locally; completion may be unknown".into());
+        }
+        let header = lines.len();
+        // The option list belongs to the searchable field: it appears only
+        // while that field is active, so the selected field of another
+        // kind keeps the viewport.
+        let searchable = search.as_ref().filter(|_| !*pending && *searching);
+        let show_fields = !*pending && (searchable.is_none() || fields.len() != 1);
+        let mut remaining = rows.saturating_sub(header);
+        // The search line is context: it appears only when the selected
+        // option still keeps a visible row.
+        let mut show_search = false;
+        if searchable.is_some() && remaining >= 2 {
+            show_search = true;
+            remaining -= 1;
+        }
+        // A searchable form reserves one row for the selected option, so
+        // the choice never scrolls out of the viewport.
+        let field_budget = if searchable.is_some() {
+            remaining.saturating_sub(1)
+        } else {
+            remaining
+        };
+        let field_start = selected.saturating_sub(field_budget.saturating_sub(1));
+        if show_fields {
+            lines.extend(
+                fields
+                    .iter()
+                    .enumerate()
+                    .skip(field_start)
+                    .take(field_budget)
+                    .map(|(i, field)| {
+                        format!("{} {}", if i == *selected { ">" } else { " " }, safe(field))
+                    }),
+            );
+        }
+        if let Some((query, options)) = searchable {
+            let rendered_fields = lines.len().saturating_sub(header);
+            let option_budget = remaining.saturating_sub(rendered_fields);
+            if show_search {
+                lines.push(format!("Search: {}", safe(query)));
+            }
+            let selected = options
+                .iter()
+                .position(|(_, selected)| *selected)
+                .unwrap_or(0);
+            let start = selected.saturating_sub(option_budget.saturating_sub(1));
+            if options.is_empty() {
+                lines.push("No matching options".into());
+            }
+            for (label, selected) in options.iter().skip(start).take(option_budget) {
+                lines.push(format!(
+                    "{} {}",
+                    if *selected { ">" } else { " " },
+                    safe(label)
+                ));
+            }
+        }
+        let highlighted = lines
+            .iter()
+            .map(|line| {
+                Line::styled(
+                    line.to_owned(),
+                    if line.starts_with("> ") {
+                        Style::default().reversed()
+                    } else {
+                        Style::default()
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        frame.render_widget(
+            Paragraph::new(highlighted).block(Block::bordered().title(title)),
+            content,
+        );
+        let hint = if fields.is_empty() {
+            "Enter submits · Esc back/cancel"
+        } else if *searching {
+            "Type filters searchable choices · ↑↓ choice · Tab field · Enter submits"
+        } else {
+            "Type enters the field · ↑↓ field · ←→ choice · Enter submits"
+        };
+        frame.render_widget(
+            Paragraph::new(format!(
+                "{hint}\nEsc back/cancel · Ctrl+C cancels; secrets are never copied to history."
+            )),
+            footer,
+        );
+        0
+    }
+
+    /// Renders the settings overlay and returns the scroll position it owns.
+    fn render_settings(frame: &mut Frame, area: Rect, overlay: &OverlayView) -> usize {
+        let OverlayView::Settings((tabs, active, items, selected, error)) = overlay else {
+            return 0;
+        };
+
+        let toasts = *active == crate::settings::TAB_TOASTS;
+        let wide_hint = if toasts {
+            "Up/Down select · Tab section · Space value · Left/Right value · Enter save · Esc close"
+        } else {
+            "Up/Down select · Tab section · Space value · Enter save · Esc close"
+        };
+        let hints = if unicode_width::UnicodeWidthStr::width(wide_hint) <= area.width as usize {
+            wide_hint
+        } else if toasts {
+            "Space value
 Tab section ←→ value
 Enter save Esc close"
-            } else {
-                "Space value
+        } else {
+            "Space value
 Tab section ↑↓ pick
 Enter save Esc close"
-            };
-            let [header, body, footer] = Layout::vertical([
-                Constraint::Length(1),
-                Constraint::Min(3),
-                Constraint::Length(hints.lines().count() as u16),
-            ])
-            .areas(area);
-            let mut header_spans: Vec<Span> = Vec::with_capacity(tabs.len() * 2);
-            for (i, name) in tabs.iter().enumerate() {
-                let style = if i == *active {
-                    Style::default().reversed()
-                } else {
-                    Style::default()
-                };
-                header_spans.push(Span::styled(format!(" {name} "), style));
-                header_spans.push(Span::raw(" "));
-            }
-            let full_width: usize = tabs
-                .iter()
-                .map(|name| unicode_width::UnicodeWidthStr::width(name.as_str()) + 3)
-                .sum();
-            let header_line = if full_width <= header.width as usize {
-                Line::from(header_spans)
+        };
+        let [header, body, footer] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Min(3),
+            Constraint::Length(hints.lines().count() as u16),
+        ])
+        .areas(area);
+        let mut header_spans: Vec<Span> = Vec::with_capacity(tabs.len() * 2);
+        for (i, name) in tabs.iter().enumerate() {
+            let style = if i == *active {
+                Style::default().reversed()
             } else {
-                Line::from(Span::styled(
-                    format!(
-                        "{} {}/{}",
-                        tabs.get(*active).map(String::as_str).unwrap_or("Settings"),
-                        active + 1,
-                        tabs.len()
-                    ),
-                    Style::default().reversed(),
-                ))
+                Style::default()
             };
-            frame.render_widget(Paragraph::new(header_line), header);
-            let body_rows = usize::from(body.height).saturating_sub(2).max(1);
-            let total_items = items.len();
-            let start = selected
-                .saturating_sub(body_rows.saturating_sub(1))
-                .min(total_items.saturating_sub(body_rows));
-            let mut text = String::new();
-            if let Some(err) = error {
-                text.push_str(&format!("!! {}\n", err));
-            }
-            for (i, (label, checked, _kind)) in items.iter().enumerate().skip(start).take(body_rows)
-            {
-                text.push_str(&format!(
-                    "{} {}{}\n",
-                    if i == *selected { "▶" } else { " " },
-                    label,
-                    if *checked { " ✓" } else { "" }
-                ));
-            }
-            frame.render_widget(
-                Paragraph::new(text).block(Block::bordered().title("Settings")),
-                body,
-            );
-            frame.render_widget(Paragraph::new(hints), footer);
-            return last_scroll;
+            header_spans.push(Span::styled(format!(" {name} "), style));
+            header_spans.push(Span::raw(" "));
         }
-        if let Some(OverlayView::Dialog(title, body, choices, selected, body_scroll)) =
-            &view.overlay
-        {
-            let [body_area, footer] =
-                Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
-            let body = safe(body);
-            // Window the body too: a long body must never push every choice
-            // out of view. One content row is always reserved so the
-            // selected choice stays visible and actionable.
-            let height = usize::from(body_area.height).saturating_sub(2);
-            let body_rows = body.lines().count().max(1).min(height.saturating_sub(1));
-            let body_lines: Vec<&str> = body.lines().collect();
-            let first = (*body_scroll).min(body_lines.len().saturating_sub(body_rows));
-            let mut text = String::new();
-            for line in body_lines.into_iter().skip(first).take(body_rows) {
-                text.push_str(line);
-                text.push('\n');
-            }
-            // Keep the selected choice visible: window the list like the
-            // approval preview does, preserving marker and safe rendering.
-            let rows = height.saturating_sub(body_rows);
-            let start = selected
-                .saturating_sub(rows.saturating_sub(1))
-                .min(choices.len().saturating_sub(rows));
-            for (index, choice) in choices.iter().enumerate().skip(start).take(rows) {
-                text.push_str(&format!(
-                    "{} {}\n",
-                    if index == *selected { ">" } else { " " },
-                    safe(choice)
-                ));
-            }
-            frame.render_widget(
-                Paragraph::new(text)
-                    .block(Block::bordered().title(format!("Plugin: {}", safe(title)))),
-                body_area,
-            );
-            frame.render_widget(
-                    Paragraph::new(
-                        "Arrows select; PgUp/PgDn scroll text; Enter chooses; Esc dismisses (not a permission)",
-                    ),
-                    footer,
-                );
-            return last_scroll;
+        let full_width: usize = tabs
+            .iter()
+            .map(|name| unicode_width::UnicodeWidthStr::width(name.as_str()) + 3)
+            .sum();
+        let header_line = if full_width <= header.width as usize {
+            Line::from(header_spans)
+        } else {
+            Line::from(Span::styled(
+                format!(
+                    "{} {}/{}",
+                    tabs.get(*active).map(String::as_str).unwrap_or("Settings"),
+                    active + 1,
+                    tabs.len()
+                ),
+                Style::default().reversed(),
+            ))
+        };
+        frame.render_widget(Paragraph::new(header_line), header);
+        let body_rows = usize::from(body.height).saturating_sub(2).max(1);
+        let total_items = items.len();
+        let start = selected
+            .saturating_sub(body_rows.saturating_sub(1))
+            .min(total_items.saturating_sub(body_rows));
+        let mut text = String::new();
+        if let Some(err) = error {
+            text.push_str(&format!("!! {}\n", err));
         }
+        for (i, (label, checked, _kind)) in items.iter().enumerate().skip(start).take(body_rows) {
+            text.push_str(&format!(
+                "{} {}{}\n",
+                if i == *selected { "▶" } else { " " },
+                label,
+                if *checked { " ✓" } else { "" }
+            ));
+        }
+        frame.render_widget(
+            Paragraph::new(text).block(Block::bordered().title("Settings")),
+            body,
+        );
+        frame.render_widget(Paragraph::new(hints), footer);
+        0
+    }
+
+    /// Renders the dialog overlay and returns the scroll position it owns.
+    fn render_dialog(frame: &mut Frame, area: Rect, overlay: &OverlayView) -> usize {
+        let OverlayView::Dialog(title, body, choices, selected, body_scroll) = overlay else {
+            return 0;
+        };
+
+        let [body_area, footer] =
+            Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
+        let body = safe(body);
+        // Window the body too: a long body must never push every choice
+        // out of view. One content row is always reserved so the
+        // selected choice stays visible and actionable.
+        let height = usize::from(body_area.height).saturating_sub(2);
+        let body_rows = body.lines().count().max(1).min(height.saturating_sub(1));
+        let body_lines: Vec<&str> = body.lines().collect();
+        let first = (*body_scroll).min(body_lines.len().saturating_sub(body_rows));
+        let mut text = String::new();
+        for line in body_lines.into_iter().skip(first).take(body_rows) {
+            text.push_str(line);
+            text.push('\n');
+        }
+        // Keep the selected choice visible: window the list like the
+        // approval preview does, preserving marker and safe rendering.
+        let rows = height.saturating_sub(body_rows);
+        let start = selected
+            .saturating_sub(rows.saturating_sub(1))
+            .min(choices.len().saturating_sub(rows));
+        for (index, choice) in choices.iter().enumerate().skip(start).take(rows) {
+            text.push_str(&format!(
+                "{} {}\n",
+                if index == *selected { ">" } else { " " },
+                safe(choice)
+            ));
+        }
+        frame.render_widget(
+            Paragraph::new(text).block(Block::bordered().title(format!("Plugin: {}", safe(title)))),
+            body_area,
+        );
+        frame.render_widget(
+            Paragraph::new(
+                "Arrows select; PgUp/PgDn scroll text; Enter chooses; Esc dismisses (not a permission)",
+            ),
+            footer,
+        );
+        0
+    }
+
+    /// Renders the transcript, completion popup and composer.
+    fn render_main(frame: &mut Frame, area: Rect, view: &View) -> usize {
+        let last_scroll = 0;
+
         let editor_width = area.width.saturating_sub(2).max(1);
         // Reuse wrapped rows for both sizing and rendering; do not add another
         // full-draft pass to the frame loop.
