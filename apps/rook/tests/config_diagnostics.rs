@@ -57,8 +57,7 @@ ttl_secs = 60
     tracing::subscriber::with_default(warnings.clone(), || {
         RookConfig::load(file.path()).expect("legacy cache keys must remain loadable");
     });
-    let result = warnings.0.lock().unwrap().clone();
-    result
+    warnings.0.lock().unwrap().clone()
 }
 
 #[test]

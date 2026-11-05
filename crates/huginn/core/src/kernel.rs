@@ -579,7 +579,10 @@ impl Drop for Supervisor {
             task.abort();
         }
         // Keep admission and slot removal atomic with respect to slot acquisition.
-        let mut slots = self.service_slots.lock().unwrap_or_else(|e| e.into_inner());
+        let mut slots = self
+            .service_slots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for slot in slots.entries.values() {
             let _ = slot.gate.revoke();
         }

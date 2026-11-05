@@ -321,7 +321,6 @@ pub struct CompletionResponse {
 /// ---------------------------------------------------------------------------
 /// Streaming
 /// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone)]
 pub struct StreamChunk {
     pub id: RequestId,
@@ -374,7 +373,6 @@ pub enum FinishReason {
 /// ---------------------------------------------------------------------------
 /// Token usage & cost
 /// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenUsage {
     pub prompt_tokens: u32,
@@ -390,7 +388,6 @@ pub struct TokenUsage {
 /// ---------------------------------------------------------------------------
 /// Health
 /// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HealthStatus {
     Healthy {
@@ -465,7 +462,6 @@ impl HealthStatus {
 /// ---------------------------------------------------------------------------
 /// Audit
 /// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RequestStatus {

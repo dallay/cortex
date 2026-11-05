@@ -1088,7 +1088,7 @@ impl Ui {
         *self
             .prompt_templates
             .lock()
-            .unwrap_or_else(|e| e.into_inner()) = templates;
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = templates;
         self.dirty.notify_one();
     }
 
@@ -1116,7 +1116,7 @@ impl Ui {
         for (name, description) in self
             .prompt_templates
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
         {
             if !commands.iter().any(|command| command.name == *name) {

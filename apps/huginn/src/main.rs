@@ -655,7 +655,8 @@ async fn tui_chat(
     let readiness = model_readiness.clone();
     // Reading and writing share one path: an explicit --config, otherwise
     // ~/.cortex/huginn/config.toml. There is no legacy layout to seed from.
-    let save_path = cli_config.map_or_else(Config::primary_config_path, |path| path.to_path_buf());
+    let save_path =
+        cli_config.map_or_else(Config::primary_config_path, std::path::Path::to_path_buf);
     let ui_config = Arc::new(config.ui.clone());
     let save_ui_config: huginn_presentation::settings::SaveUiConfig =
         Arc::new(move |ui: &UiConfig| ui_settings::persist_seeded(ui, &save_path, None));
