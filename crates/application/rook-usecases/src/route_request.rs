@@ -126,6 +126,41 @@ struct SuccessContext {
     latency_ms: u64,
 }
 
+/// The provider chosen to serve a streamed request.
+struct StreamSelection {
+    provider_id: ProviderId,
+    connection_id: Option<ConnectionId>,
+    upstream: futures::stream::BoxStream<'static, Result<StreamChunk, CortexError>>,
+    trial_permit: rook_core::RouterTrialPermit,
+}
+
+/// Mutable state carried across the steps of one combo execution.
+#[derive(Default)]
+struct ComboCursor {
+    steps_attempted: usize,
+    local_backpressure: Option<CortexError>,
+    provider_attempt_failed: bool,
+}
+
+/// A combo step that passed every preflight gate and is ready for upstream I/O.
+struct ComboPreparedStep {
+    provider: Arc<dyn rook_core::ProviderPort>,
+    provider_id: ProviderId,
+    audit_provider_id: ProviderId,
+    provider_format: ApiFormat,
+    provider_req: CompletionRequest,
+    step_req: CompletionRequest,
+    step_context: ComboStepContext,
+    trial_permit: rook_core::RouterTrialPermit,
+}
+
+/// What the combo loop must do after one step.
+enum ComboStepOutcome {
+    Completed(CompletionResponse),
+    Retry,
+    Failed(CortexError),
+}
+
 /// Mutable state carried across the attempts of one failover loop.
 struct AttemptCursor {
     excluded: Vec<ProviderId>,
@@ -1075,6 +1110,150 @@ impl RouteRequest {
         Ok(resp)
     }
 
+    /// Selects the provider whose stream is forwarded to the caller.
+    ///
+    /// Local saturation happens before any SSE byte is exposed, so this is the
+    /// only place a stream request may switch providers.
+    async fn select_stream_provider(
+        &self,
+        req: &CompletionRequest,
+        client_format: ApiFormat,
+        selection_budget: usize,
+        max_attempts: usize,
+    ) -> Result<StreamSelection, CortexError> {
+        let mut provider_attempts = 0;
+        let mut excluded = Vec::new();
+        let mut local_backpressure = None;
+        for _ in 0..selection_budget {
+            if provider_attempts >= max_attempts {
+                break;
+            }
+            let provider = match self.router.select_excluding(&req, &excluded).await {
+                Ok(provider) => provider,
+                Err(error) => {
+                    return Err(local_backpressure.unwrap_or(error));
+                }
+            };
+            let provider_id = provider.id().clone();
+            if !req.restrictions.allowed_providers.is_empty()
+                && !req.restrictions.allowed_providers.contains(&provider_id)
+            {
+                if local_backpressure.is_some() {
+                    excluded.push(provider_id);
+                    continue;
+                }
+                return Err(RestrictionViolation::ProviderNotAllowed(provider_id.clone()).into());
+            }
+            if rook_core::RequiredCapabilities::from_request(&req)
+                .check(&provider.model_capabilities(&req.model))
+                .is_err()
+            {
+                excluded.push(provider_id);
+                continue;
+            }
+            let provider_format = provider.api_format();
+            // Skip connections with fresh, authoritative exhaustion
+            // evidence before the stream starts and exposes SSE bytes.
+            let connection = if self.provider_repository.is_some() {
+                self.resolve_connection(&provider_id).await
+            } else {
+                None
+            };
+            let connection_id = connection.as_ref().map(|(id, _)| *id);
+            if self.quota_reader.is_some() {
+                if let Some((connection_id, runtime_id)) = connection.as_ref() {
+                    let state = self
+                        .connection_quota_state(connection_id, runtime_id.as_ref())
+                        .await;
+                    if state.is_exhausted() {
+                        let reason = quota_skip_reason(&state);
+                        tracing::info!(
+                            provider = %provider_id,
+                            %connection_id,
+                            skip_reason = %reason,
+                            "skipping connection with exhausted upstream quota"
+                        );
+                        excluded.push(provider_id);
+                        continue;
+                    }
+                }
+            }
+            let provider_req = self.format_translator.translate_request(
+                client_format,
+                provider_format,
+                req.clone(),
+            )?;
+            let Some(trial_permit) = self.router.try_acquire_trial(&provider_id).await else {
+                excluded.push(provider_id);
+                continue;
+            };
+            let admission = match self
+                .admit_spending_budget(provider.as_ref(), &provider_req, &req)
+                .await
+            {
+                Ok(admission) => admission,
+                Err(error) => {
+                    drop(trial_permit);
+                    return Err(error);
+                }
+            };
+            provider_attempts += 1;
+            match classify_attempt_result(AttemptResult::Provider(
+                provider.stream(&provider_req).await,
+            )) {
+                AttemptOutcome::Success(upstream) => {
+                    // Streaming cannot currently report an adapter-verified
+                    // exact final cost. Mark the reservation unresolved
+                    // before exposing the stream so EOF, errors, validation
+                    // wrappers, and client cancellation retain the charge.
+                    if let (Some(guard), Some(admission)) = (&self.spending_guard, &admission) {
+                        guard.settle(admission, None).await;
+                    }
+                    // The reservation stays charged as unresolved for the
+                    // whole lifetime of the stream.
+                    return Ok(StreamSelection {
+                        provider_id,
+                        connection_id,
+                        upstream,
+                        trial_permit,
+                    });
+                }
+                AttemptOutcome::LocalBackpressure(error) => {
+                    // The provider reports local backpressure before an
+                    // upstream request can start, so release the budget.
+                    if let (Some(guard), Some(admission)) = (&self.spending_guard, &admission) {
+                        guard.release(admission).await;
+                    }
+                    drop(trial_permit);
+                    excluded.push(provider_id);
+                    local_backpressure = Some(error);
+                }
+                AttemptOutcome::UpstreamFailure(error) => {
+                    if let (Some(guard), Some(admission)) = (&self.spending_guard, &admission) {
+                        guard.settle(admission, None).await;
+                    }
+                    notify_provider_failure(self.router.as_ref(), &provider_id, &error).await;
+                    trial_permit.complete();
+                    return Err(error);
+                }
+                AttemptOutcome::TimedOut => {
+                    unreachable!("provider stream has no timeout wrapper")
+                }
+            }
+        }
+        Err(local_backpressure.unwrap_or_else(CortexError::all_providers_exhausted))
+    }
+
+    /// Rejects a streamed request for a model the API key may not use.
+    fn ensure_stream_model_allowed(&self, req: &CompletionRequest) -> Result<(), CortexError> {
+        if req.restrictions.allowed_models.is_empty()
+            || req.restrictions.allowed_models.contains(&req.model)
+        {
+            return Ok(());
+        }
+        Err(RestrictionViolation::ModelNotAllowed(req.model.clone()).into())
+    }
+
     /// Execute a virtual combo request (`model: "rook/*"`).
     ///
     /// Single policy: lookup alias -> verify combo exists -> fail-closed
@@ -1118,11 +1297,7 @@ impl RouteRequest {
         }
 
         // 0b. Model restriction check (AFTER alias resolution)
-        if !req.restrictions.allowed_models.is_empty()
-            && !req.restrictions.allowed_models.contains(&req.model)
-        {
-            return Err(RestrictionViolation::ModelNotAllowed(req.model.clone()).into());
-        }
+        self.ensure_stream_model_allowed(&req)?;
 
         // Local connection saturation happens before the provider starts a
         // stream, so it is safe to try another provider before any SSE bytes
@@ -1134,126 +1309,13 @@ impl RouteRequest {
         } else {
             selection_budget.min(MAX_RETRY_ATTEMPTS)
         };
-        let mut provider_attempts = 0;
-        let mut excluded = Vec::new();
-        let mut local_backpressure = None;
-        let (provider_id, connection_id, mut upstream, trial_permit) = 'select: {
-            for _ in 0..selection_budget {
-                if provider_attempts >= max_attempts {
-                    break;
-                }
-                let provider = match self.router.select_excluding(&req, &excluded).await {
-                    Ok(provider) => provider,
-                    Err(error) => {
-                        return Err(local_backpressure.unwrap_or(error));
-                    }
-                };
-                let provider_id = provider.id().clone();
-                if !req.restrictions.allowed_providers.is_empty()
-                    && !req.restrictions.allowed_providers.contains(&provider_id)
-                {
-                    if local_backpressure.is_some() {
-                        excluded.push(provider_id);
-                        continue;
-                    }
-                    return Err(
-                        RestrictionViolation::ProviderNotAllowed(provider_id.clone()).into(),
-                    );
-                }
-                if rook_core::RequiredCapabilities::from_request(&req)
-                    .check(&provider.model_capabilities(&req.model))
-                    .is_err()
-                {
-                    excluded.push(provider_id);
-                    continue;
-                }
-                let provider_format = provider.api_format();
-                // Skip connections with fresh, authoritative exhaustion
-                // evidence before the stream starts and exposes SSE bytes.
-                let connection = if self.provider_repository.is_some() {
-                    self.resolve_connection(&provider_id).await
-                } else {
-                    None
-                };
-                let connection_id = connection.as_ref().map(|(id, _)| *id);
-                if self.quota_reader.is_some() {
-                    if let Some((connection_id, runtime_id)) = connection.as_ref() {
-                        let state = self
-                            .connection_quota_state(connection_id, runtime_id.as_ref())
-                            .await;
-                        if state.is_exhausted() {
-                            let reason = quota_skip_reason(&state);
-                            tracing::info!(
-                                provider = %provider_id,
-                                %connection_id,
-                                skip_reason = %reason,
-                                "skipping connection with exhausted upstream quota"
-                            );
-                            excluded.push(provider_id);
-                            continue;
-                        }
-                    }
-                }
-                let provider_req = self.format_translator.translate_request(
-                    client_format,
-                    provider_format,
-                    req.clone(),
-                )?;
-                let Some(trial_permit) = self.router.try_acquire_trial(&provider_id).await else {
-                    excluded.push(provider_id);
-                    continue;
-                };
-                let admission = match self
-                    .admit_spending_budget(provider.as_ref(), &provider_req, &req)
-                    .await
-                {
-                    Ok(admission) => admission,
-                    Err(error) => {
-                        drop(trial_permit);
-                        return Err(error);
-                    }
-                };
-                provider_attempts += 1;
-                match classify_attempt_result(AttemptResult::Provider(
-                    provider.stream(&provider_req).await,
-                )) {
-                    AttemptOutcome::Success(upstream) => {
-                        // Streaming cannot currently report an adapter-verified
-                        // exact final cost. Mark the reservation unresolved
-                        // before exposing the stream so EOF, errors, validation
-                        // wrappers, and client cancellation retain the charge.
-                        if let (Some(guard), Some(admission)) = (&self.spending_guard, &admission) {
-                            guard.settle(admission, None).await;
-                        }
-                        // The reservation stays charged as unresolved for the
-                        // whole lifetime of the stream.
-                        break 'select (provider_id, connection_id, upstream, trial_permit);
-                    }
-                    AttemptOutcome::LocalBackpressure(error) => {
-                        // The provider reports local backpressure before an
-                        // upstream request can start, so release the budget.
-                        if let (Some(guard), Some(admission)) = (&self.spending_guard, &admission) {
-                            guard.release(admission).await;
-                        }
-                        drop(trial_permit);
-                        excluded.push(provider_id);
-                        local_backpressure = Some(error);
-                    }
-                    AttemptOutcome::UpstreamFailure(error) => {
-                        if let (Some(guard), Some(admission)) = (&self.spending_guard, &admission) {
-                            guard.settle(admission, None).await;
-                        }
-                        notify_provider_failure(self.router.as_ref(), &provider_id, &error).await;
-                        trial_permit.complete();
-                        return Err(error);
-                    }
-                    AttemptOutcome::TimedOut => {
-                        unreachable!("provider stream has no timeout wrapper")
-                    }
-                }
-            }
-            return Err(local_backpressure.unwrap_or_else(CortexError::all_providers_exhausted));
-        };
+        let selection = self
+            .select_stream_provider(&req, client_format, selection_budget, max_attempts)
+            .await?;
+        let provider_id = selection.provider_id;
+        let connection_id = selection.connection_id;
+        let mut upstream = selection.upstream;
+        let trial_permit = selection.trial_permit;
 
         if let Some(policy) = &self.output_validation {
             return Ok(self.forward_validated_stream(
@@ -1673,10 +1735,8 @@ impl RouteRequest {
             .await?;
 
         // Track errors for the final AllProvidersExhausted
-        let mut steps_attempted = 0;
         let mut errors: Vec<(ProviderId, String)> = Vec::new();
-        let mut local_backpressure = None;
-        let mut provider_attempt_failed = false;
+        let mut cursor = ComboCursor::default();
 
         // Overall combo timeout
         let combo_start = Instant::now();
@@ -1688,229 +1748,339 @@ impl RouteRequest {
                 break;
             }
 
-            let provider_id = &step.provider_id;
-            let model = &step.model;
-            let effective_connection_id = step.connection_id.as_ref();
-
             tracing::info!(
                 step_index = step_index + 1,
                 total = total_steps,
-                provider_id = %provider_id,
-                model = %model,
+                provider_id = %step.provider_id,
+                model = %step.model,
                 priority = step.priority,
                 "trying combo step"
             );
 
-            let mut step_req = req.clone();
-            step_req.model = model.clone();
-            // Combos call complete and synthesize SSE; native streaming is not required.
-            step_req.stream = false;
-
-            // Skip connections with fresh, authoritative exhaustion evidence.
-            // The check runs before any upstream I/O and never replaces the
-            // authorization preflight.
-            if let Some(connection_id) = effective_connection_id {
-                let state = self
-                    .connection_quota_state(connection_id, Some(provider_id))
-                    .await;
-                if state.is_exhausted() {
-                    let reason = quota_skip_reason(&state);
-                    record_combo_skip(&mut errors, provider_id, step_index, &reason);
-                    continue;
-                }
-            }
-
-            let resolved = if let Some(connection_id) = effective_connection_id {
-                self.resolve_connection_combo_step(
-                    connection_id,
-                    provider_id,
-                    model,
-                    &req,
+            let prepared = self
+                .prepare_combo_step(
+                    &step,
+                    *combo_id,
                     step_index,
+                    &req,
+                    client_format,
+                    &mut errors,
+                )
+                .await?;
+            let Some(prepared) = prepared else {
+                continue;
+            };
+            match self
+                .run_combo_step(
+                    prepared,
+                    client_format,
+                    step_index,
+                    &mut cursor,
                     &mut errors,
                 )
                 .await?
-            } else {
-                self.resolve_legacy_combo_step(provider_id, &step_req, step_index, &mut errors)
-                    .await
-            };
-            let Some((provider, audit_provider_id, runtime_id, exact_connection_id)) = resolved
-            else {
-                continue;
-            };
-
-            if let Err(reason) = rook_core::RequiredCapabilities::from_request(&step_req)
-                .check(&provider.model_capabilities(model))
             {
-                record_combo_skip(&mut errors, &audit_provider_id, step_index, reason);
-                continue;
-            }
-
-            let step_context = ComboStepContext {
-                combo_id: *combo_id,
-                step_index,
-                provider_id: audit_provider_id.clone(),
-                connection_id: exact_connection_id
-                    .or_else(|| ConnectionId::parse_str(audit_provider_id.as_str()).ok()),
-                runtime_id,
-            };
-
-            // 3c. Execute with per-step timeout
-            let provider_format = provider.api_format();
-            let mut provider_req = self.format_translator.translate_request(
-                client_format,
-                provider_format,
-                step_req.clone(),
-            )?;
-            // The provider must receive the STEP's physical model, never a
-            // virtual `rook/*` alias or another step's model.
-            provider_req.model = model.clone();
-
-            let Some(trial_permit) = self.router.try_acquire_trial(&audit_provider_id).await else {
-                record_combo_skip(
-                    &mut errors,
-                    &audit_provider_id,
-                    step_index,
-                    "half_open_trial_in_progress",
-                );
-                continue;
-            };
-            let step_start = Instant::now();
-            let step_result =
-                tokio::time::timeout(Self::COMBO_STEP_TIMEOUT, provider.complete(&provider_req))
-                    .await;
-
-            let latency_ms = step_start.elapsed().as_millis() as u64;
-            match classify_attempt_result(match step_result {
-                Ok(result) => AttemptResult::Provider(result),
-                Err(_) => AttemptResult::TimedOut,
-            }) {
-                AttemptOutcome::Success(provider_resp) => {
-                    // Resolve circuit state before any persistence awaits.
-                    notify_provider_success(self.router.as_ref(), &audit_provider_id).await;
-                    trial_permit.complete();
-                    let resp = self.format_translator.translate_response(
-                        provider_format,
-                        client_format,
-                        provider_resp,
-                    )?;
-
-                    if let Some(validation) = &self.output_validation {
-                        if let Err(error) = validation.response(&resp) {
-                            self.record_combo_stream_outcome(
-                                &step_context,
-                                &step_req,
-                                UsageMetrics {
-                                    status: RequestStatus::Failure,
-                                    usage: Some(&resp.usage),
-                                    ttft_ms: Some(latency_ms),
-                                    latency_ms,
-                                },
-                            )
-                            .await;
-                            return Err(error);
-                        }
-                    }
-
-                    tracing::info!(
-                        step_index = step_index + 1,
-                        latency_ms = latency_ms,
-                        "combo step succeeded"
-                    );
-
-                    // Record success (fire-and-forget)
-                    self.record_combo_success(&step_context, latency_ms, &step_req, &resp)
-                        .await;
-
-                    return Ok(resp);
-                }
-                AttemptOutcome::LocalBackpressure(error) => {
-                    drop(trial_permit);
-                    local_backpressure = Some(error);
-                    continue;
-                }
-                AttemptOutcome::UpstreamFailure(e) => {
-                    // Update circuit state and release the reservation before audit and usage persistence await.
-                    notify_provider_failure(self.router.as_ref(), &audit_provider_id, &e).await;
-                    trial_permit.complete();
-                    steps_attempted += 1;
-                    provider_attempt_failed = true;
-                    // Provider returned an error
-                    errors.push((provider_id.clone(), e.to_string()));
-
-                    // Determine if we should STOP or CONTINUE
-                    let should_stop = e.is_4xx();
-
-                    tracing::warn!(
-                        step_index = step_index + 1,
-                        error = %e,
-                        retryable = !should_stop,
-                        "combo step failed"
-                    );
-
-                    // Record failure (fire-and-forget)
-                    self.record_combo_failure(&step_context, latency_ms, &step_req, &e)
-                        .await;
-
-                    if should_stop {
-                        // 4xx (except 429) stops the chain immediately
-                        return Err(e);
-                    }
-                    // 429 / 5xx / network errors: continue to next step
-                    continue;
-                }
-                AttemptOutcome::TimedOut => {
-                    let timeout_error = CortexError::provider(format!(
-                        "step {} timed out after {:?}",
-                        step_index + 1,
-                        Self::COMBO_STEP_TIMEOUT
-                    ));
-                    notify_provider_failure(
-                        self.router.as_ref(),
-                        &audit_provider_id,
-                        &timeout_error,
-                    )
-                    .await;
-                    trial_permit.complete();
-                    steps_attempted += 1;
-                    provider_attempt_failed = true;
-                    // Step timed out
-                    let err = timeout_error;
-                    errors.push((provider_id.clone(), err.to_string()));
-
-                    tracing::warn!(
-                        step_index = step_index + 1,
-                        timeout_secs = 10,
-                        "combo step timed out"
-                    );
-
-                    self.record_combo_failure(&step_context, latency_ms, &step_req, &err)
-                        .await;
-
-                    continue;
-                }
+                ComboStepOutcome::Completed(resp) => return Ok(resp),
+                ComboStepOutcome::Retry => continue,
+                ComboStepOutcome::Failed(error) => return Err(error),
             }
         }
 
         // All steps exhausted
-        if !provider_attempt_failed {
-            if let Some(error) = local_backpressure {
+        if !cursor.provider_attempt_failed {
+            if let Some(error) = cursor.local_backpressure {
                 return Err(error);
             }
         }
         let total_latency_ms = combo_start.elapsed().as_millis() as u64;
         tracing::error!(
             combo_id = %combo_id,
-            steps_attempted = steps_attempted,
+            steps_attempted = cursor.steps_attempted,
             total_latency_ms = total_latency_ms,
             "all combo steps exhausted"
         );
 
         Err(CortexError::all_providers_exhausted_combo(
             *combo_id,
-            steps_attempted,
+            cursor.steps_attempted,
             errors,
         ))
+    }
+
+    /// Resolves one combo step into a ready-to-call provider, or `None` when it must be skipped.
+    async fn prepare_combo_step(
+        &self,
+        step: &rook_core::ComboStep,
+        combo_id: ComboId,
+        step_index: usize,
+        req: &CompletionRequest,
+        client_format: ApiFormat,
+        errors: &mut Vec<(ProviderId, String)>,
+    ) -> Result<Option<ComboPreparedStep>, CortexError> {
+        let provider_id = &step.provider_id;
+        let model = &step.model;
+        let effective_connection_id = step.connection_id.as_ref();
+
+        let mut step_req = req.clone();
+        step_req.model = model.clone();
+        // Combos call complete and synthesize SSE; native streaming is not required.
+        step_req.stream = false;
+
+        // Skip connections with fresh, authoritative exhaustion evidence.
+        // The check runs before any upstream I/O and never replaces the
+        // authorization preflight.
+        if let Some(connection_id) = effective_connection_id {
+            let state = self
+                .connection_quota_state(connection_id, Some(provider_id))
+                .await;
+            if state.is_exhausted() {
+                let reason = quota_skip_reason(&state);
+                record_combo_skip(errors, provider_id, step_index, &reason);
+                return Ok(None);
+            }
+        }
+
+        let resolved = if let Some(connection_id) = effective_connection_id {
+            self.resolve_connection_combo_step(
+                connection_id,
+                provider_id,
+                model,
+                req,
+                step_index,
+                errors,
+            )
+            .await?
+        } else {
+            self.resolve_legacy_combo_step(provider_id, &step_req, step_index, errors)
+                .await
+        };
+        let Some((provider, audit_provider_id, runtime_id, exact_connection_id)) = resolved else {
+            return Ok(None);
+        };
+
+        if let Err(reason) = rook_core::RequiredCapabilities::from_request(&step_req)
+            .check(&provider.model_capabilities(model))
+        {
+            record_combo_skip(errors, &audit_provider_id, step_index, reason);
+            return Ok(None);
+        }
+
+        let step_context = ComboStepContext {
+            combo_id,
+            step_index,
+            provider_id: audit_provider_id.clone(),
+            connection_id: exact_connection_id
+                .or_else(|| ConnectionId::parse_str(audit_provider_id.as_str()).ok()),
+            runtime_id,
+        };
+
+        // 3c. Execute with per-step timeout
+        let provider_format = provider.api_format();
+        let mut provider_req = self.format_translator.translate_request(
+            client_format,
+            provider_format,
+            step_req.clone(),
+        )?;
+        // The provider must receive the STEP's physical model, never a
+        // virtual `rook/*` alias or another step's model.
+        provider_req.model = model.clone();
+
+        let Some(trial_permit) = self.router.try_acquire_trial(&audit_provider_id).await else {
+            record_combo_skip(
+                errors,
+                &audit_provider_id,
+                step_index,
+                "half_open_trial_in_progress",
+            );
+            return Ok(None);
+        };
+
+        Ok(Some(ComboPreparedStep {
+            provider,
+            provider_id: provider_id.clone(),
+            audit_provider_id,
+            provider_format,
+            provider_req,
+            step_req,
+            step_context,
+            trial_permit,
+        }))
+    }
+
+    /// Calls one combo step under its timeout and records the outcome.
+    async fn run_combo_step(
+        &self,
+        prepared: ComboPreparedStep,
+        client_format: ApiFormat,
+        step_index: usize,
+        cursor: &mut ComboCursor,
+        errors: &mut Vec<(ProviderId, String)>,
+    ) -> Result<ComboStepOutcome, CortexError> {
+        let ComboPreparedStep {
+            provider,
+            provider_id,
+            audit_provider_id,
+            provider_format,
+            provider_req,
+            step_req,
+            step_context,
+            trial_permit,
+        } = prepared;
+
+        let step_start = Instant::now();
+        let step_result =
+            tokio::time::timeout(Self::COMBO_STEP_TIMEOUT, provider.complete(&provider_req)).await;
+        let latency_ms = step_start.elapsed().as_millis() as u64;
+
+        match classify_attempt_result(match step_result {
+            Ok(result) => AttemptResult::Provider(result),
+            Err(_) => AttemptResult::TimedOut,
+        }) {
+            AttemptOutcome::Success(provider_resp) => {
+                // Resolve circuit state before any persistence awaits.
+                notify_provider_success(self.router.as_ref(), &audit_provider_id).await;
+                trial_permit.complete();
+                let resp = self.format_translator.translate_response(
+                    provider_format,
+                    client_format,
+                    provider_resp,
+                )?;
+
+                if let Some(validation) = &self.output_validation {
+                    if let Err(error) = validation.response(&resp) {
+                        self.record_combo_stream_outcome(
+                            &step_context,
+                            &step_req,
+                            UsageMetrics {
+                                status: RequestStatus::Failure,
+                                usage: Some(&resp.usage),
+                                ttft_ms: Some(latency_ms),
+                                latency_ms,
+                            },
+                        )
+                        .await;
+                        return Err(error);
+                    }
+                }
+
+                tracing::info!(
+                    step_index = step_index + 1,
+                    latency_ms = latency_ms,
+                    "combo step succeeded"
+                );
+
+                // Record success (fire-and-forget)
+                self.record_combo_success(&step_context, latency_ms, &step_req, &resp)
+                    .await;
+
+                Ok(ComboStepOutcome::Completed(resp))
+            }
+            AttemptOutcome::LocalBackpressure(error) => {
+                drop(trial_permit);
+                cursor.local_backpressure = Some(error);
+                Ok(ComboStepOutcome::Retry)
+            }
+            AttemptOutcome::UpstreamFailure(error) => {
+                self.note_combo_step_failure(
+                    &error,
+                    &audit_provider_id,
+                    trial_permit,
+                    provider_id,
+                    cursor,
+                    errors,
+                )
+                .await;
+                self.finish_failed_combo_step(
+                    &step_context,
+                    &step_req,
+                    latency_ms,
+                    step_index,
+                    error,
+                )
+                .await
+            }
+            AttemptOutcome::TimedOut => {
+                let timeout_error = CortexError::provider(format!(
+                    "step {} timed out after {:?}",
+                    step_index + 1,
+                    Self::COMBO_STEP_TIMEOUT
+                ));
+                self.note_combo_step_failure(
+                    &timeout_error,
+                    &audit_provider_id,
+                    trial_permit,
+                    provider_id,
+                    cursor,
+                    errors,
+                )
+                .await;
+
+                tracing::warn!(
+                    step_index = step_index + 1,
+                    timeout_secs = 10,
+                    "combo step timed out"
+                );
+
+                self.finish_failed_combo_step(
+                    &step_context,
+                    &step_req,
+                    latency_ms,
+                    step_index,
+                    timeout_error,
+                )
+                .await
+            }
+        }
+    }
+
+    /// Releases the circuit reservation and records the failed attempt.
+    async fn note_combo_step_failure(
+        &self,
+        error: &CortexError,
+        audit_provider_id: &ProviderId,
+        trial_permit: rook_core::RouterTrialPermit,
+        provider_id: ProviderId,
+        cursor: &mut ComboCursor,
+        errors: &mut Vec<(ProviderId, String)>,
+    ) {
+        // Update circuit state and release the reservation before audit and usage
+        // persistence await.
+        notify_provider_failure(self.router.as_ref(), audit_provider_id, error).await;
+        trial_permit.complete();
+        cursor.steps_attempted += 1;
+        cursor.provider_attempt_failed = true;
+        errors.push((provider_id, error.to_string()));
+    }
+
+    /// Records the failed step and decides whether the chain stops or continues.
+    async fn finish_failed_combo_step(
+        &self,
+        step_context: &ComboStepContext,
+        step_req: &CompletionRequest,
+        latency_ms: u64,
+        step_index: usize,
+        error: CortexError,
+    ) -> Result<ComboStepOutcome, CortexError> {
+        // Determine if we should STOP or CONTINUE
+        let should_stop = error.is_4xx();
+
+        tracing::warn!(
+            step_index = step_index + 1,
+            error = %error,
+            retryable = !should_stop,
+            "combo step failed"
+        );
+
+        // Record failure (fire-and-forget)
+        self.record_combo_failure(step_context, latency_ms, step_req, &error)
+            .await;
+
+        if should_stop {
+            // 4xx (except 429) stops the chain immediately
+            return Ok(ComboStepOutcome::Failed(error));
+        }
+        // 429 / 5xx / network errors: continue to next step
+        Ok(ComboStepOutcome::Retry)
     }
 
     async fn preflight_connection_authorization(
