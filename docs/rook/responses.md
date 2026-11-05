@@ -1,9 +1,9 @@
 # Responses API: stateless compatibility
 
 `POST /v1/responses` accepts text and client functions. Rook normalizes requests
-to the existing domain and uses `RouteRequest`, the OpenAI and Anthropic adapters,
-and existing format translation. It does not forward requests to a native
-Responses upstream or guarantee equivalence with the complete OpenAI API.
+to the existing domain and uses `RouteRequest` plus the OpenAI and Anthropic
+adapters, which own the domain-to-wire mapping. It does not forward requests to
+a native Responses upstream or guarantee equivalence with the complete OpenAI API.
 
 ## Authorization and routing
 

@@ -25,7 +25,7 @@ use rook_usecases::{
 use shared_kernel::RequestId;
 
 mod common;
-use common::{NoOpAliasRepository, NoOpAudit, NoOpCache, NoOpTranslator};
+use common::{NoOpAliasRepository, NoOpAudit, NoOpCache};
 
 #[derive(Clone, Copy, Debug)]
 enum Failure {
@@ -263,7 +263,6 @@ fn route_with_audit(router: Arc<FallbackRouter>, audit: Arc<dyn AuditPort>) -> R
         None,
         None,
         Arc::new(PricingConfig::default()),
-        Arc::new(NoOpTranslator),
         Arc::new(NoOpAliasRepository),
         ModelAliasesConfig {
             enabled: false,
@@ -633,11 +632,7 @@ async fn combo_local_rejection_preserves_trial_state_and_allows_fallback() {
     let audit = Arc::new(RecordingAudit::default());
 
     let response = route_with_audit(router.clone(), audit.clone())
-        .execute_combo(
-            &combo(&["primary", "fallback"]),
-            request(false),
-            ApiFormat::OpenAI,
-        )
+        .execute_combo(&combo(&["primary", "fallback"]), request(false))
         .await
         .unwrap();
 
@@ -668,11 +663,7 @@ async fn combo_mixed_upstream_failure_and_local_pressure_returns_exhaustion() {
     let (router, _) = router(vec![primary.clone(), fallback.clone()]);
 
     let error = route(router.clone())
-        .execute_combo(
-            &combo(&["primary", "fallback"]),
-            request(false),
-            ApiFormat::OpenAI,
-        )
+        .execute_combo(&combo(&["primary", "fallback"]), request(false))
         .await
         .unwrap_err();
 
@@ -700,11 +691,7 @@ async fn combo_auth_failure_reopens_trial_before_stopping_chain() {
     half_open(&router, &clock, primary.id()).await;
 
     let error = route(router.clone())
-        .execute_combo(
-            &combo(&["primary", "fallback"]),
-            request(false),
-            ApiFormat::OpenAI,
-        )
+        .execute_combo(&combo(&["primary", "fallback"]), request(false))
         .await
         .unwrap_err();
 
@@ -724,7 +711,7 @@ async fn combo_success_resolves_trial_before_audit_suspends_and_cancellation() {
     let route = route_with_audit(router.clone(), audit.clone());
     let combo = combo(&["primary"]);
     {
-        let attempt = route.execute_combo(&combo, request(false), ApiFormat::OpenAI);
+        let attempt = route.execute_combo(&combo, request(false));
         futures::pin_mut!(attempt);
         assert!(futures::poll!(attempt.as_mut()).is_pending());
         assert_eq!(audit.0.lock().unwrap()[0].status, RequestStatus::Success);
@@ -743,7 +730,7 @@ async fn combo_timeout_reopens_trial_before_blocked_audit_and_cancellation() {
     let route = route_with_audit(router.clone(), audit.clone());
     let combo = combo(&["primary"]);
     {
-        let attempt = route.execute_combo(&combo, request(false), ApiFormat::OpenAI);
+        let attempt = route.execute_combo(&combo, request(false));
         futures::pin_mut!(attempt);
         assert!(futures::poll!(attempt.as_mut()).is_pending());
         assert_eq!(provider.complete_calls.load(Ordering::SeqCst), 1);
@@ -772,7 +759,7 @@ async fn cancelling_combo_failure_audit_preserves_a_newer_recovery_trial() {
         let audit = Arc::new(PendingAudit::default());
         let route = route_with_audit(router.clone(), audit.clone());
         let combo = combo(&["primary"]);
-        let mut attempt = Box::pin(route.execute_combo(&combo, request(false), ApiFormat::OpenAI));
+        let mut attempt = Box::pin(route.execute_combo(&combo, request(false)));
 
         assert!(futures::poll!(attempt.as_mut()).is_pending());
         assert_eq!(provider.complete_calls.load(Ordering::SeqCst), 1);
@@ -820,7 +807,7 @@ async fn cancelling_pending_combo_releases_trial_without_recording_failure() {
     let route = route(router.clone());
     let combo = combo(&["primary"]);
     {
-        let attempt = route.execute_combo(&combo, request(false), ApiFormat::OpenAI);
+        let attempt = route.execute_combo(&combo, request(false));
         futures::pin_mut!(attempt);
         assert!(futures::poll!(attempt.as_mut()).is_pending());
         assert_eq!(provider.complete_calls.load(Ordering::SeqCst), 1);

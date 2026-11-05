@@ -448,6 +448,57 @@ impl AnthropicProvider {
         }
     }
 
+    /// Convert domain tool declarations (OpenAI function shape) into the native
+    /// Anthropic wire shape. Already-native declarations pass through unchanged,
+    /// so this is idempotent.
+    fn normalize_tools(tools: Option<serde_json::Value>) -> Option<serde_json::Value> {
+        let Some(serde_json::Value::Array(items)) = tools else {
+            return tools;
+        };
+        let native: Vec<serde_json::Value> = items
+            .into_iter()
+            .map(|tool| {
+                let function = &tool["function"];
+                let has_function_shape = function.get("name").is_some();
+                if !has_function_shape {
+                    return tool;
+                }
+                let mut out = serde_json::json!({
+                    "name": function["name"],
+                    "input_schema": function.get("parameters").cloned().unwrap_or(serde_json::json!({"type": "object"})),
+                });
+                if let Some(description) = function.get("description") {
+                    out["description"] = description.clone();
+                }
+                out
+            })
+            .collect();
+        Some(serde_json::Value::Array(native))
+    }
+
+    /// Convert domain `tool_choice` (string or OpenAI function form) into the
+    /// native Anthropic wire shape. Native objects pass through unchanged.
+    fn normalize_tool_choice(choice: Option<serde_json::Value>) -> Option<serde_json::Value> {
+        let choice = choice?;
+        Some(match &choice {
+            serde_json::Value::String(s) => match s.as_str() {
+                "auto" => serde_json::json!({"type": "auto"}),
+                "none" => serde_json::json!({"type": "none"}),
+                "required" => serde_json::json!({"type": "any"}),
+                _ => choice,
+            },
+            serde_json::Value::Object(obj) => {
+                if obj.get("type").and_then(|t| t.as_str()) == Some("function") {
+                    let name = obj["function"]["name"].clone();
+                    serde_json::json!({"type": "tool", "name": name})
+                } else {
+                    choice
+                }
+            }
+            _ => choice,
+        })
+    }
+
     fn build_stream_request(req: &CompletionRequest) -> AnthropicStreamRequest {
         let system_text = Self::extract_system_messages(req);
         AnthropicStreamRequest {
@@ -457,8 +508,8 @@ impl AnthropicProvider {
             stream: true,
             max_tokens: req.max_tokens.or(Some(4096)),
             temperature: req.temperature,
-            tools: req.tools.clone(),
-            tool_choice: req.tool_choice.clone(),
+            tools: Self::normalize_tools(req.tools.clone()),
+            tool_choice: Self::normalize_tool_choice(req.tool_choice.clone()),
         }
     }
 
@@ -939,8 +990,8 @@ impl ProviderPort for AnthropicProvider {
             stream: false,
             max_tokens: req.max_tokens.or(Some(4096)), // SC-08: default max_tokens
             temperature: req.temperature,
-            tools: req.tools.clone(),
-            tool_choice: req.tool_choice.clone(),
+            tools: Self::normalize_tools(req.tools.clone()),
+            tool_choice: Self::normalize_tool_choice(req.tool_choice.clone()),
         };
 
         let start = std::time::Instant::now();

@@ -62,8 +62,6 @@ pub struct RookContainer {
     pub api_key_rate_limiter: Arc<transport_axum::ApiKeyRateLimiter>,
     pub csrf_guard: Arc<transport_axum::CsrfGuard>,
     pub rate_limit_store: Option<transport_axum::handlers::rate_limits::RateLimitRuleStore>,
-    /// Format registry for provider wire-format lookup — used in Phase 2 routing.
-    pub format_registry: Arc<transport_axum::format_registry::FormatRegistry>,
     /// Concrete usage repository — used for retention sweep task.
     pub usage_repository: Arc<SqliteUsageRepository>,
     /// Upstream quota observation recorder — kept distinct from local usage history.
@@ -335,20 +333,7 @@ impl RookContainer {
                 .map_err(|error| anyhow::anyhow!("invalid routing.default_combo {id}: {error}"))?;
         }
 
-        // 9. Format registry and use cases
-        let mut format_registry = transport_axum::format_registry::FormatRegistry::new();
-        format_registry.register(
-            rook_core::ApiFormat::OpenAI,
-            rook_core::ApiFormat::Anthropic,
-            transport_axum::format_registry::DomainPivotTranslator,
-        );
-        format_registry.register(
-            rook_core::ApiFormat::Anthropic,
-            rook_core::ApiFormat::OpenAI,
-            transport_axum::format_registry::DomainPivotTranslator,
-        );
-        let format_registry = Arc::new(format_registry);
-
+        // 9. Use cases
         // Create telemetry tracker and spawn cleanup task if enabled
         let telemetry_tracker = if config.telemetry.enabled {
             let telemetry_config: observability::TelemetryConfig = config.telemetry.clone().into();
@@ -375,12 +360,11 @@ impl RookContainer {
                     audit.clone(),
                     usage_recorder.clone(),
                     provider_repository_for_usage,
-                    Some(combo_repo.clone()), // combo_repository - wired in Phase 4
+                    Some(combo_repo.clone()),
                     Arc::new(config.pricing.clone()),
-                    format_registry.clone(),
-                    alias_repo.clone(), // model_alias_repository - wired in Phase 3
+                    alias_repo.clone(),
                     config.model_aliases.clone().into(),
-                    telemetry_tracker, // telemetry tracker from config
+                    telemetry_tracker,
                 )
                 .with_combo_alias_repository(combo_alias_repo.clone())
                 .with_default_combo(default_combo)
@@ -441,7 +425,6 @@ impl RookContainer {
             )),
             csrf_guard: Arc::new(transport_axum::CsrfGuard::new()),
             rate_limit_store,
-            format_registry,
             usage_repository: sqlite_usage,
             quota_observation_recorder,
             usage_config: config.usage.clone(),

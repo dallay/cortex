@@ -1,15 +1,12 @@
 //! Pure Responses contract tests: no HTTP server or upstream provider required.
 
 use rook_core::{
-    ApiFormat, CompletionRequest, CompletionResponse, FinishReason, MessageContent,
-    MessageToolCall, Role, TokenUsage,
+    CompletionRequest, CompletionResponse, FinishReason, MessageContent, MessageToolCall, Role,
+    TokenUsage,
 };
 use serde_json::{json, Value};
 use shared_kernel::{ModelId, ProviderId, RequestId};
-use transport_axum::{
-    format_registry::{DomainPivotTranslator, FormatRegistry},
-    responses_adapter::{ResponseContext, ResponsesRequest},
-};
+use transport_axum::responses_adapter::{ResponseContext, ResponsesRequest};
 
 fn request(body: Value) -> Result<CompletionRequest, String> {
     serde_json::from_value::<ResponsesRequest>(body)
@@ -431,39 +428,4 @@ fn response_budget_counts_utf8_bytes_and_text_plus_arguments() {
     assert!(context().response_body(&response).is_ok());
     response.content.push('a');
     assert!(context().response_body(&response).is_err());
-}
-
-#[test]
-fn format_translation_is_limited_to_responses_openai_to_anthropic() {
-    let mut registry = FormatRegistry::new();
-    registry.register(
-        ApiFormat::OpenAI,
-        ApiFormat::Anthropic,
-        DomainPivotTranslator,
-    );
-    for (origin, target, converted) in [
-        ("responses", ApiFormat::Anthropic, true),
-        ("openai", ApiFormat::Anthropic, false),
-        ("responses", ApiFormat::OpenAI, false),
-    ] {
-        let mut req = request(
-            json!({"model":"m", "input":"hi", "tools":[function("lookup")], "tool_choice":"auto"}),
-        )
-        .unwrap();
-        req.metadata.origin = origin.into();
-        let original_tools = req.tools.clone();
-        let translated = registry
-            .translate_request(ApiFormat::OpenAI, target, req)
-            .unwrap();
-        if converted {
-            assert_eq!(
-                translated.tools,
-                Some(json!([{"name":"lookup", "input_schema":{"type":"object"}}]))
-            );
-            assert_eq!(translated.tool_choice, Some(json!({"type":"auto"})));
-        } else {
-            assert_eq!(translated.tools, original_tools);
-            assert_eq!(translated.tool_choice, Some(json!("auto")));
-        }
-    }
 }

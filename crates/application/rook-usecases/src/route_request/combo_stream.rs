@@ -2,7 +2,7 @@
 //! The selected stream is pull-driven: one prefetched chunk, no queue or task.
 use super::{
     notify_provider_failure, notify_provider_success, quota_skip_reason, record_combo_skip,
-    ApiFormat, AuditEntry, ComboStepContext, CompletionRequest, ConnectionId, CortexError, ModelId,
+    AuditEntry, ComboStepContext, CompletionRequest, ConnectionId, CortexError, ModelId,
     ObservationStatus, RequestStatus, RouteRequest, StreamChunk, TokenUsage, UsageMetrics,
 };
 use futures::StreamExt;
@@ -233,7 +233,6 @@ impl RouteRequest {
     pub(super) async fn execute_combo_stream(
         &self,
         req: CompletionRequest,
-        client_format: ApiFormat,
     ) -> Result<ChunkStream, CortexError> {
         let requested = req.model.clone();
         let (combo_id, virtual_alias) = match req.metadata.combo_id {
@@ -314,11 +313,7 @@ impl RouteRequest {
                 connection_id: connection_id
                     .or_else(|| ConnectionId::parse_str(provider_id.as_str()).ok()),
             };
-            let mut provider_req = self.format_translator.translate_request(
-                client_format,
-                provider.api_format(),
-                step_req.clone(),
-            )?;
+            let mut provider_req = step_req.clone();
             provider_req.model = step.model.clone();
             let Some(permit) = self.router.try_acquire_trial(&provider_id).await else {
                 record_combo_skip(

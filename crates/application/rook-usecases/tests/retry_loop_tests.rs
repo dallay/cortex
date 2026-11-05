@@ -13,7 +13,7 @@ use rook_usecases::{route_request::ModelAliasesConfig, PricingConfig, RouteReque
 use shared_kernel::RequestId;
 
 mod common;
-use common::{NoOpAliasRepository, NoOpAudit, NoOpCache, NoOpTranslator};
+use common::{NoOpAliasRepository, NoOpAudit, NoOpCache};
 
 // --- Fake Providers ---
 
@@ -217,17 +217,16 @@ fn make_route_request(router: Arc<dyn RouterPort>) -> RouteRequest {
         router,
         Arc::new(NoOpCache),
         Arc::new(NoOpAudit),
-        None, // usage_recorder
-        None, // provider_repository
-        None, // combo_repository
+        None,
+        None,
+        None,
         Arc::new(PricingConfig::default()),
-        Arc::new(NoOpTranslator),
         Arc::new(NoOpAliasRepository),
         ModelAliasesConfig {
             enabled: false,
             auto_seed: false,
         },
-        None, // telemetry
+        None,
     )
 }
 
@@ -242,9 +241,7 @@ async fn retry_loop_first_provider_fails_second_succeeds() {
     let route_request = make_route_request(router);
 
     let req = make_request("model-a");
-    let result = route_request
-        .execute_with_format(req, ApiFormat::OpenAI)
-        .await;
+    let result = route_request.execute(req).await;
 
     // Should succeed with p2's response
     assert!(result.is_ok(), "Expected success, got: {:?}", result);
@@ -262,9 +259,7 @@ async fn retry_loop_all_providers_fail_returns_exhausted_error() {
     let route_request = make_route_request(router);
 
     let req = make_request("model-a");
-    let result = route_request
-        .execute_with_format(req, ApiFormat::OpenAI)
-        .await;
+    let result = route_request.execute(req).await;
 
     // Should fail with all providers exhausted
     assert!(result.is_err());
@@ -285,9 +280,7 @@ async fn retry_loop_non_retryable_error_fails_immediately() {
     let route_request = make_route_request(router);
 
     let req = make_request("model-a");
-    let result = route_request
-        .execute_with_format(req, ApiFormat::OpenAI)
-        .await;
+    let result = route_request.execute(req).await;
 
     // Should fail immediately with auth error (no retry to p2)
     assert!(result.is_err());
@@ -305,9 +298,7 @@ async fn retry_loop_exhausts_all_providers() {
     let route_request = make_route_request(router);
 
     let req = make_request("model-a");
-    let result = route_request
-        .execute_with_format(req, ApiFormat::OpenAI)
-        .await;
+    let result = route_request.execute(req).await;
 
     // Should fail after exhausting all providers
     assert!(result.is_err());
@@ -327,9 +318,7 @@ async fn retry_loop_empty_exclusion_list_works() {
     let route_request = make_route_request(router);
 
     let req = make_request("model-a");
-    let result = route_request
-        .execute_with_format(req, ApiFormat::OpenAI)
-        .await;
+    let result = route_request.execute(req).await;
 
     // Should succeed on first try
     assert!(result.is_ok(), "Expected success, got: {:?}", result);

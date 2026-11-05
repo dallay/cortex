@@ -101,7 +101,6 @@ fn route(router: Arc<dyn RouterPort>) -> RouteRequest {
         None,
         None,
         Arc::new(PricingConfig::default()),
-        Arc::new(common::NoOpTranslator),
         Arc::new(common::NoOpAliasRepository),
         rook_usecases::route_request::ModelAliasesConfig {
             enabled: false,

@@ -2025,3 +2025,84 @@ async fn complete_maps_anthropic_finish_reason_variants() {
         assert_eq!(response.finish_reason, expected, "stop_reason={reason}");
     }
 }
+
+#[tokio::test]
+async fn request_tools_are_normalized_to_native_anthropic_shape() {
+    use serde_json::json;
+    use wiremock::matchers::body_partial_json;
+
+    let server = MockServer::start().await;
+    // The gateway domain carries OpenAI function-shaped tools. The adapter owns
+    // the domain-to-wire mapping, so the upstream must observe the native
+    // Anthropic declaration shape for every client origin.
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(body_partial_json(json!({
+            "tools": [{
+                "name": "lookup",
+                "description": "Find things",
+                "input_schema": {"type": "object"}
+            }],
+            "tool_choice": {"type": "auto"}
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "claude-3-5-sonnet",
+            "content": [{"type": "text", "text": "ok"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 1, "output_tokens": 1}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut req = make_test_request("claude-3-5-sonnet");
+    req.metadata.origin = "openai".into();
+    req.tools = Some(json!([{
+        "type": "function",
+        "function": {"name": "lookup", "description": "Find things", "parameters": {"type": "object"}}
+    }]));
+    req.tool_choice = Some(json!("auto"));
+
+    let result = test_provider(&server).complete(&req).await;
+    assert!(
+        result.is_ok(),
+        "wire request must satisfy the native-tool matcher: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn request_tool_choice_function_form_maps_to_native_tool_selection() {
+    use serde_json::json;
+    use wiremock::matchers::body_partial_json;
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(body_partial_json(json!({
+            "tools": [{"name": "lookup", "input_schema": {"type": "object"}}],
+            "tool_choice": {"type": "tool", "name": "lookup"}
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "claude-3-5-sonnet",
+            "content": [{"type": "text", "text": "ok"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 1, "output_tokens": 1}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut req = make_test_request("claude-3-5-sonnet");
+    req.metadata.origin = "responses".into();
+    req.tools = Some(json!([{
+        "type": "function",
+        "function": {"name": "lookup", "parameters": {"type": "object"}}
+    }]));
+    req.tool_choice = Some(json!({"type": "function", "function": {"name": "lookup"}}));
+
+    let result = test_provider(&server).complete(&req).await;
+    assert!(
+        result.is_ok(),
+        "wire request must satisfy the native-tool_choice matcher: {result:?}"
+    );
+}
