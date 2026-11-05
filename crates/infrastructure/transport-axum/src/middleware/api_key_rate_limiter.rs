@@ -15,6 +15,8 @@ use crate::middleware::ip_rate_limiter::rand_simple;
 use rook_core::ApiKeyTier;
 use tokio::sync::Mutex;
 
+use super::token_bucket::TokenBucket;
+
 /// Rate limiting configuration for API keys
 #[derive(Debug, Clone)]
 pub struct RateLimiterConfig {
@@ -84,63 +86,6 @@ pub struct RateLimitSnapshot {
     pub retry_after_secs: u64,
 }
 
-/// Token bucket for a single key (API key ID or IP fallback)
-#[derive(Debug, Clone)]
-struct TokenBucket {
-    tokens: f64,
-    last_refill: Instant,
-}
-
-impl TokenBucket {
-    fn new(capacity: u64) -> Self {
-        Self {
-            tokens: capacity as f64,
-            last_refill: Instant::now(),
-        }
-    }
-
-    /// Refill tokens based on elapsed time
-    fn refill(&mut self, capacity: u64, refill_per_second: f64) {
-        let elapsed = self.last_refill.elapsed().as_secs_f64();
-        let refill_amount = elapsed * refill_per_second;
-        self.tokens = (self.tokens + refill_amount).min(capacity as f64);
-        self.last_refill = Instant::now();
-    }
-
-    /// Try to consume one token
-    fn try_consume(&mut self, capacity: u64, refill_per_second: f64) -> bool {
-        self.refill(capacity, refill_per_second);
-        if self.tokens >= 1.0 {
-            self.tokens -= 1.0;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Current token count
-    fn tokens(&self) -> f64 {
-        self.tokens
-    }
-
-    /// Time until next token is available (capped at 1 hour to prevent u64::MAX overflow)
-    fn retry_after(&self, _capacity: u64, refill_per_second: f64) -> Duration {
-        if self.tokens >= 1.0 {
-            Duration::ZERO
-        } else {
-            let tokens_needed = 1.0 - self.tokens;
-            let secs = if refill_per_second > 0.0 {
-                (tokens_needed / refill_per_second).ceil() as u64
-            } else {
-                // Avoid division by zero; cap at 1 hour
-                3600
-            };
-            // Cap at 1 hour to prevent u64::MAX overflow on very low refill rates
-            Duration::from_secs(secs.clamp(1, 3600))
-        }
-    }
-}
-
 /// Per-key token bucket rate limiter for CLIENT_API routes
 ///
 /// Uses the `X-Authz-Auth-ID` header (set by authz middleware after API key validation)
@@ -195,12 +140,12 @@ impl ApiKeyRateLimiter {
         let now = Instant::now();
 
         // TTL eviction: remove buckets idle for longer than idle_ttl
-        buckets.retain(|_, bucket| now.duration_since(bucket.last_refill) < self.idle_ttl);
+        buckets.retain(|_, bucket| now.duration_since(bucket.last_refill()) < self.idle_ttl);
 
         // Size cap: if still over max_entries, evict oldest by last_refill time
         if buckets.len() >= self.max_entries {
             let mut entries: Vec<_> = buckets.iter().collect();
-            entries.sort_by_key(|(_, b)| b.last_refill);
+            entries.sort_by_key(|(_, b)| b.last_refill());
             let keys_to_remove: Vec<_> = entries
                 .into_iter()
                 .take(buckets.len() - self.max_entries)
@@ -288,7 +233,7 @@ impl ApiKeyRateLimiter {
                 retry_after_secs: 0,
             })
         } else {
-            let retry_after = bucket.retry_after(capacity, refill_per_second).as_secs();
+            let retry_after = bucket.retry_after(refill_per_second).as_secs();
             let reset_unix = unix_now() + retry_after;
             Err(RateLimitExceeded {
                 retry_after_secs: retry_after,

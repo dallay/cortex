@@ -3,75 +3,23 @@
 // Applies to POST /login endpoint only. Uses in-memory storage that is
 // lost on restart — acceptable for MVP login protection.
 
-use std::{
-    collections::HashMap,
-    net::IpAddr,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{collections::HashMap, net::IpAddr, sync::Arc};
 
 use tokio::sync::Mutex;
+
+use super::token_bucket::TokenBucket;
 
 /// Maximum login attempts per IP per minute
 pub const LOGIN_RATE_LIMIT_CAPACITY: u64 = 5;
 /// Refill rate: 1 token every 12 seconds (~5 per minute)
 pub const LOGIN_RATE_REFILL_SECS: f64 = 12.0;
+/// The same refill expressed as tokens per second for the shared bucket.
+pub const LOGIN_RATE_REFILL_RATE: f64 = 1.0 / LOGIN_RATE_REFILL_SECS;
 
 /// Rate limit exceeded error with retry-after information
 #[derive(Debug, Clone, PartialEq)]
 pub struct RateLimitExceeded {
     pub retry_after_secs: u64,
-}
-
-/// Token bucket for a single IP address
-#[derive(Debug, Clone)]
-struct TokenBucket {
-    tokens: f64,
-    last_refill: Instant,
-}
-
-impl TokenBucket {
-    fn new() -> Self {
-        Self {
-            tokens: LOGIN_RATE_LIMIT_CAPACITY as f64,
-            last_refill: Instant::now(),
-        }
-    }
-
-    /// Refill tokens based on elapsed time
-    fn refill(&mut self) {
-        let elapsed = self.last_refill.elapsed().as_secs_f64();
-        let refill_amount = elapsed / LOGIN_RATE_REFILL_SECS;
-        self.tokens = (self.tokens + refill_amount).min(LOGIN_RATE_LIMIT_CAPACITY as f64);
-        self.last_refill = Instant::now();
-    }
-
-    /// Try to consume one token
-    fn try_consume(&mut self) -> bool {
-        self.refill();
-        if self.tokens >= 1.0 {
-            self.tokens -= 1.0;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Current token count (for testing)
-    fn tokens(&self) -> f64 {
-        self.tokens
-    }
-
-    /// Time until next token is available
-    fn retry_after(&self) -> Duration {
-        if self.tokens >= 1.0 {
-            Duration::ZERO
-        } else {
-            let tokens_needed = 1.0 - self.tokens;
-            let secs = (tokens_needed * LOGIN_RATE_REFILL_SECS).ceil() as u64;
-            Duration::from_secs(secs.max(1))
-        }
-    }
 }
 
 /// Login rate limiter using per-IP token bucket algorithm
@@ -97,12 +45,14 @@ impl LoginRateLimiter {
     /// Returns `Err(RateLimitExceeded)` if rate limited.
     pub async fn check(&self, ip: IpAddr) -> Result<(), RateLimitExceeded> {
         let mut buckets = self.buckets.lock().await;
-        let bucket = buckets.entry(ip).or_insert_with(TokenBucket::new);
+        let bucket = buckets
+            .entry(ip)
+            .or_insert_with(|| TokenBucket::new(LOGIN_RATE_LIMIT_CAPACITY));
 
-        if bucket.try_consume() {
+        if bucket.try_consume(LOGIN_RATE_LIMIT_CAPACITY, LOGIN_RATE_REFILL_RATE) {
             Ok(())
         } else {
-            let retry_after_secs = bucket.retry_after().as_secs().max(1);
+            let retry_after_secs = bucket.retry_after(LOGIN_RATE_REFILL_RATE).as_secs().max(1);
             Err(RateLimitExceeded { retry_after_secs })
         }
     }
