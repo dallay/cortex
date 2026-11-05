@@ -1744,6 +1744,7 @@ struct RecordingLongTerm {
     fact: Mutex<Option<Fact>>,
     preference: Mutex<Option<Preference>>,
     applies_to: Mutex<Vec<(Uuid, Uuid)>>,
+    about: Mutex<Vec<(Uuid, Uuid)>>,
     relationship: Mutex<Option<Relationship>>,
     facts: Mutex<Vec<Fact>>,
     preferences: Mutex<Vec<Preference>>,
@@ -1789,6 +1790,10 @@ impl RecordingLongTerm {
 
     fn applies_to_records(&self) -> Vec<(Uuid, Uuid)> {
         self.applies_to.lock().unwrap().clone()
+    }
+
+    fn about_records(&self) -> Vec<(Uuid, Uuid)> {
+        self.about.lock().unwrap().clone()
     }
 
     fn stored_preference(&self) -> Preference {
@@ -2205,6 +2210,21 @@ impl LongTermStore for RecordingLongTerm {
             .push((preference_id, entity_id));
         Ok(())
     }
+
+    // The ABOUT writer records one entry per distinct pair, mirroring the
+    // pinned property-free `MERGE`.
+    async fn link_preference_about_entity(
+        &self,
+        preference_id: Uuid,
+        entity_id: Uuid,
+    ) -> MemoryResult<()> {
+        let mut edges = self.about.lock().unwrap();
+        if !edges.contains(&(preference_id, entity_id)) {
+            edges.push((preference_id, entity_id));
+        }
+        drop(edges);
+        Ok(())
+    }
     async fn supersede_preference(&self, old_id: Uuid, new_id: Uuid) -> MemoryResult<()> {
         self.supersessions.lock().unwrap().push((old_id, new_id));
         Ok(())
@@ -2352,6 +2372,97 @@ async fn add_preference_links_applies_to_entities() {
         store.applies_to_records(),
         vec![(store.stored_preference().id, entity)]
     );
+}
+
+#[tokio::test]
+async fn add_preference_without_about_entities_leaves_the_payload_and_graph_unchanged() {
+    let store = Arc::new(RecordingLongTerm::default());
+    let entity = Uuid::new_v4();
+    store.entities.lock().unwrap().push(target_entity(entity));
+    let body = format!(r#"{{"category":"food","preference":"cafe","applies_to":["{entity}"]}}"#);
+    let response = request(state_with_long_term(store.clone()), "add_preference", &body).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    // No new wire field is projected, and APPLIES_TO still behaves as before.
+    assert_eq!(body["category"], "food");
+    assert_eq!(body["preference"], "cafe");
+    assert!(body.get("about").is_none());
+    assert!(body.get("about_entities").is_none());
+    assert_eq!(
+        store.applies_to_records(),
+        vec![(store.stored_preference().id, entity)]
+    );
+    assert!(store.about_records().is_empty());
+}
+
+#[tokio::test]
+async fn add_preference_creates_one_about_edge_only_when_requested() {
+    let store = Arc::new(RecordingLongTerm::default());
+    let entity = Uuid::new_v4();
+    store.entities.lock().unwrap().push(target_entity(entity));
+    let body = format!(
+        r#"{{"category":"food","preference":"cafe","about_entities":["{entity}","{entity}"]}}"#
+    );
+    let response = request(state_with_long_term(store.clone()), "add_preference", &body).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let preference = store.stored_preference();
+    // One property-free edge for the caller's own preference; ABOUT alone does
+    // not imply the APPLIES_TO filter edge.
+    assert_eq!(store.about_records(), vec![(preference.id, entity)]);
+    assert!(store.applies_to_records().is_empty());
+}
+
+#[tokio::test]
+async fn add_preference_rejects_malformed_about_entities_before_the_store() {
+    let store = Arc::new(RecordingLongTerm::default());
+    for extra in [
+        r#""about_entities":"not-a-list""#,
+        r#""about_entities":["x"]"#,
+    ] {
+        let body = format!(r#"{{"category":"food","preference":"tea",{extra}}}"#);
+        let response = request(state_with_long_term(store.clone()), "add_preference", &body).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["error"],
+            "'about_entities' must be a list of UUIDs"
+        );
+        assert!(store.preference.lock().unwrap().is_none());
+        assert!(store.applies_to_records().is_empty());
+        assert!(store.about_records().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn unknown_about_target_returns_404_and_writes_nothing() {
+    let store = Arc::new(RecordingLongTerm::default());
+    let target = Uuid::new_v4();
+    let missing = Uuid::new_v4();
+    store.entities.lock().unwrap().push(target_entity(target));
+    let body = serde_json::json!({
+        "category": "food",
+        "preference": "tea",
+        "applies_to": [target.to_string()],
+        "about_entities": [target.to_string(), missing.to_string()],
+    })
+    .to_string();
+    let response = request(state_with_long_term(store.clone()), "add_preference", &body).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["error"],
+        format!("not found: entity {missing}")
+    );
+    assert!(store.preference.lock().unwrap().is_none());
+    assert!(store.applies_to_records().is_empty());
+    assert!(store.about_records().is_empty());
 }
 
 #[tokio::test]

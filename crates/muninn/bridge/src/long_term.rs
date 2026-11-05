@@ -89,6 +89,7 @@ async fn add_preference(state: &BridgeState, args: &Args) -> BridgeResult {
         confidence: args.opt_f64("confidence")?.unwrap_or(1.0),
         metadata: args.object("metadata")?,
         applies_to: args.uuid_list("applies_to")?,
+        about_entities: args.uuid_list("about_entities")?,
         ..AddPreferenceOptions::default()
     };
     let preference = state

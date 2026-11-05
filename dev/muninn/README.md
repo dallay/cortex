@@ -598,3 +598,24 @@ The sidecar binds loopback only and has no database credentials. Do not expose i
 as a public service. Silver38, live Neo4j and live model checks are NOT_RUN in U2;
 they remain integrated U6 evidence, not implied by these test results. H3 remains
 accepted/committed with its existing proof limits. No H2 A4 retry is introduced.
+
+## H4 U3 cross-memory ABOUT edge
+
+The pinned `(:Preference)-[:ABOUT]->(:Entity)` edge and its opt-in
+`about_entities` request are documented in
+[Cross-memory ABOUT links](../../docs/muninn/cross-memory.md). That guide records
+the pinned shape and direction, the pinned-source conflicts (dead ABOUT query
+versus the live `APPLIES_TO` write, the TCK `Fact` anchor with no implementation,
+and no conversation/message/trace anchor), the default-off guarantee, the
+cross-owner isolation model, and the absence of any new DDL.
+
+```sh
+cargo test -p muninn-application --locked about
+cargo test -p muninn-bridge --locked --test bridge_router about
+cargo test -p muninn-neo4j --locked --lib preference_
+cargo test -p muninn-neo4j --locked --test cross_memory_edges
+```
+
+The last command compiles the live graph target and reports it as ignored:
+**NOT_RUN** until a new authenticated empty synthetic Neo4j fixture exists, with
+caller-owned teardown. No container, image pull or network access is performed.

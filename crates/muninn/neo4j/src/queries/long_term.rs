@@ -708,6 +708,17 @@ MATCH (e:Entity {id: $entity_id})
 MERGE (p)-[:APPLIES_TO]->(e)
 ";
 
+/// `(:Preference)-[:ABOUT]->(:Entity)`, the pinned cross-memory edge.
+///
+/// Upstream `graph/queries.py` defines it as one property-free `MERGE`, so a
+/// replay adds no edge and rewrites nothing. Ported verbatim apart from the
+/// unused `RETURN`.
+pub const LINK_PREFERENCE_ABOUT_ENTITY: &str = "
+MATCH (p:Preference {id: $preference_id})
+MATCH (e:Entity {id: $entity_id})
+MERGE (p)-[:ABOUT]->(e)
+";
+
 pub const SEARCH_PREFERENCES_BY_EMBEDDING: &str = "
 CALL db.index.vector.queryNodes('preference_embedding_idx', $limit, $embedding)
 YIELD node, score
@@ -830,6 +841,33 @@ mod tests {
     fn depth_traversal_embeds_the_bound() {
         assert!(entity_relationships_within(3).contains("[:RELATED_TO*1..3]"));
     }
+    #[test]
+    fn preference_about_edge_matches_the_pinned_cross_memory_shape() {
+        // Pinned `graph/queries.py::LINK_PREFERENCE_TO_ENTITY` links a Preference
+        // to an Entity with one property-free `ABOUT` edge, merged idempotently.
+        assert!(LINK_PREFERENCE_ABOUT_ENTITY.contains("MATCH (p:Preference {id: $preference_id})"));
+        assert!(LINK_PREFERENCE_ABOUT_ENTITY.contains("MATCH (e:Entity {id: $entity_id})"));
+        assert!(LINK_PREFERENCE_ABOUT_ENTITY.contains("MERGE (p)-[:ABOUT]->(e)"));
+        for forbidden in ["SET ", "ON CREATE", "ON MATCH", "APPLIES_TO", "REMOVE"] {
+            assert!(!LINK_PREFERENCE_ABOUT_ENTITY.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn preference_reads_never_traverse_about() {
+        // The owner_scope model is preserved: no preference read path gains an
+        // ABOUT traversal that could reach another owner's namespace.
+        for query in [
+            PREFERENCES_FOR_USER,
+            FIND_DUPLICATE_PREFERENCES,
+            SEARCH_PREFERENCES_BY_EMBEDDING,
+            SEARCH_PREFERENCES_BY_CATEGORY,
+        ] {
+            assert!(!query.contains("ABOUT"));
+        }
+        assert!(PREFERENCES_FOR_USER.contains("[:HAS_PREFERENCE]->"));
+    }
+
     #[test]
     fn preferences_scope_all_read_paths() {
         for query in [

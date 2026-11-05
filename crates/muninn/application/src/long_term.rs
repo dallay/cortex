@@ -105,6 +105,9 @@ pub struct AddPreferenceOptions {
     pub user_identifier: Option<String>,
     /// Entities this preference applies to; each one creates `APPLIES_TO`.
     pub applies_to: Vec<Uuid>,
+    /// Entities to mark with the cross-memory `ABOUT` edge. Empty keeps the
+    /// previous behavior: no `ABOUT` edge and no new graph writes.
+    pub about_entities: Vec<Uuid>,
 }
 
 impl Default for AddPreferenceOptions {
@@ -116,6 +119,7 @@ impl Default for AddPreferenceOptions {
             metadata: Metadata::new(),
             user_identifier: None,
             applies_to: Vec::new(),
+            about_entities: Vec::new(),
         }
     }
 }
@@ -647,7 +651,7 @@ impl LongTermMemory {
         // SOURCE-CONFLICT: upstream skips missing explicit IDs. Reject the whole
         // list before embedding or writes, including the deduplication path.
         // This preflight does not make concurrent entity deletion atomic.
-        for id in &options.applies_to {
+        for id in options.applies_to.iter().chain(&options.about_entities) {
             self.get_entity(*id)
                 .await?
                 .ok_or_else(|| MemoryError::not_found(format!("entity {id}")))?;
@@ -686,6 +690,11 @@ impl LongTermMemory {
                         .link_preference_to_entity(existing.id, *entity)
                         .await?;
                 }
+                for entity in &options.about_entities {
+                    self.store
+                        .link_preference_about_entity(existing.id, *entity)
+                        .await?;
+                }
                 return Ok(existing);
             }
         }
@@ -708,6 +717,11 @@ impl LongTermMemory {
         for entity in &options.applies_to {
             self.store
                 .link_preference_to_entity(stored.id, *entity)
+                .await?;
+        }
+        for entity in &options.about_entities {
+            self.store
+                .link_preference_about_entity(stored.id, *entity)
                 .await?;
         }
         Ok(stored)
@@ -966,6 +980,7 @@ mod tests {
         entities: Vec<Entity>,
         created: Mutex<Vec<Preference>>,
         target_links: Mutex<Vec<(Uuid, Uuid)>>,
+        about_links: Mutex<Vec<(Uuid, Uuid)>>,
     }
 
     struct FixedEmbedder;
@@ -1140,6 +1155,23 @@ mod tests {
                 "rejected input must not link a target"
             );
             self.target_links.lock().unwrap().push((preference, target));
+            Ok(())
+        }
+        async fn link_preference_about_entity(
+            &self,
+            preference: Uuid,
+            target: Uuid,
+        ) -> MemoryResult<()> {
+            assert!(
+                !self.forbid_preferences,
+                "rejected input must not mark a preference as about a target"
+            );
+            let mut links = self.about_links.lock().unwrap();
+            // Store double mirrors the pinned MERGE: repeating writes one edge.
+            if !links.contains(&(preference, target)) {
+                links.push((preference, target));
+            }
+            drop(links);
             Ok(())
         }
         async fn supersede_preference(&self, _: Uuid, _: Uuid) -> MemoryResult<()> {
@@ -1421,6 +1453,155 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn preference_about_links_are_written_only_when_requested() {
+        for requested in [false, true] {
+            let target = entity("target");
+            let (store, memory) = memory(FakeStore {
+                entities: vec![target.clone()],
+                ..FakeStore::default()
+            });
+            let result = memory
+                .add_preference(
+                    "food",
+                    "tea",
+                    AddPreferenceOptions {
+                        about_entities: if requested { vec![target.id] } else { vec![] },
+                        ..AddPreferenceOptions::default()
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                *store.about_links.lock().unwrap(),
+                if requested {
+                    vec![(result.id, target.id)]
+                } else {
+                    vec![]
+                }
+            );
+            // ABOUT never implies the APPLIES_TO filter edge.
+            assert!(store.target_links.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn preference_about_preflight_rejects_unknown_targets_before_embedding_or_writes() {
+        for duplicate in [false, true] {
+            for generate_embedding in [false, true] {
+                let present = entity("present");
+                let missing = Uuid::new_v4();
+                let store = Arc::new(FakeStore {
+                    entities: vec![present.clone()],
+                    owners: if duplicate {
+                        vec![("owner".into(), preference("food").item)]
+                    } else {
+                        vec![]
+                    },
+                    forbid_preferences: true,
+                    ..FakeStore::default()
+                });
+                let memory =
+                    LongTermMemory::new(store.clone(), Some(Arc::new(ForbiddenEmbedder)), false);
+                let error = memory
+                    .add_preference(
+                        "food",
+                        "tea",
+                        AddPreferenceOptions {
+                            user_identifier: Some("owner".into()),
+                            about_entities: vec![present.id, missing, present.id],
+                            generate_embedding,
+                            ..AddPreferenceOptions::default()
+                        },
+                    )
+                    .await
+                    .unwrap_err();
+                assert_eq!(error.to_string(), format!("not found: entity {missing}"));
+                assert!(store.created.lock().unwrap().is_empty());
+                assert!(store.target_links.lock().unwrap().is_empty());
+                assert!(store.about_links.lock().unwrap().is_empty());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn repeated_about_link_request_keeps_one_edge() {
+        let target = entity("target");
+        let existing = preference("food").item;
+        let (store, memory) = memory(FakeStore {
+            entities: vec![target.clone()],
+            owners: vec![("owner".into(), existing.clone())],
+            ..FakeStore::default()
+        });
+        let options = || AddPreferenceOptions {
+            user_identifier: Some("owner".into()),
+            about_entities: vec![target.id],
+            ..AddPreferenceOptions::default()
+        };
+        let first = memory
+            .add_preference("food", "tea", options())
+            .await
+            .unwrap();
+        let second = memory
+            .add_preference("food", "tea", options())
+            .await
+            .unwrap();
+        assert_eq!(first.id, existing.id);
+        assert_eq!(second.id, existing.id);
+        assert_eq!(
+            *store.about_links.lock().unwrap(),
+            vec![(existing.id, target.id)]
+        );
+    }
+
+    #[tokio::test]
+    async fn preference_about_link_stays_inside_the_requesting_owner_scope() {
+        let target = entity("target");
+        let owner_a = preference("food").item;
+        let (store, memory) = memory(FakeStore {
+            entities: vec![target.clone()],
+            owners: vec![("owner-a".into(), owner_a.clone())],
+            ..FakeStore::default()
+        });
+        let added = memory
+            .add_preference(
+                "food",
+                "tea",
+                AddPreferenceOptions {
+                    user_identifier: Some("owner-a".into()),
+                    about_entities: vec![target.id],
+                    ..AddPreferenceOptions::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(added.id, owner_a.id);
+        assert_eq!(
+            *store.about_links.lock().unwrap(),
+            vec![(owner_a.id, target.id)]
+        );
+        // Every owner-scoped read path still hides the other owner's
+        // preference, so its ABOUT edge is unreachable across owners.
+        assert!(memory
+            .get_preferences_for("owner-b", true)
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(memory
+            .get_preferences_by_category_scoped("food", 10, Some("owner-b"))
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            memory
+                .get_preferences_for("owner-a", true)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
     async fn legacy_store_reads_remain_compatible_and_filters_fail_closed() {
         let expected = preference("food").item;
         let (_, memory) = memory(FakeStore {
@@ -1492,6 +1673,163 @@ mod tests {
     }
 
     struct ForbiddenEmbedder;
+
+    /// Store written against the pre-`ABOUT` port: it deliberately omits the
+    /// additive cross-memory writer, so the port default decides the outcome.
+    struct LegacyAboutStore(Arc<FakeStore>);
+
+    #[async_trait]
+    impl LongTermStore for LegacyAboutStore {
+        async fn upsert_entity(&self, _: &Entity) -> MemoryResult<Entity> {
+            unimplemented!()
+        }
+        async fn get_entity(&self, id: Uuid) -> MemoryResult<Option<Entity>> {
+            self.0.get_entity(id).await
+        }
+        async fn get_entity_by_name(&self, _: &str) -> MemoryResult<Option<Entity>> {
+            unimplemented!()
+        }
+        async fn search_entities(
+            &self,
+            _: &[f64],
+            _: i64,
+            _: f64,
+        ) -> MemoryResult<Vec<Scored<Entity>>> {
+            unimplemented!()
+        }
+        async fn list_entities(&self, _: Option<&str>, _: i64) -> MemoryResult<Vec<Entity>> {
+            unimplemented!()
+        }
+        async fn update_entity(&self, _: Uuid, _: &EntityUpdate) -> MemoryResult<Option<Entity>> {
+            unimplemented!()
+        }
+        async fn delete_entity(&self, _: Uuid) -> MemoryResult<bool> {
+            unimplemented!()
+        }
+        async fn related_entities(&self, _: Uuid, _: u8) -> MemoryResult<Vec<RelatedEntity>> {
+            unimplemented!()
+        }
+        async fn upsert_relationship(
+            &self,
+            _: &Relationship,
+        ) -> MemoryResult<Option<Relationship>> {
+            unimplemented!()
+        }
+        async fn merge_entities(&self, _: Uuid, _: Uuid) -> MemoryResult<Option<(Entity, Entity)>> {
+            unimplemented!()
+        }
+        async fn link_same_as(
+            &self,
+            _: Uuid,
+            _: Uuid,
+            _: f64,
+            _: &str,
+            _: &str,
+        ) -> MemoryResult<()> {
+            unimplemented!()
+        }
+        async fn set_entity_feedback(&self, _: Uuid, _: f64, _: bool) -> MemoryResult<bool> {
+            unimplemented!()
+        }
+        async fn link_message_to_entity(&self, _: Uuid, _: Uuid, _: f64) -> MemoryResult<bool> {
+            unimplemented!()
+        }
+        async fn entity_mentions(&self, _: Uuid) -> MemoryResult<Option<Vec<EntityMention>>> {
+            unimplemented!()
+        }
+        async fn entity_graph(&self, _: i64) -> MemoryResult<EntityGraph> {
+            unimplemented!()
+        }
+        async fn create_preference(&self, preference: &Preference) -> MemoryResult<Preference> {
+            self.0.create_preference(preference).await
+        }
+        async fn find_duplicate_preference(
+            &self,
+            _: &[f64],
+            _: &str,
+            _: f64,
+            _: Option<&str>,
+        ) -> MemoryResult<Option<Preference>> {
+            unimplemented!()
+        }
+        async fn link_user_to_preference(&self, _: &str, _: Uuid) -> MemoryResult<()> {
+            unimplemented!()
+        }
+        async fn link_preference_to_entity(&self, _: Uuid, _: Uuid) -> MemoryResult<()> {
+            unimplemented!()
+        }
+        async fn supersede_preference(&self, _: Uuid, _: Uuid) -> MemoryResult<()> {
+            unimplemented!()
+        }
+        async fn preferences_for(&self, _: &str, _: bool) -> MemoryResult<Vec<Preference>> {
+            unimplemented!()
+        }
+        async fn search_preferences(
+            &self,
+            _: &[f64],
+            _: i64,
+            _: f64,
+            _: Option<&str>,
+        ) -> MemoryResult<Vec<Scored<Preference>>> {
+            unimplemented!()
+        }
+        async fn preferences_by_category(
+            &self,
+            _: &str,
+            _: i64,
+            _: Option<&str>,
+        ) -> MemoryResult<Vec<Preference>> {
+            unimplemented!()
+        }
+        async fn create_fact(&self, _: &Fact) -> MemoryResult<Fact> {
+            unimplemented!()
+        }
+        async fn find_duplicate_fact(
+            &self,
+            _: &[f64],
+            _: &str,
+            _: &str,
+            _: f64,
+        ) -> MemoryResult<Option<Fact>> {
+            unimplemented!()
+        }
+        async fn update_fact_confidence(&self, _: Uuid, _: f64, _: &str) -> MemoryResult<()> {
+            unimplemented!()
+        }
+        async fn search_facts(&self, _: &[f64], _: i64, _: f64) -> MemoryResult<Vec<Scored<Fact>>> {
+            unimplemented!()
+        }
+        async fn facts_by_subject(&self, _: &str, _: i64) -> MemoryResult<Vec<Fact>> {
+            unimplemented!()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_store_without_the_additive_writer_fails_closed_instead_of_dropping_about() {
+        let target = entity("target");
+        let inner = Arc::new(FakeStore {
+            entities: vec![target.clone()],
+            ..FakeStore::default()
+        });
+        let memory = LongTermMemory::new(Arc::new(LegacyAboutStore(inner.clone())), None, false);
+        let error = memory
+            .add_preference(
+                "food",
+                "tea",
+                AddPreferenceOptions {
+                    about_entities: vec![target.id],
+                    generate_embedding: false,
+                    ..AddPreferenceOptions::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "not supported: preference ABOUT");
+        assert!(inner.about_links.lock().unwrap().is_empty());
+        // Not a new transaction: the preference write already happened, so the
+        // failure is visible instead of a silently missing edge.
+        assert_eq!(inner.created.lock().unwrap().len(), 1);
+    }
     #[async_trait]
     impl Embedder for ForbiddenEmbedder {
         fn dimensions(&self) -> usize {

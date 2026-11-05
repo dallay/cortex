@@ -768,6 +768,23 @@ impl LongTermStore for Neo4jLongTermStore {
             .map(|_| ())
     }
 
+    async fn link_preference_about_entity(
+        &self,
+        preference_id: Uuid,
+        entity_id: Uuid,
+    ) -> MemoryResult<()> {
+        self.client
+            .execute(
+                q::LINK_PREFERENCE_ABOUT_ENTITY,
+                vec![
+                    ("preference_id", id_param(preference_id)),
+                    ("entity_id", id_param(entity_id)),
+                ],
+            )
+            .await
+            .map(|_| ())
+    }
+
     async fn supersede_preference(&self, old_id: Uuid, new_id: Uuid) -> MemoryResult<()> {
         self.client
             .execute(

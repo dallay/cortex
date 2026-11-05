@@ -535,6 +535,18 @@ pub trait LongTermStore: Send + Sync {
         entity_id: Uuid,
     ) -> MemoryResult<()>;
 
+    /// `(:Preference)-[:ABOUT]->(:Entity)`, the pinned cross-memory edge
+    /// (`graph/queries.py`: one property-free, idempotent `MERGE`). Additive:
+    /// legacy implementations must fail explicitly instead of silently
+    /// dropping a requested cross-memory link.
+    async fn link_preference_about_entity(
+        &self,
+        _preference_id: Uuid,
+        _entity_id: Uuid,
+    ) -> MemoryResult<()> {
+        Err(MemoryError::NotSupported("preference ABOUT".into()))
+    }
+
     /// `(:Preference)-[:SUPERSEDED_BY]->(:Preference)` and `valid_until` on the
     /// old preference, exactly once; repeating the call is a no-op.
     async fn supersede_preference(&self, old_id: Uuid, new_id: Uuid) -> MemoryResult<()>;
