@@ -619,3 +619,39 @@ cargo test -p muninn-neo4j --locked --test cross_memory_edges
 The last command compiles the live graph target and reports it as ignored:
 **NOT_RUN** until a new authenticated empty synthetic Neo4j fixture exists, with
 caller-owned teardown. No container, image pull or network access is performed.
+
+## H4 GM-02/03/04 harness (deterministic only; U6 measurement pending)
+
+The H4 differential harness composes the accepted GM-05/GM-08 components; no
+`gm05*` or `gm08*` file is edited.
+
+| File | Role |
+| --- | --- |
+| `fixtures/gm_h4_v1.json` | frozen texts, extraction-mode scenarios, resolution seeds/attempts, thresholds and the declared `1e-9` |
+| `gm_h4_capture.py` | frozen GM-02/GM-04 operations and symmetric graph reads |
+| `gm_h4_extract.py` | GM-03 projection of both spaCy stage payloads |
+| `gm_h4_contract.py` | fail-closed comparison and the disclosed rule digest |
+| `gm_h4_peer.py` | one per side, inside the H4 oracle image; reference client or source-bound bridge |
+| `gm_h4_runner.py` | offline source-bound build plus dory capture and verdict |
+
+The only numeric tolerance is an absolute `1e-9` on similarity scores;
+everything else is exact. The declaration digest is
+`33f20952b97fdd6ec5f49d788a7e21fc6ec9fc177f6236786b2a805cfb7533f8`.
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover \
+  -s dev/muninn/tests -p 'test_gm_h4*.py' -v
+PYTHONDONTWRITEBYTECODE=1 python3 -B dev/muninn/gm_h4_contract.py \
+  --expected /path/to/reference.json --actual /path/to/product.json
+PYTHONDONTWRITEBYTECODE=1 python3 -B dev/muninn/gm_h4_runner.py \
+  --sources dev/muninn/.cache/sources \
+  --cargo-cache "$HOME/.cargo/registry" \
+  --output .agents/rpi/plan/tasks/muninn-h4-extraction-connected-memory/evidence/<new-run>
+```
+
+`--binary`, tolerance and deviation bypasses do not exist. Both sides run in
+`muninn-h4-oracle-spacy:20261105` against separate fresh authenticated tmpfs
+databases on an internal network without published ports. GM-02 `auto` is
+expected to fail closed because the `muninn` binary registers no extraction
+stage; GM-03 and GM-04 are measurable. Details, declared asymmetries and open
+limits: [H4 measurement notes](../../docs/muninn/h4-measurement.md#u5b-gm-020304-harness).

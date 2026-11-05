@@ -167,3 +167,106 @@ model, not an accuracy measurement and not a Gold or differential result.
 Raw command streams, exits, image identity, build log, runtime probe, inventory,
 the unchanged-GM05 witnesses and per-file hashes are retained under
 `.agents/rpi/plan/tasks/muninn-h4-extraction-connected-memory/evidence/u5a-oracle-image/`.
+
+## U5b GM-02/03/04 harness
+
+The GM-02 (extraction modes), GM-03 (spaCy fidelity) and GM-04 (resolution and
+deduplication) harness is implemented and deterministic-tested. **No real
+measurement has run**: the H4 differential belongs to U6, and every verdict
+below is `NOT_RUN` until that unit captures both sides. The harness is built by
+composing the accepted components rather than adding a framework: `gm05_build`
+for the source-bound offline build, `gm08_runner` for the dory lifecycle,
+preflight and faithful-copy helper, `gm08_peer` for the loopback bridge,
+binary-consume and fresh-database guards, and `gm08_contract` for the
+fail-closed comparison shape. No `gm05` or `gm08` file is modified.
+
+## Quick path (the U6 command)
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -B dev/muninn/gm_h4_runner.py \
+  --sources dev/muninn/.cache/sources \
+  --cargo-cache "$HOME/.cargo/registry" \
+  --output .agents/rpi/plan/tasks/muninn-h4-extraction-connected-memory/evidence/<new-run>
+```
+
+The runner builds the current workspace offline, creates one fresh authenticated
+tmpfs database per side on an internal network with no published ports, and runs
+one peer per side inside `muninn-h4-oracle-spacy:20261105`. `--binary`,
+`--tolerance`, `--epsilon` and `--deviation` do not exist. Comparison only, from
+two retained captures:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -B dev/muninn/gm_h4_contract.py \
+  --expected reference.json --actual product.json
+```
+
+Exit 0 is an offline comparison pass, exit 2 is invalid input or a difference.
+
+## What each differential compares
+
+| Item | Cross-side values | Per-side invariants (an equal-but-corrupt pair fails) |
+| --- | --- | --- |
+| GM-02 | scenario order, entity inventory, `MENTIONS` edges with `confidence`/`start_pos`/`end_pos`, `RELATED_TO` inventory | auto spans reproduce their entity name at 0.85, skip creates no mention and no entity, explicit links only the supplied references, replay does not duplicate nodes |
+| GM-03 | `name`, POLE+O `type`, `subtype`, `start_pos`, `end_pos`, constant `0.85`, `spacy` extractor, in document order | offsets in range and in character order, span reproduces the name, frozen texts verbatim, empty/whitespace text yields no entity, the stage stream is never shorter than the GM-02 mentions of the same text |
+| GM-04 | attempt order, observed band/action, matched candidate, score, match type, canonical identity, `SAME_AS` inventory | band derived from the observed score with the declared 0.90/0.85 thresholds, matched candidate inside the declared pool, merge returns the matched identity, a flagged mention keeps its own node with exactly one pending `SAME_AS` edge, a null match reports 0.0 |
+
+## Declared tolerances and rules (disclosed by hash)
+
+The only numeric tolerance is an absolute **`1e-9`** applied to resolution
+similarity scores and `SAME_AS` confidence. Every other value — including
+`MENTIONS` confidence, band thresholds, spans and labels — is compared exactly.
+The declaration digest is
+`33f20952b97fdd6ec5f49d788a7e21fc6ec9fc177f6236786b2a805cfb7533f8`
+(SHA-256 over `gm_h4_contract.DECLARATIONS`, the sixteen pre-declared rules).
+Any observed difference that would need a wider tolerance is a finding to
+report, never a relaxation.
+
+Two declared asymmetries, both recorded before measurement:
+
+1. **Additive MENTIONS provenance.** The pinned reference writes only
+   `confidence`, `start_pos` and `end_pos` (`graph/queries.py::LINK_MESSAGE_TO_ENTITY`).
+   Muninn also writes `derived`, `extractor`, `support`, `source_message_ids` and
+   `evidence`. Those five columns are validated on the product side against the
+   frozen fixture and are never compared across servers; their presence on the
+   reference side fails.
+2. **Reference-only extraction fields.** The pinned `ExtractedEntity` also
+   carries `context`, `attributes` and `id`; the Muninn stage emits none of them,
+   so H4 claims no parity for them. They are accepted and dropped, and an
+   unknown field on either side fails.
+
+## Known limits of this harness
+
+- **Product extraction stage is not wired in the built binary.** `apps/muninn`
+   exposes Neo4j and embedding flags only (no extractor, no `NAM_EXTRACTION*`),
+   so the bridge never registers `SpacyEntityExtractor`. GM-02 `auto` therefore
+  produces no product mentions and fails closed on the fixture's declared
+  minimum of one. That is an expected measured finding for U6, not a harness
+  deviation, and no product code is changed in U5.
+- **The flagged band is not deterministically reachable.** Both sides receive
+  the same controlled vectors (TCK `MockEmbedder` SHA-256 1536 for the
+  reference, the byte-identical `hash` provider for the product), whose cosines
+  between distinct names are near zero. Exact surfaces force `1.0`/merged and
+  absent candidates force `0.0`/none; a mid-band score depends on the observed
+  vector/fuzzy mix and is compared, never predicted. GM-04 validates the
+  pending-`SAME_AS` structure whenever a side reports `flagged`, and compares
+  the merge structure that the forced cases do exercise.
+- **The vector space is the declared test-only one.** GM-04 feeds both sides
+  the same SHA-256 1536 embedding — the reference TCK mock and the byte-identical
+  product `hash` provider — so the differential measures resolution policy, not
+  the MiniLM space S4 selects for production. Resolution inside the pinned
+  `MiniLmEmbedder` bundle is **NOT_RUN** here and C1/MiniLM numerical acceptance
+  stays a separate pending H1 item.
+- **Extraction quality statistics, Gold cross-memory, Silver38 and live Neo4j
+  ingestion are NOT_RUN** in U5b. They do not belong to a harness unit.
+
+## Deterministic checks
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -B dev/muninn/tests/test_gm_h4_contract.py
+PYTHONDONTWRITEBYTECODE=1 python3 -B dev/muninn/tests/test_gm_h4_extract.py
+PYTHONDONTWRITEBYTECODE=1 python3 -B dev/muninn/tests/test_gm_h4_runner.py
+```
+
+Raw RED and GREEN streams, exits, per-file hashes and the declaration digest are
+retained under
+`.agents/rpi/plan/tasks/muninn-h4-extraction-connected-memory/evidence/u5b-harness/`.

@@ -1,0 +1,119 @@
+{
+  "schema": "gm_h4-fixture-v1",
+  "seed": 404,
+  "numeric_epsilon": 1e-09,
+  "thresholds": {
+    "auto_merge": 0.9,
+    "review": 0.85,
+    "fuzzy": 0.85,
+    "semantic": 0.8,
+    "candidate_limit": 12
+  },
+  "gm02": {
+    "session_id": "gm-h4-synthetic-session",
+    "role": "user",
+    "seeded": [
+      {"name": "Dana Reyes", "type": "PERSON"}
+    ],
+    "scenarios": [
+      {
+        "key": "auto",
+        "mode": "auto",
+        "text": "Alice met Acme Corporation in Paris on 4 May 2024.",
+        "min_mentions": 1
+      },
+      {
+        "key": "auto-replay",
+        "mode": "auto",
+        "text": "Alice met Acme Corporation in Paris on 4 May 2024.",
+        "min_mentions": 1
+      },
+      {
+        "key": "skip",
+        "mode": "skip",
+        "text": "Alice met Acme Corporation in Paris on 4 May 2024.",
+        "explicit_mentions": [{"name": "Skip Probe", "type": "ORGANIZATION"}],
+        "expected_mentions": [],
+        "absent_entities": ["Skip Probe|ORGANIZATION"]
+      },
+      {
+        "key": "explicit",
+        "mode": "explicit",
+        "text": "Approved synthetic entity references.",
+        "explicit_mentions": [
+          {"id_of": "Dana Reyes|PERSON"},
+          {"name": "Olive Turner", "type": "PERSON"},
+          {"name": "Unlinked Unknown Name"}
+        ],
+        "expected_mentions": ["Dana Reyes|PERSON", "Olive Turner|PERSON"]
+      }
+    ]
+  },
+  "gm03": {
+    "texts": [
+      {"key": "auto", "text": "Alice met Acme Corporation in Paris on 4 May 2024."},
+      {"key": "unicode", "text": "Zoe Q. Moritz visited Cafe Lumiere in Zurich."},
+      {"key": "mixed", "text": "The Quarterly Report was filed in Tokyo by the Norlund Institute on 12 March 2025."},
+      {"key": "empty", "text": ""},
+      {"key": "whitespace", "text": "   "}
+    ]
+  },
+  "gm04": {
+    "seeds": [
+      {"name": "Gm H4 Candidate Alpine", "type": "PERSON"},
+      {"name": "Gm H4 Candidate Alpine", "type": "OBJECT"},
+      {"name": "Gm H4 Candidate Boreal", "type": "OBJECT"},
+      {"name": "Gm H4 Candidate Alpine", "type": "LOCATION"},
+      {"name": "Gm H4 Candidate Boreal", "type": "LOCATION"},
+      {"name": "Gm H4 Candidate Cypress", "type": "LOCATION"}
+    ],
+    "attempts": [
+      {
+        "key": "prefix-1",
+        "name": "Gm H4 Cypress Candidate",
+        "entity_type": "PERSON",
+        "pool": ["Gm H4 Candidate Alpine|PERSON"]
+      },
+      {
+        "key": "prefix-2",
+        "name": "Gm H4 Cypress Candidate",
+        "entity_type": "OBJECT",
+        "pool": ["Gm H4 Candidate Alpine|OBJECT", "Gm H4 Candidate Boreal|OBJECT"]
+      },
+      {
+        "key": "prefix-3",
+        "name": "Gm H4 Cypress Candidate",
+        "entity_type": "LOCATION",
+        "pool": [
+          "Gm H4 Candidate Alpine|LOCATION",
+          "Gm H4 Candidate Boreal|LOCATION",
+          "Gm H4 Candidate Cypress|LOCATION"
+        ]
+      },
+      {
+        "key": "exact",
+        "name": "Gm H4 Candidate Alpine",
+        "entity_type": "OBJECT",
+        "pool": ["Gm H4 Candidate Alpine|OBJECT"],
+        "expect_band": "merged",
+        "expect_score": 1.0
+      },
+      {
+        "key": "exact-repeat",
+        "name": "Gm H4 Candidate Alpine",
+        "entity_type": "OBJECT",
+        "pool": ["Gm H4 Candidate Alpine|OBJECT"],
+        "expect_band": "merged",
+        "expect_score": 1.0
+      },
+      {
+        "key": "no-candidate",
+        "name": "Gm H4 Distant Sigma",
+        "entity_type": "ORGANIZATION",
+        "pool": [],
+        "expect_band": "none",
+        "expect_score": 0.0
+      }
+    ]
+  }
+}
