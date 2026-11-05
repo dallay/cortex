@@ -12,7 +12,8 @@ use crossterm::event::{
 use crossterm::{
     cursor::Show,
     event::{
-        DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
+        DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
+        KeyModifiers,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode},
@@ -666,6 +667,30 @@ impl View {
         }
     }
 }
+
+/// What a key means once the completion menu is open.
+enum CompletionAction {
+    /// The key is not a completion key; the caller keeps handling it.
+    Ignored,
+    /// The completion menu consumed the key.
+    Stop,
+    /// The caller must release the UI lock before dispatching this command.
+    Dispatch {
+        command: huginn_plugin_api::v1::Command,
+        rest: String,
+    },
+}
+
+/// What a submitted draft turned into.
+enum DraftDelivery {
+    /// The draft became a new turn.
+    Sent,
+    /// The draft stays in the composer and the reason is on screen.
+    Refused,
+    /// The draft became a steering message.
+    Steered,
+}
+
 impl Driver {
     fn model_configured(&self) -> bool {
         self.readiness
@@ -1322,6 +1347,95 @@ Enter save Esc close"
             }
         }
     }
+    /// Applies a completion-menu key; `Dispatch` tells the caller to drop the lock first.
+    fn completion_key(state: &mut crate::state::UiState, key: KeyEvent) -> CompletionAction {
+        if state.completion.items.is_empty() {
+            return CompletionAction::Ignored;
+        }
+        match key.code {
+            KeyCode::Esc => {
+                let crate::state::UiState {
+                    editor, completion, ..
+                } = &mut *state;
+                completion.dismiss(editor);
+                CompletionAction::Stop
+            }
+            KeyCode::Up if key.modifiers.is_empty() => {
+                state.completion.navigate(false);
+                CompletionAction::Stop
+            }
+            KeyCode::Down if key.modifiers.is_empty() => {
+                state.completion.navigate(true);
+                CompletionAction::Stop
+            }
+            KeyCode::Tab | KeyCode::Enter if key.modifiers.is_empty() => {
+                let execute = key.code == KeyCode::Enter;
+                // Completion replaces byte ranges in the visible draft.
+                // Expand paste spans first so that it cannot orphan source text.
+                state.materialize_all_pastes();
+                let crate::state::UiState {
+                    editor, completion, ..
+                } = &mut *state;
+                match completion.accept(editor, execute) {
+                    None | Some(Acceptance::Inserted) => CompletionAction::Stop,
+                    Some(Acceptance::Command(Some(command))) => {
+                        let line = state.editor.text.trim().to_string();
+                        let boundary = line.find(char::is_whitespace).unwrap_or(line.len());
+                        CompletionAction::Dispatch {
+                            command,
+                            rest: line[boundary..].trim().to_string(),
+                        }
+                    }
+                    Some(Acceptance::Command(None)) => CompletionAction::Ignored,
+                }
+            }
+            _ => CompletionAction::Ignored,
+        }
+    }
+
+    /// Delivers a submitted draft as a steering message during a turn, or as the next turn.
+    fn deliver_draft(
+        &self,
+        line: &str,
+        state: &mut crate::state::UiState,
+        prompts: &tokio::sync::mpsc::Sender<String>,
+    ) -> DraftDelivery {
+        // UI commands remain usable during a turn. A conversation draft becomes
+        // a steering message the loop drains at its next step boundary; it is
+        // never queued as a turn of its own.
+        if !state.busy {
+            if prompts.try_send(line.to_owned()).is_err() {
+                return DraftDelivery::Refused;
+            }
+            state.busy = true;
+            return DraftDelivery::Sent;
+        }
+        let Some(steering) = &self.steering else {
+            state.status.set_diagnostic(
+                "Steering is unavailable; the draft waits for the turn to end".into(),
+            );
+            return DraftDelivery::Refused;
+        };
+        if let Err(error) = steering.push(line) {
+            // The draft stays in the composer: a refused message must never
+            // look delivered. The loop's own wording is kept, without the
+            // internal error taxonomy, because this line is UI copy.
+            let reason = match &error {
+                huginn_core::AgentError::Configuration(message) => message.clone(),
+                other => other.to_string(),
+            };
+            state
+                .status
+                .set_diagnostic(format!("Steering refused: {reason}"));
+            return DraftDelivery::Refused;
+        }
+        state.clear_editor();
+        state
+            .status
+            .set_notice("Steering queued; delivered at the next step".into());
+        DraftDelivery::Steered
+    }
+
     fn input(&self, event: Event, prompts: &tokio::sync::mpsc::Sender<String>, focus: u64) {
         self.ui.refresh_completion(self.model_configured());
         let mut state = self.ui.lock();
@@ -1362,46 +1476,14 @@ Enter save Esc close"
             }
             return;
         }
-        if !state.completion.items.is_empty() {
-            match key.code {
-                KeyCode::Esc => {
-                    let crate::state::UiState {
-                        editor, completion, ..
-                    } = &mut *state;
-                    completion.dismiss(editor);
-                    return;
-                }
-                KeyCode::Up if key.modifiers.is_empty() => {
-                    state.completion.navigate(false);
-                    return;
-                }
-                KeyCode::Down if key.modifiers.is_empty() => {
-                    state.completion.navigate(true);
-                    return;
-                }
-                KeyCode::Tab | KeyCode::Enter if key.modifiers.is_empty() => {
-                    let execute = key.code == KeyCode::Enter;
-                    // Completion replaces byte ranges in the visible draft.
-                    // Expand paste spans first so that it cannot orphan source text.
-                    state.materialize_all_pastes();
-                    let crate::state::UiState {
-                        editor, completion, ..
-                    } = &mut *state;
-                    match completion.accept(editor, execute) {
-                        None => return,
-                        Some(Acceptance::Inserted) => return,
-                        Some(Acceptance::Command(Some(command))) => {
-                            let line = state.editor.text.trim().to_string();
-                            let boundary = line.find(char::is_whitespace).unwrap_or(line.len());
-                            drop(state);
-                            self.ui.dispatch_handle(&command, line[boundary..].trim());
-                            self.ui.lock().clear_editor();
-                            return;
-                        }
-                        Some(Acceptance::Command(None)) => {}
-                    }
-                }
-                _ => {}
+        match Self::completion_key(&mut state, key) {
+            CompletionAction::Ignored => {}
+            CompletionAction::Stop => return,
+            CompletionAction::Dispatch { command, rest } => {
+                drop(state);
+                self.ui.dispatch_handle(&command, &rest);
+                self.ui.lock().clear_editor();
+                return;
             }
         }
         if key.code == KeyCode::Enter
@@ -1449,39 +1531,9 @@ Enter save Esc close"
                     return;
                 }
                 let mut state = self.ui.lock();
-                // UI commands remain usable during a turn. A conversation draft becomes
-                // a steering message the loop drains at its next step boundary; it is
-                // never queued as a turn of its own.
-                if state.busy {
-                    let Some(steering) = &self.steering else {
-                        state.status.set_diagnostic(
-                            "Steering is unavailable; the draft waits for the turn to end".into(),
-                        );
-                        return;
-                    };
-                    if let Err(error) = steering.push(&line) {
-                        // The draft stays in the composer: a refused message must never
-                        // look delivered. The loop's own wording is kept, without the
-                        // internal error taxonomy, because this line is UI copy.
-                        let reason = match &error {
-                            huginn_core::AgentError::Configuration(message) => message.clone(),
-                            other => other.to_string(),
-                        };
-                        state
-                            .status
-                            .set_diagnostic(format!("Steering refused: {reason}"));
-                        return;
-                    }
-                    state.clear_editor();
-                    state
-                        .status
-                        .set_notice("Steering queued; delivered at the next step".into());
-                    return;
-                }
-                if prompts.try_send(line).is_ok() {
-                    state.busy = true;
-                } else {
-                    return;
+                match self.deliver_draft(&line, &mut state, prompts) {
+                    DraftDelivery::Sent => {}
+                    DraftDelivery::Refused | DraftDelivery::Steered => return,
                 }
                 state.clear_editor();
             }
