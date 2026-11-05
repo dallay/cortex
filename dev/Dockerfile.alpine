@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM rust:1.99-alpine@sha256:7e9e2d068a107a2adafd19930011178d14a78326053cd4c3a9f7ad3fd049557d AS builder
+FROM rust:1.99-alpine@sha256:f432d4b8663fbc50b29e33846bf6a1fb9f17f142023598899d641cddf57c6b22 AS builder
 
 WORKDIR /app
 
