@@ -5,6 +5,8 @@ mod embedded {
     embed_migrations!("src/migrations");
 }
 
+pub mod connection;
+
 pub use embedded::migrations;
 
 /// Build the migration runner with the configured migration table name.
@@ -17,6 +19,9 @@ fn build_runner() -> refinery::Runner {
 /// Run all pending migrations on the given database path.
 pub fn run_migrations(db_path: &str) -> anyhow::Result<usize> {
     let mut conn = rusqlite::Connection::open(db_path)?;
+    conn.busy_timeout(std::time::Duration::from_millis(
+        connection::BUSY_TIMEOUT_MS as u64,
+    ))?;
     run_on_connection(&mut conn)
 }
 
@@ -104,6 +109,9 @@ impl MigrationRunner {
 
     pub fn status(&self) -> anyhow::Result<MigrationStatus> {
         let mut conn = rusqlite::Connection::open(&self.db_path)?;
+        conn.busy_timeout(std::time::Duration::from_millis(
+            connection::BUSY_TIMEOUT_MS as u64,
+        ))?;
 
         let runner = build_runner();
 
@@ -123,6 +131,9 @@ impl MigrationRunner {
 
     pub fn run(&self) -> anyhow::Result<usize> {
         let mut conn = rusqlite::Connection::open(&self.db_path)?;
+        conn.busy_timeout(std::time::Duration::from_millis(
+            connection::BUSY_TIMEOUT_MS as u64,
+        ))?;
 
         let runner = build_runner();
 

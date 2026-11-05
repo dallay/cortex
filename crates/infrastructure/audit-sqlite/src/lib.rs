@@ -44,7 +44,8 @@ impl SqliteAudit {
     pub fn new(db_path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let conn = Connection::open(db_path)?;
         conn.execute_batch(
-            "PRAGMA foreign_keys = ON;
+            "PRAGMA busy_timeout = 5000;
+            PRAGMA foreign_keys = ON;
             CREATE TABLE IF NOT EXISTS audit (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 request_id  TEXT NOT NULL,
@@ -139,12 +140,13 @@ impl SqliteUsageRepository {
             .map_err(|e| CortexError::provider(format!("sqlite open failed: {e}")))?;
         // Schema (usage_history table and indexes) is managed by db-migration/V2__usage_history.sql.
         // Calling code must run run_startup_migrations() before using the repository.
-        conn.execute_batch("PRAGMA foreign_keys = ON;")
+        // The busy timeout makes writes wait for a lock instead of failing at once.
+        conn.execute_batch("PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;")
             .map_err(|e| CortexError::provider(format!("sqlite pragma setup failed: {e}")))?;
         let worker_conn = Connection::open(db_path)
             .map_err(|e| CortexError::provider(format!("sqlite quota worker open failed: {e}")))?;
         worker_conn
-            .execute_batch("PRAGMA foreign_keys = ON;")
+            .execute_batch("PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;")
             .map_err(|e| {
                 CortexError::provider(format!("sqlite quota worker pragma setup failed: {e}"))
             })?;
