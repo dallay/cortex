@@ -235,6 +235,40 @@ fn read_document(
     repository: &Path,
 ) -> Result<(SkillEntry, String), Rejection> {
     let logical = directory.join("SKILL.md");
+    let (parent, canonical) = resolve_document_paths(scope, directory, repository)?;
+    let before = fs::metadata(&canonical).map_err(resolution)?;
+    verify_document_file(&before)?;
+    let mut file =
+        fs::File::open(&canonical).map_err(|e| reject("file_unreadable", e.to_string()))?;
+    if !same_metadata(&before, &file.metadata().map_err(resolution)?) {
+        return Err(reject("source_changed", "SKILL.md changed before reading"));
+    }
+    let bytes = read_bounded(&mut file)?;
+    ensure_document_unchanged(&logical, &canonical, directory, &parent, &before, &file)?;
+    let text =
+        std::str::from_utf8(&bytes).map_err(|_| reject("invalid_utf8", "SKILL.md is not UTF-8"))?;
+    let (name, description) = parse_frontmatter(text, directory)?;
+    Ok((
+        SkillEntry {
+            name: name.into(),
+            description: description.into(),
+            source_scope: scope,
+            logical_path: logical,
+            canonical_path: canonical,
+            content_fingerprint: hex_digest(&Sha256::digest(&bytes)),
+            selected: false,
+            trust: SkillTrust::Untrusted,
+        },
+        text.to_owned(),
+    ))
+}
+
+/// Canonicalizes the skill directory and document, rejecting escapes from the repository.
+fn resolve_document_paths(
+    scope: SourceScope,
+    directory: &Path,
+    repository: &Path,
+) -> Result<(std::path::PathBuf, std::path::PathBuf), Rejection> {
     let parent = directory.canonicalize().map_err(resolution)?;
     if scope == SourceScope::Project && !parent.starts_with(repository) {
         return Err(reject("project_escape", "skill directory exits repository"));
@@ -245,42 +279,65 @@ fn read_document(
             "skill candidate is not a directory",
         ));
     }
-    let canonical = logical.canonicalize().map_err(resolution)?;
+    let canonical = directory
+        .join("SKILL.md")
+        .canonicalize()
+        .map_err(resolution)?;
     if scope == SourceScope::Project && !canonical.starts_with(repository) {
         return Err(reject("project_escape", "SKILL.md exits repository"));
     }
-    let before = fs::metadata(&canonical).map_err(resolution)?;
+    Ok((parent, canonical))
+}
+
+/// Rejects a document that is not a regular file within the size limit.
+fn verify_document_file(before: &fs::Metadata) -> Result<(), Rejection> {
     if !before.is_file() {
         return Err(reject("not_regular", "SKILL.md is not a regular file"));
     }
     if before.len() > MAX_BYTES {
         return Err(reject("file_limit", "SKILL.md exceeds 65536 bytes"));
     }
-    let mut file =
-        fs::File::open(&canonical).map_err(|e| reject("file_unreadable", e.to_string()))?;
-    if !same_metadata(&before, &file.metadata().map_err(resolution)?) {
-        return Err(reject("source_changed", "SKILL.md changed before reading"));
-    }
+    Ok(())
+}
+
+/// Reads at most the byte limit plus one, so an oversized document is still detectable.
+fn read_bounded(file: &mut fs::File) -> Result<Vec<u8>, Rejection> {
     let mut bytes = Vec::new();
-    (&mut file)
-        .take(MAX_BYTES + 1)
+    file.take(MAX_BYTES + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| reject("file_unreadable", e.to_string()))?;
     if bytes.len() as u64 > MAX_BYTES {
         return Err(reject("file_limit", "SKILL.md exceeds 65536 bytes"));
     }
-    if logical.canonicalize().ok().as_ref() != Some(&canonical)
-        || directory.canonicalize().ok().as_ref() != Some(&parent)
-        || !same_metadata(&before, &file.metadata().map_err(resolution)?)
-        || !same_metadata(&before, &fs::metadata(&canonical).map_err(resolution)?)
+    Ok(bytes)
+}
+
+/// Rejects a document whose path or metadata changed while it was being read.
+fn ensure_document_unchanged(
+    logical: &Path,
+    canonical: &Path,
+    directory: &Path,
+    parent: &Path,
+    before: &fs::Metadata,
+    file: &fs::File,
+) -> Result<(), Rejection> {
+    let resolved_logical = logical.canonicalize().ok();
+    let resolved_parent = directory.canonicalize().ok();
+    if resolved_logical.as_deref() != Some(canonical)
+        || resolved_parent.as_deref() != Some(parent)
+        || !same_metadata(before, &file.metadata().map_err(resolution)?)
+        || !same_metadata(before, &fs::metadata(canonical).map_err(resolution)?)
     {
         return Err(reject(
             "source_changed",
             "skill source changed during reading",
         ));
     }
-    let text =
-        std::str::from_utf8(&bytes).map_err(|_| reject("invalid_utf8", "SKILL.md is not UTF-8"))?;
+    Ok(())
+}
+
+/// Parses and validates the YAML frontmatter, returning its name and description.
+fn parse_frontmatter(text: &str, directory: &Path) -> Result<(String, String), Rejection> {
     let mut lines = text.split_inclusive('\n');
     if lines.next().map(str::trim_end) != Some("---") {
         return Err(reject(
@@ -320,15 +377,7 @@ fn read_document(
         .get("description")
         .and_then(|v| v.as_str())
         .ok_or_else(|| reject("metadata_type", "description must be a string"))?;
-    if name.is_empty()
-        || name.len() > 64
-        || !name
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-        || name.starts_with('-')
-        || name.ends_with('-')
-        || name.contains("--")
-    {
+    if !valid_skill_name(name) {
         return Err(reject("invalid_name", "name must be 1-64 lowercase ASCII letters/digits/hyphens without edge or consecutive hyphens"));
     }
     if directory.file_name().and_then(|s| s.to_str()) != Some(name) {
@@ -343,6 +392,26 @@ fn read_document(
             "description must be nonempty and at most 1024 Unicode characters",
         ));
     }
+    validate_optional_fields(object)?;
+    Ok((name.to_owned(), description.to_owned()))
+}
+
+/// Skill names are lowercase ASCII slugs of at most 64 characters.
+fn valid_skill_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && !name.starts_with('-')
+        && !name.ends_with('-')
+        && !name.contains("--")
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// Validates the optional frontmatter fields this loader understands.
+fn validate_optional_fields(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), Rejection> {
     for field in ["license", "compatibility", "allowed-tools"] {
         if let Some(value) = object.get(field) {
             let text = value
@@ -357,30 +426,18 @@ fn read_document(
         }
     }
     if let Some(value) = object.get("metadata") {
-        if !value
+        let all_strings = value
             .as_object()
             .map(|m| m.values().all(|v| v.is_string()))
-            .unwrap_or(false)
-        {
+            .unwrap_or(false);
+        if !all_strings {
             return Err(reject(
                 "metadata_type",
                 "metadata must map string keys to string values",
             ));
         }
     }
-    Ok((
-        SkillEntry {
-            name: name.into(),
-            description: description.into(),
-            source_scope: scope,
-            logical_path: logical,
-            canonical_path: canonical,
-            content_fingerprint: hex_digest(&Sha256::digest(&bytes)),
-            selected: false,
-            trust: SkillTrust::Untrusted,
-        },
-        text.to_owned(),
-    ))
+    Ok(())
 }
 
 /// Runtime filesystem adapter. All activation policy remains in application contracts.
