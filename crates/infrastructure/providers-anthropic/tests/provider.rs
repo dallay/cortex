@@ -393,6 +393,14 @@ async fn streamed_finish_and_usage(
         .collect::<Vec<_>>()
         .await;
     if origin == "responses" && reason.is_some() {
+        // An unknown stop_reason is an error, never a finish: every chunk that did arrive
+        // must be a successful one without a finish reason before the terminal error.
+        for chunk in chunks.iter().filter_map(|chunk| chunk.as_ref().ok()) {
+            assert!(
+                chunk.finish_reason.is_none(),
+                "origin={origin}, reason={reason:?}: finish reason before the terminal error"
+            );
+        }
         let error = chunks.last().unwrap().as_ref().unwrap_err();
         assert_eq!(
             rook_core::StreamValidationError::usage(error)
