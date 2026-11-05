@@ -22,7 +22,7 @@ host = "127.0.0.1"   # default: "127.0.0.1"
 port = 3773          # default: 3773
 
 [routing]
-strategy = "priority"  # "priority" | "round-robin" | "model-based"
+strategy = "priority"  # "priority" | "round-robin"
 
 [cache]
 enabled = true
@@ -88,7 +88,9 @@ requests_per_minute = 30
 | `strategy`      | enum   | `"priority"` | Routing strategy. See Routing Strategies       |
 | `default_combo` | string | `null`       | Default combo UUID; only applied without `X-Rook-Combo` or a `rook/*` alias |
 
-Supported values for `strategy`: `priority`, `round-robin`, `model-based`
+Supported values for `strategy`: `priority`, `round-robin`.
+
+Weighted random selection exists internally for combo use but is not configurable here; unknown values are rejected at startup.
 
 ### `[[combos]]` — Multi-step Fallback Chains
 
@@ -498,10 +500,6 @@ Providers are tried in priority order. First available provider that supports th
 ### `round-robin`
 
 Providers are rotated in round-robin order (among available providers that support the model).
-
-### `model-based`
-
-Selects provider by model ID prefix. Not yet fully implemented (falls back to priority).
 
 ## Full Example
 
