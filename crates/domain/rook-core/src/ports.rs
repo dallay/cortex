@@ -99,26 +99,6 @@ pub trait OAuthTokenPort: Send + Sync {
 }
 
 // ---------------------------------------------------------------------------
-// FormatTranslatorPort — explicit domain-pivot format routing
-// ---------------------------------------------------------------------------
-
-pub trait FormatTranslatorPort: Send + Sync {
-    fn translate_request(
-        &self,
-        from: ApiFormat,
-        to: ApiFormat,
-        req: CompletionRequest,
-    ) -> CortexResult<CompletionRequest>;
-
-    fn translate_response(
-        &self,
-        from: ApiFormat,
-        to: ApiFormat,
-        resp: CompletionResponse,
-    ) -> CortexResult<CompletionResponse>;
-}
-
-// ---------------------------------------------------------------------------
 // RouterPort — provider selection and fallback
 // ---------------------------------------------------------------------------
 

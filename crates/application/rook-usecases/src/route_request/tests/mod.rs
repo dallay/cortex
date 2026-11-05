@@ -5,12 +5,12 @@ use async_trait::async_trait;
 use chrono::Utc;
 use futures::{stream, StreamExt};
 use rook_core::{
-    ApiKeyId, CacheStats, Combo, ComboAlias, ComboAliasRepositoryError, ComboAliasRepositoryPort,
-    ComboRepositoryError, ComboStep, ComboStrategy, CostBreakdown, HealthStatus, Message,
-    ModelAlias, ModelAliasRepositoryError, ModelId, Pagination, ProviderId, ProviderPort,
-    ProviderRepositoryPort, QuotaObservation, QuotaObservationRecorderPort, RequestMetadata, Role,
-    SignatureEntry, StreamChunk, TokenCacheStats, TokenUsage, UsageEntry, UsageFilters,
-    UsageRecorderPort, UsageSummary,
+    ApiFormat, ApiKeyId, CacheStats, Combo, ComboAlias, ComboAliasRepositoryError,
+    ComboAliasRepositoryPort, ComboRepositoryError, ComboStep, ComboStrategy, CostBreakdown,
+    HealthStatus, Message, ModelAlias, ModelAliasRepositoryError, ModelId, Pagination, ProviderId,
+    ProviderPort, ProviderRepositoryPort, QuotaObservation, QuotaObservationRecorderPort,
+    RequestMetadata, Role, SignatureEntry, StreamChunk, TokenCacheStats, TokenUsage, UsageEntry,
+    UsageFilters, UsageRecorderPort, UsageSummary,
 };
 use shared_kernel::{CacheKey, ConnectionId, CortexResult, RequestId};
 use std::collections::HashMap;
@@ -285,7 +285,6 @@ fn make_usecase_with_provider(provider: Arc<dyn ProviderPort>) -> RouteRequest {
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -360,7 +359,6 @@ async fn local_backpressure_survives_router_exhaustion_after_exclusion() {
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -437,7 +435,6 @@ fn usecase_with_router_and_audit(
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -627,7 +624,6 @@ async fn execute_preserves_local_backpressure_when_fallback_is_disallowed() {
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -671,7 +667,6 @@ async fn execute_stream_preserves_local_backpressure_when_fallback_is_disallowed
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -710,7 +705,7 @@ async fn execute_combo_returns_local_backpressure_when_all_admission_is_busy() {
     req.metadata.cacheable = false;
 
     let error = usecase
-        .execute_combo(&combo, req, ApiFormat::OpenAI)
+        .execute_combo(&combo, req)
         .await
         .expect_err("busy combo provider rejects admission");
     holder.abort();
@@ -987,28 +982,6 @@ impl ProviderRepositoryPort for FailingProviderRepository {
     }
 }
 
-struct TestFormatTranslator;
-
-impl FormatTranslatorPort for TestFormatTranslator {
-    fn translate_request(
-        &self,
-        _from: ApiFormat,
-        _to: ApiFormat,
-        req: CompletionRequest,
-    ) -> CortexResult<CompletionRequest> {
-        Ok(req)
-    }
-
-    fn translate_response(
-        &self,
-        _from: ApiFormat,
-        _to: ApiFormat,
-        resp: CompletionResponse,
-    ) -> CortexResult<CompletionResponse> {
-        Ok(resp)
-    }
-}
-
 static TEST_MODEL: std::sync::LazyLock<ModelId> =
     std::sync::LazyLock::new(|| ModelId::new("gpt-test"));
 
@@ -1175,10 +1148,9 @@ async fn execute_stream_bypasses_cache_and_audits_final_usage() {
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
-        None, // telemetry
+        None,
     );
 
     let mut stream = usecase
@@ -1228,10 +1200,9 @@ fn make_usecase() -> RouteRequest {
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
-        None, // telemetry
+        None,
     )
 }
 
@@ -1332,7 +1303,6 @@ async fn execute_with_format_resolves_alias_before_combo_dispatch() {
             alias_lookup_called: alias_lookup_called.clone(),
         })),
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(AliasLookupSpy {
             called: alias_lookup_called.clone(),
         }),
@@ -1348,7 +1318,7 @@ async fn execute_with_format_resolves_alias_before_combo_dispatch() {
 
     // The combo is intentionally absent; reaching its lookup proves the
     // alias lookup happened first. The expected not-found is incidental.
-    let result = usecase.execute_with_format(req, ApiFormat::OpenAI).await;
+    let result = usecase.execute(req).await;
 
     assert!(result.is_err());
     assert!(alias_lookup_called.load(std::sync::atomic::Ordering::SeqCst));
@@ -1375,10 +1345,9 @@ async fn route_request_runs_with_nullable_usage_recorder_and_warns_through_conne
         Some(Arc::new(FailingProviderRepository)),
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
-        None, // telemetry
+        None,
     );
 
     let result = usecase.execute(request()).await;
@@ -1432,10 +1401,9 @@ async fn non_stream_usage_records_success_with_latency_as_ttft_and_cost_metadata
         })),
         None,
         Arc::new(pricing),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
-        None, // telemetry
+        None,
     );
     let mut req = request();
     req.metadata.api_key_id = Some(ApiKeyId::new("key_123"));
@@ -1492,7 +1460,6 @@ async fn non_stream_success_preserves_unknown_connection_in_audit_and_usage() {
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -1535,10 +1502,9 @@ async fn non_stream_usage_records_failure_with_nullable_tokens_and_ttft() {
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
-        None, // telemetry
+        None,
     );
     let req = request();
 
@@ -1583,10 +1549,9 @@ async fn non_stream_usage_recording_failure_does_not_fail_successful_client_resp
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
-        None, // telemetry
+        None,
     );
 
     let result = usecase.execute(request()).await;
@@ -1622,10 +1587,9 @@ async fn non_stream_usage_missing_pricing_records_null_cost_not_zero() {
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
-        None, // telemetry
+        None,
     );
 
     let result = usecase.execute(request()).await;
@@ -1754,10 +1718,9 @@ async fn streaming_usage_records_ttft_from_first_chunk_and_final_usage_on_succes
         })),
         None,
         Arc::new(pricing),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
-        None, // telemetry
+        None,
     );
     let mut req = request();
     req.metadata.api_key_id = Some(ApiKeyId::new("key_streaming"));
@@ -1865,10 +1828,9 @@ async fn streaming_usage_records_failure_with_nullable_tokens_and_rate_limited_s
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
-        None, // telemetry
+        None,
     );
 
     let mut stream = usecase
@@ -1917,10 +1879,9 @@ async fn streaming_usage_recording_failure_emits_warn_and_increments_metric_with
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
-        None, // telemetry
+        None,
     );
 
     let stream = usecase
@@ -1967,7 +1928,7 @@ async fn budgeted_request_without_verifiable_provider_bound_is_rejected_before_p
     };
 
     let error = usecase
-        .execute_with_format(req, ApiFormat::OpenAI)
+        .execute(req)
         .await
         .expect_err("no provider exposes an enforceable preflight cost bound");
 
@@ -2327,7 +2288,6 @@ fn combo_harness_with_repositories_and_quota(
         provider_repository,
         Some(Arc::new(MapComboRepository { combos })),
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -2513,7 +2473,7 @@ async fn combo_success_closes_real_router_circuit() {
 
     harness
         .usecase
-        .execute_combo(&combo, req, ApiFormat::OpenAI)
+        .execute_combo(&combo, req)
         .await
         .expect("half-open combo succeeds");
     let circuit = &router.circuit_states()[0].1;
@@ -2552,11 +2512,7 @@ async fn combo_upstream_failure_updates_real_router_circuit() {
     req.stream = false;
     req.metadata.cacheable = false;
 
-    assert!(harness
-        .usecase
-        .execute_combo(&combo, req, ApiFormat::OpenAI)
-        .await
-        .is_err());
+    assert!(harness.usecase.execute_combo(&combo, req).await.is_err());
     assert_eq!(router.circuit_states()[0].1.failures, 1);
 }
 
@@ -2593,12 +2549,7 @@ async fn combo_timeout_updates_real_router_circuit_and_records_failed_audit_step
     req.model = ModelId::new("rook/coding");
     req.stream = false;
     req.metadata.cacheable = false;
-    let task = tokio::spawn(async move {
-        harness
-            .usecase
-            .execute_combo(&combo, req, ApiFormat::OpenAI)
-            .await
-    });
+    let task = tokio::spawn(async move { harness.usecase.execute_combo(&combo, req).await });
 
     started_rx.await.expect("combo provider call started");
     assert!(!task.is_finished());
@@ -2666,7 +2617,6 @@ async fn combo_cancellation_while_audit_is_blocked_updates_circuit_first() {
         None,
         Some(Arc::new(MapComboRepository { combos })),
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -2677,8 +2627,7 @@ async fn combo_cancellation_while_audit_is_blocked_updates_circuit_first() {
     req.model = ModelId::new("rook/coding");
     req.stream = false;
     req.metadata.cacheable = false;
-    let task =
-        tokio::spawn(async move { usecase.execute_combo(&combo, req, ApiFormat::OpenAI).await });
+    let task = tokio::spawn(async move { usecase.execute_combo(&combo, req).await });
     entered.await;
     assert_eq!(failures.load(std::sync::atomic::Ordering::SeqCst), 1);
     task.abort();
@@ -2735,7 +2684,6 @@ async fn combo_step_with_connection_id_uses_exact_provider_not_router_selection(
         .execute_combo(
             &combo,
             combo_req("gpt-4o", rook_core::ApiKeyRestrictions::default()),
-            ApiFormat::OpenAI,
         )
         .await;
 
@@ -2894,7 +2842,6 @@ async fn quota_read_timeout_keeps_connection_eligible() {
         Some(repository),
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -2978,7 +2925,6 @@ async fn uuid_provider_id_resolves_exact_connection_for_standard_and_streaming_r
         Some(provider_repository),
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -2987,7 +2933,7 @@ async fn uuid_provider_id_resolves_exact_connection_for_standard_and_streaming_r
 
     let mut req = request();
     req.stream = false;
-    let result = usecase.execute_with_format(req, ApiFormat::OpenAI).await;
+    let result = usecase.execute(req).await;
 
     assert!(
         result.is_ok(),
@@ -3065,7 +3011,6 @@ async fn streaming_request_resolves_uuid_provider_id_before_quota_check() {
         Some(provider_repository),
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -3075,7 +3020,7 @@ async fn streaming_request_resolves_uuid_provider_id_before_quota_check() {
     let mut req = request();
     req.stream = true;
     let mut stream = usecase
-        .execute_stream_with_format(req, ApiFormat::OpenAI)
+        .execute_stream(req)
         .await
         .expect("healthy provider should start streaming");
     while stream.next().await.is_some() {}
@@ -3242,7 +3187,6 @@ async fn combo_skips_connection_with_fresh_exhausted_quota() {
         .execute_combo(
             &combo,
             combo_req("gpt-test", rook_core::ApiKeyRestrictions::default()),
-            ApiFormat::OpenAI,
         )
         .await;
 
@@ -3286,7 +3230,6 @@ async fn combo_keeps_connection_without_quota_evidence() {
         .execute_combo(
             &combo,
             combo_req("gpt-test", rook_core::ApiKeyRestrictions::default()),
-            ApiFormat::OpenAI,
         )
         .await;
 
@@ -3324,7 +3267,6 @@ async fn combo_keeps_connection_with_stale_quota_evidence() {
         .execute_combo(
             &combo,
             combo_req("gpt-test", rook_core::ApiKeyRestrictions::default()),
-            ApiFormat::OpenAI,
         )
         .await;
 
@@ -3362,7 +3304,6 @@ async fn combo_reconsiders_connection_after_the_reset_instant_passed() {
         .execute_combo(
             &combo,
             combo_req("gpt-test", rook_core::ApiKeyRestrictions::default()),
-            ApiFormat::OpenAI,
         )
         .await;
 
@@ -3432,7 +3373,6 @@ async fn combo_reports_the_quota_skip_reason_when_every_connection_is_exhausted(
         .execute_combo(
             &combo,
             combo_req("gpt-test", rook_core::ApiKeyRestrictions::default()),
-            ApiFormat::OpenAI,
         )
         .await
         .expect_err("an exhausted connection must fail the combo");
@@ -3535,7 +3475,6 @@ async fn unauthorized_later_connection_step_is_rejected_before_any_upstream_io()
                     spending_budget: None,
                 },
             ),
-            ApiFormat::OpenAI,
         )
         .await;
 
@@ -3592,7 +3531,7 @@ async fn connection_bound_step_rejects_another_account_before_upstream_io() {
 
     let error = h
         .usecase
-        .execute_combo(&combo, combo_req("gpt-4o", restrictions), ApiFormat::OpenAI)
+        .execute_combo(&combo, combo_req("gpt-4o", restrictions))
         .await
         .expect_err("different account must be forbidden");
 
@@ -3685,7 +3624,6 @@ async fn connection_bound_step_falls_back_to_the_next_step_on_rate_limit() {
                     spending_budget: None,
                 },
             ),
-            ApiFormat::OpenAI,
         )
         .await
         .expect("the second step must run after the 429");
@@ -3779,7 +3717,6 @@ async fn unusable_and_disallowed_connection_step_is_skipped_in_both_paths() {
                     spending_budget: None,
                 },
             ),
-            ApiFormat::OpenAI,
         )
         .await
         .expect_err("an unusable step cannot satisfy the request");
@@ -3851,7 +3788,6 @@ async fn combo_audit_and_usage_record_the_effective_connection() {
                     spending_budget: None,
                 },
             ),
-            ApiFormat::OpenAI,
         )
         .await
         .expect("combo execution succeeds");
@@ -3921,7 +3857,6 @@ async fn legacy_step_keeps_its_adapter_id_without_connection_lookup() {
                     spending_budget: None,
                 },
             ),
-            ApiFormat::OpenAI,
         )
         .await
         .expect("legacy step must still execute");
@@ -4113,7 +4048,6 @@ fn stream_harness(
         None,
         Some(Arc::new(MapComboRepository { combos })),
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -4156,7 +4090,7 @@ async fn combo_stream_emits_content_then_final_chunk() {
     );
     let usecase = stream_harness(combos, aliases, vec![ok_provider("openai")]);
     let stream = usecase
-        .execute_stream_with_format(stream_req("rook/coding"), ApiFormat::OpenAI)
+        .execute_stream(stream_req("rook/coding"))
         .await
         .expect("combo stream starts");
     let chunks: Vec<_> = stream.collect::<Vec<_>>().await;
@@ -4301,14 +4235,13 @@ async fn combo_stream_carries_tool_calls_then_tool_use_finish() {
         None,
         Some(Arc::new(MapComboRepository { combos })),
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
     )
     .with_combo_alias_repository(Arc::new(MapComboAliasRepository { aliases }));
     let stream = usecase
-        .execute_stream_with_format(stream_req("rook/tools"), ApiFormat::OpenAI)
+        .execute_stream(stream_req("rook/tools"))
         .await
         .expect("tool combo stream starts");
     let chunks: Vec<_> = stream.collect::<Vec<_>>().await;
@@ -4358,7 +4291,7 @@ async fn combo_stream_falls_back_before_first_event() {
         vec![failing_provider("openai"), ok_provider("fallback")],
     );
     let stream = usecase
-        .execute_stream_with_format(stream_req("rook/fb"), ApiFormat::OpenAI)
+        .execute_stream(stream_req("rook/fb"))
         .await
         .expect("fallback combo stream starts");
     let chunks: Vec<_> = stream.collect::<Vec<_>>().await;
@@ -4374,7 +4307,7 @@ async fn combo_stream_falls_back_before_first_event() {
 async fn combo_stream_unknown_alias_is_not_found_before_headers() {
     let usecase = stream_harness(HashMap::new(), HashMap::new(), vec![ok_provider("openai")]);
     let err = usecase
-        .execute_stream_with_format(stream_req("rook/nope"), ApiFormat::OpenAI)
+        .execute_stream(stream_req("rook/nope"))
         .await
         .err()
         .expect("unknown alias must fail before committing headers");
@@ -4510,7 +4443,6 @@ async fn virtual_combo_selects_with_step_physical_model() {
         None,
         Some(Arc::new(MapComboRepository { combos })),
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -4692,7 +4624,6 @@ fn hijack_stream_harness(rook_consulted: Arc<std::sync::atomic::AtomicBool>) -> 
         None,
         Some(Arc::new(MapComboRepository { combos })),
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(HijackAliasRepo { rook_consulted }),
         ModelAliasesConfig {
             enabled: true,
@@ -4711,7 +4642,7 @@ async fn streaming_virtual_model_never_enters_model_alias_resolution() {
     // must NOT rewrite rook/*: it must take the virtual-combo path and
     // keep the requested model.
     let stream = usecase
-        .execute_stream_with_format(stream_req("rook/coding"), ApiFormat::OpenAI)
+        .execute_stream(stream_req("rook/coding"))
         .await
         .expect("virtual combo stream starts");
     let chunks: Vec<_> = stream.collect::<Vec<_>>().await;
@@ -4737,7 +4668,7 @@ async fn streaming_normal_alias_still_resolves() {
     // Non-virtual alias `coding -> gpt-4o` must still resolve on the
     // streaming path (echo provider surfaces the rewritten model).
     let stream = usecase
-        .execute_stream_with_format(stream_req("coding"), ApiFormat::OpenAI)
+        .execute_stream(stream_req("coding"))
         .await
         .expect("stream starts");
     let chunks: Vec<_> = stream.collect::<Vec<_>>().await;

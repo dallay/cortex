@@ -1,6 +1,6 @@
 // gateway_e2e — deterministic end-to-end through the REAL gateway stack.
 //
-// REAL: axum router, RouteRequest, FallbackRouter, DomainPivotTranslator,
+// REAL: axum router, RouteRequest, FallbackRouter,
 // OpenAIProvider + AnthropicProvider against wiremock upstreams,
 // AuthenticateClientApi against a revocable fake repo.
 // FAKED (deterministic, in-process): combo + combo-alias repos, cache, audit.
@@ -19,14 +19,13 @@ use axum::http::{Method, Request, StatusCode};
 use providers_anthropic::{AnthropicProvider, AnthropicProviderConfig};
 use providers_openai::{OpenAIProvider, OpenAIProviderConfig};
 use rook_core::{
-    ApiFormat, ApiKeyId, ApiKeyRepositoryError, ApiKeyRepositoryPort, ApiKeyScope, ApiKeySubject,
-    ApiKeyTier, AuditEntry, AuditPort, CachePort, CacheStats, Combo, ComboAlias,
-    ComboAliasRepositoryError, ComboAliasRepositoryPort, ComboRepositoryError, ComboRepositoryPort,
-    ComboStep, ComboStrategy, CompletionRequest, CompletionResponse, CortexResult, ModelAlias,
-    ModelAliasRepositoryError, ModelAliasRepositoryPort, NewSession, NewUser, PasswordHash,
-    PasswordHashError, PasswordHasher, ProviderPort, RouterPort, Session, SessionId,
-    SessionRepositoryError, SessionRepositoryPort, SignatureEntry, TokenCacheStats, User, UserId,
-    UserRepositoryError, UserRepositoryPort,
+    ApiKeyId, ApiKeyRepositoryError, ApiKeyRepositoryPort, ApiKeyScope, ApiKeySubject, ApiKeyTier,
+    AuditEntry, AuditPort, CachePort, CacheStats, Combo, ComboAlias, ComboAliasRepositoryError,
+    ComboAliasRepositoryPort, ComboRepositoryError, ComboRepositoryPort, ComboStep, ComboStrategy,
+    CompletionRequest, CompletionResponse, CortexResult, ModelAlias, ModelAliasRepositoryError,
+    ModelAliasRepositoryPort, NewSession, NewUser, PasswordHash, PasswordHashError, PasswordHasher,
+    ProviderPort, RouterPort, Session, SessionId, SessionRepositoryError, SessionRepositoryPort,
+    SignatureEntry, TokenCacheStats, User, UserId, UserRepositoryError, UserRepositoryPort,
 };
 use rook_usecases::{
     AuthenticateClientApi, BootstrapStatus, EnsureAdminUser, FallbackRouter, HealthCheck, Login,
@@ -36,7 +35,6 @@ use shared_kernel::{CacheKey, ComboId, ModelId, ProviderId};
 use tokio::sync::RwLock;
 use tower::ServiceExt;
 use transport_axum::authz::AuthzConfig;
-use transport_axum::format_registry::{DomainPivotTranslator, FormatRegistry};
 
 #[path = "gateway_e2e/responses.rs"]
 mod responses;
@@ -647,17 +645,6 @@ async fn build_gateway_with_router(
     );
     combos.insert(anthropic_first.id, anthropic_first);
 
-    let mut registry = FormatRegistry::new();
-    registry.register(
-        ApiFormat::OpenAI,
-        ApiFormat::Anthropic,
-        DomainPivotTranslator,
-    );
-    registry.register(
-        ApiFormat::Anthropic,
-        ApiFormat::OpenAI,
-        DomainPivotTranslator,
-    );
     let accounting = Arc::new(responses_accounting::Records::default());
     let route_request = RouteRequest::new(
         router.unwrap_or_else(|| fallback_router.clone() as Arc<dyn RouterPort>),
@@ -669,7 +656,6 @@ async fn build_gateway_with_router(
             combos: Mutex::new(combos),
         })),
         Arc::new(serde_json::from_value(serde_json::json!({"openai-e2e":{"gpt-4o":{"prompt_per_million":1.0,"completion_per_million":2.0}},"anthropic-e2e":{"claude-e2e":{"prompt_per_million":1.0,"completion_per_million":2.0,"cache_read_per_million":0.5,"cache_creation_per_million":1.5}}})).unwrap()),
-        Arc::new(registry),
         Arc::new(NoopAliasRepo),
         rook_usecases::route_request::ModelAliasesConfig {
             enabled: false,

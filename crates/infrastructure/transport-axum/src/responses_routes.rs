@@ -9,7 +9,6 @@ use axum::{
     Json,
 };
 use futures::StreamExt;
-use rook_core::ApiFormat;
 use serde_json::json;
 
 use crate::{
@@ -58,10 +57,7 @@ pub(crate) async fn create(
         .clone()
         .with_output_validation(Arc::new(ResponsesValidation(context.clone())));
     if request.stream {
-        let stream = match route_request
-            .execute_stream_with_format(request, ApiFormat::OpenAI)
-            .await
-        {
+        let stream = match route_request.execute_stream(request).await {
             Ok(stream) => stream,
             Err(error) => return route_failure(&error),
         };
@@ -108,10 +104,7 @@ pub(crate) async fn create(
         );
         return response;
     }
-    match route_request
-        .execute_with_format(request, ApiFormat::OpenAI)
-        .await
-    {
+    match route_request.execute(request).await {
         Ok(response) => match context.response_body(&response) {
             Ok(body) => Json(body).into_response(),
             Err(_) => failure(

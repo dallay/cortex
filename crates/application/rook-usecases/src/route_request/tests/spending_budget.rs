@@ -443,16 +443,13 @@ async fn direct_and_virtual_combo_calls_reject_budgets_before_upstream() {
         )]),
     }));
     let error = usecase
-        .execute_combo(&combo, budgeted_request(), ApiFormat::OpenAI)
+        .execute_combo(&combo, budgeted_request())
         .await
         .unwrap_err();
     assert!(error.is_cost_unavailable());
     let mut req = budgeted_request();
     req.model = ModelId::new("rook/budget");
-    let error = usecase
-        .execute_virtual_combo(req, ApiFormat::OpenAI)
-        .await
-        .unwrap_err();
+    let error = usecase.execute_virtual_combo(req).await.unwrap_err();
     assert!(error.is_cost_unavailable());
     assert!(events.lock().unwrap().is_empty());
 }

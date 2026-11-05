@@ -15,12 +15,11 @@ use chrono::Utc;
 use futures::StreamExt;
 use observability::{ObservationStatus, TelemetryTracker};
 use rook_core::{
-    evaluate_connection_quota, ApiFormat, AuditEntry, AuditPort, CachePort,
-    ComboAliasRepositoryPort, ComboRepositoryPort, ComboStep, CompletionRequest,
-    CompletionResponse, CortexError, FormatTranslatorPort, ModelAliasRepositoryPort,
-    ProviderRepositoryPort, QuotaEligibilityPolicy, QuotaObservationQuery,
-    QuotaObservationRecorderPort, QuotaState, RequestStatus, RouterPort, StreamChunk, TokenUsage,
-    UsageEntry, UsageRecorderPort,
+    evaluate_connection_quota, AuditEntry, AuditPort, CachePort, ComboAliasRepositoryPort,
+    ComboRepositoryPort, ComboStep, CompletionRequest, CompletionResponse, CortexError,
+    ModelAliasRepositoryPort, ProviderRepositoryPort, QuotaEligibilityPolicy,
+    QuotaObservationQuery, QuotaObservationRecorderPort, QuotaState, RequestStatus, RouterPort,
+    StreamChunk, TokenUsage, UsageEntry, UsageRecorderPort,
 };
 use shared_kernel::{ComboId, ConnectionId, ModelId, ProviderId, RestrictionViolation};
 
@@ -120,8 +119,6 @@ struct SuccessContext {
     provider_resp: CompletionResponse,
     provider_id: ProviderId,
     connection_id: Option<ConnectionId>,
-    provider_format: ApiFormat,
-    client_format: ApiFormat,
     cache_key: rook_core::CacheKey,
     latency_ms: u64,
 }
@@ -147,7 +144,6 @@ struct ComboPreparedStep {
     provider: Arc<dyn rook_core::ProviderPort>,
     provider_id: ProviderId,
     audit_provider_id: ProviderId,
-    provider_format: ApiFormat,
     provider_req: CompletionRequest,
     step_req: CompletionRequest,
     step_context: ComboStepContext,
@@ -172,7 +168,6 @@ struct AttemptCursor {
 /// Immutable inputs shared by every attempt of one failover loop.
 struct AttemptContext<'a> {
     req: &'a CompletionRequest,
-    client_format: ApiFormat,
     cache_key: &'a rook_core::CacheKey,
     start: Instant,
     max_attempts: usize,
@@ -184,7 +179,6 @@ struct EligibleAttempt {
     provider: Arc<dyn rook_core::ProviderPort>,
     provider_id: ProviderId,
     connection_id: Option<ConnectionId>,
-    provider_format: ApiFormat,
     provider_req: CompletionRequest,
     trial_permit: rook_core::RouterTrialPermit,
     admission: Option<crate::spending_budget::SpendingAdmission>,
@@ -264,7 +258,6 @@ pub struct RouteRequest {
     provider_repository: Option<Arc<dyn ProviderRepositoryPort>>,
     combo_repository: Option<Arc<dyn ComboRepositoryPort>>,
     pricing: Arc<PricingConfig>,
-    format_translator: Arc<dyn FormatTranslatorPort>,
     alias_repository: Arc<dyn ModelAliasRepositoryPort>,
     alias_config: ModelAliasesConfig,
     telemetry: Option<Arc<TelemetryTracker>>,
@@ -297,7 +290,6 @@ impl RouteRequest {
         provider_repository: Option<Arc<dyn ProviderRepositoryPort>>,
         combo_repository: Option<Arc<dyn ComboRepositoryPort>>,
         pricing: Arc<PricingConfig>,
-        format_translator: Arc<dyn FormatTranslatorPort>,
         alias_repository: Arc<dyn ModelAliasRepositoryPort>,
         alias_config: ModelAliasesConfig,
         telemetry: Option<Arc<TelemetryTracker>>,
@@ -310,7 +302,6 @@ impl RouteRequest {
             provider_repository,
             combo_repository,
             pricing,
-            format_translator,
             alias_repository,
             alias_config,
             telemetry,
@@ -407,22 +398,12 @@ impl RouteRequest {
     }
 
     pub async fn execute(&self, req: CompletionRequest) -> Result<CompletionResponse, CortexError> {
-        self.execute_with_format(req, ApiFormat::OpenAI).await
-    }
-
-    pub async fn execute_with_format(
-        &self,
-        req: CompletionRequest,
-        client_format: ApiFormat,
-    ) -> Result<CompletionResponse, CortexError> {
         self.ensure_budget_enforcement_is_configured(&req)?;
-        let (req, combo_response) = self
-            .resolve_alias_and_dispatch_combo(req, client_format)
-            .await?;
+        let (req, combo_response) = self.resolve_alias_and_dispatch_combo(req).await?;
         if let Some(response) = combo_response {
             return Ok(response);
         }
-        self.execute_standard_request(req, client_format).await
+        self.execute_standard_request(req).await
     }
 
     /// Fail closed when a budgeted request cannot be admitted.
@@ -485,7 +466,6 @@ impl RouteRequest {
     async fn resolve_alias_and_dispatch_combo(
         &self,
         mut req: CompletionRequest,
-        client_format: ApiFormat,
     ) -> Result<(CompletionRequest, Option<CompletionResponse>), CortexError> {
         self.apply_default_combo(&mut req);
         // Resolve aliases before combo dispatch and restrictions checks so combo
@@ -496,15 +476,9 @@ impl RouteRequest {
         self.ensure_combo_has_no_budget(&req)?;
 
         let combo_response = if is_virtual_model(&req.model) {
-            Some(
-                self.execute_virtual_combo(req.clone(), client_format)
-                    .await?,
-            )
+            Some(self.execute_virtual_combo(req.clone()).await?)
         } else if let Some(combo_id) = req.metadata.combo_id {
-            Some(
-                self.execute_legacy_combo(&combo_id, req.clone(), client_format)
-                    .await?,
-            )
+            Some(self.execute_legacy_combo(&combo_id, req.clone()).await?)
         } else {
             None
         };
@@ -514,7 +488,6 @@ impl RouteRequest {
     async fn execute_standard_request(
         &self,
         req: CompletionRequest,
-        client_format: ApiFormat,
     ) -> Result<CompletionResponse, CortexError> {
         let cache_key = req.cache_key();
         let start = Instant::now();
@@ -545,7 +518,6 @@ impl RouteRequest {
 
         self.execute_provider_attempts(
             req,
-            client_format,
             cache_key,
             start,
             selection_budget,
@@ -563,7 +535,6 @@ impl RouteRequest {
     async fn execute_provider_attempts(
         &self,
         req: CompletionRequest,
-        client_format: ApiFormat,
         cache_key: rook_core::CacheKey,
         start: Instant,
         selection_budget: usize,
@@ -582,7 +553,6 @@ impl RouteRequest {
         };
         let context = AttemptContext {
             req: &req,
-            client_format,
             cache_key: &cache_key,
             start,
             max_attempts,
@@ -646,8 +616,6 @@ impl RouteRequest {
                         provider_resp,
                         provider_id: attempt.provider_id,
                         connection_id: attempt.connection_id,
-                        provider_format: attempt.provider_format,
-                        client_format: context.client_format,
                         cache_key: context.cache_key.clone(),
                         latency_ms,
                     })
@@ -746,15 +714,7 @@ impl RouteRequest {
             return AttemptPreparation::Retry(provider_id);
         }
 
-        let provider_format = provider.api_format();
-        let provider_req = match self.format_translator.translate_request(
-            context.client_format,
-            provider_format,
-            context.req.clone(),
-        ) {
-            Ok(request) => request,
-            Err(error) => return AttemptPreparation::Stop(error),
-        };
+        let provider_req = context.req.clone();
 
         // Acquire the half-open trial only after preflight checks and just before upstream I/O.
         // Keep the half-open permit until the outcome updates circuit state.
@@ -780,7 +740,6 @@ impl RouteRequest {
             provider,
             provider_id,
             connection_id,
-            provider_format,
             provider_req,
             trial_permit,
             admission,
@@ -1034,11 +993,7 @@ impl RouteRequest {
     }
 
     async fn handle_success(&self, ctx: SuccessContext) -> Result<CompletionResponse, CortexError> {
-        let resp = self.format_translator.translate_response(
-            ctx.provider_format,
-            ctx.client_format,
-            ctx.provider_resp,
-        )?;
+        let resp = ctx.provider_resp;
 
         if let Some(validation) = &self.output_validation {
             if let Err(error) = validation.response(&resp) {
@@ -1117,7 +1072,6 @@ impl RouteRequest {
     async fn select_stream_provider(
         &self,
         req: &CompletionRequest,
-        client_format: ApiFormat,
         selection_budget: usize,
         max_attempts: usize,
     ) -> Result<StreamSelection, CortexError> {
@@ -1151,7 +1105,6 @@ impl RouteRequest {
                 excluded.push(provider_id);
                 continue;
             }
-            let provider_format = provider.api_format();
             // Skip connections with fresh, authoritative exhaustion
             // evidence before the stream starts and exposes SSE bytes.
             let connection = if self.provider_repository.is_some() {
@@ -1178,11 +1131,7 @@ impl RouteRequest {
                     }
                 }
             }
-            let provider_req = self.format_translator.translate_request(
-                client_format,
-                provider_format,
-                req.clone(),
-            )?;
+            let provider_req = req.clone();
             let Some(trial_permit) = self.router.try_acquire_trial(&provider_id).await else {
                 excluded.push(provider_id);
                 continue;
@@ -1261,17 +1210,7 @@ impl RouteRequest {
     /// and then selects the provider whose stream is forwarded to the caller.
     pub async fn execute_stream(
         &self,
-        req: CompletionRequest,
-    ) -> Result<futures::stream::BoxStream<'static, Result<StreamChunk, CortexError>>, CortexError>
-    {
-        self.execute_stream_with_format(req, ApiFormat::OpenAI)
-            .await
-    }
-
-    pub async fn execute_stream_with_format(
-        &self,
         mut req: CompletionRequest,
-        client_format: ApiFormat,
     ) -> Result<futures::stream::BoxStream<'static, Result<StreamChunk, CortexError>>, CortexError>
     {
         self.ensure_budget_enforcement_is_configured(&req)?;
@@ -1291,7 +1230,7 @@ impl RouteRequest {
         // native deltas. No transparent provider switch is allowed afterward.
         // Unknown alias -> 404, unauthorized step -> 403, same as non-stream.
         if is_virtual_model(&req.model) || req.metadata.combo_id.is_some() {
-            return self.execute_combo_stream(req, client_format).await;
+            return self.execute_combo_stream(req).await;
         }
 
         // 0b. Model restriction check (AFTER alias resolution)
@@ -1308,7 +1247,7 @@ impl RouteRequest {
             selection_budget.min(MAX_RETRY_ATTEMPTS)
         };
         let selection = self
-            .select_stream_provider(&req, client_format, selection_budget, max_attempts)
+            .select_stream_provider(&req, selection_budget, max_attempts)
             .await?;
         let provider_id = selection.provider_id;
         let connection_id = selection.connection_id;
@@ -1517,13 +1456,12 @@ impl RouteRequest {
     pub async fn execute_virtual_combo(
         &self,
         req: CompletionRequest,
-        client_format: ApiFormat,
     ) -> Result<CompletionResponse, CortexError> {
         let requested = req.model.clone();
         let combo_id = self.resolve_virtual_alias(&requested).await?;
         let combo = self.load_combo(&combo_id).await?;
         self.check_combo_authorization(&req.restrictions, &combo, Some(&requested))?;
-        let mut resp = self.execute_combo(&combo, req, client_format).await?;
+        let mut resp = self.execute_combo(&combo, req).await?;
         // External contract uses the requested virtual model; audit keeps
         // provider/step details via record_combo_success.
         resp.model = requested;
@@ -1537,13 +1475,12 @@ impl RouteRequest {
         &self,
         combo_id: &ComboId,
         req: CompletionRequest,
-        client_format: ApiFormat,
     ) -> Result<CompletionResponse, CortexError> {
         self.check_model_restriction(&req)?;
         let combo = self.load_combo(combo_id).await?;
         self.check_combo_authorization(&req.restrictions, &combo, None)?;
         let requested = req.model.clone();
-        let mut resp = self.execute_combo(&combo, req, client_format).await?;
+        let mut resp = self.execute_combo(&combo, req).await?;
         resp.model = requested;
         Ok(resp)
     }
@@ -1707,7 +1644,6 @@ impl RouteRequest {
         &self,
         combo: &rook_core::Combo,
         req: CompletionRequest,
-        client_format: ApiFormat,
     ) -> Result<CompletionResponse, CortexError> {
         if req.restrictions.spending_budget.is_some() {
             return Err(CortexError::cost_unavailable(
@@ -1756,26 +1692,13 @@ impl RouteRequest {
             );
 
             let prepared = self
-                .prepare_combo_step(
-                    step,
-                    *combo_id,
-                    step_index,
-                    &req,
-                    client_format,
-                    &mut errors,
-                )
+                .prepare_combo_step(step, *combo_id, step_index, &req, &mut errors)
                 .await?;
             let Some(prepared) = prepared else {
                 continue;
             };
             match self
-                .run_combo_step(
-                    prepared,
-                    client_format,
-                    step_index,
-                    &mut cursor,
-                    &mut errors,
-                )
+                .run_combo_step(prepared, step_index, &mut cursor, &mut errors)
                 .await?
             {
                 ComboStepOutcome::Completed(resp) => return Ok(*resp),
@@ -1812,7 +1735,6 @@ impl RouteRequest {
         combo_id: ComboId,
         step_index: usize,
         req: &CompletionRequest,
-        client_format: ApiFormat,
         errors: &mut Vec<(ProviderId, String)>,
     ) -> Result<Option<ComboPreparedStep>, CortexError> {
         let provider_id = &step.provider_id;
@@ -1873,12 +1795,7 @@ impl RouteRequest {
         };
 
         // 3c. Execute with per-step timeout
-        let provider_format = provider.api_format();
-        let mut provider_req = self.format_translator.translate_request(
-            client_format,
-            provider_format,
-            step_req.clone(),
-        )?;
+        let mut provider_req = step_req.clone();
         // The provider must receive the STEP's physical model, never a
         // virtual `rook/*` alias or another step's model.
         provider_req.model = model.clone();
@@ -1897,7 +1814,6 @@ impl RouteRequest {
             provider,
             provider_id: provider_id.clone(),
             audit_provider_id,
-            provider_format,
             provider_req,
             step_req,
             step_context,
@@ -1909,7 +1825,6 @@ impl RouteRequest {
     async fn run_combo_step(
         &self,
         prepared: ComboPreparedStep,
-        client_format: ApiFormat,
         step_index: usize,
         cursor: &mut ComboCursor,
         errors: &mut Vec<(ProviderId, String)>,
@@ -1918,7 +1833,6 @@ impl RouteRequest {
             provider,
             provider_id,
             audit_provider_id,
-            provider_format,
             provider_req,
             step_req,
             step_context,
@@ -1938,11 +1852,7 @@ impl RouteRequest {
                 // Resolve circuit state before any persistence awaits.
                 notify_provider_success(self.router.as_ref(), &audit_provider_id).await;
                 trial_permit.complete();
-                let resp = self.format_translator.translate_response(
-                    provider_format,
-                    client_format,
-                    provider_resp,
-                )?;
+                let resp = provider_resp;
 
                 if let Some(validation) = &self.output_validation {
                     if let Err(error) = validation.response(&resp) {

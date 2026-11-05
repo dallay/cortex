@@ -91,10 +91,7 @@ async fn connection_bound_combo_skips_unknown_and_unsupported_tools_before_io() 
         let (h, combo, _, _, first, second) = setup(state);
         let mut req = combo_req("gpt-test", ApiKeyRestrictions::default());
         req.tools = Some(serde_json::json!([{"type":"function","function":{"name":"lookup"}}]));
-        h.usecase
-            .execute_combo(&combo, req, ApiFormat::OpenAI)
-            .await
-            .unwrap();
+        h.usecase.execute_combo(&combo, req).await.unwrap();
         assert!(first.lock().unwrap().is_empty());
         assert_eq!(second.lock().unwrap().len(), 1);
     }
@@ -228,11 +225,7 @@ async fn legacy_combo_preserves_capability_skip_reason_without_upstream_attempts
     let h = combo_harness_with_router(combo.clone(), vec![], router, calls.clone());
     let mut req = combo_req("gpt-test", ApiKeyRestrictions::default());
     req.tools = Some(serde_json::json!([{"type":"function","function":{"name":"lookup"}}]));
-    let error = h
-        .usecase
-        .execute_combo(&combo, req, ApiFormat::OpenAI)
-        .await
-        .unwrap_err();
+    let error = h.usecase.execute_combo(&combo, req).await.unwrap_err();
     assert!(calls.lock().unwrap().is_empty());
     assert_eq!(
         error.combo_skip_reasons().unwrap()[0].1,
