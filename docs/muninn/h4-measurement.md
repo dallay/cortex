@@ -240,14 +240,14 @@ Two declared asymmetries, both recorded before measurement:
 
 ## Known limits of this harness
 
-- **Product extraction stage is wired, default off.** U5 measured the gap that
-  `apps/muninn` registered no extraction stage, so GM-02 `auto` produced no
-  product mentions. The follow-up unit closed it: the shipped binary now builds
-  the spaCy stage from `--extraction-provider` / `NAM_EXTRACTION__PROVIDER`
-  (default `none`) through the existing `MemoryClient::with_extractor`, so the
-  previous finding no longer holds. A GM-02 run without that flag still
-  measures the default-off path, which is the correct comparison for an
-  unconfigured deployment.
+- **Product enrichment and geocoding stages are wired, default off.** H4-U5C-F1
+  recorded that the shipped binary registered neither stage and that the bridge
+  lacked `get_context`. The follow-up unit closed both: the binary builds the
+  stages from `--enrichment-*` / `--geocoding-*` flags (or `NAM_ENRICHMENT__*` /
+  `NAM_GEOCODING__*` environment) through the existing client builders, and the
+  bridge exposes the pinned fused `get_context` document. A GM-06/07 run
+  without those flags measures the default-off path, which is the correct
+  comparison for an unconfigured deployment.
 - **The flagged band is not deterministically reachable.** Both sides receive
   the same controlled vectors (TCK `MockEmbedder` SHA-256 1536 for the
   reference, the byte-identical `hash` provider for the product), whose cosines

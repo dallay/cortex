@@ -636,6 +636,29 @@ ephemeral authenticated Neo4j fixture and a fake sidecar are retained under
 `.agents/rpi/plan/tasks/muninn-h4-extraction-connected-memory/evidence/u2c-binary-wiring/`;
 they are wiring proof, not spaCy accuracy or integrated U6 evidence.
 
+### Shipped-binary enrichment, geocoding and get_context (U6a)
+
+The same registration pattern now covers enrichment and geocoding: opt-in flags
+(`--enrichment-enabled`, `--geocoding-enabled` and companions, mirrored by
+`NAM_ENRICHMENT__*` / `NAM_GEOCODING__*`) build the stages through the existing
+client builders, validate fail-fast with redacted messages before Neo4j is
+touched, and persist through the Neo4j store's own enrichment writer. The full
+option table lives in [Entity enrichment](../../docs/muninn/enrichment.md). The
+bridge also exposes the pinned fused `get_context` document
+([Fused prompt context](../../docs/muninn/context.md)), owner-scoped for messages
+and preferences, with the reasoning traces rendered under the fused `##` header.
+
+```sh
+cargo test -p muninn --locked --bins
+cargo test -p muninn-bridge --locked --test context
+```
+
+The binary target adds a recorded Wikimedia provider contract test end to end
+through the parsed CLI; the context target pins the document shape, the empty
+state, argument rejection without reads and cross-owner isolation. Live Neo4j
+context and enrichment-graph assertions plus the real GM-06/07 differential
+remain U6 work.
+
 ## H4 U3 cross-memory ABOUT edge
 
 The pinned `(:Preference)-[:ABOUT]->(:Entity)` edge and its opt-in

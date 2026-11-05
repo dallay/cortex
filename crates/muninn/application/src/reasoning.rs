@@ -460,6 +460,23 @@ impl ReasoningMemory {
         max_traces: i64,
         success_only: bool,
     ) -> MemoryResult<String> {
+        let entries = self
+            .similar_task_entries(query, max_traces, success_only)
+            .await?;
+        if entries.is_empty() {
+            return Ok(String::new());
+        }
+        Ok(format!("### Similar Past Tasks{entries}"))
+    }
+
+    /// Trace entries without the `### Similar Past Tasks` header, for the fused
+    /// prompt document that renders this section under its own `##` header.
+    pub async fn similar_task_entries(
+        &self,
+        query: &str,
+        max_traces: i64,
+        success_only: bool,
+    ) -> MemoryResult<String> {
         let options = SimilarityOptions {
             limit: max_traces,
             success_only,
@@ -469,8 +486,8 @@ impl ReasoningMemory {
         if traces.is_empty() {
             return Ok(String::new());
         }
-        let mut parts = vec!["### Similar Past Tasks".to_owned()];
-        for trace in traces {
+        let mut parts = Vec::new();
+        for trace in &traces {
             let similarity = trace
                 .metadata
                 .get("similarity")

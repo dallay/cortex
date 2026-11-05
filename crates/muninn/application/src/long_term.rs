@@ -918,12 +918,24 @@ impl LongTermMemory {
 
     /// Context block for prompts (`LongTermMemory.get_context`).
     pub async fn get_context(&self, query: &str, max_items: i64) -> MemoryResult<String> {
+        self.get_context_scoped(query, max_items, None).await
+    }
+
+    /// Owner-scoped context: preferences follow the caller's namespace while
+    /// entities stay global, matching the store's own scoping model.
+    pub async fn get_context_scoped(
+        &self,
+        query: &str,
+        max_items: i64,
+        user_identifier: Option<&str>,
+    ) -> MemoryResult<String> {
         let mut parts = Vec::new();
         let preferences = self
             .search_preferences(
                 query,
                 &SearchPreferencesOptions {
                     limit: max_items,
+                    user_identifier: user_identifier.map(str::to_owned),
                     ..SearchPreferencesOptions::default()
                 },
             )

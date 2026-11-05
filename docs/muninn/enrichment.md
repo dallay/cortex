@@ -200,6 +200,34 @@ writer still refuses loudly (`501`) instead of silently discarding data.
 - **GM-11 schema work is not absorbed here.** No migration, index or Cypher
   change belongs to this unit.
 
+## Shipped-binary registration (U6a)
+
+The `muninn` binary builds both stages from the same conventions as the other
+providers. Disabled by default: with no flag the binary behaves exactly as
+before and contacts nothing.
+
+| Flag | Environment | Default | Meaning |
+| --- | --- | --- | --- |
+| `--enrichment-enabled` | `NAM_ENRICHMENT__ENABLED` | `false` | Opt in to enrichment |
+| `--enrichment-providers` | `NAM_ENRICHMENT__PROVIDERS` | `wikimedia` | Comma-separated priority order |
+| `--enrichment-wikimedia-base-url` | `NAM_ENRICHMENT__WIKIMEDIA_BASE_URL` | pinned upstream root | REST root override |
+| `--enrichment-diffbot-base-url` | `NAM_ENRICHMENT__DIFFBOT_BASE_URL` | pinned upstream root | REST root override |
+| `--enrichment-diffbot-api-key` | `NAM_ENRICHMENT__DIFFBOT_API_KEY` | none | Required only for `diffbot`; never logged |
+| `--enrichment-timeout-secs` | `NAM_ENRICHMENT__TIMEOUT_SECS` | `10` | Per-request deadline; zero rejected |
+| `--geocoding-enabled` | `NAM_GEOCODING__ENABLED` | `false` | Opt in to geocoding |
+| `--geocoding-provider` | `NAM_GEOCODING__PROVIDER` | `nominatim` | `google` validates but is not implemented |
+| `--geocoding-base-url` | `NAM_GEOCODING__BASE_URL` | pinned upstream root | Search root override |
+| `--geocoding-api-key` | `NAM_GEOCODING__API_KEY` | none | Never logged |
+| `--geocoding-rate-limit-per-second` | `NAM_GEOCODING__RATE_LIMIT_PER_SECOND` | upstream default | Config value is authoritative |
+| `--geocoding-timeout-secs` | `NAM_GEOCODING__TIMEOUT_SECS` | `10` | Per-request deadline; zero rejected |
+
+An invalid or credential-bearing endpoint fails fast at startup with a redacted
+message (exit 1) before Neo4j is contacted. An unreachable endpoint surfaces at
+request time as an explicit provider error, never as a silent empty enrichment.
+The persistence writer is the Neo4j store itself, so enriched properties and the
+location point land on the entity node as documented above. `get_context` is
+documented separately in `context.md`.
+
 ## Boundaries and evidence
 
 Enrichment adds no field to any existing response: `add_entity` keeps its exact

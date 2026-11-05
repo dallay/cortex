@@ -39,6 +39,7 @@ pub async fn dispatch(state: &BridgeState, method: &str, args: &Args) -> Option<
         "get_entity_graph" => get_entity_graph(state, args).await,
         "enrich_entity" => enrich_entity(state, args).await,
         "geocode_entity" => geocode_entity(state, args).await,
+        "get_context" => get_context(state, args).await,
         _ => return None,
     };
     Some(result)
@@ -46,6 +47,62 @@ pub async fn dispatch(state: &BridgeState, method: &str, args: &Args) -> Option<
 
 fn entity_not_found(id: Uuid) -> BridgeError {
     BridgeError::Memory(MemoryError::not_found(format!("entity {id}")))
+}
+
+/// Pinned fused prompt document: three sections joined by a blank line, empty
+/// sections omitted. Defaults mirror `MemoryClient.get_context`; preferences
+/// follow the caller's namespace while entities stay global.
+async fn get_context(state: &BridgeState, args: &Args) -> BridgeResult {
+    // Parse the entire request before any store read.
+    let query = args.string("query")?;
+    let session_id = args.opt_string("session_id")?;
+    let include_short_term = args.opt_bool("include_short_term")?.unwrap_or(true);
+    let include_long_term = args.opt_bool("include_long_term")?.unwrap_or(true);
+    let include_reasoning = args.opt_bool("include_reasoning")?.unwrap_or(true);
+    let max_items = args.opt_i64("max_items")?.unwrap_or(10);
+    if max_items < 0 {
+        return Err(BridgeError::BadRequest(
+            "'max_items' must be nonnegative".into(),
+        ));
+    }
+    let user_identifier = args.opt_string("user_identifier")?;
+    let mut parts: Vec<String> = Vec::new();
+    if include_short_term {
+        let short_term = state
+            .memory
+            .short_term()
+            .get_context_scoped(
+                &query,
+                session_id.as_deref(),
+                usize::try_from(max_items).unwrap_or(usize::MAX),
+                user_identifier.as_deref(),
+            )
+            .await?;
+        if !short_term.is_empty() {
+            parts.push(format!("## Conversation History\n{short_term}"));
+        }
+    }
+    if include_long_term {
+        let long_term = state
+            .memory
+            .long_term()
+            .get_context_scoped(&query, max_items, user_identifier.as_deref())
+            .await?;
+        if !long_term.is_empty() {
+            parts.push(format!("## Relevant Knowledge\n{long_term}"));
+        }
+    }
+    if include_reasoning {
+        let reasoning = state
+            .memory
+            .reasoning()
+            .similar_task_entries(&query, max_items / 2, true)
+            .await?;
+        if !reasoning.is_empty() {
+            parts.push(format!("## Similar Past Tasks\n{reasoning}"));
+        }
+    }
+    Ok(Reply::Json(json!(parts.join("\n\n"))))
 }
 
 fn entities(items: &[muninn_core::model::Entity]) -> Reply {

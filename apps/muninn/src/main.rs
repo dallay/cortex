@@ -6,15 +6,23 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use muninn_application::enrichment::{EnrichmentService, GeocodingService};
 use muninn_application::{MemoryClient, MemoryOptions, MemoryPorts};
 use muninn_bridge::BridgeState;
+use muninn_core::enrichment::{
+    ApiKey, EnrichmentConfig, EnrichmentProvider, EnrichmentProviderKind, EntityEnrichmentStore,
+    Geocoder, GeocodingConfig, GeocodingProviderKind,
+};
 use muninn_core::extraction::EntityExtractor;
 use muninn_core::ports::{Embedder, GraphMaintenance};
 use muninn_neo4j::{
     Neo4jClient, Neo4jConfig, Neo4jCypherQuery, Neo4jLongTermStore, Neo4jMaintenance,
     Neo4jReasoningStore, Neo4jShortTermStore, SchemaManager,
 };
-use muninn_providers::{HashEmbedder, OpenAiEmbedder, SpacyEntityExtractor};
+use muninn_providers::{
+    DiffbotEnrichment, HashEmbedder, NominatimGeocoder, OpenAiEmbedder, SpacyEntityExtractor,
+    WikimediaEnrichment,
+};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -30,6 +38,10 @@ struct Cli {
     embedding: EmbeddingArgs,
     #[command(flatten)]
     extraction: ExtractionArgs,
+    #[command(flatten)]
+    enrichment: EnrichmentArgs,
+    #[command(flatten)]
+    geocoding: GeocodingArgs,
     #[command(subcommand)]
     command: Command,
 }
@@ -120,6 +132,69 @@ struct ExtractionArgs {
     extraction_timeout_secs: u64,
 }
 
+/// Upstream `EnrichmentConfig` surface. Disabled by default: nothing is reachable
+/// and no stage is built until `--enrichment-enabled` is set.
+#[derive(Args)]
+struct EnrichmentArgs {
+    /// Opt in to entity enrichment; false contacts no provider.
+    #[arg(long, env = "NAM_ENRICHMENT__ENABLED", default_value_t = false)]
+    enrichment_enabled: bool,
+    /// Provider priority order, comma separated; `none` selects nothing.
+    #[arg(long, env = "NAM_ENRICHMENT__PROVIDERS", default_value = "wikimedia")]
+    enrichment_providers: String,
+    /// Wikimedia REST root override, e.g. `http://127.0.0.1:8765/api/rest_v1`.
+    #[arg(long, env = "NAM_ENRICHMENT__WIKIMEDIA_BASE_URL")]
+    enrichment_wikimedia_base_url: Option<String>,
+    /// Diffbot knowledge-graph root override.
+    #[arg(long, env = "NAM_ENRICHMENT__DIFFBOT_BASE_URL")]
+    enrichment_diffbot_base_url: Option<String>,
+    /// Required only when the `diffbot` provider is selected.
+    #[arg(long, env = "NAM_ENRICHMENT__DIFFBOT_API_KEY", hide_env_values = true)]
+    enrichment_diffbot_api_key: Option<String>,
+    /// Per-request provider deadline in seconds; zero is rejected.
+    #[arg(long, env = "NAM_ENRICHMENT__TIMEOUT_SECS", default_value_t = 10)]
+    enrichment_timeout_secs: u64,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum GeocodingProvider {
+    /// OpenStreetMap Nominatim `GET /search`; the declared user agent is required.
+    Nominatim,
+    /// Configuration is validated; no adapter is implemented.
+    Google,
+}
+
+/// Upstream `GeocodingConfig` surface. Disabled by default, like enrichment.
+#[derive(Args)]
+struct GeocodingArgs {
+    /// Opt in to `LOCATION` geocoding; false contacts no provider.
+    #[arg(long, env = "NAM_GEOCODING__ENABLED", default_value_t = false)]
+    geocoding_enabled: bool,
+    #[arg(
+        long,
+        env = "NAM_GEOCODING__PROVIDER",
+        value_enum,
+        default_value = "nominatim"
+    )]
+    geocoding_provider: GeocodingProvider,
+    /// Nominatim root override, e.g. `http://127.0.0.1:8766`.
+    #[arg(long, env = "NAM_GEOCODING__BASE_URL")]
+    geocoding_base_url: Option<String>,
+    /// Required only when the `google` provider is selected.
+    #[arg(long, env = "NAM_GEOCODING__API_KEY", hide_env_values = true)]
+    geocoding_api_key: Option<String>,
+    /// Upstream applies this value as seconds between requests, not per second.
+    #[arg(
+        long,
+        env = "NAM_GEOCODING__RATE_LIMIT_PER_SECOND",
+        default_value_t = 1.0
+    )]
+    geocoding_rate_limit_per_second: f64,
+    /// Per-request geocoder deadline in seconds; zero is rejected.
+    #[arg(long, env = "NAM_GEOCODING__TIMEOUT_SECS", default_value_t = 10)]
+    geocoding_timeout_secs: u64,
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Create or verify constraints and indexes.
@@ -204,6 +279,143 @@ fn extractor(args: &ExtractionArgs) -> Result<Option<Arc<dyn EntityExtractor>>> 
     }
 }
 
+/// Closed provider vocabulary of `EnrichmentConfig.providers`; an unknown name is
+/// rejected instead of adopted, and the message never echoes the input.
+fn enrichment_providers(names: &str) -> Result<Vec<EnrichmentProviderKind>> {
+    names
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(|name| {
+            EnrichmentProviderKind::from_name(name).context(
+                "enrichment configuration rejected: --enrichment-providers must name wikimedia, \
+                 diffbot or none",
+            )
+        })
+        .collect()
+}
+
+/// One adapter per configured provider, in the configured priority order.
+/// Building an adapter contacts nothing; the caller supplies the property writer.
+fn enrichment_provider(
+    kind: EnrichmentProviderKind,
+    args: &EnrichmentArgs,
+    config: &EnrichmentConfig,
+) -> Result<Arc<dyn EnrichmentProvider>> {
+    let rate = config.rate_limit(kind).unwrap_or(1.0);
+    let timeout = Duration::from_secs(args.enrichment_timeout_secs);
+    const REJECT: &str = "enrichment configuration rejected: use an http(s) provider endpoint \
+                          without credentials and a nonzero timeout";
+    Ok(match kind {
+        EnrichmentProviderKind::Wikimedia => {
+            let adapter = args
+                .enrichment_wikimedia_base_url
+                .as_deref()
+                .map_or_else(
+                    || {
+                        WikimediaEnrichment::for_language(
+                            &config.language,
+                            &config.user_agent,
+                            rate,
+                            timeout,
+                        )
+                    },
+                    |base| WikimediaEnrichment::new(base, &config.user_agent, rate, timeout),
+                )
+                .context(REJECT)?;
+            Arc::new(adapter)
+        }
+        EnrichmentProviderKind::Diffbot => {
+            let base = args
+                .enrichment_diffbot_base_url
+                .as_deref()
+                .unwrap_or(DiffbotEnrichment::DEFAULT_BASE);
+            let key = config.diffbot_api_key.as_deref().context(
+                "enrichment configuration rejected: enrichment.diffbot_api_key is \
+                          required when the diffbot provider is selected",
+            )?;
+            Arc::new(DiffbotEnrichment::new(base, key, rate, timeout).context(REJECT)?)
+        }
+        EnrichmentProviderKind::None => bail!(
+            "enrichment configuration rejected: 'none' selects no enrichment provider adapter"
+        ),
+    })
+}
+
+/// Validated enrichment configuration and the adapters it selects. The default
+/// path returns `None`: no stage is built and no endpoint is contacted.
+type EnrichmentStage = (EnrichmentConfig, Vec<Arc<dyn EnrichmentProvider>>);
+
+fn enrichment(args: &EnrichmentArgs) -> Result<Option<EnrichmentStage>> {
+    let mut config = EnrichmentConfig {
+        enabled: args.enrichment_enabled,
+        providers: enrichment_providers(&args.enrichment_providers)?,
+        ..EnrichmentConfig::default()
+    };
+    if let Some(key) = args.enrichment_diffbot_api_key.as_deref() {
+        config.diffbot_api_key = ApiKey::new(key);
+    }
+    config
+        .validate()
+        .context("enrichment configuration rejected")?;
+    if !config.is_active() {
+        return Ok(None);
+    }
+    let mut adapters: Vec<Arc<dyn EnrichmentProvider>> = Vec::new();
+    for kind in config.providers.clone() {
+        if kind != EnrichmentProviderKind::None {
+            adapters.push(enrichment_provider(kind, args, &config)?);
+        }
+    }
+    Ok(Some((config, adapters)))
+}
+
+/// Validated geocoding configuration and the adapter it selects. The default path
+/// returns `None` and contacts nothing.
+fn geocoding(args: &GeocodingArgs) -> Result<Option<(GeocodingConfig, Arc<dyn Geocoder>)>> {
+    let mut config = GeocodingConfig {
+        enabled: args.geocoding_enabled,
+        provider: match args.geocoding_provider {
+            GeocodingProvider::Nominatim => GeocodingProviderKind::Nominatim,
+            GeocodingProvider::Google => GeocodingProviderKind::Google,
+        },
+        rate_limit_per_second: args.geocoding_rate_limit_per_second,
+        ..GeocodingConfig::default()
+    };
+    if let Some(key) = args.geocoding_api_key.as_deref() {
+        config.api_key = ApiKey::new(key);
+    }
+    config
+        .validate()
+        .context("geocoding configuration rejected")?;
+    if !config.is_active() {
+        return Ok(None);
+    }
+    match config.provider {
+        GeocodingProviderKind::Nominatim => {
+            let base = args
+                .geocoding_base_url
+                .as_deref()
+                .unwrap_or(NominatimGeocoder::DEFAULT_BASE);
+            let adapter = NominatimGeocoder::new(
+                base,
+                &config.user_agent,
+                config.rate_limit_per_second,
+                Duration::from_secs(args.geocoding_timeout_secs),
+            )
+            .context(
+                "geocoding configuration rejected: use an http(s) endpoint without credentials \
+                 and a nonzero timeout",
+            )?;
+            Ok(Some((config, Arc::new(adapter))))
+        }
+        GeocodingProviderKind::Google => bail!(
+            "geocoding configuration rejected: the google provider is validated but not \
+             implemented; configure nominatim"
+        ),
+    }
+}
+
 async fn connect(args: &Neo4jArgs, dimensions: usize) -> Result<Neo4jClient> {
     let config = Neo4jConfig {
         uri: args.neo4j_uri.clone(),
@@ -228,6 +440,8 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let embedder = embedder(&cli.embedding)?;
     let extraction = extractor(&cli.extraction)?;
+    let enrichment = enrichment(&cli.enrichment)?;
+    let geocoding = geocoding(&cli.geocoding)?;
     let dimensions = embedder
         .as_ref()
         .map_or(cli.embedding.embedding_dimensions, |provider| {
@@ -261,6 +475,22 @@ async fn main() -> Result<()> {
                 tracing::info!("entity extraction stage is configured");
                 memory = memory.with_extractor(extraction);
             }
+            if let Some((config, providers)) = enrichment {
+                tracing::info!("entity enrichment stage is configured");
+                let writer: Arc<dyn EntityEnrichmentStore> =
+                    Arc::new(Neo4jLongTermStore::new(client.clone()));
+                let service = EnrichmentService::new(config, providers, Some(writer))
+                    .context("enrichment configuration rejected")?;
+                memory = memory.with_enrichment(Arc::new(service));
+            }
+            if let Some((config, geocoder)) = geocoding {
+                tracing::info!("entity geocoding stage is configured");
+                let writer: Arc<dyn EntityEnrichmentStore> =
+                    Arc::new(Neo4jLongTermStore::new(client.clone()));
+                let service = GeocodingService::new(config, geocoder, Some(writer))
+                    .context("geocoding configuration rejected")?;
+                memory = memory.with_geocoding(Arc::new(service));
+            }
             let memory = Arc::new(memory);
             let maintenance: Option<Arc<dyn GraphMaintenance>> = if allow_destructive_clear {
                 tracing::warn!("clear_all_data is enabled: this database will be wiped by the TCK");
@@ -292,6 +522,58 @@ mod tests {
 
     fn parse_cli(arguments: &[&str]) -> Cli {
         Cli::try_parse_from(arguments).expect("synthetic CLI arguments must parse")
+    }
+
+    #[test]
+    fn cli_accepts_the_documented_enrichment_and_geocoding_configuration() {
+        Cli::try_parse_from([
+            "muninn",
+            "--neo4j-password",
+            "synthetic-test-password",
+            "--enrichment-enabled",
+            "--enrichment-providers",
+            "wikimedia",
+            "--enrichment-wikimedia-base-url",
+            "http://127.0.0.1:18765/api/rest_v1",
+            "--geocoding-enabled",
+            "--geocoding-provider",
+            "nominatim",
+            "--geocoding-base-url",
+            "http://127.0.0.1:18766/search",
+            "--geocoding-rate-limit-per-second",
+            "0.5",
+            "bridge",
+        ])
+        .expect("the documented enrichment and geocoding configuration must be accepted");
+    }
+
+    #[test]
+    fn help_documents_the_enrichment_and_geocoding_options() {
+        let help = Cli::command().render_help().to_string();
+        for text in [
+            "--enrichment-enabled",
+            "--enrichment-providers",
+            "--enrichment-wikimedia-base-url",
+            "--enrichment-diffbot-base-url",
+            "--enrichment-diffbot-api-key",
+            "--enrichment-timeout-secs",
+            "--geocoding-enabled",
+            "--geocoding-provider",
+            "--geocoding-base-url",
+            "--geocoding-api-key",
+            "--geocoding-rate-limit-per-second",
+            "--geocoding-timeout-secs",
+        ] {
+            assert!(help.contains(text), "{text} missing from help:\n{help}");
+        }
+        assert!(
+            help.contains("wikimedia"),
+            "wikimedia value missing:\n{help}"
+        );
+        assert!(
+            help.contains("nominatim"),
+            "nominatim value missing:\n{help}"
+        );
     }
 
     #[test]
@@ -356,6 +638,24 @@ mod tests {
 
         fn requests(&self) -> Vec<String> {
             self.received.lock().unwrap().clone()
+        }
+    }
+
+    /// Records enrichment writes so the binary-level test never touches a store.
+    #[derive(Default)]
+    struct RecordingWriter {
+        enrichments: std::sync::Mutex<Vec<uuid::Uuid>>,
+    }
+
+    #[async_trait::async_trait]
+    impl EntityEnrichmentStore for RecordingWriter {
+        async fn write_enrichment(
+            &self,
+            entity_id: uuid::Uuid,
+            _: &muninn_core::enrichment::EnrichmentAttributes,
+        ) -> muninn_core::MemoryResult<bool> {
+            self.enrichments.lock().unwrap().push(entity_id);
+            Ok(true)
         }
     }
 
@@ -476,6 +776,85 @@ mod tests {
         for expected in ["\"text\":\"Alice in Paris\"", "\"entity_types\":null"] {
             assert!(body.contains(expected), "{body}");
         }
+    }
+
+    #[tokio::test]
+    async fn configured_wikimedia_enrichment_reaches_the_provider_contract() {
+        let body = r#"{"type":"standard","title":"Ada Lovelace","extract":"mathematician","description":null,"wikibase_item":"Q7259","thumbnail":null,"content_urls":null}"#;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("loopback bind");
+        let address = listener.local_addr().unwrap();
+        let received = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = received.clone();
+        std::thread::spawn(move || {
+            use std::io::Write;
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let request = read_http_request(&mut stream);
+                recorded.lock().unwrap().push(request);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+                stream.flush().unwrap();
+            }
+        });
+        let base = format!("http://{address}/api/rest_v1");
+        let cli = parse_cli(&[
+            "muninn",
+            "--neo4j-password",
+            "synthetic-test-password",
+            "--enrichment-enabled",
+            "--enrichment-providers",
+            "wikimedia",
+            "--enrichment-wikimedia-base-url",
+            base.as_str(),
+            "bridge",
+        ]);
+        let Some((config, providers)) = enrichment(&cli.enrichment)
+            .unwrap()
+            .filter(|(config, _)| config.is_active())
+        else {
+            panic!("a configured provider must build the enrichment stage");
+        };
+        let service = EnrichmentService::new(
+            config,
+            providers,
+            Some(Arc::new(RecordingWriter::default())),
+        )
+        .expect("the recorded configuration is valid");
+        let entity = muninn_core::model::Entity {
+            id: uuid::Uuid::new_v4(),
+            name: "Ada Lovelace".to_owned(),
+            canonical_name: Some("Ada Lovelace".to_owned()),
+            entity_type: "PERSON".to_owned(),
+            subtype: None,
+            description: None,
+            confidence: 1.0,
+            aliases: Vec::new(),
+            embedding: None,
+            created_at: chrono::Utc::now(),
+            updated_at: None,
+            metadata: muninn_core::model::Metadata::new(),
+        };
+        let outcome = service.enrich(&entity).await.expect("the provider answers");
+        let attributes = outcome
+            .attributes
+            .expect("a found summary carries the documented attributes");
+        assert_eq!(
+            attributes.enriched_summary.as_deref(),
+            Some("mathematician")
+        );
+        assert_eq!(attributes.enriched_description, None);
+        assert_eq!(attributes.wikidata_id.as_deref(), Some("Q7259"));
+        assert_eq!(attributes.enrichment_provider, "wikimedia");
+        let requests = received.lock().unwrap().clone();
+        assert_eq!(requests.len(), 1, "{requests:?}");
+        assert!(
+            requests[0].starts_with("GET /api/rest_v1/page/summary/Ada_Lovelace HTTP/1.1"),
+            "{}",
+            requests[0]
+        );
     }
 
     #[test]
