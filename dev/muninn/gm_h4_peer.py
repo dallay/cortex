@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import sys
 import sysconfig
+import threading
 import time
 
 from gm08_peer import _post, consume_binary, require_empty, start_bridge, stop_bridge
@@ -167,14 +168,16 @@ class ReferenceAdapter:
     async def call(self, operation, **arguments):
         if operation == 'add_message':
             from neo4j_agent_memory.schema.models import EntityRef
-            mentions = [EntityRef(**item) for item in arguments['explicit_mentions']]
-            extract = arguments['extract_entities']
+            mentions = [EntityRef(**item)
+                        for item in arguments.get('explicit_mentions') or []]
+            extract = arguments.get('extract_entities')
             message = await self.client.short_term.add_message(
                 arguments['session_id'], arguments['role'], arguments['content'],
-                extraction_mode=arguments['extraction_mode'], explicit_mentions=mentions,
+                extraction_mode=arguments.get('extraction_mode', 'auto'),
+                explicit_mentions=mentions,
                 extract_entities=True if extract is None else extract,
-                extract_relations=arguments['extract_relations'],
-                generate_embedding=arguments['generate_embedding'],
+                extract_relations=arguments.get('extract_relations') or False,
+                generate_embedding=arguments.get('generate_embedding', True),
                 user_identifier=arguments.get('user_identifier'))
             return {'id': str(message.id), 'content': message.content}
         if operation == 'add_entity':
@@ -240,12 +243,59 @@ class ReferenceAdapter:
             await asyncio.sleep(0.05)
 
 
+class RecordedHttpServer:
+    """Serve the frozen provider answers over real loopback HTTP.
+
+    The product bridge reaches its providers through its own HTTP adapters, so
+    the recorded fixtures are served on a socket instead of an in-process
+    transport. Every accepted request is logged through the shared
+    ``RecordedProviders`` so spacing and totals stay comparable per side.
+    """
+
+    def __init__(self, providers):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_):
+                pass  # Never log request paths or payloads.
+
+            def do_GET(self):
+                try:
+                    status, body = providers.answer(self.path.split('?', 1)[0])
+                except RuntimeError:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                data = json.dumps(body).encode('utf-8')
+                self.send_response(status)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+        self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.server.daemon_threads = True
+        self.thread = threading.Thread(target=self.server.serve_forever,
+                                       daemon=True)
+        self.thread.start()
+
+    @property
+    def base(self):
+        host, port = self.server.server_address[:2]
+        return f'http://{host}:{port}'
+
+    def stop(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(5)
+
+
 class ProductAdapter:
     """Drive the source-bound bridge wire; no native product object is read."""
 
-    def __init__(self, url, driver):
+    def __init__(self, url, driver, providers=None):
         self.url, self.driver = url, driver
-        self.providers, self.side = RecordedProviders({}), 'product'
+        self.providers, self.side = (providers or RecordedProviders({})), 'product'
 
     def provider_requests(self):
         return self.providers.requests()
@@ -260,23 +310,31 @@ class ProductAdapter:
         except LookupError as error:
             raise RuntimeError(f'bridge exposes no {operation} method') from error
 
+    async def _add_entity(self, **arguments):
+        # The bridge keeps the entity fields top-level and adds the
+        # deduplication result additively; normalize to the reference's
+        # (entity, deduplication) shape so both captures read the same.
+        response = await self._call('add_entity', **arguments)
+        deduplication = response.pop('deduplication', None)
+        return {'entity': response, 'deduplication': deduplication}
+
     async def call(self, operation, **arguments):
         if operation == 'add_entity':
-            return await self._call('add_entity', **arguments)
+            return await self._add_entity(**arguments)
         if operation in ('add_message', 'add_relationship'):
             return await self._call(operation, **arguments)
         if operation == 'enrich_entity':
-            created = await self._call('add_entity', name=arguments['name'],
-                                       entity_type=arguments['entity_type'],
-                                       resolve=False, deduplicate=False)
+            created = await self._add_entity(name=arguments['name'],
+                                             entity_type=arguments['entity_type'],
+                                             resolve=False, deduplicate=False)
             identifier = created['entity']['id']
             outcome = await self._call('enrich_entity', entity_id=str(identifier))
             return {'entity': {'id': str(identifier)}, 'status': outcome['status'],
                     'failure': outcome['failure']}
         if operation == 'geocode_entity':
-            created = await self._call('add_entity', name=arguments['name'],
-                                       entity_type=arguments['entity_type'],
-                                       resolve=False, deduplicate=False)
+            created = await self._add_entity(name=arguments['name'],
+                                             entity_type=arguments['entity_type'],
+                                             resolve=False, deduplicate=False)
             identifier = created['entity']['id']
             outcome = await self._call('geocode_entity', entity_id=str(identifier))
             return {'entity': {'id': str(identifier)}, 'status': outcome['status'],
@@ -365,26 +423,53 @@ def main():
         if side == 'product':
             binary = Path('/target/muninn')
             consume_binary('/built/muninn', binary, os.environ['GM_H4_BINARY_SHA256'])
+            providers = RecordedProviders(frozen_fixture()['gm06']['providers'])
+            recorded = RecordedHttpServer(providers)
+            # The bridge builds its stages from the same configuration surface
+            # a deployment uses; recorded fixtures stand in for the live roots.
+            os.environ.update({
+                'NAM_ENRICHMENT__ENABLED': 'true',
+                'NAM_ENRICHMENT__PROVIDERS': 'wikimedia',
+                'NAM_ENRICHMENT__WIKIMEDIA_BASE_URL': recorded.base + '/api/rest_v1',
+                'NAM_GEOCODING__ENABLED': 'true',
+                'NAM_GEOCODING__PROVIDER': 'nominatim',
+                'NAM_GEOCODING__BASE_URL': recorded.base + '/search',
+            })
             product, url = start_bridge(binary, uri, password)
-            adapter = ProductAdapter(url, driver)
+            adapter = ProductAdapter(url, driver, providers)
+            recorded_server = recorded
         else:
             providers = RecordedProviders(frozen_fixture()['gm06']['providers'])
             original = serve_recorded_providers(providers)
-            client = asyncio.run(reference_client(uri, password, model, providers))
-            adapter = ReferenceAdapter(client, driver, providers)
 
-        async def capture():
-            gm04 = await capture_gm04(adapter)
-            gm07 = await capture_gm07(adapter)
-            gm02 = await capture_gm02(adapter)
-            gm06 = await capture_gm06(adapter)
-            return gm02, gm04, gm06, gm07
+            async def reference_capture():
+                # One event loop owns the async driver pool for the whole
+                # capture: a client created under one asyncio.run and used
+                # under another loses its pooled connections when the first
+                # loop closes, and the first execute_write dies on a dead
+                # socket.
+                client = await reference_client(uri, password, model, providers)
+                try:
+                    local = ReferenceAdapter(client, driver, providers)
+                    gm04 = await capture_gm04(local)
+                    gm07 = await capture_gm07(local)
+                    gm02 = await capture_gm02(local)
+                    gm06 = await capture_gm06(local)
+                    return gm02, gm04, gm06, gm07, local
+                finally:
+                    await client.close()
 
-        try:
+            gm02, gm04, gm06, gm07, adapter = asyncio.run(reference_capture())
+
+        if side == 'product':
+            async def capture():
+                gm04 = await capture_gm04(adapter)
+                gm07 = await capture_gm07(adapter)
+                gm02 = await capture_gm02(adapter)
+                gm06 = await capture_gm06(adapter)
+                return gm02, gm04, gm06, gm07
+
             gm02, gm04, gm06, gm07 = asyncio.run(capture())
-        finally:
-            if side == 'reference':
-                asyncio.run(adapter.client.close())
         gm03 = gm03_section(side, frozen_fixture()['gm03']['texts'], model)
         document = capture_document(side, gm02, gm03, gm04, gm06, gm07)
         components = adapter.query('CALL dbms.components() YIELD versions, edition '
@@ -402,11 +487,13 @@ def main():
             else 'hash 1536 (provider=hash)',
             'extraction': 'pinned SpacyEntityExtractor' if side == 'reference'
             else 'dev/muninn/spacy_service.py',
-            'providers': ('recorded local fixtures' if side == 'reference'
-                          else 'none: the product binary registers no enrichment stage'),
+            'providers': ('recorded in-process fixtures' if side == 'reference'
+                          else 'recorded local fixtures over loopback HTTP'),
         }, indent=2) + '\n')
         return 0
     finally:
+        if side == 'product':
+            recorded_server.stop()
         if original is not None:
             import httpx
             httpx.AsyncClient = original

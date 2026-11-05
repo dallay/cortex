@@ -17,6 +17,7 @@ FIXTURE = Path(__file__).with_name('fixtures') / 'gm_h4_v1.json'
 
 ENTITIES = 'MATCH (e:Entity) RETURN properties(e) AS properties'
 MENTIONS = ('MATCH (m:Message)-[r:MENTIONS]->(e:Entity) '
+            'WHERE m.id IN $message_ids '
             'RETURN m.id AS message, e.id AS entity, properties(r) AS properties')
 RELATIONS = ('MATCH (a:Entity)-[r:RELATED_TO]->(b:Entity) '
              'RETURN a.id AS source, b.id AS target, properties(r) AS properties')
@@ -98,7 +99,9 @@ async def capture_gm02(adapter, fixture=None):
         owners[str(created['id'])] = scenario['key']
     entities, identifiers = inventory(adapter.query)
     mentions = []
-    for row in adapter.query(MENTIONS, {}):
+    # GM-02 compares the mentions its own scenarios created; messages seeded by
+    # other sections are captured and validated by their own sections.
+    for row in adapter.query(MENTIONS, {'message_ids': sorted(owners.values())}):
         properties = row['properties']
         unknown = set(properties) - set(MENTIONS_SHARED) - set(MENTIONS_PRODUCT_ONLY)
         if unknown:
