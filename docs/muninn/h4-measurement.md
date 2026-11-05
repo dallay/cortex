@@ -236,12 +236,14 @@ Two declared asymmetries, both recorded before measurement:
 
 ## Known limits of this harness
 
-- **Product extraction stage is not wired in the built binary.** `apps/muninn`
-   exposes Neo4j and embedding flags only (no extractor, no `NAM_EXTRACTION*`),
-   so the bridge never registers `SpacyEntityExtractor`. GM-02 `auto` therefore
-  produces no product mentions and fails closed on the fixture's declared
-  minimum of one. That is an expected measured finding for U6, not a harness
-  deviation, and no product code is changed in U5.
+- **Product extraction stage is wired, default off.** U5 measured the gap that
+  `apps/muninn` registered no extraction stage, so GM-02 `auto` produced no
+  product mentions. The follow-up unit closed it: the shipped binary now builds
+  the spaCy stage from `--extraction-provider` / `NAM_EXTRACTION__PROVIDER`
+  (default `none`) through the existing `MemoryClient::with_extractor`, so the
+  previous finding no longer holds. A GM-02 run without that flag still
+  measures the default-off path, which is the correct comparison for an
+  unconfigured deployment.
 - **The flagged band is not deterministically reachable.** Both sides receive
   the same controlled vectors (TCK `MockEmbedder` SHA-256 1536 for the
   reference, the byte-identical `hash` provider for the product), whose cosines

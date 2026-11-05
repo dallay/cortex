@@ -45,8 +45,49 @@ this does not add authentication or authorization to Muninn.
 
 ## Rust configuration
 
-The composition root registers the adapter explicitly; no environment variable,
-bridge endpoint or model-download hook is added:
+The shipped `muninn` binary registers the adapter from explicit configuration. It
+follows the existing `NAM_` flag/environment convention and stays **disabled by
+default**; with no extraction configuration the binary behaves exactly as before
+and contacts no endpoint:
+
+```sh
+NAM_EXTRACTION__PROVIDER=spacy \
+NAM_EXTRACTION__ENDPOINT=http://127.0.0.1:8765/extract \
+NAM_EXTRACTION__TIMEOUT_SECS=10 \
+  muninn --neo4j-uri bolt://localhost:7687 --neo4j-password <secret> \
+  --embedding-provider hash --embedding-dimensions 8 bridge
+```
+
+The example selects the deterministic test embedder so it runs without provider
+credentials; the extraction wiring is independent of the embedding provider.
+
+- `--extraction-provider` / `NAM_EXTRACTION__PROVIDER` (default `none`): `none`
+  builds no extractor at all; `spacy` builds the HTTP adapter.
+- `--extraction-endpoint` / `NAM_EXTRACTION__ENDPOINT` (unset): trusted local
+  `POST /extract` endpoint, required when the provider is `spacy`.
+- `--extraction-timeout-secs` / `NAM_EXTRACTION__TIMEOUT_SECS` (default `10`):
+  per-request deadline; zero is rejected.
+
+Startup validation runs before the Neo4j connection and before any listening
+socket. A missing endpoint fails with `spaCy extraction requires
+--extraction-endpoint naming the trusted local sidecar`. An unparsable or
+credential-bearing endpoint, a non-`http(s)` scheme or a zero timeout fails with
+`spaCy extraction configuration rejected: use an http(s) endpoint without
+credentials and a nonzero timeout`, followed by the adapter's redacted cause
+(`spaCy extraction invalid endpoint` or `spaCy extraction invalid configuration`).
+Neither message repeats the configured value, the URL or its credentials, and
+the process exits with status `1`. A syntactically valid but unreachable endpoint
+is not probed at startup: the request that opts into `auto` fails with HTTP 500
+`provider error: spaCy extraction transport failed` and writes nothing. The
+binary never reports extraction success from an empty provider answer.
+
+When a stage is configured the binary logs `entity extraction stage is
+configured` (no endpoint, no payload) and passes it to the client exactly as the
+library snippet below does. Extraction stays inert until a request opts in.
+
+Library composition roots, including embedding/integration tests that do not use
+the binary, register the same adapter explicitly; no model-download hook is
+added:
 
 ```rust,ignore
 use std::{sync::Arc, time::Duration};
@@ -187,16 +228,26 @@ Authority: agent-memory `9d45af5529ecb5f2fe352013468a11087f3163d4`,
    provenance on new edges through the same writer. Existing edge properties and
    first evidence are not rewritten. New evidence columns are an explicit Muninn
    addition, not upstream serialization parity.
+6. **Binary dispatch:** the shipped binary selects the stage from
+   `--extraction-provider`/`NAM_EXTRACTION__*`, while the pinned reference
+   enables extraction from its own settings object. The observable control
+   surface of extraction (`extraction_mode`, `extract_entities`,
+   `explicit_mentions`, `extract_relations`) is unchanged; only the way an
+   operator supplies the stage differs, and the disabled default is preserved.
 
 The documentation and Muninn source-file SHA-256 hashes (upstream reference files are pinned by revision instead), raw RED/GREEN streams,
 command exits, and base/current differential are retained under
 `.agents/rpi/plan/tasks/muninn-h4-extraction-connected-memory/evidence/u2-extraction/`.
+The shipped-binary wiring and its real before/after invocations are retained
+under
+`.agents/rpi/plan/tasks/muninn-h4-extraction-connected-memory/evidence/u2c-binary-wiring/`.
 `summary.json` hashes this document as the deviation disclosure; no statistical
 quality tolerance was introduced. The differential normalizes only generated
 UUID/timestamp values in API observations, not semantic results or error text.
 
-Deterministic tests use frozen stages, wiremock loopback responses and synthetic
-vectors. They are not spaCy accuracy measurements. The ignored
+Deterministic tests use frozen stages, wiremock loopback responses, one std-socket
+fake sidecar for the binary path and synthetic vectors. They are not spaCy
+accuracy measurements. The ignored
 `neo4j/tests/extraction_mentions.rs` target requires a NEW authenticated empty
 synthetic fixture with caller-owned teardown; ignored means **NOT_RUN**.
 Silver38, live Neo4j and live spaCy-model execution are **NOT_RUN** here and belong

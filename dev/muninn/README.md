@@ -599,6 +599,43 @@ as a public service. Silver38, live Neo4j and live model checks are NOT_RUN in U
 they remain integrated U6 evidence, not implied by these test results. H3 remains
 accepted/committed with its existing proof limits. No H2 A4 retry is introduced.
 
+### Shipped-binary extraction registration (U2 follow-up)
+
+The `muninn` binary registers the stage from the existing `NAM_` convention and
+stays disabled by default: with no extraction configuration it builds no
+extractor, contacts no endpoint and `extraction_mode: auto` links nothing, exactly
+as before. Configuration is validated before the Neo4j connection, and errors are
+redacted:
+
+```sh
+NAM_EXTRACTION__PROVIDER=spacy \
+NAM_EXTRACTION__ENDPOINT=http://127.0.0.1:8765/extract \
+  cargo run -p muninn -- --embedding-provider hash --embedding-dimensions 8 \
+  --neo4j-password "$NEO4J_PASSWORD" bridge
+```
+
+Options: `--extraction-provider {none,spacy}`, `--extraction-endpoint` and
+`--extraction-timeout-secs` (default 10, zero rejected), mirrored by
+`NAM_EXTRACTION__PROVIDER`, `NAM_EXTRACTION__ENDPOINT` and
+`NAM_EXTRACTION__TIMEOUT_SECS`. `extraction_provider=spacy` without an endpoint
+exits 1 with a message naming the option; a malformed or credential-bearing
+endpoint exits 1 with a redacted message (the configured value is never echoed);
+an unreachable endpoint fails the opting-in request with HTTP 500 instead of
+returning an empty extraction. Details:
+[Message extraction](../../docs/muninn/extraction.md).
+
+```sh
+cargo test -p muninn --locked --bins
+```
+
+That target covers the disabled default with no endpoint contact, the sidecar
+request contract through a std-socket fake endpoint, fail-fast redacted start
+validation and the unreachable-endpoint request error. It runs no model and does
+no external network access. Real before/after binary invocations against an
+ephemeral authenticated Neo4j fixture and a fake sidecar are retained under
+`.agents/rpi/plan/tasks/muninn-h4-extraction-connected-memory/evidence/u2c-binary-wiring/`;
+they are wiring proof, not spaCy accuracy or integrated U6 evidence.
+
 ## H4 U3 cross-memory ABOUT edge
 
 The pinned `(:Preference)-[:ABOUT]->(:Entity)` edge and its opt-in
@@ -651,7 +688,12 @@ PYTHONDONTWRITEBYTECODE=1 python3 -B dev/muninn/gm_h4_runner.py \
 
 `--binary`, tolerance and deviation bypasses do not exist. Both sides run in
 `muninn-h4-oracle-spacy:20261105` against separate fresh authenticated tmpfs
-databases on an internal network without published ports. GM-02 `auto` is
-expected to fail closed because the `muninn` binary registers no extraction
-stage; GM-03 and GM-04 are measurable. Details, declared asymmetries and open
-limits: [H4 measurement notes](../../docs/muninn/h4-measurement.md#u5b-gm-020304-harness).
+databases on an internal network without published ports. GM-02 `auto` product
+mentions depend on the product extraction stage being registered. Before the U2
+follow-up wiring described above, the `muninn` binary registered no
+extraction stage, so GM-02 `auto` failed closed on the product side; the binary
+now accepts `--extraction-provider spacy`/`NAM_EXTRACTION__*`, so the previously
+declared asymmetry must be re-measured, not assumed, in U6. No measurement is
+claimed here and the harness declaration digest is unchanged. GM-03 and GM-04
+remain measurable. Details, declared asymmetries and open limits:
+[H4 measurement notes](../../docs/muninn/h4-measurement.md#u5b-gm-020304-harness).

@@ -2,17 +2,19 @@
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use muninn_application::{MemoryClient, MemoryOptions, MemoryPorts};
 use muninn_bridge::BridgeState;
+use muninn_core::extraction::EntityExtractor;
 use muninn_core::ports::{Embedder, GraphMaintenance};
 use muninn_neo4j::{
     Neo4jClient, Neo4jConfig, Neo4jCypherQuery, Neo4jLongTermStore, Neo4jMaintenance,
     Neo4jReasoningStore, Neo4jShortTermStore, SchemaManager,
 };
-use muninn_providers::{HashEmbedder, OpenAiEmbedder};
+use muninn_providers::{HashEmbedder, OpenAiEmbedder, SpacyEntityExtractor};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -26,6 +28,8 @@ struct Cli {
     neo4j: Neo4jArgs,
     #[command(flatten)]
     embedding: EmbeddingArgs,
+    #[command(flatten)]
+    extraction: ExtractionArgs,
     #[command(subcommand)]
     command: Command,
 }
@@ -91,6 +95,31 @@ struct EmbeddingArgs {
     embedding_bundle_id: Option<String>,
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+enum ExtractionProvider {
+    /// Disabled: `extraction_mode: auto` links no entity and contacts no endpoint.
+    None,
+    /// Local spaCy `en_core_web_sm` sidecar behind the HTTP adapter.
+    Spacy,
+}
+
+#[derive(Args)]
+struct ExtractionArgs {
+    #[arg(
+        long,
+        env = "NAM_EXTRACTION__PROVIDER",
+        value_enum,
+        default_value = "none"
+    )]
+    extraction_provider: ExtractionProvider,
+    /// Trusted local sidecar `POST /extract` endpoint; required with provider `spacy`.
+    #[arg(long, env = "NAM_EXTRACTION__ENDPOINT")]
+    extraction_endpoint: Option<String>,
+    /// Per-request extraction deadline in seconds; zero is rejected.
+    #[arg(long, env = "NAM_EXTRACTION__TIMEOUT_SECS", default_value_t = 10)]
+    extraction_timeout_secs: u64,
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Create or verify constraints and indexes.
@@ -153,6 +182,28 @@ fn minilm_embedder(args: &EmbeddingArgs) -> Result<Option<Arc<dyn Embedder>>> {
     }
 }
 
+/// Build the configured extraction stage. The default provider adds nothing,
+/// so ingestion keeps today's no-extraction behavior and contacts no endpoint.
+fn extractor(args: &ExtractionArgs) -> Result<Option<Arc<dyn EntityExtractor>>> {
+    match args.extraction_provider {
+        ExtractionProvider::None => Ok(None),
+        ExtractionProvider::Spacy => {
+            let endpoint = args.extraction_endpoint.as_deref().context(
+                "spaCy extraction requires --extraction-endpoint naming the trusted local sidecar",
+            )?;
+            let stage = SpacyEntityExtractor::new(
+                endpoint,
+                Duration::from_secs(args.extraction_timeout_secs),
+            )
+            .context(
+                "spaCy extraction configuration rejected: use an http(s) endpoint without \
+                 credentials and a nonzero timeout",
+            )?;
+            Ok(Some(Arc::new(stage)))
+        }
+    }
+}
+
 async fn connect(args: &Neo4jArgs, dimensions: usize) -> Result<Neo4jClient> {
     let config = Neo4jConfig {
         uri: args.neo4j_uri.clone(),
@@ -176,6 +227,7 @@ async fn main() -> Result<()> {
         .init();
     let cli = Cli::parse();
     let embedder = embedder(&cli.embedding)?;
+    let extraction = extractor(&cli.extraction)?;
     let dimensions = embedder
         .as_ref()
         .map_or(cli.embedding.embedding_dimensions, |provider| {
@@ -195,7 +247,7 @@ async fn main() -> Result<()> {
             host,
             allow_destructive_clear,
         } => {
-            let memory = Arc::new(MemoryClient::new(
+            let mut memory = MemoryClient::new(
                 MemoryPorts {
                     short_term: Arc::new(Neo4jShortTermStore::new(client.clone())),
                     long_term: Arc::new(Neo4jLongTermStore::new(client.clone())),
@@ -204,7 +256,12 @@ async fn main() -> Result<()> {
                     cypher_query: Some(Arc::new(Neo4jCypherQuery::new(client.clone()))),
                 },
                 &MemoryOptions::default(),
-            ));
+            );
+            if let Some(extraction) = extraction {
+                tracing::info!("entity extraction stage is configured");
+                memory = memory.with_extractor(extraction);
+            }
+            let memory = Arc::new(memory);
             let maintenance: Option<Arc<dyn GraphMaintenance>> = if allow_destructive_clear {
                 tracing::warn!("clear_all_data is enabled: this database will be wiped by the TCK");
                 Some(Arc::new(Neo4jMaintenance::new(client)))
@@ -231,9 +288,290 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
 
     fn parse_cli(arguments: &[&str]) -> Cli {
         Cli::try_parse_from(arguments).expect("synthetic CLI arguments must parse")
+    }
+
+    #[test]
+    fn cli_accepts_the_documented_extraction_configuration() {
+        Cli::try_parse_from([
+            "muninn",
+            "--neo4j-password",
+            "synthetic-test-password",
+            "--extraction-provider",
+            "spacy",
+            "--extraction-endpoint",
+            "http://127.0.0.1:8765/extract",
+            "--extraction-timeout-secs",
+            "5",
+            "bridge",
+        ])
+        .expect("the documented extraction configuration must be accepted");
+    }
+
+    #[test]
+    fn help_documents_the_extraction_options() {
+        let help = Cli::command().render_help().to_string();
+        for text in [
+            "--extraction-provider",
+            "--extraction-endpoint",
+            "--extraction-timeout-secs",
+        ] {
+            assert!(help.contains(text), "{text} missing from help:\n{help}");
+        }
+        assert!(help.contains("spacy"), "spacy value missing:\n{help}");
+    }
+
+    /// Minimal loopback HTTP stand-in for the spaCy sidecar: no model, no
+    /// egress, one canned response per request.
+    struct FakeSidecar {
+        endpoint: String,
+        received: Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    impl FakeSidecar {
+        fn start(body: &'static str) -> Self {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("loopback bind");
+            let endpoint = format!("http://{}/extract", listener.local_addr().unwrap());
+            let received = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let recorded = received.clone();
+            std::thread::spawn(move || {
+                use std::io::Write;
+                for stream in listener.incoming() {
+                    let Ok(mut stream) = stream else { return };
+                    let request = read_http_request(&mut stream);
+                    recorded.lock().unwrap().push(request);
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    stream.write_all(response.as_bytes()).unwrap();
+                    stream.flush().unwrap();
+                }
+            });
+            Self { endpoint, received }
+        }
+
+        fn requests(&self) -> Vec<String> {
+            self.received.lock().unwrap().clone()
+        }
+    }
+
+    fn read_http_request(stream: &mut std::net::TcpStream) -> String {
+        use std::io::Read;
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut buffer = Vec::new();
+        let mut chunk = [0_u8; 2048];
+        loop {
+            let read = stream.read(&mut chunk).unwrap();
+            if read == 0 {
+                return String::from_utf8_lossy(&buffer).into_owned();
+            }
+            buffer.extend_from_slice(&chunk[..read]);
+            let Some(head_end) = buffer.windows(4).position(|window| window == b"\r\n\r\n") else {
+                continue;
+            };
+            let head = String::from_utf8_lossy(&buffer[..head_end]).into_owned();
+            let length = head
+                .lines()
+                .find_map(|line| {
+                    line.to_ascii_lowercase()
+                        .strip_prefix("content-length:")
+                        .map(|value| value.trim().parse::<usize>().unwrap_or(0))
+                })
+                .unwrap_or(0);
+            while buffer.len() < head_end + 4 + length {
+                let read = stream.read(&mut chunk).unwrap();
+                if read == 0 {
+                    break;
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+            }
+            return String::from_utf8_lossy(&buffer).into_owned();
+        }
+    }
+
+    fn spacy_args(endpoint: &str) -> Vec<&str> {
+        vec![
+            "muninn",
+            "--neo4j-password",
+            "synthetic-test-password",
+            "--extraction-provider",
+            "spacy",
+            "--extraction-endpoint",
+            endpoint,
+            "bridge",
+        ]
+    }
+
+    #[test]
+    fn extraction_is_disabled_by_default_and_contacts_no_endpoint() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("loopback bind");
+        let endpoint = format!("http://{}/extract", listener.local_addr().unwrap());
+        let cli = parse_cli(&[
+            "muninn",
+            "--neo4j-password",
+            "synthetic-test-password",
+            "--extraction-endpoint",
+            &endpoint,
+            "bridge",
+        ]);
+        assert!(matches!(
+            cli.extraction.extraction_provider,
+            ExtractionProvider::None
+        ));
+        assert_eq!(cli.extraction.extraction_timeout_secs, 10);
+        assert!(extractor(&cli.extraction).unwrap().is_none());
+        listener.set_nonblocking(true).unwrap();
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+
+    #[tokio::test]
+    async fn configured_spacy_extraction_reaches_the_sidecar_contract() {
+        let sidecar = FakeSidecar::start(
+            r#"{"entities":[{"name":"Alice","type":"PERSON","subtype":null,"start_pos":0,"end_pos":5,"confidence":0.85,"extractor":"spacy"}],"relations":[],"preferences":[],"source_text":null}"#,
+        );
+        let cli = parse_cli(&spacy_args(&sidecar.endpoint));
+        let stage = extractor(&cli.extraction)
+            .unwrap()
+            .expect("a configured provider must build the extractor");
+        let result = stage
+            .extract(
+                "Alice in Paris",
+                &muninn_core::extraction::ExtractOptions {
+                    extract_relations: Some(false),
+                    extract_preferences: Some(false),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("the fake sidecar returns a valid extraction");
+        assert_eq!(result.entities.len(), 1);
+        let entity = &result.entities[0];
+        assert_eq!(
+            (entity.name.as_str(), entity.entity_type.as_str()),
+            ("Alice", "PERSON")
+        );
+        assert_eq!((entity.start_pos, entity.end_pos), (Some(0), Some(5)));
+        assert_eq!(entity.confidence, 0.85);
+        assert_eq!(entity.extractor.as_deref(), Some("spacy"));
+        let requests = sidecar.requests();
+        assert_eq!(requests.len(), 1, "{requests:?}");
+        assert!(
+            requests[0].starts_with("POST /extract HTTP/1.1"),
+            "{}",
+            requests[0]
+        );
+        let body = requests[0]
+            .split_once("\r\n\r\n")
+            .map(|(_, body)| body)
+            .expect("request body");
+        for expected in ["\"text\":\"Alice in Paris\"", "\"entity_types\":null"] {
+            assert!(body.contains(expected), "{body}");
+        }
+    }
+
+    #[test]
+    fn invalid_extraction_endpoint_fails_fast_without_disclosure() {
+        for endpoint in [
+            "http://synthetic-user:synthetic-secret@127.0.0.1:18765/extract",
+            "not-a-url",
+            "file:///tmp/extract",
+        ] {
+            let cli = parse_cli(&spacy_args(endpoint));
+            let error = extractor(&cli.extraction)
+                .err()
+                .expect("invalid extraction configuration must be rejected");
+            let message = format!("{error:#}");
+            assert!(message.contains("spaCy extraction"), "{message}");
+            for secret in ["synthetic-secret", endpoint] {
+                assert!(!message.contains(secret), "{message}");
+            }
+        }
+    }
+
+    #[test]
+    fn missing_extraction_endpoint_names_the_option() {
+        let arguments = [
+            "muninn",
+            "--neo4j-password",
+            "synthetic-test-password",
+            "--extraction-provider",
+            "spacy",
+            "bridge",
+        ];
+        let cli = parse_cli(&arguments);
+        let error = extractor(&cli.extraction)
+            .err()
+            .expect("invalid extraction configuration must be rejected");
+        assert!(format!("{error:#}").contains("--extraction-endpoint"));
+    }
+
+    #[test]
+    fn zero_extraction_timeout_is_rejected() {
+        let cli = parse_cli(&[
+            "muninn",
+            "--neo4j-password",
+            "synthetic-test-password",
+            "--extraction-provider",
+            "spacy",
+            "--extraction-endpoint",
+            "http://127.0.0.1:18765/extract",
+            "--extraction-timeout-secs",
+            "0",
+            "bridge",
+        ]);
+        let error = extractor(&cli.extraction)
+            .err()
+            .expect("zero timeout must be rejected");
+        assert!(format!("{error:#}").contains("spaCy extraction"));
+    }
+
+    #[tokio::test]
+    async fn unreachable_extraction_endpoint_fails_the_request() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("loopback bind");
+        let endpoint = format!("http://{}/extract", listener.local_addr().unwrap());
+        drop(listener);
+        let cli = parse_cli(&spacy_args(&endpoint));
+        let stage = extractor(&cli.extraction).unwrap().expect("adapter");
+        let error = stage
+            .extract("Alice in Paris", &Default::default())
+            .await
+            .unwrap_err();
+        assert!(matches!(error, muninn_core::MemoryError::Provider(_)));
+        assert_eq!(
+            error.to_string(),
+            "provider error: spaCy extraction transport failed"
+        );
+    }
+
+    #[test]
+    fn bridge_command_defaults_are_unchanged() {
+        let cli = parse_cli(&[
+            "muninn",
+            "--neo4j-password",
+            "synthetic-test-password",
+            "bridge",
+        ]);
+        match cli.command {
+            Command::Bridge {
+                port,
+                host,
+                allow_destructive_clear,
+            } => {
+                assert_eq!(port, 3001);
+                assert_eq!(host, "127.0.0.1");
+                assert!(!allow_destructive_clear);
+            }
+            Command::Schema => panic!("bridge invocation must not select schema"),
+        }
     }
 
     #[test]
