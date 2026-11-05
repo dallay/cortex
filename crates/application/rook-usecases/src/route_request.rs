@@ -126,6 +126,63 @@ struct SuccessContext {
     latency_ms: u64,
 }
 
+/// Mutable state carried across the attempts of one failover loop.
+struct AttemptCursor {
+    excluded: Vec<ProviderId>,
+    local_backpressure: Option<CortexError>,
+    provider_attempt_failed: bool,
+    provider_attempts: usize,
+}
+
+/// Immutable inputs shared by every attempt of one failover loop.
+struct AttemptContext<'a> {
+    req: &'a CompletionRequest,
+    client_format: ApiFormat,
+    cache_key: &'a rook_core::CacheKey,
+    start: Instant,
+    max_attempts: usize,
+    total_providers: usize,
+}
+
+/// One candidate that passed every preflight gate and is ready for upstream I/O.
+struct EligibleAttempt {
+    provider: Arc<dyn rook_core::ProviderPort>,
+    provider_id: ProviderId,
+    connection_id: Option<ConnectionId>,
+    provider_format: ApiFormat,
+    provider_req: CompletionRequest,
+    trial_permit: rook_core::RouterTrialPermit,
+    admission: Option<crate::spending_budget::SpendingAdmission>,
+}
+
+/// Outcome of selecting and preparing the next candidate.
+enum AttemptPreparation {
+    /// Candidate is ready; the caller performs the attempt.
+    Ready(EligibleAttempt),
+    /// Candidate must be excluded and the loop must try again.
+    Retry(ProviderId),
+    /// No attempt is possible; the request ends with this error.
+    Stop(CortexError),
+}
+
+/// What the failover loop must do after one attempt.
+enum AttemptStep {
+    Retry,
+    Done(Result<CompletionResponse, CortexError>),
+}
+
+/// The failing attempt the loop must settle before it can try another provider.
+struct AttemptFailure<'a> {
+    req: &'a CompletionRequest,
+    provider_id: ProviderId,
+    connection_id: Option<ConnectionId>,
+    latency_ms: u64,
+    error: CortexError,
+    max_attempts: usize,
+    total_providers: usize,
+    cursor: &'a mut AttemptCursor,
+}
+
 /// Grouped metrics for usage recording to avoid excessive parameter count
 struct UsageMetrics<'a> {
     status: RequestStatus,
@@ -477,288 +534,384 @@ impl RouteRequest {
         selection_budget: usize,
         max_attempts: usize,
         total_providers: usize,
-        mut excluded: Vec<ProviderId>,
-        mut local_backpressure: Option<CortexError>,
-        mut provider_attempt_failed: bool,
-        mut provider_attempts: usize,
+        excluded: Vec<ProviderId>,
+        local_backpressure: Option<CortexError>,
+        provider_attempt_failed: bool,
+        provider_attempts: usize,
     ) -> Result<CompletionResponse, CortexError> {
+        let mut cursor = AttemptCursor {
+            excluded,
+            local_backpressure,
+            provider_attempt_failed,
+            provider_attempts,
+        };
+        let context = AttemptContext {
+            req: &req,
+            client_format,
+            cache_key: &cache_key,
+            start,
+            max_attempts,
+            total_providers,
+        };
+
         for _ in 0..selection_budget {
-            if provider_attempts >= max_attempts {
+            if cursor.provider_attempts >= max_attempts {
                 break;
             }
-            // Create span for this retry attempt
-            let _attempt_span = tracing::info_span!(
-                "router.retry.attempt",
-                attempt = provider_attempts + 1,
-                max_attempts = max_attempts,
-                excluded_count = excluded.len()
-            );
-
-            // Select next available provider (excluding failed ones)
-            let _select_span = tracing::debug_span!("router.select_excluding");
-            let provider = match self.router.select_excluding(&req, &excluded).await {
-                Ok(p) => p,
-                Err(e) => {
-                    if !provider_attempt_failed {
-                        if let Some(error) = local_backpressure {
-                            return Err(error);
-                        }
-                    }
-                    return Err(e);
-                }
-            };
-            let provider_id = provider.id().clone();
-            let connection = if self.provider_repository.is_some() {
-                self.resolve_connection(&provider_id).await
-            } else {
-                None
-            };
-            let connection_id = connection.as_ref().map(|(id, _)| *id);
-
-            // Provider restriction check (after selection, before execution)
-            if let Err(error) = self.check_provider_restriction(&req, &provider_id) {
-                if local_backpressure.is_some() {
-                    excluded.push(provider_id);
-                    continue;
-                }
-                return Err(error);
-            }
-
-            // Skip connections with fresh, authoritative exhaustion evidence.
-            // The check runs after authorization and before any upstream I/O.
-            if rook_core::RequiredCapabilities::from_request(&req)
-                .check(&provider.model_capabilities(&req.model))
-                .is_err()
-            {
-                excluded.push(provider_id);
-                continue;
-            }
-            if self.quota_reader.is_some() {
-                if let Some((connection_id, runtime_id)) = connection.as_ref() {
-                    let state = self
-                        .connection_quota_state(connection_id, runtime_id.as_ref())
-                        .await;
-                    if state.is_exhausted() {
-                        let reason = quota_skip_reason(&state);
-                        tracing::info!(
-                            provider = %provider_id,
-                            %connection_id,
-                            skip_reason = %reason,
-                            "skipping connection with exhausted upstream quota"
-                        );
-                        excluded.push(provider_id);
-                        continue;
-                    }
-                }
-            }
-
-            let provider_format = provider.api_format();
-            let provider_req = match self.format_translator.translate_request(
-                client_format,
-                provider_format,
-                req.clone(),
-            ) {
-                Ok(r) => r,
-                Err(e) => return Err(e),
-            };
-
-            // Acquire the half-open trial only after preflight checks and just before upstream I/O.
-            // Keep the half-open permit until the outcome updates circuit state.
-            let Some(_trial_permit) = self.router.try_acquire_trial(&provider_id).await else {
-                excluded.push(provider_id);
-                continue;
-            };
-
-            // Strict spending budget admission. The reservation must exist
-            // before any upstream I/O, and a budgeted request is never retried
-            // on another provider: a second attempt could spend more than the
-            // configured per-request limit.
-            let admission = match self
-                .admit_spending_budget(provider.as_ref(), &provider_req, &req)
-                .await
-            {
-                Ok(admission) => admission,
-                Err(error) => {
-                    // No upstream I/O happened for this attempt.
-                    drop(_trial_permit);
-                    return Err(error);
-                }
-            };
-
-            provider_attempts += 1;
-            let result = provider.complete(&provider_req).await;
-            let latency_ms = start.elapsed().as_millis() as u64;
-
-            // Settle the reservation with the final cost when the adapter
-            // reports it. An unknown cost keeps the reservation charged as
-            // unresolved spend.
-            if let Some(admission) = &admission {
-                let guard = self
-                    .spending_guard
-                    .as_ref()
-                    .expect("admission implies a configured guard");
-                match &result {
-                    Ok(provider_resp) => {
-                        guard
-                            .settle(
-                                admission,
-                                provider
-                                    .strict_realized_cost_micros_usd(&provider_req, provider_resp),
-                            )
-                            .await;
-                    }
-                    Err(error) if error.is_local_backpressure() => {
-                        // The concurrency adapter rejects before upstream I/O.
-                        guard.release(admission).await;
-                    }
-                    Err(_) => guard.settle(admission, None).await,
-                }
-            }
-
-            let e = match classify_attempt_result(AttemptResult::Provider(result)) {
-                AttemptOutcome::Success(provider_resp) => {
-                    notify_provider_success(self.router.as_ref(), &provider_id).await;
-                    _trial_permit.complete();
-                    // If this is a retry (excluded list is not empty), record successful failover
-                    if !excluded.is_empty() {
-                        tracing::info!(
-                            provider = %provider_id,
-                            attempt = provider_attempts,
-                            excluded_providers = ?excluded,
-                            "failover successful"
-                        );
-                    }
-                    return self
-                        .handle_success(SuccessContext {
-                            req,
-                            provider_resp,
-                            provider_id,
-                            connection_id,
-                            provider_format,
-                            client_format,
-                            cache_key,
-                            latency_ms,
-                        })
-                        .await;
-                }
-                AttemptOutcome::LocalBackpressure(error) => {
-                    // Local admission pressure releases the half-open reservation
-                    // without touching the circuit state.
-                    drop(_trial_permit);
-                    local_backpressure = Some(CortexError::local_backpressure());
-                    error
-                }
-                AttemptOutcome::UpstreamFailure(error) => {
-                    // Record failure for circuit breaker before checking retryability.
-                    notify_provider_failure(self.router.as_ref(), &provider_id, &error).await;
-                    _trial_permit.complete();
-                    provider_attempt_failed = true;
-                    error
-                }
-                AttemptOutcome::TimedOut => {
-                    unreachable!("completion attempts have no timeout wrapper")
-                }
-            };
-
-            let final_latency = start.elapsed().as_millis() as u64;
-
-            {
-                // Non-retryable errors: record audit/usage/telemetry and return
-                if !e.is_retryable() {
-                    self.record_failure_audit_usage(
-                        &req,
-                        &provider_id,
-                        connection_id,
-                        final_latency,
-                        &e,
-                    )
-                    .await;
-                    if let Some(telemetry) = &self.telemetry {
-                        telemetry.record_observation(
-                            provider_id,
-                            final_latency,
-                            None,
-                            ObservationStatus::Failure,
-                        );
-                    }
-                    return Err(e);
-                }
-
-                // A budgeted request never retries on another provider: a
-                // second attempt could spend more than the configured
-                // per-request limit.
-                if req.restrictions.spending_budget.is_some() {
-                    self.record_failure_audit_usage(
-                        &req,
-                        &provider_id,
-                        connection_id,
-                        final_latency,
-                        &e,
-                    )
-                    .await;
-                    if let Some(telemetry) = &self.telemetry {
-                        telemetry.record_observation(
-                            provider_id,
-                            final_latency,
-                            None,
-                            ObservationStatus::Failure,
-                        );
-                    }
-                    return Err(e);
-                }
-
-                tracing::warn!(
-                    provider = %provider_id,
-                    attempt = provider_attempts,
-                    max_attempts = max_attempts,
-                    error = %e,
-                    "provider failed, trying next"
-                );
-
-                // Record retry attempt metric (via tracing for now)
-                tracing::debug!(
-                    provider = %provider_id,
-                    attempt = provider_attempts,
-                    "retry attempt"
-                );
-
-                // Exclude this provider and retry
-                excluded.push(provider_id.clone());
-
-                // If we've exhausted all providers, record audit/usage/telemetry and return exhausted
-                if excluded.len() >= total_providers {
-                    if !provider_attempt_failed {
-                        if let Some(error) = local_backpressure {
-                            return Err(error);
-                        }
-                    }
-                    tracing::error!(
-                        providers = ?self.router.providers(),
-                        excluded = ?excluded,
-                        "all providers exhausted"
-                    );
-                    self.record_failure_audit_usage(
-                        &req,
-                        &provider_id,
-                        connection_id,
-                        final_latency,
-                        &e,
-                    )
-                    .await;
-                    if let Some(telemetry) = &self.telemetry {
-                        let status = if e.is_rate_limited() {
-                            ObservationStatus::RateLimited
-                        } else {
-                            ObservationStatus::Failure
-                        };
-                        telemetry.record_observation(provider_id, final_latency, None, status);
-                    }
-                    return Err(CortexError::all_providers_exhausted());
-                }
+            if let AttemptStep::Done(result) = self.attempt_once(&context, &mut cursor).await {
+                return result;
             }
         }
 
-        self.finish_provider_attempts(provider_attempt_failed, local_backpressure)
+        self.finish_provider_attempts(cursor.provider_attempt_failed, cursor.local_backpressure)
+    }
+
+    /// Runs one select → preflight → upstream → outcome cycle of the failover loop.
+    async fn attempt_once(
+        &self,
+        context: &AttemptContext<'_>,
+        cursor: &mut AttemptCursor,
+    ) -> AttemptStep {
+        let attempt = match self.prepare_attempt(context, cursor).await {
+            AttemptPreparation::Ready(attempt) => attempt,
+            AttemptPreparation::Retry(provider_id) => {
+                cursor.excluded.push(provider_id);
+                return AttemptStep::Retry;
+            }
+            AttemptPreparation::Stop(error) => return AttemptStep::Done(Err(error)),
+        };
+
+        cursor.provider_attempts += 1;
+        let result = attempt.provider.complete(&attempt.provider_req).await;
+        let latency_ms = context.start.elapsed().as_millis() as u64;
+        self.settle_spending_reservation(
+            &attempt.admission,
+            attempt.provider.as_ref(),
+            &attempt.provider_req,
+            &result,
+        )
+        .await;
+
+        let error = match classify_attempt_result(AttemptResult::Provider(result)) {
+            AttemptOutcome::Success(provider_resp) => {
+                notify_provider_success(self.router.as_ref(), &attempt.provider_id).await;
+                attempt.trial_permit.complete();
+                // If this is a retry (excluded list is not empty), record successful failover
+                if !cursor.excluded.is_empty() {
+                    tracing::info!(
+                        provider = %attempt.provider_id,
+                        attempt = cursor.provider_attempts,
+                        excluded_providers = ?cursor.excluded,
+                        "failover successful"
+                    );
+                }
+                let response = self
+                    .handle_success(SuccessContext {
+                        req: context.req.clone(),
+                        provider_resp,
+                        provider_id: attempt.provider_id,
+                        connection_id: attempt.connection_id,
+                        provider_format: attempt.provider_format,
+                        client_format: context.client_format,
+                        cache_key: context.cache_key.clone(),
+                        latency_ms,
+                    })
+                    .await;
+                return AttemptStep::Done(response);
+            }
+            AttemptOutcome::LocalBackpressure(error) => {
+                // Local admission pressure releases the half-open reservation
+                // without touching the circuit state.
+                drop(attempt.trial_permit);
+                cursor.local_backpressure = Some(CortexError::local_backpressure());
+                error
+            }
+            AttemptOutcome::UpstreamFailure(error) => {
+                // Record failure for circuit breaker before checking retryability.
+                notify_provider_failure(self.router.as_ref(), &attempt.provider_id, &error).await;
+                attempt.trial_permit.complete();
+                cursor.provider_attempt_failed = true;
+                error
+            }
+            AttemptOutcome::TimedOut => {
+                unreachable!("completion attempts have no timeout wrapper")
+            }
+        };
+
+        let failure = AttemptFailure {
+            req: context.req,
+            provider_id: attempt.provider_id,
+            connection_id: attempt.connection_id,
+            // Measured after the attempt settled, so the audit entry carries end-to-end latency.
+            latency_ms: context.start.elapsed().as_millis() as u64,
+            error,
+            max_attempts: context.max_attempts,
+            total_providers: context.total_providers,
+            cursor,
+        };
+        self.handle_attempt_failure(failure).await
+    }
+
+    /// Selects the next candidate and runs every preflight gate before any upstream I/O.
+    async fn prepare_attempt(
+        &self,
+        context: &AttemptContext<'_>,
+        cursor: &mut AttemptCursor,
+    ) -> AttemptPreparation {
+        // Create span for this retry attempt
+        let _attempt_span = tracing::info_span!(
+            "router.retry.attempt",
+            attempt = cursor.provider_attempts + 1,
+            max_attempts = context.max_attempts,
+            excluded_count = cursor.excluded.len()
+        );
+
+        // Select next available provider (excluding failed ones)
+        let _select_span = tracing::debug_span!("router.select_excluding");
+        let provider = match self
+            .router
+            .select_excluding(context.req, &cursor.excluded)
+            .await
+        {
+            Ok(provider) => provider,
+            Err(error) => {
+                if !cursor.provider_attempt_failed {
+                    if let Some(backpressure) = cursor.local_backpressure.take() {
+                        return AttemptPreparation::Stop(backpressure);
+                    }
+                }
+                return AttemptPreparation::Stop(error);
+            }
+        };
+        let provider_id = provider.id().clone();
+        let connection = if self.provider_repository.is_some() {
+            self.resolve_connection(&provider_id).await
+        } else {
+            None
+        };
+        let connection_id = connection.as_ref().map(|(id, _)| *id);
+
+        // Provider restriction check (after selection, before execution)
+        if let Err(error) = self.check_provider_restriction(context.req, &provider_id) {
+            if cursor.local_backpressure.is_some() {
+                return AttemptPreparation::Retry(provider_id);
+            }
+            return AttemptPreparation::Stop(error);
+        }
+
+        if self
+            .candidate_must_be_skipped(
+                context.req,
+                provider.as_ref(),
+                &provider_id,
+                connection.as_ref(),
+            )
+            .await
+        {
+            return AttemptPreparation::Retry(provider_id);
+        }
+
+        let provider_format = provider.api_format();
+        let provider_req = match self.format_translator.translate_request(
+            context.client_format,
+            provider_format,
+            context.req.clone(),
+        ) {
+            Ok(request) => request,
+            Err(error) => return AttemptPreparation::Stop(error),
+        };
+
+        // Acquire the half-open trial only after preflight checks and just before upstream I/O.
+        // Keep the half-open permit until the outcome updates circuit state.
+        let Some(trial_permit) = self.router.try_acquire_trial(&provider_id).await else {
+            return AttemptPreparation::Retry(provider_id);
+        };
+
+        // Strict spending budget admission. The reservation must exist before any upstream I/O,
+        // and a budgeted request is never retried on another provider.
+        let admission = match self
+            .admit_spending_budget(provider.as_ref(), &provider_req, context.req)
+            .await
+        {
+            Ok(admission) => admission,
+            Err(error) => {
+                // No upstream I/O happened for this attempt.
+                drop(trial_permit);
+                return AttemptPreparation::Stop(error);
+            }
+        };
+
+        AttemptPreparation::Ready(EligibleAttempt {
+            provider,
+            provider_id,
+            connection_id,
+            provider_format,
+            provider_req,
+            trial_permit,
+            admission,
+        })
+    }
+
+    /// Capability and upstream-quota preflight; true when this candidate must be skipped.
+    async fn candidate_must_be_skipped(
+        &self,
+        req: &CompletionRequest,
+        provider: &dyn rook_core::ProviderPort,
+        provider_id: &ProviderId,
+        connection: Option<&(ConnectionId, Option<ProviderId>)>,
+    ) -> bool {
+        // Skip providers that cannot satisfy the capabilities the request requires.
+        // The check runs after authorization and before any upstream I/O.
+        if rook_core::RequiredCapabilities::from_request(req)
+            .check(&provider.model_capabilities(&req.model))
+            .is_err()
+        {
+            return true;
+        }
+
+        // Skip connections with fresh, authoritative exhaustion evidence.
+        let Some((connection_id, runtime_id)) = connection else {
+            return false;
+        };
+        if self.quota_reader.is_none() {
+            return false;
+        }
+        let state = self
+            .connection_quota_state(connection_id, runtime_id.as_ref())
+            .await;
+        if !state.is_exhausted() {
+            return false;
+        }
+        tracing::info!(
+            provider = %provider_id,
+            %connection_id,
+            skip_reason = %quota_skip_reason(&state),
+            "skipping connection with exhausted upstream quota"
+        );
+        true
+    }
+
+    /// Settles the spending reservation with the realized cost of this attempt.
+    async fn settle_spending_reservation(
+        &self,
+        admission: &Option<crate::spending_budget::SpendingAdmission>,
+        provider: &dyn rook_core::ProviderPort,
+        provider_req: &CompletionRequest,
+        result: &Result<CompletionResponse, CortexError>,
+    ) {
+        // Settle the reservation with the final cost when the adapter reports it. An unknown
+        // cost keeps the reservation charged as unresolved spend.
+        let Some(admission) = admission.as_ref() else {
+            return;
+        };
+        let guard = self
+            .spending_guard
+            .as_ref()
+            .expect("admission implies a configured guard");
+        match result {
+            Ok(provider_resp) => {
+                guard
+                    .settle(
+                        admission,
+                        provider.strict_realized_cost_micros_usd(provider_req, provider_resp),
+                    )
+                    .await;
+            }
+            Err(error) if error.is_local_backpressure() => {
+                // The concurrency adapter rejects before upstream I/O.
+                guard.release(admission).await;
+            }
+            Err(_) => guard.settle(admission, None).await,
+        }
+    }
+
+    fn record_failure_observation(
+        &self,
+        provider_id: ProviderId,
+        latency_ms: u64,
+        status: ObservationStatus,
+    ) {
+        if let Some(telemetry) = &self.telemetry {
+            telemetry.record_observation(provider_id, latency_ms, None, status);
+        }
+    }
+
+    /// Records the failed attempt and decides whether to retry on another provider.
+    async fn handle_attempt_failure(&self, failure: AttemptFailure<'_>) -> AttemptStep {
+        let AttemptFailure {
+            req,
+            provider_id,
+            connection_id,
+            latency_ms,
+            error,
+            max_attempts,
+            total_providers,
+            cursor,
+        } = failure;
+
+        // Non-retryable errors end the request; so does a budgeted request, because a second
+        // attempt could spend more than the configured per-request limit.
+        if !error.is_retryable() || req.restrictions.spending_budget.is_some() {
+            self.record_failure_audit_usage(req, &provider_id, connection_id, latency_ms, &error)
+                .await;
+            self.record_failure_observation(provider_id, latency_ms, ObservationStatus::Failure);
+            return AttemptStep::Done(Err(error));
+        }
+
+        tracing::warn!(
+            provider = %provider_id,
+            attempt = cursor.provider_attempts,
+            max_attempts = max_attempts,
+            error = %error,
+            "provider failed, trying next"
+        );
+
+        // Record retry attempt metric (via tracing for now)
+        tracing::debug!(
+            provider = %provider_id,
+            attempt = cursor.provider_attempts,
+            "retry attempt"
+        );
+
+        // Exclude this provider and retry
+        cursor.excluded.push(provider_id.clone());
+
+        if cursor.excluded.len() < total_providers {
+            return AttemptStep::Retry;
+        }
+        self.finish_exhausted_attempts(req, provider_id, connection_id, latency_ms, error, cursor)
+            .await
+    }
+
+    /// Ends the request once every provider has been excluded.
+    async fn finish_exhausted_attempts(
+        &self,
+        req: &CompletionRequest,
+        provider_id: ProviderId,
+        connection_id: Option<ConnectionId>,
+        latency_ms: u64,
+        error: CortexError,
+        cursor: &mut AttemptCursor,
+    ) -> AttemptStep {
+        if !cursor.provider_attempt_failed {
+            if let Some(backpressure) = cursor.local_backpressure.take() {
+                return AttemptStep::Done(Err(backpressure));
+            }
+        }
+        tracing::error!(
+            providers = ?self.router.providers(),
+            excluded = ?cursor.excluded,
+            "all providers exhausted"
+        );
+        let status = if error.is_rate_limited() {
+            ObservationStatus::RateLimited
+        } else {
+            ObservationStatus::Failure
+        };
+        self.record_failure_audit_usage(req, &provider_id, connection_id, latency_ms, &error)
+            .await;
+        self.record_failure_observation(provider_id, latency_ms, status);
+        AttemptStep::Done(Err(CortexError::all_providers_exhausted()))
     }
 
     fn finish_provider_attempts(
