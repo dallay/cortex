@@ -20,11 +20,7 @@ pub struct SqliteApiKeyRepository {
 impl SqliteApiKeyRepository {
     pub fn new(db_path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let mut conn = Connection::open(&db_path)?;
-        conn.execute_batch(
-            "PRAGMA busy_timeout = 5000;
-             PRAGMA journal_mode = WAL;
-             PRAGMA foreign_keys = ON;",
-        )?;
+        db_migration::connection::configure_connection(&conn)?;
         if db_path.as_ref().to_str() == Some(":memory:") {
             db_migration::run_on_connection(&mut conn)?;
         }
@@ -701,11 +697,7 @@ pub struct SqliteUserRepository {
 impl SqliteUserRepository {
     pub fn new(db_path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let mut conn = Connection::open(&db_path)?;
-        conn.execute_batch(
-            "PRAGMA busy_timeout = 5000;
-             PRAGMA journal_mode = WAL;
-             PRAGMA foreign_keys = ON;",
-        )?;
+        db_migration::connection::configure_connection(&conn)?;
         if db_path.as_ref().to_str() == Some(":memory:") {
             db_migration::run_on_connection(&mut conn)?;
         }
@@ -817,11 +809,7 @@ pub struct SqliteSessionRepository {
 impl SqliteSessionRepository {
     pub fn new(db_path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let mut conn = Connection::open(&db_path)?;
-        conn.execute_batch(
-            "PRAGMA busy_timeout = 5000;
-             PRAGMA journal_mode = WAL;
-             PRAGMA foreign_keys = ON;",
-        )?;
+        db_migration::connection::configure_connection(&conn)?;
         if db_path.as_ref().to_str() == Some(":memory:") {
             db_migration::run_on_connection(&mut conn)?;
         }
