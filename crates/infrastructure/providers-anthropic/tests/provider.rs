@@ -992,7 +992,7 @@ async fn complete_returns_valid_response_from_mock_server() {
     });
 
     Mock::given(method("POST"))
-        .and(path("/v1/messages"))
+        .and(path("/custom/messages"))
         .respond_with(ResponseTemplate::new(200).set_body_json(response_body))
         .mount(&mock_server)
         .await;
@@ -1005,7 +1005,8 @@ async fn complete_returns_valid_response_from_mock_server() {
         models: vec![ModelId::new("claude-3-5-sonnet-20241022")],
         timeout_secs: 10,
     })
-    .unwrap();
+    .unwrap()
+    .with_chat_path("/custom/messages");
 
     let req = CompletionRequest {
         id: RequestId::new(),

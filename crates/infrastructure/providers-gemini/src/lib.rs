@@ -69,6 +69,8 @@ pub struct GeminiProvider {
     oauth_token_port: Option<Arc<dyn rook_core::OAuthTokenPort>>,
     connection_id: Option<ConnectionId>,
     project_id: Option<String>,
+    generate_content_path: String,
+    health_path: String,
 }
 
 impl GeminiProvider {
@@ -77,12 +79,15 @@ impl GeminiProvider {
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
             .redirect(reqwest::redirect::Policy::none())
             .build()?;
+        let descriptor = rook_core::descriptor_by_id("gemini").expect("Gemini descriptor");
         Ok(Arc::new(Self {
             config,
             client,
             oauth_token_port: None,
             connection_id: None,
             project_id: None,
+            generate_content_path: descriptor.paths.chat.to_string(),
+            health_path: descriptor.paths.health.to_string(),
         }))
     }
 
@@ -96,20 +101,41 @@ impl GeminiProvider {
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
             .redirect(reqwest::redirect::Policy::none())
             .build()?;
+        let descriptor = rook_core::descriptor_by_id("gemini").expect("Gemini descriptor");
         Ok(Arc::new(Self {
             config,
             client,
             oauth_token_port: Some(oauth_token_port),
             connection_id: Some(connection_id),
             project_id: Some(project_id),
+            generate_content_path: descriptor.paths.chat.to_string(),
+            health_path: descriptor.paths.health.to_string(),
         }))
     }
 
+    /// Configure the generate-content endpoint from the provider descriptor.
+    pub fn with_generate_content_path(mut self: Arc<Self>, path: &str) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("newly constructed provider has a unique Arc")
+            .generate_content_path = path.to_string();
+        self
+    }
+
+    /// Configure the model/health endpoint from the provider descriptor.
+    pub fn with_health_path(mut self: Arc<Self>, path: &str) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("newly constructed provider has a unique Arc")
+            .health_path = path.to_string();
+        self
+    }
+
     fn base_url(&self) -> String {
-        self.config
-            .base_url
-            .clone()
-            .unwrap_or_else(|| "https://generativelanguage.googleapis.com".to_string())
+        self.config.base_url.clone().unwrap_or_else(|| {
+            rook_core::descriptor_by_id("gemini")
+                .expect("Gemini provider descriptor")
+                .default_base_url
+                .to_string()
+        })
     }
 
     async fn access_token(&self, force_refresh: bool) -> Result<String, String> {
@@ -210,7 +236,7 @@ impl ProviderPort for GeminiProvider {
         }
 
         let start = std::time::Instant::now();
-        let probe_url = format!("{}/v1beta/models", self.base_url());
+        let probe_url = format!("{}{}", self.base_url(), self.health_path);
         match self.send_models_request(&probe_url).await {
             Ok(resp) => {
                 let latency_ms = start.elapsed().as_millis() as u64;
@@ -302,11 +328,8 @@ impl ProviderPort for GeminiProvider {
         }
 
         let start = std::time::Instant::now();
-        let url = format!(
-            "{}/v1beta/models/{}:generateContent",
-            self.base_url(),
-            model
-        );
+        let path = self.generate_content_path.replace("{model}", &model);
+        let url = format!("{}{}", self.base_url(), path);
 
         let resp = self.send_generate_request(&url, &body).await?;
 
@@ -495,7 +518,9 @@ mod tests {
             timeout_secs: 5,
         };
 
-        let provider = GeminiProvider::new(config).unwrap();
+        let provider = GeminiProvider::new(config)
+            .unwrap()
+            .with_generate_content_path("/custom/models/{model}:generateContent");
         assert!(provider.is_available());
 
         // Mock health check (GET /v1beta/models)
@@ -544,7 +569,7 @@ mod tests {
         });
 
         Mock::given(method("POST"))
-            .and(path("/v1beta/models/gemini-1.5-pro:generateContent"))
+            .and(path("/custom/models/gemini-1.5-pro:generateContent"))
             .and(header("x-goog-api-key", "test-key-123"))
             .and(wiremock::matchers::body_json(expected_body))
             .respond_with(ResponseTemplate::new(200).set_body_json(response_body))

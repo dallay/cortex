@@ -382,6 +382,7 @@ pub struct AnthropicProvider {
     config: AnthropicProviderConfig,
     client: Client,
     quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
+    chat_path: String,
 }
 
 /// Map an Anthropic HTTP error response to a typed `CortexError`.
@@ -433,11 +434,22 @@ impl AnthropicProvider {
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
             .redirect(reqwest::redirect::Policy::none())
             .build()?;
+        let chat_path = rook_core::descriptor_by_id(config.provider_id)
+            .map_or_else(String::new, |descriptor| descriptor.paths.chat.to_string());
         Ok(Arc::new(Self {
             config,
             client,
             quota_recorder,
+            chat_path,
         }))
+    }
+
+    /// Configure the message endpoint from the provider descriptor.
+    pub fn with_chat_path(mut self: Arc<Self>, path: &str) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("newly constructed provider has a unique Arc")
+            .chat_path = path.to_string();
+        self
     }
 
     async fn record_quota_headers(&self, headers: &reqwest::header::HeaderMap) {
@@ -556,7 +568,7 @@ impl AnthropicProvider {
         body: &AnthropicStreamRequest,
     ) -> CortexResult<reqwest::Response> {
         self.client
-            .post(format!("{}/v1/messages", self.config.base_url))
+            .post(format!("{}{}", self.config.base_url, self.chat_path))
             .header("x-api-key", &self.config.api_key)
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
@@ -1020,7 +1032,7 @@ impl ProviderPort for AnthropicProvider {
         let start = std::time::Instant::now();
         let resp = self
             .client
-            .post(format!("{}/v1/messages", self.config.base_url))
+            .post(format!("{}{}", self.config.base_url, self.chat_path))
             .header("x-api-key", &self.config.api_key)
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
