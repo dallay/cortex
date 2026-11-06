@@ -229,3 +229,28 @@ async fn di_builder_filters_recorder_for_custom_urls() {
     assert!(custom_provider.complete(&request()).await.is_err());
     assert_eq!(*custom_recorder.calls.lock().unwrap(), 0);
 }
+
+#[tokio::test]
+async fn anthropic_descriptor_default_and_override_control_routing_and_capture() {
+    let server = mock_response(200, serde_json::json!({"id":"m","type":"message","role":"assistant","model":"claude","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}})).await;
+    let mut descriptor = *rook_core::descriptor_by_id("anthropic").unwrap();
+    descriptor.default_base_url = Box::leak(server.uri().into_boxed_str());
+    let descriptor = Box::leak(Box::new(descriptor));
+    for override_url in [None, Some(server.uri())] {
+        let recorder = Arc::new(Recorder::default());
+        let provider = build_provider_from_connection_with_recorder(
+            &ConnectionId::new(),
+            descriptor,
+            &DecryptedCredentials::ApiKey {
+                api_key: "key".into(),
+            },
+            override_url,
+            vec![],
+            Some(recorder.clone()),
+            None,
+        )
+        .unwrap();
+        assert!(provider.complete(&request()).await.is_ok());
+        assert_eq!(*recorder.calls.lock().unwrap(), 0);
+    }
+}

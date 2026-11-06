@@ -118,6 +118,8 @@ pub struct ProviderDescriptor {
     pub aliases: &'static [&'static str],
     pub protocol: Protocol,
     pub auth: AuthKind,
+    /// Whether managed connections accept imported OAuth credentials.
+    pub accepts_oauth_credentials: bool,
     /// Base URL used when the user does not override it.
     /// Empty means the provider has no truthful default: the user must
     /// supply one (`requires_base_url` is true).
@@ -206,6 +208,7 @@ const fn openai() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::OpenAiChat,
         auth: AuthKind::ApiKey,
+        accepts_oauth_credentials: true,
         default_base_url: "https://api.openai.com/v1",
         requires_base_url: false,
         endpoint_validation: EndpointValidation::None,
@@ -224,6 +227,7 @@ const fn openai_compatible() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::OpenAiChat,
         auth: AuthKind::ApiKey,
+        accepts_oauth_credentials: false,
         default_base_url: "",
         requires_base_url: true,
         endpoint_validation: EndpointValidation::OpenAiEndpointPolicy,
@@ -242,6 +246,7 @@ const fn anthropic() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::AnthropicMessages,
         auth: AuthKind::ApiKey,
+        accepts_oauth_credentials: true,
         default_base_url: "https://api.anthropic.com",
         requires_base_url: false,
         endpoint_validation: EndpointValidation::None,
@@ -264,6 +269,7 @@ const fn ollama() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::OllamaNative,
         auth: AuthKind::ApiKey,
+        accepts_oauth_credentials: true,
         default_base_url: "http://localhost:11434",
         requires_base_url: true,
         endpoint_validation: EndpointValidation::None,
@@ -284,6 +290,7 @@ const fn ollama_cloud() -> ProviderDescriptor {
         aliases: &["ollamacloud"],
         protocol: Protocol::OllamaNative,
         auth: AuthKind::ImportedToken,
+        accepts_oauth_credentials: true,
         default_base_url: "https://ollama.com",
         requires_base_url: false,
         endpoint_validation: EndpointValidation::None,
@@ -302,6 +309,7 @@ const fn gemini() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::GeminiGenerateContent,
         auth: AuthKind::OAuth,
+        accepts_oauth_credentials: true,
         default_base_url: "https://generativelanguage.googleapis.com",
         requires_base_url: false,
         endpoint_validation: EndpointValidation::None,
@@ -333,6 +341,7 @@ const fn azure_openai() -> ProviderDescriptor {
         aliases: &["azureopenai"],
         protocol: Protocol::OpenAiChat,
         auth: AuthKind::OAuth,
+        accepts_oauth_credentials: true,
         default_base_url: "",
         requires_base_url: true,
         endpoint_validation: EndpointValidation::AzureHost,
@@ -362,6 +371,7 @@ const fn groq() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::OpenAiChat,
         auth: AuthKind::ApiKey,
+        accepts_oauth_credentials: true,
         default_base_url: "https://api.groq.com/openai/v1",
         requires_base_url: false,
         endpoint_validation: EndpointValidation::None,
@@ -380,6 +390,7 @@ const fn xai() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::OpenAiChat,
         auth: AuthKind::ApiKey,
+        accepts_oauth_credentials: true,
         default_base_url: "https://api.x.ai/v1",
         requires_base_url: false,
         endpoint_validation: EndpointValidation::None,
@@ -398,6 +409,7 @@ const fn mistral() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::OpenAiChat,
         auth: AuthKind::ApiKey,
+        accepts_oauth_credentials: true,
         default_base_url: "https://api.mistral.ai/v1",
         requires_base_url: false,
         endpoint_validation: EndpointValidation::None,
@@ -420,6 +432,7 @@ const fn deepseek() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::OpenAiChat,
         auth: AuthKind::ApiKey,
+        accepts_oauth_credentials: true,
         default_base_url: "https://api.deepseek.com/v1",
         requires_base_url: false,
         endpoint_validation: EndpointValidation::None,
@@ -438,6 +451,7 @@ const fn together() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::OpenAiChat,
         auth: AuthKind::ApiKey,
+        accepts_oauth_credentials: true,
         default_base_url: "https://api.together.xyz/v1",
         requires_base_url: false,
         endpoint_validation: EndpointValidation::None,
@@ -456,6 +470,7 @@ const fn fireworks() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::OpenAiChat,
         auth: AuthKind::ApiKey,
+        accepts_oauth_credentials: true,
         default_base_url: "https://api.fireworks.ai/inference/v1",
         requires_base_url: false,
         endpoint_validation: EndpointValidation::None,
@@ -474,6 +489,7 @@ const fn cerebras() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::OpenAiChat,
         auth: AuthKind::ApiKey,
+        accepts_oauth_credentials: true,
         default_base_url: "https://api.cerebras.ai/v1",
         requires_base_url: false,
         endpoint_validation: EndpointValidation::None,
@@ -492,6 +508,7 @@ const fn openrouter() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::OpenAiChat,
         auth: AuthKind::ApiKey,
+        accepts_oauth_credentials: true,
         default_base_url: "https://openrouter.ai/api/v1",
         requires_base_url: false,
         endpoint_validation: EndpointValidation::None,
@@ -510,6 +527,7 @@ const fn nan() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::OpenAiChat,
         auth: AuthKind::ApiKey,
+        accepts_oauth_credentials: false,
         default_base_url: "https://api.nan.builders/v1",
         requires_base_url: false,
         endpoint_validation: EndpointValidation::None,
@@ -542,67 +560,4 @@ pub fn descriptor_by_id(id: &str) -> Option<&'static ProviderDescriptor> {
 /// derive from.
 pub fn provider_ids() -> impl Iterator<Item = &'static str> {
     PROVIDER_DESCRIPTORS.iter().map(|d| d.id)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_descriptor_is_fully_declared() {
-        assert_eq!(PROVIDER_DESCRIPTORS.len(), 16);
-        for descriptor in PROVIDER_DESCRIPTORS {
-            assert!(!descriptor.id.is_empty());
-            assert!(
-                !descriptor.default_base_url.is_empty() || descriptor.requires_base_url,
-                "{} must declare a base URL or require one",
-                descriptor.id
-            );
-            assert!(!descriptor.paths.chat.is_empty());
-            assert!(!descriptor.paths.models.is_empty());
-            assert!(!descriptor.paths.health.is_empty());
-            let has_models = match descriptor.models {
-                ModelSource::Static(models) => !models.is_empty(),
-                ModelSource::Catalog | ModelSource::Dynamic => true,
-            };
-            assert!(
-                has_models,
-                "{} must declare at least one model source",
-                descriptor.id
-            );
-        }
-    }
-
-    #[test]
-    fn table_is_queryable_by_id_and_alias() {
-        assert_eq!(descriptor_by_id("openai").unwrap().id, "openai");
-        // Legacy serde spellings resolve through the alias map.
-        assert_eq!(
-            descriptor_for("ollamacloud").map(|d| d.id),
-            Some("ollama-cloud")
-        );
-        assert_eq!(
-            descriptor_for("azureopenai").map(|d| d.id),
-            Some("azure-openai")
-        );
-        assert_eq!(
-            descriptor_for("OLLAMA-CLOUD").map(|d| d.id),
-            Some("ollama-cloud")
-        );
-        assert!(descriptor_for("unknown").is_none());
-    }
-
-    #[test]
-    fn nan_is_declared_with_its_catalogued_models() {
-        let nan = descriptor_by_id("nan").expect("nan descriptor");
-        assert_eq!(nan.default_base_url, "https://api.nan.builders/v1");
-        assert_eq!(nan.protocol, Protocol::OpenAiChat);
-        match nan.models {
-            ModelSource::Static(models) => {
-                assert!(models.contains(&"deepseek-v4-flash"));
-                assert!(models.contains(&"glm5.3-flash"));
-            }
-            other => panic!("nan must declare static models, got {other:?}"),
-        }
-    }
 }

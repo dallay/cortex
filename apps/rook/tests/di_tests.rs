@@ -1300,3 +1300,15 @@ async fn test_noop_cache_port() {
     assert!(cache.stats().await.is_ok());
     assert!(cache.clear().await.is_ok());
 }
+
+#[test]
+fn bare_host_quota_exception_is_openai_only() {
+    let openai = rook_core::descriptor_by_id("openai").unwrap();
+    let xai = rook_core::descriptor_by_id("xai").unwrap();
+    assert!(is_canonical_base_url(
+        openai,
+        Some("https://api.openai.com")
+    ));
+    assert!(!is_canonical_base_url(xai, Some("https://api.x.ai")));
+    assert!(is_canonical_base_url(xai, Some("https://api.x.ai/v1")));
+}

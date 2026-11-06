@@ -21,14 +21,14 @@ impl StaticModelCatalog {
         Self::with_declarations(Vec::new()).expect("bundled catalog is valid")
     }
 
-    pub fn with_declarations(configured: Vec<ModelDeclaration>) -> Result<Self, String> {
-        let bundled: Vec<ModelDeclaration> = serde_json::from_str(include_str!("models.json"))
+    pub fn with_declarations(mut configured: Vec<ModelDeclaration>) -> Result<Self, String> {
+        let mut bundled: Vec<ModelDeclaration> = serde_json::from_str(include_str!("models.json"))
             .map_err(|e| format!("invalid bundled catalog: {e}"))?;
-        for entry in &bundled {
-            let provider_id: &str = entry.provider_id.as_str();
-            if rook_core::descriptor_for(provider_id).is_none() {
-                return Err(format!("unknown provider id: {}", entry.provider_id));
-            }
+        for entry in bundled.iter_mut().chain(configured.iter_mut()) {
+            entry.provider_id = rook_core::descriptor_for(&entry.provider_id)
+                .ok_or_else(|| format!("unknown provider id: {}", entry.provider_id))?
+                .id
+                .to_string();
         }
         for (i, entry) in configured.iter().enumerate() {
             if entry.model_id.trim().is_empty() || entry.model_id.trim() != entry.model_id {

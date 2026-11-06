@@ -104,16 +104,7 @@ impl ProviderRepositoryPort for SqliteProviderRepository {
             return Err(RepositoryError::DuplicateId(conn_model.id));
         }
 
-        if tx
-            .query_row(
-                "SELECT 1 FROM provider_connections WHERE provider_kind = ?1 AND name = ?2",
-                params![conn_model.provider.as_str(), conn_model.name],
-                |_| Ok(()),
-            )
-            .optional()
-            .map_err(db_error)?
-            .is_some()
-        {
+        if has_duplicate_name(&tx, conn_model)? {
             return Err(duplicate_connection(conn_model));
         }
 
@@ -131,6 +122,9 @@ impl ProviderRepositoryPort for SqliteProviderRepository {
 
         let mut conn = self.lock()?;
         let tx = conn.transaction().map_err(db_error)?;
+        if has_duplicate_name(&tx, conn_model)? {
+            return Err(duplicate_connection(conn_model));
+        }
         let rows = tx
             .execute(
                 UPDATE_PROVIDER_CONNECTION,
@@ -254,6 +248,28 @@ fn update_params(
     values.push(conn.updated_at.to_rfc3339().into());
     values.push(expected_updated_at.to_rfc3339().into());
     rusqlite::params_from_iter(values)
+}
+
+fn has_duplicate_name(
+    tx: &rusqlite::Transaction<'_>,
+    conn: &ProviderConnection,
+) -> Result<bool, RepositoryError> {
+    let mut statement = tx
+        .prepare("SELECT provider_kind FROM provider_connections WHERE name = ?1 AND id != ?2")
+        .map_err(db_error)?;
+    let providers = statement
+        .query_map(params![conn.name, conn.id.to_string()], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(db_error)?;
+    for provider in providers {
+        if rook_core::descriptor_for(&provider.map_err(db_error)?)
+            .is_some_and(|descriptor| descriptor.id == conn.provider.id)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn common_values(conn: &ProviderConnection) -> Vec<rusqlite::types::Value> {
@@ -659,6 +675,42 @@ mod tests {
             created_at,
             updated_at: created_at,
         }
+    }
+
+    #[test]
+    fn duplicate_names_reject_legacy_and_case_variant_provider_ids() {
+        runtime().block_on(async {
+            for stored in ["ollamacloud", "OLLAMA-CLOUD"] {
+                let temp = tempfile::NamedTempFile::new().unwrap();
+                let mut db = Connection::open(temp.path()).unwrap();
+                db_migration::run_on_connection(&mut db).unwrap();
+                let repo = SqliteProviderRepository::new(temp.path()).unwrap();
+                let mut original = connection("shared", 1, Utc::now());
+                original.provider = rook_core::descriptor_by_id("ollama-cloud").unwrap();
+                repo.create(&original).await.unwrap();
+                Connection::open(temp.path())
+                    .unwrap()
+                    .execute(
+                        "UPDATE provider_connections SET provider_kind = ?1",
+                        [stored],
+                    )
+                    .unwrap();
+                let mut duplicate = original.clone();
+                duplicate.id = ConnectionId::new();
+                assert!(matches!(
+                    repo.create(&duplicate).await,
+                    Err(RepositoryError::DuplicateConnection(_))
+                ));
+                duplicate.name = "different".to_string();
+                repo.create(&duplicate).await.unwrap();
+                let expected = duplicate.updated_at;
+                duplicate.name = "shared".to_string();
+                assert!(matches!(
+                    repo.update(&duplicate, expected).await,
+                    Err(RepositoryError::DuplicateConnection(_))
+                ));
+            }
+        });
     }
 
     #[test]

@@ -67,3 +67,33 @@ fn declarations_with_unknown_provider_ids_are_rejected_with_a_clear_error() {
     };
     assert_eq!(error, "unknown provider id: not-a-provider");
 }
+
+#[tokio::test]
+async fn legacy_provider_ids_are_canonicalized_for_listing_and_resolution() {
+    let declarations = serde_json::from_value(serde_json::json!([
+        {"provider_id":"OLLAMACLOUD", "model_id":"alias-model",
+         "capabilities":{"tools":"supported"}}
+    ]))
+    .unwrap();
+    let catalog = StaticModelCatalog::with_declarations(declarations).unwrap();
+    assert!(catalog
+        .list()
+        .await
+        .iter()
+        .any(|entry| entry.provider_id == "ollama-cloud" && entry.model_id == "alias-model"));
+    let provider = rook_core::descriptor_by_id("ollama-cloud").unwrap();
+    assert_eq!(
+        catalog
+            .resolve(provider, None, "alias-model")
+            .await
+            .tools
+            .state,
+        CapabilityState::Supported
+    );
+    let duplicates = serde_json::from_value(serde_json::json!([
+        {"provider_id":"ollamacloud", "model_id":"same"},
+        {"provider_id":"ollama-cloud", "model_id":"same"}
+    ]))
+    .unwrap();
+    assert!(StaticModelCatalog::with_declarations(duplicates).is_err());
+}

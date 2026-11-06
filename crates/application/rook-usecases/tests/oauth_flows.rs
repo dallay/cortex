@@ -132,6 +132,10 @@ async fn azure_authorization_code_uses_pkce_and_keeps_secret_out_of_url() {
     let url = reqwest::Url::parse(started.authorization_url.as_deref().unwrap()).unwrap();
     let query: std::collections::HashMap<String, String> = url.query_pairs().into_owned().collect();
 
+    assert_eq!(
+        query.get("scope").map(String::as_str),
+        Some("https://cognitiveservices.azure.com/.default offline_access openid profile email")
+    );
     assert_eq!(url.host_str(), Some("login.microsoftonline.com"));
     assert_eq!(
         query.get("code_challenge_method").map(String::as_str),
@@ -166,9 +170,10 @@ async fn gemini_authorization_requests_its_documented_scope_and_offline_access()
         query.get("access_type").map(String::as_str),
         Some("offline")
     );
-    assert!(query
-        .get("scope")
-        .is_some_and(|scope| scope.contains("generative-language.retriever")));
+    assert_eq!(
+        query.get("scope").map(String::as_str),
+        Some("https://www.googleapis.com/auth/generative-language.retriever openid email")
+    );
     assert_eq!(
         query.get("code_challenge_method").map(String::as_str),
         Some("S256")
@@ -573,4 +578,12 @@ async fn authorization_accepts_loopback_http() {
         )
         .await
         .expect("loopback HTTP must start a flow");
+}
+
+#[test]
+fn openai_has_no_oauth_flow_scopes() {
+    assert!(rook_core::descriptor_by_id("openai")
+        .unwrap()
+        .oauth
+        .is_none());
 }

@@ -23,8 +23,8 @@ use providers_ollama::OllamaProvider;
 use rook_core::{
     ApiKeyRepositoryPort, AuditPort, CachePort, Combo, ComboAliasRepositoryPort,
     ComboRepositoryPort, ComboStep, ComboStrategy, ConnectionId, DecryptedCredentials,
-    ModelAliasRepositoryPort, ModelCatalogPort, PasswordHasher, Protocol, ProviderDescriptor,
-    ProviderId, ProviderPort, ProviderRegistryPort, ProviderRepositoryPort, QuotaObservation,
+    ModelAliasRepositoryPort, ModelCatalogPort, PasswordHasher, ProviderDescriptor, ProviderId,
+    ProviderPort, ProviderRegistryPort, ProviderRepositoryPort, QuotaObservation,
     QuotaObservationRecorderPort, RouterPort, SessionRepositoryPort, UsageRecorderPort,
 };
 use rook_usecases::{
@@ -995,9 +995,7 @@ pub fn is_canonical_base_url(
             None => (c_rest, ""),
         };
         let path_matches = norm_path == c_path.to_ascii_lowercase()
-            || (descriptor.protocol == Protocol::OpenAiChat
-                && c_path == "/v1"
-                && norm_path.is_empty());
+            || (descriptor.id == "openai" && c_path == "/v1" && norm_path.is_empty());
         host == c_host && path_matches
     })
 }
@@ -1044,8 +1042,16 @@ pub fn build_provider_from_connection_with_policy(
         oauth_token_port,
         endpoint_policy,
     } = options;
-    let quota_recorder =
-        quota_recorder.filter(|_| is_canonical_base_url(descriptor, base_url_override.as_deref()));
+    let quota_recorder = quota_recorder.filter(|_| {
+        is_canonical_base_url(
+            descriptor,
+            Some(
+                base_url_override
+                    .as_deref()
+                    .unwrap_or(descriptor.default_base_url),
+            ),
+        )
+    });
     // Extract credentials — use access_token for OAuth where the provider supports it
     let api_key = match credentials {
         DecryptedCredentials::ApiKey { api_key } => api_key.clone(),
@@ -1119,7 +1125,7 @@ pub fn build_provider_from_connection_with_policy(
                 provider_id: descriptor.id,
                 api_key,
                 base_url: base_url_override
-                    .unwrap_or_else(|| "https://api.anthropic.com".to_string()),
+                    .unwrap_or_else(|| descriptor.default_base_url.to_string()),
                 models: models.clone(),
                 timeout_secs: 60,
             };

@@ -125,3 +125,14 @@ fn credentials_request() -> TestCredentialsRequest {
         },
     }
 }
+
+#[test]
+fn update_rejects_unknown_provider_id() {
+    let request: UpdateProviderRequest = serde_json::from_value(serde_json::json!({
+        "expectedUpdatedAt": Utc::now().to_rfc3339(),
+        "providerKind": "unknown-provider"
+    }))
+    .unwrap();
+    let result = rook_usecases::manage_connections::UpdateConnectionRequest::try_from(&request);
+    assert!(matches!(result, Err(error) if error == "unknown provider id: unknown-provider"));
+}

@@ -517,6 +517,10 @@ db_path = "~/.cortex/rook/rook.db"
 enabled = true
 ```
 
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:b53861a90dd6170ecc5ffb4f4c91b01dbd201549d304efe5626797a483212d4f -->
+
 > Providers are added via the CRUD API after Rook starts:
 > ```bash
 > curl -X POST http://localhost:3773/api/providers \
@@ -524,13 +528,19 @@ enabled = true
 >   -d '{
 >     "name": "openai-primary",
 >     "providerKind": "openai",
+>     "providerRuntimeId": "openai-primary",
 >     "authType": "api_key",
->     "credentials": { "api_key": "${OPENAI_API_KEY}" },
->     "is_active": true,
->     "priority": 1
+>     "credentials": { "apiKey": "${OPENAI_API_KEY}" },
+>     "isActive": true,
+>     "priority": 1,
+>     "config": {
+>       "maxConcurrent": 5,
+>       "quotaWindowThresholds": { "warning": 0.7, "error": 0.9 }
+>     }
 >   }'
 > ```
 
+<!-- /coderabbit-ai-generated:v1 -->
 ## Validation
 
 Rook validates config on startup:

@@ -216,8 +216,9 @@ pub(super) fn validate_provider_auth_type(
     {
         return Err(ValidationError::AzureOpenAIRequiresOAuth);
     }
-    if provider.endpoint_validation == EndpointValidation::OpenAiEndpointPolicy
-        && auth_type != AuthType::ApiKey
+    if (!provider.accepts_oauth_credentials
+        || provider.endpoint_validation == EndpointValidation::OpenAiEndpointPolicy)
+        && auth_type == AuthType::OAuth
     {
         return Err(ValidationError::AuthTypeCredentialMismatch);
     }

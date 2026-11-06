@@ -337,7 +337,11 @@ impl TryFrom<&UpdateProviderRequest> for UsecaseUpdateConnectionRequest {
             provider: req
                 .provider_kind
                 .as_ref()
-                .and_then(|kind| rook_core::descriptor_for(kind)),
+                .map(|kind| {
+                    rook_core::descriptor_for(kind)
+                        .ok_or_else(|| format!("unknown provider id: {kind}"))
+                })
+                .transpose()?,
             provider_runtime_id: req.provider_runtime_id.clone(),
             auth_type: req
                 .auth_type

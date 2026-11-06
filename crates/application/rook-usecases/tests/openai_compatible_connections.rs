@@ -757,6 +757,25 @@ async fn create_defaults_missing_api_format_for_openai_compatible_connections() 
 }
 
 #[tokio::test]
+async fn create_defaults_missing_api_format_for_openai_connections() {
+    let (mc, _repo, _registry, _builder) = usecase(EndpointPolicyConfig::default());
+    let mut request = create_request(
+        RUNTIME_A,
+        "compat-a",
+        "https://upstream-a.example/v1",
+        "key",
+        &["model-a"],
+    );
+    request.provider = rook_core::descriptor_by_id("openai").unwrap();
+    request.is_active = false;
+    request.config.api_format = None;
+
+    let created = mc.create(request).await.expect("connection is valid");
+
+    assert_eq!(created.config.api_format, Some(ApiFormat::OpenAI));
+}
+
+#[tokio::test]
 async fn create_defaults_missing_api_format_for_anthropic_connections() {
     let (mc, _repo, _registry, _builder) = usecase(EndpointPolicyConfig::default());
     let mut request = create_request(
@@ -1201,4 +1220,28 @@ async fn startup_refresh_skips_ungranted_connections_and_passes_only_connection_
     )
     .unwrap();
     assert_eq!(provider.supported_models(), &[ModelId::new("model-a")]);
+}
+
+#[tokio::test]
+async fn nan_oauth_is_rejected_before_saving_credentials() {
+    let (mc, repo, _registry, _builder) = usecase(EndpointPolicyConfig::default());
+    let mut request = create_request(
+        RUNTIME_A,
+        "nan",
+        "https://api.nan.builders/v1",
+        "",
+        &["gemma4"],
+    );
+    request.provider = rook_core::descriptor_by_id("nan").unwrap();
+    request.auth_type = rook_core::AuthType::OAuth;
+    request.is_active = false;
+    // Invalid credentials would produce EmptyCredential if encryption were reached.
+    let result = mc.create(request).await;
+    assert!(matches!(
+        result,
+        Err(ManageConnectionsError::Validation(
+            rook_core::ValidationError::AuthTypeCredentialMismatch
+        ))
+    ));
+    assert!(repo.list().await.unwrap().is_empty());
 }

@@ -447,13 +447,16 @@ fn map_quota_observation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QuotaO
     let provider_id: String = row.get(0)?;
     // Legacy rows may still carry pre-migration spellings; the descriptor
     // alias map resolves them so no stored observation is dropped.
-    if rook_core::descriptor_for(&provider_id).is_none() {
-        return Err(rusqlite::Error::InvalidColumnType(
-            0,
-            "provider_kind".to_string(),
-            rusqlite::types::Type::Text,
-        ));
-    }
+    let provider_id = rook_core::descriptor_for(&provider_id)
+        .ok_or_else(|| {
+            rusqlite::Error::InvalidColumnType(
+                0,
+                "provider_kind".to_string(),
+                rusqlite::types::Type::Text,
+            )
+        })?
+        .id
+        .to_string();
     let connection_id: Option<String> = row.get(2)?;
     let connection_id = connection_id
         .map(|id| {
@@ -1339,6 +1342,22 @@ mod usage_tests {
             reset_after_milliseconds: Some(7_660),
             observed_at: timestamp(2),
         }
+    }
+
+    #[test]
+    fn quota_rows_canonicalize_aliases_and_case_variants() {
+        runtime().block_on(async {
+            let (_db_dir, repo) = usage_repo();
+            for stored in ["ollamacloud", "OLLAMA-CLOUD"] {
+                let mut observation = quota_observation(stored, None);
+                observation.provider_id = stored.to_string();
+                repo.record_observations(vec![observation]).await.unwrap();
+            }
+            repo.shutdown().await.unwrap();
+            let rows = repo.list_observations(None).await.unwrap();
+            assert_eq!(rows.len(), 2);
+            assert!(rows.iter().all(|row| row.provider_id == "ollama-cloud"));
+        });
     }
 
     #[test]
