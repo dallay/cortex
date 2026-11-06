@@ -98,9 +98,11 @@ fn every_oauth_endpoint_uses_https() {
             ("userinfo_endpoint", Some(oauth.userinfo_endpoint)),
         ] {
             if let Some(endpoint) = endpoint {
+                // The endpoint value is deliberately absent from the message:
+                // OAuth endpoints are sensitive data and must not reach logs.
                 assert!(
                     endpoint.starts_with("https://"),
-                    "{} {name} must use HTTPS: {endpoint}",
+                    "{} {name} must use HTTPS",
                     descriptor.id
                 );
             }
