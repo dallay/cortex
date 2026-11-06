@@ -1064,12 +1064,8 @@ pub fn build_provider_from_connection_with_policy(
         DecryptedCredentials::OAuth { .. } => String::new(),
     };
 
-    // Transitional adapter selection: DALLAY-766 replaces this match with
-    // descriptor-driven adapter construction. Provider identity strings are
-    // used only to pick the protocol adapter implementation here.
-    let provider = match descriptor.id {
-        "openai" | "xai" | "mistral" | "deepseek" | "together" | "fireworks" | "cerebras"
-        | "openrouter" | "nan" => {
+    let provider = match descriptor.adapter {
+        rook_core::ProviderAdapter::OpenAi => {
             let config = providers_openai::OpenAIProviderConfig {
                 id: ProviderId::new(connection_id.to_string()),
                 provider_id: descriptor.id,
@@ -1096,7 +1092,7 @@ pub fn build_provider_from_connection_with_policy(
             .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?;
             Arc::new(provider) as Arc<dyn ProviderPort>
         }
-        "openai-compatible" => {
+        rook_core::ProviderAdapter::OpenAiCompatible => {
             let base_url = base_url_override.ok_or_else(|| {
                 ProviderBuildError::ConstructionFailed(
                     "OpenAI-compatible provider requires base_url".to_string(),
@@ -1120,7 +1116,7 @@ pub fn build_provider_from_connection_with_policy(
                     .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?,
             ) as Arc<dyn ProviderPort>
         }
-        "anthropic" => {
+        rook_core::ProviderAdapter::Anthropic => {
             let config = providers_anthropic::AnthropicProviderConfig {
                 id: ProviderId::new(connection_id.to_string()),
                 provider_id: descriptor.id,
@@ -1136,7 +1132,7 @@ pub fn build_provider_from_connection_with_policy(
             )
             .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
         }
-        "ollama" => {
+        rook_core::ProviderAdapter::Ollama => {
             let base_url = base_url_override.ok_or(ProviderBuildError::OllamaRequiresBaseUrl)?;
             let config = providers_ollama::OllamaProviderConfig {
                 id: ProviderId::new(connection_id.to_string()),
@@ -1148,7 +1144,7 @@ pub fn build_provider_from_connection_with_policy(
             providers_ollama::OllamaProvider::new(config)
                 .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
         }
-        "ollama-cloud" => {
+        rook_core::ProviderAdapter::OllamaCloud => {
             // Ollama Cloud reuses the same `OllamaProvider` implementation —
             // it differs only in the base URL (defaults to https://ollama.com)
             // and the required Bearer auth token. The API surface
@@ -1168,7 +1164,7 @@ pub fn build_provider_from_connection_with_policy(
             providers_ollama::OllamaProvider::new(config)
                 .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
         }
-        "gemini" => {
+        rook_core::ProviderAdapter::Gemini => {
             let config = providers_gemini::GeminiProviderConfig {
                 id: ProviderId::new(connection_id.to_string()),
                 api_key,
@@ -1189,19 +1185,25 @@ pub fn build_provider_from_connection_with_policy(
             }
             .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
         }
-        "groq" => {
+        rook_core::ProviderAdapter::Groq => {
             let config = providers_groq::GroqProviderConfig {
                 id: ProviderId::new(connection_id.to_string()),
                 provider_id: descriptor.id,
                 api_key,
-                base_url: None,
+                base_url: Some(
+                    base_url_override.unwrap_or_else(|| descriptor.default_base_url.to_string()),
+                ),
                 models: models.clone(),
                 timeout_secs: 60,
             };
-            providers_groq::GroqProvider::new_with_quota_recorder(config, quota_recorder.clone())
-                .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
+            providers_groq::GroqProvider::new_with_descriptor(
+                config,
+                quota_recorder.clone(),
+                descriptor.paths,
+            )
+            .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
         }
-        "azure-openai" => {
+        rook_core::ProviderAdapter::AzureOpenAi => {
             if !matches!(credentials, DecryptedCredentials::OAuth { .. }) {
                 return Err(ProviderBuildError::AzureOpenAIRequiresOAuth);
             }
@@ -1229,11 +1231,6 @@ pub fn build_provider_from_connection_with_policy(
             }
             .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?;
             Arc::new(provider) as Arc<dyn ProviderPort>
-        }
-        other => {
-            return Err(ProviderBuildError::ConstructionFailed(format!(
-                "provider {other} has no protocol adapter"
-            )));
         }
     };
 
@@ -1411,18 +1408,18 @@ fn adapter_capability_ceiling(descriptor: &ProviderDescriptor) -> rook_core::Mod
         ModelCapabilities, Protocol,
     };
     let mut out = ModelCapabilities::default();
+    let tools_supported = descriptor.adapter != rook_core::ProviderAdapter::Groq
+        && matches!(
+            descriptor.protocol,
+            Protocol::OpenAiChat | Protocol::AnthropicMessages
+        );
     out.apply(
         &CapabilityOverrides {
-            tools: Some(
-                if matches!(
-                    descriptor.protocol,
-                    Protocol::OpenAiChat | Protocol::AnthropicMessages
-                ) {
-                    Supported
-                } else {
-                    Unsupported
-                },
-            ),
+            tools: Some(if tools_supported {
+                Supported
+            } else {
+                Unsupported
+            }),
             vision: Some(Unsupported),
             reasoning: Some(Unsupported),
             streaming: Some(if descriptor.protocol == Protocol::GeminiGenerateContent {

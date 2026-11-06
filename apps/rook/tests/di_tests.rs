@@ -9,10 +9,157 @@ use rook::di::{
     build_rate_limiter_config, generate_setup_token, is_canonical_base_url, ProviderBuildError,
     ProviderConnectionBuildOptions,
 };
-use rook_core::{ApiKeyTier, ConnectionId, DecryptedCredentials, ModelId};
+use rook_core::{ApiKeyTier, CompletionRequest, ConnectionId, DecryptedCredentials, ModelId, Role};
 
 fn conn_id() -> ConnectionId {
     ConnectionId::default()
+}
+
+fn completion_request(model: &str) -> CompletionRequest {
+    CompletionRequest {
+        id: shared_kernel::RequestId::new(),
+        model: ModelId::new(model),
+        messages: vec![rook_core::Message {
+            role: Role::User,
+            content: rook_core::MessageContent::Text("hello".into()),
+            tool_calls: vec![],
+        }],
+        stream: false,
+        max_tokens: None,
+        temperature: None,
+        tools: None,
+        tool_choice: None,
+        metadata: rook_core::RequestMetadata {
+            origin: "test".into(),
+            cacheable: false,
+            priority: 0,
+            api_key_id: None,
+            requested_tier: None,
+            combo_id: None,
+        },
+        restrictions: Default::default(),
+    }
+}
+
+#[tokio::test]
+async fn migrated_openai_providers_route_with_bearer_auth() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .and(wiremock::matchers::header(
+            "authorization",
+            "Bearer migration-test-key",
+        ))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "chatcmpl-migration",
+                "model": "test-model",
+                "choices": [{
+                    "message": {"role": "assistant", "content": "ok"},
+                    "finish_reason": "stop"
+                }],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+            })),
+        )
+        .expect(8)
+        .mount(&server)
+        .await;
+
+    let request = completion_request("test-model");
+
+    for provider_id in [
+        "xai",
+        "mistral",
+        "deepseek",
+        "together",
+        "fireworks",
+        "cerebras",
+        "openrouter",
+        "nan",
+    ] {
+        let descriptor = rook_core::descriptor_by_id(provider_id).expect("descriptor");
+        let provider = build_provider_from_connection(
+            &ConnectionId::new(),
+            descriptor,
+            &DecryptedCredentials::ApiKey {
+                api_key: "migration-test-key".into(),
+            },
+            Some(server.uri()),
+            vec![ModelId::new("test-model")],
+        )
+        .unwrap_or_else(|error| panic!("{provider_id} should build: {error}"));
+        assert!(provider.is_available(), "{provider_id} should authenticate");
+        provider
+            .complete(&request)
+            .await
+            .unwrap_or_else(|error| panic!("{provider_id} should route: {error}"));
+    }
+
+    assert_eq!(server.received_requests().await.unwrap().len(), 8);
+}
+
+#[tokio::test]
+async fn groq_uses_descriptor_default_url_and_wire_paths() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/descriptor/chat"))
+        .and(wiremock::matchers::header(
+            "authorization",
+            "Bearer groq-test-key",
+        ))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "chatcmpl-groq",
+                "model": "test-model",
+                "choices": [{
+                    "message": {"role": "assistant", "content": "ok"},
+                    "finish_reason": "stop"
+                }],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+            })),
+        )
+        .mount(&server)
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/descriptor/health"))
+        .and(wiremock::matchers::header(
+            "authorization",
+            "Bearer groq-test-key",
+        ))
+        .respond_with(wiremock::ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let mut descriptor = *rook_core::descriptor_by_id("groq").expect("Groq descriptor");
+    descriptor.default_base_url = Box::leak(server.uri().into_boxed_str());
+    descriptor.paths = rook_core::WirePaths {
+        chat: "/descriptor/chat",
+        models: "/descriptor/models",
+        health: "/descriptor/health",
+    };
+    let descriptor = Box::leak(Box::new(descriptor));
+    let provider = build_provider_from_connection(
+        &ConnectionId::new(),
+        descriptor,
+        &DecryptedCredentials::ApiKey {
+            api_key: "groq-test-key".into(),
+        },
+        None,
+        vec![ModelId::new("test-model")],
+    )
+    .expect("Groq provider should build from descriptor data");
+
+    assert!(matches!(
+        provider.health_check().await,
+        rook_core::HealthStatus::Healthy { .. }
+    ));
+    provider
+        .complete(&completion_request("test-model"))
+        .await
+        .expect("Groq completion should use descriptor chat path");
+
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2);
 }
 
 #[test]

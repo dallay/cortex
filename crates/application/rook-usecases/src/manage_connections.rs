@@ -1626,7 +1626,13 @@ fn oauth_scopes(provider: &ProviderDescriptor) -> String {
         .unwrap_or_default()
 }
 
-fn tenant_segment(connection: &PendingOAuthConnection) -> ManageConnectionsResult<&str> {
+fn tenant_segment<'a>(
+    connection: &'a PendingOAuthConnection,
+    endpoint_template: &str,
+) -> ManageConnectionsResult<&'a str> {
+    if !endpoint_template.contains("{tenant}") {
+        return Ok("common");
+    }
     let tenant = connection
         .tenant_id
         .as_deref()
@@ -1647,7 +1653,10 @@ fn authorization_endpoint(connection: &PendingOAuthConnection) -> ManageConnecti
     let oauth = connection.provider.oauth.ok_or_else(|| {
         ManageConnectionsError::OAuth("OAuth is not supported for this provider".to_string())
     })?;
-    Ok(oauth.resolve_endpoint(oauth.authorization_endpoint, tenant_segment(connection)?))
+    Ok(oauth.resolve_endpoint(
+        oauth.authorization_endpoint,
+        tenant_segment(connection, oauth.authorization_endpoint)?,
+    ))
 }
 
 fn token_endpoint_with_overrides(
@@ -1662,7 +1671,10 @@ fn token_endpoint_with_overrides(
     if let Some(override_url) = overrides.get(connection.provider.id, "token") {
         return checked_test_endpoint(override_url.clone());
     }
-    Ok(oauth.resolve_endpoint(oauth.token_endpoint, tenant_segment(connection)?))
+    Ok(oauth.resolve_endpoint(
+        oauth.token_endpoint,
+        tenant_segment(connection, oauth.token_endpoint)?,
+    ))
 }
 
 fn device_code_endpoint_with_overrides(
@@ -1685,7 +1697,10 @@ fn device_code_endpoint_with_overrides(
         .provider
         .oauth
         .expect("checked above")
-        .resolve_endpoint(device_code_endpoint, tenant_segment(connection)?))
+        .resolve_endpoint(
+            device_code_endpoint,
+            tenant_segment(connection, device_code_endpoint)?,
+        ))
 }
 
 /// Accept a test endpoint override only over HTTPS or loopback HTTP.

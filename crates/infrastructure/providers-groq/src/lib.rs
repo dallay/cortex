@@ -112,11 +112,15 @@ pub struct GroqProviderConfig {
     pub timeout_secs: u64,
 }
 
-const GROQ_DEFAULT_BASE_URL: &str = "https://api.groq.com/openai/v1";
-
 impl GroqProviderConfig {
     fn base_url(&self) -> &str {
-        self.base_url.as_deref().unwrap_or(GROQ_DEFAULT_BASE_URL)
+        self.base_url
+            .as_deref()
+            .unwrap_or("https://api.groq.com/openai/v1")
+    }
+
+    fn endpoint(&self, path: &str) -> String {
+        format!("{}{}", self.base_url().trim_end_matches('/'), path)
     }
 }
 
@@ -157,6 +161,7 @@ pub struct GroqProvider {
     config: GroqProviderConfig,
     client: Client,
     quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
+    paths: rook_core::WirePaths,
 }
 
 impl GroqProvider {
@@ -168,6 +173,22 @@ impl GroqProvider {
         config: GroqProviderConfig,
         quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
     ) -> anyhow::Result<Arc<Self>> {
+        Self::new_with_descriptor(
+            config,
+            quota_recorder,
+            rook_core::WirePaths {
+                chat: "/chat/completions",
+                models: "/models",
+                health: "/models",
+            },
+        )
+    }
+
+    pub fn new_with_descriptor(
+        config: GroqProviderConfig,
+        quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
+        paths: rook_core::WirePaths,
+    ) -> anyhow::Result<Arc<Self>> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
             .redirect(reqwest::redirect::Policy::none())
@@ -176,6 +197,7 @@ impl GroqProvider {
             config,
             client,
             quota_recorder,
+            paths,
         }))
     }
 
@@ -213,7 +235,7 @@ impl GroqProvider {
 
     async fn send_stream_request(&self, body: &GroqRequest) -> CortexResult<reqwest::Response> {
         self.client
-            .post(format!("{}/chat/completions", self.config.base_url()))
+            .post(self.config.endpoint(self.paths.chat))
             .header("Authorization", format!("Bearer {}", self.config.api_key))
             .header("content-type", "application/json")
             .json(body)
@@ -349,7 +371,7 @@ impl ProviderPort for GroqProvider {
         }
 
         let start = std::time::Instant::now();
-        let probe_url = format!("{}/openai/v1/models", self.config.base_url());
+        let probe_url = self.config.endpoint(self.paths.health);
         match self
             .client
             .get(&probe_url)
@@ -384,7 +406,7 @@ impl ProviderPort for GroqProvider {
                         HealthStatus::Unhealthy {
                             provider: self.config.id.clone(),
                             latency_ms: Some(latency_ms),
-                            error: format!("GET /openai/v1/models returned HTTP {code}"),
+                            error: format!("GET {} returned HTTP {code}", self.paths.health),
                         }
                     }
                     // Network errors are constructed by the Err arm below.
@@ -392,7 +414,7 @@ impl ProviderPort for GroqProvider {
                         HealthStatus::Unhealthy {
                             provider: self.config.id.clone(),
                             latency_ms: Some(latency_ms),
-                            error: "GET /openai/v1/models returned an unknown status".to_string(),
+                            error: format!("GET {} returned an unknown status", self.paths.health),
                         }
                     }
                 }
@@ -402,7 +424,7 @@ impl ProviderPort for GroqProvider {
                 HealthStatus::Unhealthy {
                     provider: self.config.id.clone(),
                     latency_ms: Some(latency_ms),
-                    error: format!("GET /openai/v1/models failed: {e}"),
+                    error: format!("GET {} failed: {e}", self.paths.health),
                 }
             }
         }
@@ -427,7 +449,7 @@ impl ProviderPort for GroqProvider {
         let start = std::time::Instant::now();
         let resp = self
             .client
-            .post(format!("{}/chat/completions", self.config.base_url()))
+            .post(self.config.endpoint(self.paths.chat))
             .header("Authorization", format!("Bearer {}", self.config.api_key))
             .header("content-type", "application/json")
             .json(&body)

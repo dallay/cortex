@@ -8,10 +8,10 @@ use shared_kernel::{ProviderId, RequestId};
 
 #[tokio::test]
 async fn health_check_returns_healthy_on_2xx() {
-    // Groq is OpenAI-compatible; the probe is GET /openai/v1/models.
+    // The descriptor base already includes `/openai/v1`; its health path is `/models`.
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path("/openai/v1/models"))
+        .and(wiremock::matchers::path("/models"))
         .and(wiremock::matchers::header(
             "Authorization",
             "Bearer gsk-test",
@@ -49,7 +49,7 @@ async fn health_check_does_not_follow_redirects() {
         .await;
     let source = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path("/openai/v1/models"))
+        .and(wiremock::matchers::path("/models"))
         .respond_with(
             wiremock::ResponseTemplate::new(302)
                 .insert_header("Location", format!("{}/target", target.uri())),
@@ -78,7 +78,7 @@ async fn health_check_does_not_follow_redirects() {
 async fn health_check_returns_warning_on_429() {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path("/openai/v1/models"))
+        .and(wiremock::matchers::path("/models"))
         .respond_with(wiremock::ResponseTemplate::new(429))
         .mount(&server)
         .await;
@@ -109,7 +109,7 @@ async fn health_check_returns_warning_on_429() {
 async fn health_check_returns_unhealthy_on_401() {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path("/openai/v1/models"))
+        .and(wiremock::matchers::path("/models"))
         .respond_with(wiremock::ResponseTemplate::new(401))
         .mount(&server)
         .await;
@@ -140,7 +140,7 @@ async fn health_check_returns_unhealthy_on_401() {
 async fn health_check_returns_unhealthy_on_500() {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path("/openai/v1/models"))
+        .and(wiremock::matchers::path("/models"))
         .respond_with(wiremock::ResponseTemplate::new(500))
         .mount(&server)
         .await;

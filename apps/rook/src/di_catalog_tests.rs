@@ -86,7 +86,8 @@ async fn declarations_preserve_azure_and_compatible_membership_and_adapter_limit
         {"provider_kind":"openai-compatible", "model_id":"physical", "capabilities":{"tools":"supported", "vision":"supported"}},
         {"provider_kind":"azure-openai", "model_id":"undeclared"},
         {"provider_kind":"azure-openai", "model_id":"deployment", "capabilities":{"tools":"supported"}},
-        {"provider_kind":"gemini", "model_id":"gemini-test", "capabilities":{"tools":"supported", "streaming":"supported"}}
+        {"provider_kind":"gemini", "model_id":"gemini-test", "capabilities":{"tools":"supported", "streaming":"supported"}},
+        {"provider_kind":"groq", "model_id":"groq-tools", "capabilities":{"tools":"supported"}}
     ])).unwrap();
     let builder = DynamicProviderBuilder::new(
         Arc::new(StaticModelCatalog::with_declarations(declarations).unwrap()),
@@ -151,4 +152,64 @@ async fn declarations_preserve_azure_and_compatible_membership_and_adapter_limit
             .state,
         CapabilityState::Supported
     );
+    let groq = builder
+        .build(input(
+            rook_core::descriptor_by_id("groq").expect("groq descriptor"),
+            ConnectionId::new(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        groq.model_capabilities(&ModelId::new("groq-tools"))
+            .tools
+            .state,
+        CapabilityState::Unsupported
+    );
+}
+
+#[tokio::test]
+async fn migrated_openai_descriptors_build_with_api_key_and_descriptor_models() {
+    let descriptors = [
+        "xai",
+        "mistral",
+        "deepseek",
+        "together",
+        "fireworks",
+        "cerebras",
+        "openrouter",
+        "nan",
+    ]
+    .map(|id| rook_core::descriptor_by_id(id).expect("descriptor"));
+    let declaration_values: Vec<serde_json::Value> = descriptors
+        .iter()
+        .flat_map(|descriptor| match descriptor.models {
+            rook_core::ModelSource::Static(models) => models
+                .iter()
+                .map(|model| serde_json::json!({"provider_kind": descriptor.id, "model_id": model}))
+                .collect::<Vec<_>>(),
+            _ => panic!("expected migrated providers to declare static models"),
+        })
+        .collect::<Vec<_>>();
+    let declarations: Vec<ModelDeclaration> =
+        serde_json::from_value(serde_json::Value::Array(declaration_values)).unwrap();
+    let builder = DynamicProviderBuilder::new(
+        Arc::new(StaticModelCatalog::with_declarations(declarations).unwrap()),
+        None,
+        Arc::new(rook_usecases::PricingConfig {
+            providers: Default::default(),
+        }),
+    );
+
+    for descriptor in descriptors {
+        let provider = builder
+            .build(input(descriptor, ConnectionId::new()))
+            .await
+            .unwrap_or_else(|error| panic!("{} should build: {error}", descriptor.id));
+        assert!(!provider.supported_models().is_empty(), "{}", descriptor.id);
+        assert!(
+            provider.is_available(),
+            "{} should use the API key",
+            descriptor.id
+        );
+    }
 }

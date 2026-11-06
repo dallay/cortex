@@ -33,6 +33,19 @@ pub enum Protocol {
     OllamaNative,
 }
 
+/// Concrete adapter implementation used by the composition root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderAdapter {
+    OpenAi,
+    OpenAiCompatible,
+    AzureOpenAi,
+    Anthropic,
+    Ollama,
+    OllamaCloud,
+    Gemini,
+    Groq,
+}
+
 /// How a connection's model list is established.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelListing {
@@ -117,6 +130,7 @@ pub struct ProviderDescriptor {
     /// Legacy spellings accepted on read so pre-migration rows never fail.
     pub aliases: &'static [&'static str],
     pub protocol: Protocol,
+    pub adapter: ProviderAdapter,
     pub auth: AuthKind,
     /// Whether managed connections accept imported OAuth credentials.
     pub accepts_oauth_credentials: bool,
@@ -208,6 +222,7 @@ const fn openai() -> ProviderDescriptor {
         id: "openai",
         aliases: &[],
         protocol: Protocol::OpenAiChat,
+        adapter: ProviderAdapter::OpenAi,
         auth: AuthKind::ApiKey,
         default_base_url: "https://api.openai.com/v1",
         requires_base_url: false,
@@ -227,6 +242,7 @@ const fn openai_compatible() -> ProviderDescriptor {
         id: "openai-compatible",
         aliases: &[],
         protocol: Protocol::OpenAiChat,
+        adapter: ProviderAdapter::OpenAiCompatible,
         auth: AuthKind::ApiKey,
         default_base_url: "",
         requires_base_url: true,
@@ -246,6 +262,7 @@ const fn anthropic() -> ProviderDescriptor {
         id: "anthropic",
         aliases: &[],
         protocol: Protocol::AnthropicMessages,
+        adapter: ProviderAdapter::Anthropic,
         auth: AuthKind::ApiKey,
         default_base_url: "https://api.anthropic.com",
         requires_base_url: false,
@@ -269,6 +286,7 @@ const fn ollama() -> ProviderDescriptor {
         id: "ollama",
         aliases: &[],
         protocol: Protocol::OllamaNative,
+        adapter: ProviderAdapter::Ollama,
         auth: AuthKind::ApiKey,
         default_base_url: "http://localhost:11434",
         requires_base_url: true,
@@ -290,6 +308,7 @@ const fn ollama_cloud() -> ProviderDescriptor {
         // Pre-migration rows and serde output spelled it `ollamacloud`.
         aliases: &["ollamacloud"],
         protocol: Protocol::OllamaNative,
+        adapter: ProviderAdapter::OllamaCloud,
         auth: AuthKind::ImportedToken,
         default_base_url: "https://ollama.com",
         requires_base_url: false,
@@ -309,6 +328,7 @@ const fn gemini() -> ProviderDescriptor {
         id: "gemini",
         aliases: &[],
         protocol: Protocol::GeminiGenerateContent,
+        adapter: ProviderAdapter::Gemini,
         auth: AuthKind::OAuth,
         default_base_url: "https://generativelanguage.googleapis.com",
         requires_base_url: false,
@@ -341,6 +361,7 @@ const fn azure_openai() -> ProviderDescriptor {
         // Pre-migration rows and serde output spelled it `azureopenai`.
         aliases: &["azureopenai"],
         protocol: Protocol::OpenAiChat,
+        adapter: ProviderAdapter::AzureOpenAi,
         auth: AuthKind::OAuth,
         default_base_url: "",
         requires_base_url: true,
@@ -371,6 +392,7 @@ const fn groq() -> ProviderDescriptor {
         id: "groq",
         aliases: &[],
         protocol: Protocol::OpenAiChat,
+        adapter: ProviderAdapter::Groq,
         auth: AuthKind::ApiKey,
         default_base_url: "https://api.groq.com/openai/v1",
         requires_base_url: false,
@@ -390,6 +412,7 @@ const fn xai() -> ProviderDescriptor {
         id: "xai",
         aliases: &[],
         protocol: Protocol::OpenAiChat,
+        adapter: ProviderAdapter::OpenAi,
         auth: AuthKind::ApiKey,
         default_base_url: "https://api.x.ai/v1",
         requires_base_url: false,
@@ -409,6 +432,7 @@ const fn mistral() -> ProviderDescriptor {
         id: "mistral",
         aliases: &[],
         protocol: Protocol::OpenAiChat,
+        adapter: ProviderAdapter::OpenAi,
         auth: AuthKind::ApiKey,
         default_base_url: "https://api.mistral.ai/v1",
         requires_base_url: false,
@@ -432,6 +456,7 @@ const fn deepseek() -> ProviderDescriptor {
         id: "deepseek",
         aliases: &[],
         protocol: Protocol::OpenAiChat,
+        adapter: ProviderAdapter::OpenAi,
         auth: AuthKind::ApiKey,
         default_base_url: "https://api.deepseek.com/v1",
         requires_base_url: false,
@@ -451,6 +476,7 @@ const fn together() -> ProviderDescriptor {
         id: "together",
         aliases: &[],
         protocol: Protocol::OpenAiChat,
+        adapter: ProviderAdapter::OpenAi,
         auth: AuthKind::ApiKey,
         default_base_url: "https://api.together.xyz/v1",
         requires_base_url: false,
@@ -470,6 +496,7 @@ const fn fireworks() -> ProviderDescriptor {
         id: "fireworks",
         aliases: &[],
         protocol: Protocol::OpenAiChat,
+        adapter: ProviderAdapter::OpenAi,
         auth: AuthKind::ApiKey,
         default_base_url: "https://api.fireworks.ai/inference/v1",
         requires_base_url: false,
@@ -489,6 +516,7 @@ const fn cerebras() -> ProviderDescriptor {
         id: "cerebras",
         aliases: &[],
         protocol: Protocol::OpenAiChat,
+        adapter: ProviderAdapter::OpenAi,
         auth: AuthKind::ApiKey,
         default_base_url: "https://api.cerebras.ai/v1",
         requires_base_url: false,
@@ -508,6 +536,7 @@ const fn openrouter() -> ProviderDescriptor {
         id: "openrouter",
         aliases: &[],
         protocol: Protocol::OpenAiChat,
+        adapter: ProviderAdapter::OpenAi,
         auth: AuthKind::ApiKey,
         default_base_url: "https://openrouter.ai/api/v1",
         requires_base_url: false,
@@ -527,6 +556,7 @@ const fn nan() -> ProviderDescriptor {
         id: "nan",
         aliases: &[],
         protocol: Protocol::OpenAiChat,
+        adapter: ProviderAdapter::OpenAi,
         auth: AuthKind::ApiKey,
         default_base_url: "https://api.nan.builders/v1",
         requires_base_url: false,

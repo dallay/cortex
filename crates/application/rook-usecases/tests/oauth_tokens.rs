@@ -406,7 +406,7 @@ async fn gemini_refresh_keeps_old_scope_and_id_token_when_absent() {
         rook_core::descriptor_by_id("gemini").expect("gemini descriptor"),
         0,
         "gemini-client",
-        None,
+        Some("not/a/valid/path/tenant"),
     );
     let id = conn.id;
     let repo = Arc::new(MemoryRepo::new(vec![conn]));

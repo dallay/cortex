@@ -116,9 +116,8 @@ impl OAuthTokenManager {
     }
 
     /// Resolve the refresh token endpoint from the connection's descriptor,
-    /// honoring a test override keyed by provider id. The tenant segment is
-    /// validated with the same rule the OAuth flow uses; a bad tenant fails
-    /// the refresh instead of producing a malformed URL.
+    /// honoring a test override keyed by provider id. A tenant is validated
+    /// only when the token endpoint uses `{tenant}`.
     async fn token_endpoint_for(
         &self,
         connection: &mut ProviderConnection,
@@ -143,17 +142,15 @@ impl OAuthTokenManager {
             }
             return Ok(override_url.clone());
         }
-        let tenant = oauth_tenant_id.unwrap_or("common");
-        if tenant.is_empty()
-            || !tenant
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'.')
-        {
-            self.mark_refresh_failed(connection).await;
-            return Err(CortexError::auth_failed(
-                "OAuth tenant configuration invalid",
-            ));
-        }
+        let tenant = match tenant_segment(oauth.token_endpoint, oauth_tenant_id) {
+            Ok(tenant) => tenant,
+            Err(()) => {
+                self.mark_refresh_failed(connection).await;
+                return Err(CortexError::auth_failed(
+                    "OAuth tenant configuration invalid",
+                ));
+            }
+        };
         Ok(oauth.resolve_endpoint(oauth.token_endpoint, tenant))
     }
 
@@ -457,6 +454,60 @@ fn repository_error(error: RepositoryError) -> CortexError {
     }
 }
 
+fn tenant_segment<'a>(template: &str, tenant: Option<&'a str>) -> Result<&'a str, ()> {
+    if !template.contains("{tenant}") {
+        return Ok("common");
+    }
+
+    let tenant = tenant
+        .filter(|tenant| !tenant.is_empty())
+        .unwrap_or("common");
+    if tenant
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'.')
+    {
+        Ok(tenant)
+    } else {
+        Err(())
+    }
+}
+
 pub fn refresh_interval() -> Duration {
     Duration::from_secs(60)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tenant_segment;
+
+    #[test]
+    fn tenant_segment_is_validated_only_for_templated_endpoints() {
+        assert_eq!(
+            tenant_segment("https://oauth.example/token", Some("bad tenant!")),
+            Ok("common")
+        );
+        assert_eq!(
+            tenant_segment("https://login.example/{tenant}/token", Some("tenant-1")),
+            Ok("tenant-1")
+        );
+        assert!(
+            tenant_segment("https://login.example/{tenant}/token", Some("bad tenant!")).is_err()
+        );
+    }
+
+    #[test]
+    fn gemini_refresh_endpoint_ignores_unused_tenant() {
+        let oauth = rook_core::descriptor_by_id("gemini")
+            .expect("Gemini descriptor")
+            .oauth
+            .expect("Gemini OAuth configuration");
+
+        let tenant = tenant_segment(oauth.token_endpoint, Some("not/a/path/tenant"))
+            .expect("Gemini token endpoint has no tenant placeholder");
+
+        assert_eq!(
+            oauth.resolve_endpoint(oauth.token_endpoint, tenant),
+            "https://oauth2.googleapis.com/token"
+        );
+    }
 }

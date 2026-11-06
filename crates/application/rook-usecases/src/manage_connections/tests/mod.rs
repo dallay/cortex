@@ -1693,7 +1693,8 @@ async fn fetch_oauth_email_sends_bearer_token_to_https_endpoint() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio_rustls::{rustls, TlsAcceptor};
 
-    let certified_key = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let certified_key =
+        rcgen::generate_simple_self_signed(vec!["openidconnect.googleapis.com".into()]).unwrap();
     let certificate = certified_key.cert.der().clone();
     let tls_config = rustls::ServerConfig::builder_with_provider(
         rustls::crypto::ring::default_provider().into(),
@@ -1708,10 +1709,7 @@ async fn fetch_oauth_email_sends_bearer_token_to_https_endpoint() {
     )
     .unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let endpoint = format!(
-        "https://localhost:{}/userinfo",
-        listener.local_addr().unwrap().port()
-    );
+    let local_address = listener.local_addr().unwrap();
     let server = async move {
         let (socket, _) = listener.accept().await.unwrap();
         let mut socket = TlsAcceptor::from(Arc::new(tls_config))
@@ -1730,7 +1728,7 @@ async fn fetch_oauth_email_sends_bearer_token_to_https_endpoint() {
             }
         }
         let request = String::from_utf8(request).unwrap();
-        assert!(request.starts_with("GET /userinfo HTTP/1.1\r\n"));
+        assert!(request.starts_with("GET /v1/userinfo HTTP/1.1\r\n"));
         assert!(request.lines().any(|line| {
             line.split_once(':').is_some_and(|(name, value)| {
                 name.eq_ignore_ascii_case("authorization")
@@ -1746,12 +1744,8 @@ async fn fetch_oauth_email_sends_bearer_token_to_https_endpoint() {
         socket.shutdown().await.unwrap();
     };
 
-    let mut provider = *rook_core::descriptor_by_id("gemini").expect("Gemini descriptor");
-    let mut oauth = provider.oauth.expect("Gemini OAuth configuration");
-    oauth.userinfo_endpoint = Box::leak(endpoint.into_boxed_str());
-    provider.oauth = Some(oauth);
     let connection = PendingOAuthConnection {
-        provider: Box::leak(Box::new(provider)),
+        provider: rook_core::descriptor_by_id("gemini").expect("Gemini descriptor"),
         provider_runtime_id: ProviderId::new("gemini-test"),
         name: "Gemini test".into(),
         priority: 0,
@@ -1769,6 +1763,7 @@ async fn fetch_oauth_email_sends_bearer_token_to_https_endpoint() {
     manager.oauth_http_client = Some(
         reqwest::Client::builder()
             .no_proxy()
+            .resolve("openidconnect.googleapis.com", local_address)
             .redirect(reqwest::redirect::Policy::none())
             .add_root_certificate(reqwest::Certificate::from_der(certificate.as_ref()).unwrap())
             .build()
@@ -1825,6 +1820,29 @@ async fn fetch_oauth_email_does_not_send_bearer_token_to_http_endpoint() {
 
     assert_eq!(server.received_requests().await.unwrap().len(), 0);
     assert!(email.is_empty());
+}
+
+#[test]
+fn gemini_authorization_ignores_unused_tenant_but_azure_validates_templated_tenant() {
+    let mut gemini = PendingOAuthConnection {
+        provider: rook_core::descriptor_by_id("gemini").unwrap(),
+        provider_runtime_id: ProviderId::new("gemini-test"),
+        name: "Gemini test".into(),
+        priority: 0,
+        is_active: true,
+        config: config(),
+        client_id: "client-id".into(),
+        client_secret: None,
+        tenant_id: Some("not/a/tenant".into()),
+        redirect_uri: "http://localhost/callback".into(),
+        project_id: String::new(),
+        scopes: String::new(),
+        existing_connection_id: None,
+    };
+    assert!(authorization_endpoint(&gemini).is_ok());
+
+    gemini.provider = rook_core::descriptor_by_id("azure-openai").unwrap();
+    assert!(authorization_endpoint(&gemini).is_err());
 }
 
 // 5.6 - refresh_registry skips inactive connections

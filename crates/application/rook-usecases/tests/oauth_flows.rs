@@ -312,6 +312,25 @@ async fn gemini_requires_project_id() {
 }
 
 #[tokio::test]
+async fn gemini_authorization_ignores_unused_tenant_value() {
+    let manager = manager();
+    let mut req = request(OAuthFlowType::AuthorizationCode);
+    req.tenant_id = Some("not/a/path/tenant".to_string());
+    req.project_id = Some("gemini-project".to_string());
+
+    let started = manager
+        .start_oauth_flow(
+            rook_core::descriptor_by_id("gemini").expect("gemini descriptor"),
+            req,
+        )
+        .await
+        .expect("Gemini authorization must ignore its unused tenant");
+
+    let url = reqwest::Url::parse(started.authorization_url.as_deref().unwrap()).unwrap();
+    assert_eq!(url.host_str(), Some("accounts.google.com"));
+}
+
+#[tokio::test]
 async fn tenant_with_invalid_characters_is_rejected() {
     let manager = manager();
     let mut req = request(OAuthFlowType::AuthorizationCode);
