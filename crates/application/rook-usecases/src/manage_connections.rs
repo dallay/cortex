@@ -788,26 +788,28 @@ impl ManageConnections {
         let Some(oauth) = connection.provider.oauth else {
             return Ok(String::new());
         };
-        let endpoint = oauth.userinfo_endpoint;
+        // Carve-out to compile-time HTTPS literals: CodeQL cannot prove the
+        // cleartext-transmission invariant through the descriptor lookup, so
+        // the bearer token is only sent to these two fixed endpoints. The
+        // descriptor table test `every_oauth_endpoint_uses_https` pins that
+        // these literals stay equal to the declared `userinfo_endpoint`.
+        let expected = oauth.userinfo_endpoint;
+        let endpoint = match (connection.provider.id, expected) {
+            ("azure-openai", "https://graph.microsoft.com/oidc/userinfo") => {
+                "https://graph.microsoft.com/oidc/userinfo"
+            }
+            ("gemini", "https://openidconnect.googleapis.com/v1/userinfo") => {
+                "https://openidconnect.googleapis.com/v1/userinfo"
+            }
+            _ => return Ok(String::new()),
+        };
         let Some(client) = self.oauth_http_client.as_ref() else {
             return Ok(String::new());
         };
-        let Ok(endpoint) = reqwest::Url::parse(endpoint) else {
-            return Ok(String::new());
-        };
-        if endpoint.scheme() != "https" {
-            return Ok(String::new());
-        }
-        // The userinfo endpoint is a compile-time constant in the descriptor table,
-        // never derived from user input. The rook-core descriptor_table test
-        // `every_oauth_endpoint_uses_https` enforces HTTPS for every OAuth endpoint.
-        // CodeQL cannot see through the table lookup to prove this invariant.
-        let Ok(response) = client
-            .get(endpoint) // codeql[rust/cleartext-transmission]
-            .bearer_auth(access_token)
-            .send()
-            .await
-        else {
+        // The endpoint is a compile-time HTTPS literal above (matched against
+        // the descriptor-declared userinfo endpoint), so the cleartext
+        // invariant is provable without a suppression comment.
+        let Ok(response) = client.get(endpoint).bearer_auth(access_token).send().await else {
             return Ok(String::new());
         };
         if !response.status().is_success() {
