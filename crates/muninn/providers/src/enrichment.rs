@@ -142,6 +142,8 @@ struct WikimediaSummary {
     #[serde(rename = "type")]
     page_type: Option<String>,
     title: Option<String>,
+    #[allow(dead_code)] // Deserialized for fidelity; the pinned stage writes
+    // the raw extract into enrichment_data, not a summary property.
     extract: Option<String>,
     description: Option<String>,
     wikibase_item: Option<String>,
