@@ -237,6 +237,7 @@ async fn anthropic_descriptor_default_and_override_control_routing_and_capture()
     descriptor.default_base_url = Box::leak(server.uri().into_boxed_str());
     let descriptor = Box::leak(Box::new(descriptor));
     for override_url in [None, Some(server.uri())] {
+        let uses_descriptor_default = override_url.is_none();
         let recorder = Arc::new(Recorder::default());
         let provider = build_provider_from_connection_with_recorder(
             &ConnectionId::new(),
@@ -251,6 +252,9 @@ async fn anthropic_descriptor_default_and_override_control_routing_and_capture()
         )
         .unwrap();
         assert!(provider.complete(&request()).await.is_ok());
+        if uses_descriptor_default {
+            assert_eq!(server.received_requests().await.unwrap().len(), 1);
+        }
         assert_eq!(*recorder.calls.lock().unwrap(), 0);
     }
 }

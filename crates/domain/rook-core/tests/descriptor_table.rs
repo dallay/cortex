@@ -63,10 +63,10 @@ fn nan_is_declared_with_its_catalogued_models() {
 }
 
 #[test]
-fn oauth_credentials_are_only_accepted_where_declared() {
-    // The eight legacy kinds keep today's behavior; the new table entries
+fn oauth_credential_capability_preserves_existing_provider_combinations() {
+    // The seven legacy kinds keep today's behavior; all other table entries
     // require API keys.
-    for id in [
+    let oauth_provider_ids = [
         "openai",
         "anthropic",
         "ollama",
@@ -74,26 +74,36 @@ fn oauth_credentials_are_only_accepted_where_declared() {
         "gemini",
         "groq",
         "azure-openai",
-    ] {
-        assert!(
-            descriptor_by_id(id).unwrap().accepts_oauth_credentials,
-            "{id} must keep accepting OAuth credentials"
+    ];
+    for descriptor in PROVIDER_DESCRIPTORS {
+        assert_eq!(
+            descriptor.accepts_oauth_credentials,
+            oauth_provider_ids.contains(&descriptor.id),
+            "{}",
+            descriptor.id
         );
     }
-    for id in [
-        "openai-compatible",
-        "xai",
-        "mistral",
-        "deepseek",
-        "together",
-        "fireworks",
-        "cerebras",
-        "openrouter",
-        "nan",
-    ] {
-        assert!(
-            !descriptor_by_id(id).unwrap().accepts_oauth_credentials,
-            "{id} must reject OAuth credentials"
-        );
+}
+
+#[test]
+fn every_oauth_endpoint_uses_https() {
+    for descriptor in PROVIDER_DESCRIPTORS {
+        let Some(oauth) = descriptor.oauth else {
+            continue;
+        };
+        for (name, endpoint) in [
+            ("authorization_endpoint", Some(oauth.authorization_endpoint)),
+            ("token_endpoint", Some(oauth.token_endpoint)),
+            ("device_code_endpoint", oauth.device_code_endpoint),
+            ("userinfo_endpoint", Some(oauth.userinfo_endpoint)),
+        ] {
+            if let Some(endpoint) = endpoint {
+                assert!(
+                    endpoint.starts_with("https://"),
+                    "{} {name} must use HTTPS: {endpoint}",
+                    descriptor.id
+                );
+            }
+        }
     }
 }

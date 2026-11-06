@@ -792,10 +792,10 @@ impl ManageConnections {
         let Some(client) = self.oauth_http_client.as_ref() else {
             return Ok(String::new());
         };
-        // The userinfo endpoint is a compile-time HTTPS constant declared in
-        // the descriptor table (`https://openidconnect.googleapis.com/v1/userinfo`);
-        // it is never derived from user input. CodeQL cannot see through the
-        // table lookup to prove the constant.
+        // The userinfo endpoint is a compile-time constant in the descriptor table,
+        // never derived from user input. The rook-core descriptor_table test
+        // `every_oauth_endpoint_uses_https` enforces HTTPS for every OAuth endpoint.
+        // CodeQL cannot see through the table lookup to prove this invariant.
         let Ok(response) = client
             .get(endpoint) // codeql[rust/cleartext-transmission]
             .bearer_auth(access_token)
