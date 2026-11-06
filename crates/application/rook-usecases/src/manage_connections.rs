@@ -792,7 +792,17 @@ impl ManageConnections {
         let Some(client) = self.oauth_http_client.as_ref() else {
             return Ok(String::new());
         };
-        let Ok(response) = client.get(endpoint).bearer_auth(access_token).send().await else {
+        let Ok(response) = client
+            .get(endpoint)
+            // The userinfo endpoint is a compile-time HTTPS constant declared in
+            // the descriptor table (`https://openidconnect.googleapis.com/v1/userinfo`);
+            // it is never derived from user input. CodeQL cannot see through the
+            // table lookup to prove the constant.
+            // codeql[rust/cleartext-transmission]
+            .bearer_auth(access_token)
+            .send()
+            .await
+        else {
             return Ok(String::new());
         };
         if !response.status().is_success() {
