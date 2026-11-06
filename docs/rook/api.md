@@ -51,12 +51,13 @@ reservations and settled charges in the same window still
 count against the new budget. Lowering the budget below existing commitments
 blocks new reservations until sufficient capacity is available.
 
-Budgeted gateway requests require a provider adapter to expose a verifiable,
-enforceable strict cost bound. Rook rejects requests before provider I/O when
-that capability is unavailable, with HTTP `400` and error code
-`COST_UNAVAILABLE`. No current production provider adapter exposes
-this capability, so budgeted requests are currently rejected fail-closed. A
-budgeted request does not retry on another provider. Streaming reservations are
+Budgeted gateway requests require a verifiable, enforceable strict cost
+bound. The bound is derived from the model-catalog pricing for priced models
+(conservative prompt estimate plus the output cap) or from an adapter that
+proves its own bound. Rook rejects requests before provider I/O with HTTP
+`400` and error code `COST_UNAVAILABLE` when the requested model has no
+declared pricing, so budgeted requests on unpriced models remain
+fail-closed. A budgeted request does not retry on another provider. Streaming reservations are
 marked unresolved before the stream is exposed and remain charged after EOF,
 upstream failure, or client cancellation. Combos with a budget are rejected
 because Rook cannot prove a strict bound for the complete combo request.

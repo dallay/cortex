@@ -126,6 +126,7 @@ pub fn build_manage_connections(
     let builder: Arc<dyn ProviderBuilderPort> = Arc::new(DynamicProviderBuilder::new(
         model_catalog.clone(),
         quota_observation_recorder,
+        Arc::new(config.pricing.clone()),
     ));
     Ok(Some(
         ManageConnections::new(
@@ -1282,16 +1283,19 @@ impl QuotaObservationRecorderPort for ConnectionQuotaRecorder {
 struct DynamicProviderBuilder {
     catalog: Arc<dyn ModelCatalogPort>,
     quota_observation_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
+    pricing: Arc<rook_usecases::PricingConfig>,
 }
 
 impl DynamicProviderBuilder {
     fn new(
         catalog: Arc<dyn ModelCatalogPort>,
         quota_observation_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
+        pricing: Arc<rook_usecases::PricingConfig>,
     ) -> Self {
         Self {
             catalog,
             quota_observation_recorder,
+            pricing,
         }
     }
 
@@ -1364,7 +1368,8 @@ impl ProviderBuilderPort for DynamicProviderBuilder {
         Ok(Arc::new(
             rook_usecases::catalogued_provider::CataloguedProvider::new(
                 provider, metadata, ceiling,
-            ),
+            )
+            .with_pricing(self.pricing.clone()),
         ))
     }
 }

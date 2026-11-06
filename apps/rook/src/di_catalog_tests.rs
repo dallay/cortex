@@ -43,6 +43,9 @@ async fn builder_keeps_connection_scoped_models_and_metadata_on_the_exact_adapte
     let builder = DynamicProviderBuilder::new(
         Arc::new(StaticModelCatalog::with_declarations(declarations).unwrap()),
         None,
+        Arc::new(rook_usecases::PricingConfig {
+            providers: Default::default(),
+        }),
     );
     let first_provider = builder
         .build(input(ProviderKind::OpenAI, first))
@@ -79,6 +82,9 @@ async fn declarations_preserve_azure_and_compatible_membership_and_adapter_limit
     let builder = DynamicProviderBuilder::new(
         Arc::new(StaticModelCatalog::with_declarations(declarations).unwrap()),
         None,
+        Arc::new(rook_usecases::PricingConfig {
+            providers: Default::default(),
+        }),
     );
     let mut compatible = input(ProviderKind::OpenAiCompatible, ConnectionId::new());
     compatible.base_url = Some("https://upstream.example/v1".into());
