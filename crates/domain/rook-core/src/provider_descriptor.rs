@@ -270,7 +270,8 @@ const fn ollama() -> ProviderDescriptor {
         model_listing: ModelListing::Catalog,
         oauth: None,
         paths: ollama_paths(),
-        canonical_base_urls: &["http://localhost:11434"],
+        // Ollama carries no quota capture; no URL is canonical.
+        canonical_base_urls: &[],
         capability_ceiling: no_ceiling(),
         models: ModelSource::Catalog,
     }
@@ -318,7 +319,8 @@ const fn gemini() -> ProviderDescriptor {
             models: "/v1beta/models",
             health: "/v1beta/models",
         },
-        canonical_base_urls: &["https://generativelanguage.googleapis.com"],
+        // Gemini carries no quota capture; no URL is canonical.
+        canonical_base_urls: &[],
         capability_ceiling: no_ceiling(),
         models: ModelSource::Catalog,
     }

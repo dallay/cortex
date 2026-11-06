@@ -93,15 +93,14 @@ fn validate_openai_endpoint(
     {
         return Err(ValidationError::InvalidBaseUrl);
     }
-    if provider.model_listing == ModelListing::SupportedModels {
-        if config.supported_models.is_empty()
+    if provider.model_listing == ModelListing::SupportedModels
+        && (config.supported_models.is_empty()
             || config
                 .supported_models
                 .iter()
-                .any(|m| m.as_str().trim().is_empty())
-        {
-            return Err(ValidationError::EmptySupportedModels);
-        }
+                .any(|m| m.as_str().trim().is_empty()))
+    {
+        return Err(ValidationError::EmptySupportedModels);
     }
     if provider.protocol == Protocol::OpenAiChat
         && config.api_format.unwrap_or(rook_core::ApiFormat::OpenAI) != rook_core::ApiFormat::OpenAI
