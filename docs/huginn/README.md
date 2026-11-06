@@ -463,13 +463,8 @@ huginn --workspace ./my-project --json run "Analyze the code and return metrics"
 
 ## 🧪 Testing
 
-```bash
-# Run all tests
-cargo test -p huginn
-
-# With coverage
-cargo tarpaulin -p huginn
-```
+For repository setup, mock-provider workflows, the architecture guard, and focused Huginn tests,
+see the [Huginn development guide](../development/huginn.md).
 
 ---
 
