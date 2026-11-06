@@ -838,16 +838,16 @@ mod tests {
             metadata: muninn_core::model::Metadata::new(),
         };
         let outcome = service.enrich(&entity).await.expect("the provider answers");
-        let attributes = outcome
-            .attributes
-            .expect("a found summary carries the documented attributes");
+        // Declared divergence (GM-06): the product's data carrier is the
+        // enriched description, not the pinned raw-payload blob, so a body
+        // with only an extract and a wikidata id stays absent on the product.
         assert_eq!(
-            attributes.enriched_summary.as_deref(),
-            Some("mathematician")
+            outcome.status,
+            muninn_core::enrichment::EnrichmentStatus::Success
         );
-        assert_eq!(attributes.enriched_description, None);
-        assert_eq!(attributes.wikidata_id.as_deref(), Some("Q7259"));
-        assert_eq!(attributes.enrichment_provider, "wikimedia");
+        assert_eq!(outcome.provider.as_deref(), Some("wikimedia"));
+        assert_eq!(outcome.attributes, None);
+        assert_eq!(outcome.persisted, false);
         let requests = received.lock().unwrap().clone();
         assert_eq!(requests.len(), 1, "{requests:?}");
         assert!(
