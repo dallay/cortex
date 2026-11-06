@@ -1000,6 +1000,11 @@ fn settings_pty_escape_closes_modal_without_cancelling_stream() {
         !rendered.contains("operation cancelled"),
         "Esc cancelled the active stream:\n{rendered}"
     );
+    let output = pty.output();
+    assert!(
+        !output.contains("operation cancelled"),
+        "Esc emitted cancellation feedback in raw PTY output:\n{output}"
+    );
     pty.send("\x03");
     pty.finish(true);
 }
