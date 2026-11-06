@@ -4,9 +4,7 @@
 use std::sync::{Arc, Mutex};
 
 use rook::di::quota_recorder_for_connection;
-use rook_core::{
-    ConnectionId, ProviderId, ProviderKind, QuotaObservation, QuotaObservationRecorderPort,
-};
+use rook_core::{ConnectionId, ProviderId, QuotaObservation, QuotaObservationRecorderPort};
 use shared_kernel::CortexResult;
 
 #[derive(Default)]
@@ -41,7 +39,7 @@ impl QuotaObservationRecorderPort for NullRecorder {
 }
 
 /// Returns whether a connection with this endpoint would capture quota signals.
-fn capture_enabled(kind: ProviderKind, base_url: Option<&str>) -> bool {
+fn capture_enabled(kind: &'static rook_core::ProviderDescriptor, base_url: Option<&str>) -> bool {
     quota_recorder_for_connection(
         kind,
         base_url,
@@ -55,14 +53,38 @@ fn capture_enabled(kind: ProviderKind, base_url: Option<&str>) -> bool {
 #[test]
 fn canonical_gate_accepts_default_and_explicit_canonical_urls() {
     for (kind, url) in [
-        (ProviderKind::OpenAI, None),
-        (ProviderKind::OpenAI, Some("https://api.openai.com")),
-        (ProviderKind::OpenAI, Some("https://api.openai.com/")),
-        (ProviderKind::OpenAI, Some("https://api.openai.com/v1")),
-        (ProviderKind::Anthropic, None),
-        (ProviderKind::Anthropic, Some("https://api.anthropic.com")),
-        (ProviderKind::Groq, None),
-        (ProviderKind::Groq, Some("https://api.groq.com/openai/v1")),
+        (
+            rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+            None,
+        ),
+        (
+            rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+            Some("https://api.openai.com"),
+        ),
+        (
+            rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+            Some("https://api.openai.com/"),
+        ),
+        (
+            rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+            Some("https://api.openai.com/v1"),
+        ),
+        (
+            rook_core::descriptor_by_id("anthropic").expect("anthropic descriptor"),
+            None,
+        ),
+        (
+            rook_core::descriptor_by_id("anthropic").expect("anthropic descriptor"),
+            Some("https://api.anthropic.com"),
+        ),
+        (
+            rook_core::descriptor_by_id("groq").expect("groq descriptor"),
+            None,
+        ),
+        (
+            rook_core::descriptor_by_id("groq").expect("groq descriptor"),
+            Some("https://api.groq.com/openai/v1"),
+        ),
     ] {
         assert!(
             capture_enabled(kind, url),
@@ -74,21 +96,36 @@ fn canonical_gate_accepts_default_and_explicit_canonical_urls() {
 #[test]
 fn canonical_gate_rejects_custom_and_non_capturing_endpoints() {
     for (kind, url) in [
-        (ProviderKind::OpenAI, Some("https://proxy.internal/v1")),
-        (ProviderKind::OpenAI, Some("http://api.openai.com")),
-        (ProviderKind::OpenAI, Some("https://api.openai.com:8443")),
         (
-            ProviderKind::OpenAI,
+            rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+            Some("https://proxy.internal/v1"),
+        ),
+        (
+            rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+            Some("http://api.openai.com"),
+        ),
+        (
+            rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+            Some("https://api.openai.com:8443"),
+        ),
+        (
+            rook_core::descriptor_by_id("openai").expect("openai descriptor"),
             Some("https://api.openai.com.evil.test"),
         ),
         (
-            ProviderKind::Anthropic,
+            rook_core::descriptor_by_id("anthropic").expect("anthropic descriptor"),
             Some("https://api.anthropic.com/v1"),
         ),
-        (ProviderKind::Groq, Some("https://api.groq.com/v1")),
-        (ProviderKind::Ollama, Some("http://localhost:11434")),
         (
-            ProviderKind::Gemini,
+            rook_core::descriptor_by_id("groq").expect("groq descriptor"),
+            Some("https://api.groq.com/v1"),
+        ),
+        (
+            rook_core::descriptor_by_id("ollama").expect("ollama descriptor"),
+            Some("http://localhost:11434"),
+        ),
+        (
+            rook_core::descriptor_by_id("gemini").expect("gemini descriptor"),
             Some("https://generativelanguage.googleapis.com"),
         ),
     ] {
@@ -103,7 +140,7 @@ fn canonical_gate_rejects_custom_and_non_capturing_endpoints() {
 fn capture_is_disabled_without_a_recorder_even_for_canonical_endpoints() {
     assert!(
         quota_recorder_for_connection(
-            ProviderKind::OpenAI,
+            rook_core::descriptor_by_id("openai").expect("openai descriptor"),
             None,
             ConnectionId::new(),
             ProviderId::new("probe"),
@@ -149,7 +186,7 @@ async fn identity_wrapper_restores_runtime_and_connection() {
     for connection_id in [ConnectionId::new(), ConnectionId::new()] {
         expected_connections.push(connection_id);
         let recorder = quota_recorder_for_connection(
-            ProviderKind::OpenAI,
+            rook_core::descriptor_by_id("openai").expect("openai descriptor"),
             None,
             connection_id,
             runtime_id.clone(),
@@ -161,7 +198,7 @@ async fn identity_wrapper_restores_runtime_and_connection() {
         // wrapper must restore the managed runtime identity before persisting.
         recorder
             .record_observation(QuotaObservation {
-                provider_kind: ProviderKind::OpenAI,
+                provider_id: "openai".to_string(),
                 provider: ProviderId::new(connection_id.to_string()),
                 connection_id: None,
                 metric: "requests".into(),
@@ -193,7 +230,7 @@ async fn identity_wrapper_restores_runtime_and_connection() {
     assert_eq!(observed_connections, expected_connections);
     for row in rows {
         assert_eq!(row.provider, runtime_id);
-        assert_eq!(row.provider_kind, ProviderKind::OpenAI);
+        assert_eq!(row.provider_id, "openai");
         assert_eq!(row.metric, "requests");
         assert_eq!(row.limit, Some(100.0));
         assert_eq!(row.remaining, Some(75.0));
@@ -207,7 +244,7 @@ async fn identity_wrapper_preserves_batch_boundary_and_stamps_every_observation(
     let observations: Vec<_> = ["requests", "tokens"]
         .into_iter()
         .map(|metric| QuotaObservation {
-            provider_kind: ProviderKind::OpenAI,
+            provider_id: "openai".to_string(),
             provider: ProviderId::new("connection-scoped-id"),
             connection_id: None,
             metric: metric.into(),
@@ -223,7 +260,7 @@ async fn identity_wrapper_preserves_batch_boundary_and_stamps_every_observation(
         .collect();
 
     let recorder = quota_recorder_for_connection(
-        ProviderKind::OpenAI,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
         None,
         connection_id,
         ProviderId::new("openai-primary"),

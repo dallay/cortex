@@ -554,6 +554,7 @@ async fn build_gateway_with_router(
 
     let openai_provider: Arc<dyn ProviderPort> = Arc::new(
         OpenAIProvider::new(OpenAIProviderConfig {
+            provider_id: "openai",
             id: ProviderId::new("openai-e2e"),
             api_key: "upstream".to_string(),
             base_url: upstreams.openai.uri(),
@@ -565,6 +566,7 @@ async fn build_gateway_with_router(
     let anthropic_provider: Arc<dyn ProviderPort> =
         AnthropicProvider::new(AnthropicProviderConfig {
             id: ProviderId::new("anthropic-e2e"),
+            provider_id: "anthropic",
             api_key: "upstream".to_string(),
             base_url: upstreams.anthropic.uri(),
             models: vec![ModelId::new("claude-e2e")],

@@ -124,7 +124,7 @@ async fn azure_authorization_code_uses_pkce_and_keeps_secret_out_of_url() {
     let manager = manager();
     let started = manager
         .start_oauth_flow(
-            rook_core::ProviderKind::AzureOpenAI,
+            rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
             request(OAuthFlowType::AuthorizationCode),
         )
         .await
@@ -152,7 +152,10 @@ async fn gemini_authorization_requests_its_documented_scope_and_offline_access()
     request.project_id = Some("google-project".to_string());
     request.config.base_url = None;
     let started = manager
-        .start_oauth_flow(rook_core::ProviderKind::Gemini, request)
+        .start_oauth_flow(
+            rook_core::descriptor_by_id("gemini").expect("gemini descriptor"),
+            request,
+        )
         .await
         .expect("Gemini authorization flow starts");
     let url = reqwest::Url::parse(started.authorization_url.as_deref().unwrap()).unwrap();
@@ -179,7 +182,10 @@ async fn authorization_rejects_redirects_outside_the_rook_callback_path() {
     request.redirect_uri = "https://attacker.example/collect".to_string();
 
     assert!(manager
-        .start_oauth_flow(rook_core::ProviderKind::AzureOpenAI, request)
+        .start_oauth_flow(
+            rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
+            request
+        )
         .await
         .is_err());
 }
@@ -191,7 +197,10 @@ async fn gemini_does_not_advertise_device_code_flow() {
     request.project_id = Some("google-project".to_string());
 
     assert!(manager
-        .start_oauth_flow(rook_core::ProviderKind::Gemini, request)
+        .start_oauth_flow(
+            rook_core::descriptor_by_id("gemini").expect("gemini descriptor"),
+            request
+        )
         .await
         .is_err());
 }
@@ -203,7 +212,10 @@ async fn azure_requires_a_deployment_and_azure_resource_endpoint() {
     request.config.base_url = Some("https://attacker.example".to_string());
 
     assert!(manager
-        .start_oauth_flow(rook_core::ProviderKind::AzureOpenAI, request)
+        .start_oauth_flow(
+            rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
+            request
+        )
         .await
         .is_err());
 }
@@ -213,7 +225,7 @@ async fn unsupported_provider_is_rejected() {
     let manager = manager();
     let err = manager
         .start_oauth_flow(
-            rook_core::ProviderKind::OpenAI,
+            rook_core::descriptor_by_id("openai").expect("openai descriptor"),
             request(OAuthFlowType::AuthorizationCode),
         )
         .await
@@ -227,7 +239,10 @@ async fn missing_client_id_is_rejected() {
     let mut req = request(OAuthFlowType::AuthorizationCode);
     req.client_id = "   ".to_string();
     let err = manager
-        .start_oauth_flow(rook_core::ProviderKind::AzureOpenAI, req)
+        .start_oauth_flow(
+            rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
+            req,
+        )
         .await
         .expect_err("clientId required");
     assert!(err.to_string().contains("clientId"));
@@ -239,7 +254,10 @@ async fn empty_name_is_rejected() {
     let mut req = request(OAuthFlowType::AuthorizationCode);
     req.name = "  ".to_string();
     assert!(manager
-        .start_oauth_flow(rook_core::ProviderKind::AzureOpenAI, req)
+        .start_oauth_flow(
+            rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
+            req
+        )
         .await
         .is_err());
 }
@@ -250,7 +268,10 @@ async fn zero_priority_is_rejected() {
     let mut req = request(OAuthFlowType::AuthorizationCode);
     req.priority = 0;
     assert!(manager
-        .start_oauth_flow(rook_core::ProviderKind::AzureOpenAI, req)
+        .start_oauth_flow(
+            rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
+            req
+        )
         .await
         .is_err());
 }
@@ -262,7 +283,10 @@ async fn invalid_threshold_order_is_rejected() {
     req.config.quota_window_thresholds.warning = 0.9;
     req.config.quota_window_thresholds.error = 0.8;
     assert!(manager
-        .start_oauth_flow(rook_core::ProviderKind::AzureOpenAI, req)
+        .start_oauth_flow(
+            rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
+            req
+        )
         .await
         .is_err());
 }
@@ -273,7 +297,10 @@ async fn gemini_requires_project_id() {
     let mut req = request(OAuthFlowType::AuthorizationCode);
     req.project_id = None;
     let err = manager
-        .start_oauth_flow(rook_core::ProviderKind::Gemini, req)
+        .start_oauth_flow(
+            rook_core::descriptor_by_id("gemini").expect("gemini descriptor"),
+            req,
+        )
         .await
         .expect_err("project required");
     assert!(err.to_string().contains("projectId"));
@@ -285,7 +312,10 @@ async fn tenant_with_invalid_characters_is_rejected() {
     let mut req = request(OAuthFlowType::AuthorizationCode);
     req.tenant_id = Some("bad tenant!".to_string());
     assert!(manager
-        .start_oauth_flow(rook_core::ProviderKind::AzureOpenAI, req)
+        .start_oauth_flow(
+            rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
+            req
+        )
         .await
         .is_err());
 }
@@ -296,7 +326,10 @@ async fn unknown_connection_id_is_rejected() {
     let mut req = request(OAuthFlowType::AuthorizationCode);
     req.connection_id = Some(ConnectionId::new());
     assert!(manager
-        .start_oauth_flow(rook_core::ProviderKind::AzureOpenAI, req)
+        .start_oauth_flow(
+            rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
+            req
+        )
         .await
         .is_err());
 }
@@ -346,7 +379,7 @@ async fn authorization_flow_status_is_pending_then_cancellable() {
     let manager = manager();
     let started = manager
         .start_oauth_flow(
-            rook_core::ProviderKind::AzureOpenAI,
+            rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
             request(OAuthFlowType::AuthorizationCode),
         )
         .await
@@ -381,14 +414,15 @@ async fn device_code_start_uses_mock_endpoint() {
         Arc::new(PassThroughKeyManager),
         Arc::new(UnusedBuilder),
         rook_usecases::manage_connections::OAuthEndpointOverrides {
-            azure_token_url: None,
-            gemini_token_url: None,
-            azure_devicecode_url: Some(server.uri()),
+            endpoints: std::collections::HashMap::from([(
+                ("azure-openai", "device_code"),
+                server.uri(),
+            )]),
         },
     );
     let started = manager
         .start_oauth_flow(
-            rook_core::ProviderKind::AzureOpenAI,
+            rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
             request(OAuthFlowType::DeviceCode),
         )
         .await
@@ -422,14 +456,16 @@ async fn authorization_code_exchange_completes_connection() {
         Arc::new(PassThroughKeyManager),
         Arc::new(UnusedBuilder),
         rook_usecases::manage_connections::OAuthEndpointOverrides {
-            azure_token_url: Some(server.uri()),
-            gemini_token_url: Some(server.uri()),
-            azure_devicecode_url: Some(server.uri()),
+            endpoints: std::collections::HashMap::from([
+                (("azure-openai", "token"), server.uri()),
+                (("gemini", "token"), server.uri()),
+                (("azure-openai", "device_code"), server.uri()),
+            ]),
         },
     );
     let started = manager
         .start_oauth_flow(
-            rook_core::ProviderKind::AzureOpenAI,
+            rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
             request(OAuthFlowType::AuthorizationCode),
         )
         .await
@@ -458,14 +494,15 @@ async fn remote_cleartext_devicecode_override_is_rejected() {
         Arc::new(PassThroughKeyManager),
         Arc::new(UnusedBuilder),
         rook_usecases::manage_connections::OAuthEndpointOverrides {
-            azure_token_url: None,
-            gemini_token_url: None,
-            azure_devicecode_url: Some("http://evil.example/devicecode".to_string()),
+            endpoints: std::collections::HashMap::from([(
+                ("azure-openai", "device_code"),
+                "http://evil.example/devicecode".to_string(),
+            )]),
         },
     );
     let err = manager
         .start_oauth_flow(
-            rook_core::ProviderKind::AzureOpenAI,
+            rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
             request(OAuthFlowType::DeviceCode),
         )
         .await
@@ -481,14 +518,15 @@ async fn remote_cleartext_token_override_rejects_exchange() {
         Arc::new(PassThroughKeyManager),
         Arc::new(UnusedBuilder),
         rook_usecases::manage_connections::OAuthEndpointOverrides {
-            azure_token_url: Some("http://evil.example/token".to_string()),
-            gemini_token_url: None,
-            azure_devicecode_url: None,
+            endpoints: std::collections::HashMap::from([(
+                ("azure-openai", "token"),
+                "http://evil.example/token".to_string(),
+            )]),
         },
     );
     let started = manager
         .start_oauth_flow(
-            rook_core::ProviderKind::AzureOpenAI,
+            rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
             request(OAuthFlowType::AuthorizationCode),
         )
         .await
@@ -510,7 +548,10 @@ async fn authorization_rejects_https_callback_on_unlisted_host() {
     bad.redirect_uri = "https://evil.example/api/oauth/callback".to_string();
 
     let err = manager
-        .start_oauth_flow(rook_core::ProviderKind::AzureOpenAI, bad)
+        .start_oauth_flow(
+            rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
+            bad,
+        )
         .await
         .expect_err("unlisted HTTPS host must never start a flow");
     assert!(
@@ -526,7 +567,10 @@ async fn authorization_accepts_loopback_http() {
     let mut loopback = request(OAuthFlowType::AuthorizationCode);
     loopback.redirect_uri = "http://localhost:3000/api/oauth/callback".to_string();
     manager
-        .start_oauth_flow(rook_core::ProviderKind::AzureOpenAI, loopback)
+        .start_oauth_flow(
+            rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
+            loopback,
+        )
         .await
         .expect("loopback HTTP must start a flow");
 }

@@ -2,7 +2,7 @@ use chrono::Utc;
 use provider_sqlite::SqliteProviderRepository;
 use rook_core::{
     AuthType, ConnectionConfig, ConnectionId, Credentials, EncryptedBlob, ProviderConnection,
-    ProviderKind, ProviderRepositoryPort, QuotaWindowThresholds, TestStatus,
+    ProviderRepositoryPort, QuotaWindowThresholds, TestStatus,
 };
 use shared_kernel::ProviderId;
 
@@ -14,7 +14,7 @@ async fn oauth_client_configuration_round_trips_through_v6_columns() {
     let repo = SqliteProviderRepository::new(database.path()).expect("repository");
     let connection = ProviderConnection {
         id: ConnectionId::new(),
-        provider_kind: ProviderKind::AzureOpenAI,
+        provider: rook_core::descriptor_by_id("azure-openai").expect("descriptor"),
         provider_runtime_id: ProviderId::new("azure-test"),
         name: "Azure test".to_string(),
         priority: 10,
@@ -55,6 +55,6 @@ async fn oauth_client_configuration_round_trips_through_v6_columns() {
         .expect("load connection")
         .expect("connection exists");
 
-    assert_eq!(loaded.provider_kind, ProviderKind::AzureOpenAI);
+    assert_eq!(loaded.provider.id, "azure-openai");
     assert_eq!(loaded.credentials, connection.credentials);
 }

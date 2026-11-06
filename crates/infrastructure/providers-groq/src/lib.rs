@@ -18,9 +18,10 @@ use std::sync::Arc;
 pub fn parse_groq_rate_limit_headers(
     headers: &reqwest::header::HeaderMap,
     provider: ProviderId,
+    descriptor_id: &'static str,
     observed_at: chrono::DateTime<chrono::Utc>,
 ) -> Vec<rook_core::QuotaObservation> {
-    use rook_core::{ProviderKind, QuotaObservation};
+    use rook_core::QuotaObservation;
 
     [
         ("requests", "requests", "day"),
@@ -35,7 +36,7 @@ pub fn parse_groq_rate_limit_headers(
             .and_then(|value| value.to_str().ok())
             .and_then(parse_reset_milliseconds);
         Some(QuotaObservation {
-            provider_kind: ProviderKind::Groq,
+            provider_id: descriptor_id.to_string(),
             provider: provider.clone(),
             connection_id: None,
             metric: metric.to_string(),
@@ -103,6 +104,8 @@ struct GroqStreamDelta {
 #[derive(Debug, Clone)]
 pub struct GroqProviderConfig {
     pub id: ProviderId,
+    /// Canonical descriptor id of the provider this connection represents.
+    pub provider_id: &'static str,
     pub api_key: String,
     pub base_url: Option<String>,
     pub models: Vec<KModelId>,
@@ -180,8 +183,12 @@ impl GroqProvider {
         let Some(recorder) = self.quota_recorder.as_ref() else {
             return;
         };
-        let observations =
-            parse_groq_rate_limit_headers(headers, self.config.id.clone(), chrono::Utc::now());
+        let observations = parse_groq_rate_limit_headers(
+            headers,
+            self.config.id.clone(),
+            self.config.provider_id,
+            chrono::Utc::now(),
+        );
         if let Err(error) = recorder.record_observations(observations).await {
             tracing::warn!(%error, "failed to record Groq quota observations");
         }

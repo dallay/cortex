@@ -1,5 +1,5 @@
 use chrono::Utc;
-use rook_core::{AuthType, ProviderKind, TestStatus};
+use rook_core::{AuthType, TestStatus};
 use rook_usecases::manage_connections::CreateConnectionRequest;
 use shared_kernel::ProviderId;
 use transport_axum::provider_dto::*;
@@ -66,7 +66,7 @@ fn test_test_credentials_request_conversion() {
     let req = credentials_request();
 
     let domain = req.try_into_domain().unwrap();
-    assert_eq!(domain.provider_kind, ProviderKind::Anthropic);
+    assert_eq!(domain.provider.id, "anthropic");
     assert_eq!(domain.auth_type, AuthType::ApiKey);
 }
 

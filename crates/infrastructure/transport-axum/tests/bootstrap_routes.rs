@@ -279,6 +279,7 @@ async fn openai_chat_completions_http_sse_preserves_tools_and_propagates_truncat
         .mount(&valid_server)
         .await;
     let valid_provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-http-test"),
         api_key: "upstream-test-key".to_string(),
         base_url: valid_server.uri(),
@@ -307,6 +308,7 @@ async fn openai_chat_completions_http_sse_preserves_tools_and_propagates_truncat
         .mount(&truncated_server)
         .await;
     let truncated_provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-truncated-test"),
         api_key: "upstream-test-key".to_string(),
         base_url: truncated_server.uri(),

@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use rook_core::ports::ProviderRepositoryPort;
 use rook_core::provider_connection::{
-    AuthType, ConnectionConfig, Credentials, EncryptedBlob, ProviderConnection, ProviderKind,
+    AuthType, ConnectionConfig, Credentials, EncryptedBlob, ProviderConnection,
     QuotaWindowThresholds, RepositoryError, TestStatus,
 };
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
@@ -107,7 +107,7 @@ impl ProviderRepositoryPort for SqliteProviderRepository {
         if tx
             .query_row(
                 "SELECT 1 FROM provider_connections WHERE provider_kind = ?1 AND name = ?2",
-                params![conn_model.provider_kind.as_str(), conn_model.name],
+                params![conn_model.provider.as_str(), conn_model.name],
                 |_| Ok(()),
             )
             .optional()
@@ -259,7 +259,7 @@ fn update_params(
 fn common_values(conn: &ProviderConnection) -> Vec<rusqlite::types::Value> {
     vec![
         conn.id.to_string().into(),
-        conn.provider_kind.as_str().to_string().into(),
+        conn.provider.as_str().to_string().into(),
         conn.provider_runtime_id.to_string().into(),
         conn.name.clone().into(),
         auth_type_str(conn.auth_type).to_string().into(),
@@ -285,7 +285,7 @@ fn common_values(conn: &ProviderConnection) -> Vec<rusqlite::types::Value> {
         match conn.config.api_format {
             Some(rook_core::ApiFormat::Anthropic) => "anthropic",
             Some(rook_core::ApiFormat::OpenAI) => "openai",
-            None if conn.provider_kind == ProviderKind::Anthropic => "anthropic",
+            None if conn.provider.protocol == rook_core::Protocol::AnthropicMessages => "anthropic",
             None => "openai",
         }
         .to_string()
@@ -351,7 +351,6 @@ fn row_to_connection(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderConnec
         "oauth" => AuthType::OAuth,
         _ => return Err(invalid_data("invalid auth_type")),
     };
-    let provider_kind = row.get::<_, String>("provider_kind")?;
     let test_status = row.get::<_, String>("test_status")?;
     let created_at = row.get::<_, String>("created_at")?;
     let updated_at = row.get::<_, String>("updated_at")?;
@@ -381,8 +380,8 @@ fn row_to_connection(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderConnec
     Ok(ProviderConnection {
         id: ConnectionId::parse_str(&row.get::<_, String>("id")?)
             .map_err(|_| invalid_data("invalid connection id"))?,
-        provider_kind: ProviderKind::try_from(provider_kind.as_str())
-            .map_err(|_| invalid_data("invalid provider kind"))?,
+        provider: rook_core::descriptor_for(&row.get::<_, String>("provider_kind")?)
+            .ok_or_else(|| invalid_data("unknown provider id"))?,
         provider_runtime_id: ProviderId::new(row.get::<_, String>("provider_runtime_id")?),
         name: row.get("name")?,
         priority: row.get::<_, i64>("priority")? as u8,
@@ -593,7 +592,7 @@ impl CredentialsExt for ProviderConnection {
 }
 
 fn duplicate_connection(conn: &ProviderConnection) -> RepositoryError {
-    RepositoryError::DuplicateConnection(format!("{}/{}", conn.provider_kind.as_str(), conn.name))
+    RepositoryError::DuplicateConnection(format!("{}/{}", conn.provider.as_str(), conn.name))
 }
 
 fn update_error(error: rusqlite::Error, conn: &ProviderConnection) -> RepositoryError {
@@ -636,7 +635,7 @@ mod tests {
     fn connection(name: &str, priority: u8, created_at: DateTime<Utc>) -> ProviderConnection {
         ProviderConnection {
             id: ConnectionId::new(),
-            provider_kind: ProviderKind::OpenAI,
+            provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
             provider_runtime_id: ProviderId::new(format!("runtime-{name}")),
             name: name.to_string(),
             priority,
@@ -662,6 +661,86 @@ mod tests {
         }
     }
 
+    #[test]
+    fn pre_migration_legacy_provider_spellings_load_through_the_alias_map() {
+        let temp_file = tempfile::Builder::new()
+            .prefix("rook-provider-legacy-spelling-")
+            .suffix(".sqlite")
+            .tempfile()
+            .expect("temporary database");
+        let path = temp_file.path();
+        {
+            let mut conn = Connection::open(path).expect("legacy database");
+            db_migration::run_on_connection(&mut conn).expect("migrations");
+            // Rows written before the descriptor-id migration carry the serde
+            // spellings of Ollama Cloud and Azure OpenAI.
+            for (kind, runtime) in [
+                ("ollamacloud", "runtime-legacy-ollamacloud"),
+                ("azureopenai", "runtime-legacy-azureopenai"),
+            ] {
+                conn.execute(
+                    "INSERT INTO provider_connections (
+                        id, provider_kind, provider_runtime_id, name, auth_type,
+                        priority, is_active, api_key_ct, max_concurrent, quota_warning,
+                        quota_error, test_status, created_at, updated_at
+                    ) VALUES (?1, ?2, ?3, ?4, 'apiKey',
+                        5, 1, 'enc:v1:legacy', 1, 0.7, 0.9, 'neverTested',
+                        '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                    params![ConnectionId::new().to_string(), kind, runtime, runtime],
+                )
+                .expect("legacy row");
+            }
+        }
+
+        runtime().block_on(async {
+            let repo = SqliteProviderRepository::new(path).expect("repo");
+            let connections = repo.list().await.expect("legacy connections load");
+            let mut ids: Vec<_> = connections.iter().map(|c| c.provider.id).collect();
+            ids.sort();
+            assert_eq!(ids, vec!["azure-openai", "ollama-cloud"]);
+        });
+    }
+
+    #[test]
+    fn the_descriptor_id_migration_canonicalizes_legacy_stored_rows() {
+        // Run the shipped V15 statements verbatim against rows carrying the
+        // legacy serde spellings.
+        let migration_sql =
+            include_str!("../../db-migration/src/migrations/V15__provider_descriptor_ids.sql");
+        let mut conn = Connection::open_in_memory().expect("database");
+        db_migration::run_on_connection(&mut conn).expect("migrations");
+        for kind in ["ollamacloud", "azureopenai"] {
+            conn.execute(
+                "INSERT INTO provider_connections (
+                    id, provider_kind, provider_runtime_id, name, auth_type,
+                    priority, is_active, api_key_ct, max_concurrent, quota_warning,
+                    quota_error, test_status, created_at, updated_at
+                ) VALUES (?1, ?2, ?3, ?4, 'apiKey',
+                    5, 1, 'enc:v1:legacy', 1, 0.7, 0.9, 'neverTested',
+                    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                params![
+                    ConnectionId::new().to_string(),
+                    kind,
+                    format!("runtime-{kind}"),
+                    kind
+                ],
+            )
+            .expect("legacy row");
+        }
+        conn.execute_batch(migration_sql).expect("V15 applies");
+
+        let mut kinds: Vec<String> = {
+            let mut stmt = conn
+                .prepare("SELECT DISTINCT provider_kind FROM provider_connections")
+                .expect("select");
+            stmt.query_map([], |row| row.get(0))
+                .expect("query")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("rows")
+        };
+        kinds.sort();
+        assert_eq!(kinds, vec!["azure-openai", "ollama-cloud"]);
+    }
     #[test]
     fn connections_created_before_the_model_declaration_migration_keep_working() {
         let temp_file = tempfile::Builder::new()
@@ -692,7 +771,7 @@ mod tests {
             let connections = repo.list().await.expect("legacy connection loads");
             assert_eq!(connections.len(), 1);
             let legacy = &connections[0];
-            assert_eq!(legacy.provider_kind, ProviderKind::OpenAI);
+            assert_eq!(legacy.provider.id, "openai");
             assert!(
                 legacy.config.supported_models.is_empty(),
                 "a legacy connection has no declared models"

@@ -21,9 +21,9 @@ use super::{
 };
 use super::{
     ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeySubject, Combo, ComboValidationError,
-    NewSession, NewUser, PasswordHash, ProviderConnection, ProviderKind, RepositoryError, Session,
-    SessionId, SpendingBudgetReservation, SpendingBudgetReservationError,
-    SpendingReservationOutcome, User, UserId,
+    NewSession, NewUser, PasswordHash, ProviderConnection, RepositoryError, Session, SessionId,
+    SpendingBudgetReservation, SpendingBudgetReservationError, SpendingReservationOutcome, User,
+    UserId,
 };
 
 /// ---------------------------------------------------------------------------
@@ -582,11 +582,11 @@ pub type BoxStream<'a, T> = futures::stream::BoxStream<'a, T>;
 // The wire format
 // and the consuming UI must NOT depend on the implementation details.
 
-/// Model membership for a provider kind; presence is not capability evidence.
+/// Model membership for a provider; presence is not capability evidence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelCatalogEntry {
     pub model_id: String,
-    pub provider_kind: ProviderKind,
+    pub provider_id: String,
 }
 
 #[async_trait]
@@ -597,7 +597,7 @@ pub trait ModelCatalogPort: Send + Sync {
     /// Include declarations scoped to this connection without publishing them globally.
     async fn list_for_connection(
         &self,
-        _kind: ProviderKind,
+        _provider: &'static crate::provider_descriptor::ProviderDescriptor,
         _connection: &ConnectionId,
     ) -> Vec<ModelCatalogEntry> {
         self.list().await
@@ -607,7 +607,7 @@ pub trait ModelCatalogPort: Send + Sync {
     /// Model presence alone provides no capability guarantees.
     async fn resolve(
         &self,
-        _kind: ProviderKind,
+        _provider: &'static crate::provider_descriptor::ProviderDescriptor,
         _connection: Option<&ConnectionId>,
         _model: &str,
     ) -> crate::ModelCapabilities {

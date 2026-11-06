@@ -1,12 +1,11 @@
 use models_catalog::StaticModelCatalog;
-use rook_core::{CapabilityState, ConnectionId, ModelCatalogPort, ModelDeclaration, ProviderKind};
+use rook_core::{CapabilityState, ConnectionId, ModelCatalogPort, ModelDeclaration};
 
 #[tokio::test]
 async fn discovery_proves_presence_without_inventing_capabilities() {
     let catalog = StaticModelCatalog::new();
-    let metadata = catalog
-        .resolve(ProviderKind::OpenAI, None, "new-discovered-id")
-        .await;
+    let openai = rook_core::descriptor_by_id("openai").unwrap();
+    let metadata = catalog.resolve(openai, None, "new-discovered-id").await;
     assert_eq!(metadata.tools.state, CapabilityState::Unknown);
     assert_eq!(metadata.vision.state, CapabilityState::Unknown);
     assert!(metadata.context_tokens.is_none());
@@ -16,16 +15,15 @@ async fn discovery_proves_presence_without_inventing_capabilities() {
 async fn connection_overrides_merge_per_field_and_explicit_unknown_suppresses_support() {
     let connection = ConnectionId::new();
     let declarations: Vec<ModelDeclaration> = serde_json::from_value(serde_json::json!([
-        {"provider_kind":"openai", "model_id":"custom", "capabilities":{
+        {"provider_id":"openai", "model_id":"custom", "capabilities":{
             "tools":"supported", "streaming":"supported", "context_tokens":8192}},
-        {"provider_kind":"openai", "model_id":"custom", "connection_id":connection,
+        {"provider_id":"openai", "model_id":"custom", "connection_id":connection,
          "capabilities":{"tools":"unknown"}}
     ]))
     .unwrap();
     let catalog = StaticModelCatalog::with_declarations(declarations).unwrap();
-    let metadata = catalog
-        .resolve(ProviderKind::OpenAI, Some(&connection), "custom")
-        .await;
+    let openai = rook_core::descriptor_by_id("openai").unwrap();
+    let metadata = catalog.resolve(openai, Some(&connection), "custom").await;
     assert_eq!(metadata.tools.state, CapabilityState::Unknown);
     assert_eq!(metadata.tools.source, "connection_configuration");
     assert_eq!(metadata.streaming.state, CapabilityState::Supported);
@@ -34,25 +32,38 @@ async fn connection_overrides_merge_per_field_and_explicit_unknown_suppresses_su
     assert_eq!(context.value, 8192);
     assert_eq!(context.source, "provider_configuration");
     let other = catalog
-        .resolve(ProviderKind::OpenAI, Some(&ConnectionId::new()), "custom")
+        .resolve(openai, Some(&ConnectionId::new()), "custom")
         .await;
     assert_eq!(other.tools.state, CapabilityState::Supported);
     assert_eq!(other.tools.source, "provider_configuration");
-    let discovered = catalog.resolve(ProviderKind::OpenAI, None, "custom").await;
+    let discovered = catalog.resolve(openai, None, "custom").await;
     assert_eq!(discovered.tools.state, CapabilityState::Supported);
 }
 
 #[test]
 fn conflicting_declarations_and_empty_ids_are_rejected() {
     for value in [
-        serde_json::json!([{"provider_kind":"openai","model_id":" "}]),
+        serde_json::json!([{"provider_id":"openai","model_id":" "}]),
         serde_json::json!([
-            {"provider_kind":"openai","model_id":"same"},
-            {"provider_kind":"openai","model_id":"same"}
+            {"provider_id":"openai","model_id":"same"},
+            {"provider_id":"openai","model_id":"same"}
         ]),
-        serde_json::json!([{"provider_kind":"openai","model_id":"a","capabilities":{"context_tokens":0}}]),
+        serde_json::json!([{"provider_id":"openai","model_id":"a","capabilities":{"context_tokens":0}}]),
     ] {
         let declarations = serde_json::from_value(value).unwrap();
         assert!(StaticModelCatalog::with_declarations(declarations).is_err());
     }
+}
+
+#[test]
+fn declarations_with_unknown_provider_ids_are_rejected_with_a_clear_error() {
+    let declarations: Vec<ModelDeclaration> = serde_json::from_value(serde_json::json!([
+        {"provider_id":"not-a-provider","model_id":"custom"}
+    ]))
+    .unwrap();
+    let error = match StaticModelCatalog::with_declarations(declarations) {
+        Ok(_) => panic!("an unknown provider id must be rejected at write time"),
+        Err(error) => error,
+    };
+    assert_eq!(error, "unknown provider id: not-a-provider");
 }

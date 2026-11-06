@@ -26,9 +26,10 @@ use std::sync::Arc;
 pub fn parse_anthropic_rate_limit_headers(
     headers: &reqwest::header::HeaderMap,
     provider: ProviderId,
+    descriptor_id: &'static str,
     observed_at: chrono::DateTime<chrono::Utc>,
 ) -> Vec<rook_core::QuotaObservation> {
-    use rook_core::{ProviderKind, QuotaObservation};
+    use rook_core::QuotaObservation;
 
     let scope = headers
         .get("anthropic-workspace-id")
@@ -66,7 +67,7 @@ pub fn parse_anthropic_rate_limit_headers(
                 .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
                 .map(|value| value.with_timezone(&chrono::Utc));
             Some(QuotaObservation {
-                provider_kind: ProviderKind::Anthropic,
+                provider_id: descriptor_id.to_string(),
                 provider: provider.clone(),
                 connection_id: None,
                 metric: metric.to_string(),
@@ -369,6 +370,8 @@ struct ToolUseTracker {
 #[derive(Debug, Clone)]
 pub struct AnthropicProviderConfig {
     pub id: ProviderId,
+    /// Canonical descriptor id of the provider this connection represents.
+    pub provider_id: &'static str,
     pub api_key: String,
     pub base_url: String,
     pub models: Vec<KModelId>,
@@ -441,8 +444,12 @@ impl AnthropicProvider {
         let Some(recorder) = self.quota_recorder.as_ref() else {
             return;
         };
-        let observations =
-            parse_anthropic_rate_limit_headers(headers, self.config.id.clone(), chrono::Utc::now());
+        let observations = parse_anthropic_rate_limit_headers(
+            headers,
+            self.config.id.clone(),
+            self.config.provider_id,
+            chrono::Utc::now(),
+        );
         if let Err(error) = recorder.record_observations(observations).await {
             tracing::warn!(%error, "failed to record Anthropic quota observations");
         }

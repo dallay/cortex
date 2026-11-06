@@ -2325,14 +2325,13 @@ fn test_connection(
     is_active: bool,
 ) -> rook_core::ProviderConnection {
     use rook_core::{
-        AuthType, ConnectionConfig, Credentials, EncryptedBlob, ProviderKind,
-        QuotaWindowThresholds, TestStatus,
+        AuthType, ConnectionConfig, Credentials, EncryptedBlob, QuotaWindowThresholds, TestStatus,
     };
 
     let now = chrono::Utc::now();
     rook_core::ProviderConnection {
         id,
-        provider_kind: ProviderKind::OpenAI,
+        provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
         provider_runtime_id: runtime_id,
         name: "combo-test".to_string(),
         priority: 1,
@@ -3048,7 +3047,7 @@ fn quota_observation(
     reset_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> QuotaObservation {
     QuotaObservation {
-        provider_kind: rook_core::ProviderKind::OpenAI,
+        provider_id: "openai".to_string(),
         provider: runtime_id,
         connection_id: Some(connection_id),
         metric: "requests".to_string(),

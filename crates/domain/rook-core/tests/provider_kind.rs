@@ -1,19 +1,26 @@
-use rook_core::ProviderKind;
+use rook_core::{descriptor_by_id, descriptor_for};
 
 #[test]
-fn openai_compatible_provider_kind_round_trips() {
+fn openai_compatible_descriptor_resolves() {
+    let descriptor = descriptor_by_id("openai-compatible").expect("declared descriptor");
+    assert_eq!(descriptor.id, "openai-compatible");
     assert_eq!(
-        ProviderKind::try_from("openai-compatible").unwrap(),
-        ProviderKind::OpenAiCompatible
+        descriptor_for("openai-compatible").map(|d| d.id),
+        Some(descriptor.id)
     );
-    assert_eq!(ProviderKind::OpenAiCompatible.as_str(), "openai-compatible");
 }
 
 #[test]
-fn azure_openai_provider_kind_round_trips() {
+fn azure_openai_descriptor_resolves() {
+    let descriptor = descriptor_by_id("azure-openai").expect("declared descriptor");
+    assert_eq!(descriptor.id, "azure-openai");
     assert_eq!(
-        ProviderKind::try_from("azure-openai").unwrap(),
-        ProviderKind::AzureOpenAI
+        descriptor_for("azure-openai").map(|d| d.id),
+        Some(descriptor.id)
     );
-    assert_eq!(ProviderKind::AzureOpenAI.as_str(), "azure-openai");
+    // The pre-migration serde spelling stays readable through the alias map.
+    assert_eq!(
+        descriptor_for("azureopenai").map(|d| d.id),
+        Some(descriptor.id)
+    );
 }

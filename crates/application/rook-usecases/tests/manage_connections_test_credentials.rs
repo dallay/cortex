@@ -6,9 +6,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use rook_core::{
     ApiFormat, AuthType, BoxStream, CompletionRequest, CompletionResponse, ConnectionConfig,
-    CortexResult, HealthStatus, ModelId, ProviderConnection, ProviderId, ProviderKind,
-    ProviderPort, ProviderRegistryPort, ProviderRepositoryPort, QuotaWindowThresholds,
-    RegistryError, RepositoryError, StreamChunk,
+    CortexResult, HealthStatus, ModelId, ProviderConnection, ProviderId, ProviderPort,
+    ProviderRegistryPort, ProviderRepositoryPort, QuotaWindowThresholds, RegistryError,
+    RepositoryError, StreamChunk,
 };
 use rook_usecases::{
     manage_connections::{
@@ -232,7 +232,7 @@ fn test_credentials_returns_healthy_for_valid_credentials() {
 
             let result = mc
                 .test_credentials(TestCredentialsRequest {
-                    provider_kind: ProviderKind::Ollama,
+                    provider: rook_core::descriptor_by_id("ollama").expect("ollama descriptor"),
                     provider_runtime_id: ProviderId::new("ollama-primary"),
                     auth_type: AuthType::ApiKey,
                     credentials: CredentialsInput::ApiKey {
@@ -293,7 +293,7 @@ fn test_credentials_does_not_persist_to_database() {
             );
 
             mc.test_credentials(TestCredentialsRequest {
-                provider_kind: ProviderKind::Ollama,
+                provider: rook_core::descriptor_by_id("ollama").expect("ollama descriptor"),
                 provider_runtime_id: ProviderId::new("ollama-primary"),
                 auth_type: AuthType::ApiKey,
                 credentials: CredentialsInput::ApiKey {
@@ -339,7 +339,7 @@ fn test_credentials_validates_empty_api_key() {
 
             let result = mc
                 .test_credentials(TestCredentialsRequest {
-                    provider_kind: ProviderKind::Ollama,
+                    provider: rook_core::descriptor_by_id("ollama").expect("ollama descriptor"),
                     provider_runtime_id: ProviderId::new("ollama-primary"),
                     auth_type: AuthType::ApiKey,
                     credentials: CredentialsInput::ApiKey {
@@ -391,7 +391,7 @@ async fn run_test_credentials() -> rook_usecases::manage_connections::TestConnec
         latency_ms: 0,
     });
     mc.test_credentials(TestCredentialsRequest {
-        provider_kind: ProviderKind::Ollama,
+        provider: rook_core::descriptor_by_id("ollama").expect("ollama descriptor"),
         provider_runtime_id: ProviderId::new("ollama-primary"),
         auth_type: AuthType::ApiKey,
         credentials: CredentialsInput::ApiKey {
@@ -437,7 +437,7 @@ fn mapper_warning_returns_valid_true_status_warning_with_warning_text() {
             });
             let res = mc
                 .test_credentials(TestCredentialsRequest {
-                    provider_kind: ProviderKind::Ollama,
+                    provider: rook_core::descriptor_by_id("ollama").expect("ollama descriptor"),
                     provider_runtime_id: ProviderId::new("ollama-primary"),
                     auth_type: AuthType::ApiKey,
                     credentials: CredentialsInput::ApiKey {
@@ -472,7 +472,7 @@ fn mapper_unhealthy_returns_valid_false_status_unhealthy_with_error() {
             });
             let res = mc
                 .test_credentials(TestCredentialsRequest {
-                    provider_kind: ProviderKind::Ollama,
+                    provider: rook_core::descriptor_by_id("ollama").expect("ollama descriptor"),
                     provider_runtime_id: ProviderId::new("ollama-primary"),
                     auth_type: AuthType::ApiKey,
                     credentials: CredentialsInput::ApiKey {
@@ -509,7 +509,8 @@ fn mapper_unknown_returns_valid_true_status_unknown_with_reason_as_warning() {
             });
             let res = mc
                 .test_credentials(TestCredentialsRequest {
-                    provider_kind: ProviderKind::Anthropic,
+                    provider: rook_core::descriptor_by_id("anthropic")
+                        .expect("anthropic descriptor"),
                     provider_runtime_id: ProviderId::new("anthropic-primary"),
                     auth_type: AuthType::ApiKey,
                     credentials: CredentialsInput::ApiKey {

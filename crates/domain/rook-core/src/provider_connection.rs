@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use shared_kernel::{ConnectionId, ModelId, ProviderId};
 
+use crate::provider_descriptor::ProviderDescriptor;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum AuthType {
@@ -78,59 +80,12 @@ pub enum TestStatus {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ProviderKind {
-    OpenAI,
-    #[serde(rename = "openai-compatible")]
-    OpenAiCompatible,
-    Anthropic,
-    Ollama,
-    #[serde(alias = "ollama-cloud")]
-    OllamaCloud,
-    Gemini,
-    Groq,
-    #[serde(alias = "azure-openai")]
-    AzureOpenAI,
-}
-
-impl ProviderKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::OpenAI => "openai",
-            Self::OpenAiCompatible => "openai-compatible",
-            Self::Anthropic => "anthropic",
-            Self::Ollama => "ollama",
-            Self::OllamaCloud => "ollama-cloud",
-            Self::Gemini => "gemini",
-            Self::Groq => "groq",
-            Self::AzureOpenAI => "azure-openai",
-        }
-    }
-}
-
-impl TryFrom<&str> for ProviderKind {
-    type Error = ValidationError;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value.to_ascii_lowercase().as_str() {
-            "openai" => Ok(Self::OpenAI),
-            "openai-compatible" => Ok(Self::OpenAiCompatible),
-            "anthropic" => Ok(Self::Anthropic),
-            "ollama" => Ok(Self::Ollama),
-            "ollama-cloud" => Ok(Self::OllamaCloud),
-            "gemini" => Ok(Self::Gemini),
-            "groq" => Ok(Self::Groq),
-            "azure-openai" => Ok(Self::AzureOpenAI),
-            _ => Err(ValidationError::InvalidProviderKind),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct ProviderConnection {
     pub id: ConnectionId,
-    pub provider_kind: ProviderKind,
+    /// The connection's provider, resolved from the descriptor table at load
+    /// and validated at write time.
+    pub provider: &'static ProviderDescriptor,
     pub provider_runtime_id: ProviderId,
     pub name: String,
     pub priority: u8,
@@ -145,7 +100,7 @@ pub struct ProviderConnection {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidationError {
-    InvalidProviderKind,
+    InvalidProviderId,
     EmptyRuntimeId,
     EmptyName,
     NameTooLong,
@@ -170,7 +125,7 @@ pub enum ValidationError {
 impl std::fmt::Display for ValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::InvalidProviderKind => write!(f, "invalid provider kind"),
+            Self::InvalidProviderId => write!(f, "unknown provider id"),
             Self::EmptyRuntimeId => write!(f, "provider runtime id must not be empty"),
             Self::EmptyName => write!(f, "name must not be empty"),
             Self::NameTooLong => write!(f, "name must be at most 256 Unicode scalar values"),
@@ -287,66 +242,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn provider_kind_valid_cases() {
-        for kind in [
+    fn provider_ids_resolve_through_the_descriptor_table() {
+        use crate::provider_descriptor::{descriptor_by_id, descriptor_for};
+        for id in [
             "openai",
+            "openai-compatible",
             "anthropic",
             "ollama",
             "ollama-cloud",
             "gemini",
             "groq",
+            "azure-openai",
         ] {
-            assert!(ProviderKind::try_from(kind).is_ok());
+            assert!(descriptor_by_id(id).is_some(), "{id} must be declared");
         }
-    }
-
-    #[test]
-    fn provider_kind_case_insensitive() {
-        assert_eq!(ProviderKind::try_from("OPENAI"), Ok(ProviderKind::OpenAI));
+        // Legacy serde spellings resolve through the alias map so
+        // pre-migration rows never fail.
         assert_eq!(
-            ProviderKind::try_from("Anthropic"),
-            Ok(ProviderKind::Anthropic)
+            descriptor_for("ollamacloud").map(|d| d.id),
+            Some("ollama-cloud")
         );
         assert_eq!(
-            ProviderKind::try_from("OLLAMA-CLOUD"),
-            Ok(ProviderKind::OllamaCloud)
+            descriptor_for("azureopenai").map(|d| d.id),
+            Some("azure-openai")
         );
-    }
-
-    #[test]
-    fn provider_kind_invalid_cases() {
-        for kind in ["unknown", "azure", "openrouter", "", "openai "] {
-            assert_eq!(
-                ProviderKind::try_from(kind),
-                Err(ValidationError::InvalidProviderKind)
-            );
-        }
-    }
-
-    #[test]
-    fn provider_kind_as_str_roundtrip() {
-        for kind in [
-            ProviderKind::OpenAI,
-            ProviderKind::OpenAiCompatible,
-            ProviderKind::Anthropic,
-            ProviderKind::Ollama,
-            ProviderKind::OllamaCloud,
-            ProviderKind::Gemini,
-            ProviderKind::Groq,
-            ProviderKind::AzureOpenAI,
-        ] {
-            let value = kind.as_str();
-            assert_eq!(ProviderKind::try_from(value), Ok(kind));
-            let serialized = serde_json::to_string(&kind).unwrap();
-            assert_eq!(
-                serde_json::from_str::<ProviderKind>(&serialized).unwrap(),
-                kind
-            );
-            assert_eq!(
-                serde_json::from_str::<ProviderKind>(&format!("{value:?}")).unwrap(),
-                kind
-            );
-        }
+        assert!(descriptor_for("unknown").is_none());
     }
 
     #[test]

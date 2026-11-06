@@ -7,7 +7,7 @@ use rook_core::{
 };
 use rook_core::{
     AuthType, ConnectionConfig, Credentials, EncryptedBlob, HealthStatus, ProviderConnection,
-    ProviderKind, QuotaWindowThresholds, TestStatus, ValidationError,
+    QuotaWindowThresholds, TestStatus, ValidationError,
 };
 use shared_kernel::{ConnectionId, ProviderId};
 use std::sync::Arc;
@@ -136,7 +136,7 @@ fn create_rejects_credentials_that_do_not_match_auth_type() {
         .block_on(async {
             let result = usecase()
                 .create(CreateConnectionRequest {
-                    provider_kind: ProviderKind::OpenAI,
+                    provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                     provider_runtime_id: ProviderId::new("openai-primary"),
                     auth_type: AuthType::OAuth,
                     name: "primary".to_string(),
@@ -217,7 +217,7 @@ fn list_returns_populated() {
         .block_on(async {
             let conn = ProviderConnection {
                 id: ConnectionId::new(),
-                provider_kind: ProviderKind::OpenAI,
+                provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                 provider_runtime_id: ProviderId::new("openai-primary"),
                 name: "test-conn".to_string(),
                 priority: 1,
@@ -280,7 +280,7 @@ fn get_returns_some_for_existing_id() {
         .block_on(async {
             let conn = ProviderConnection {
                 id: ConnectionId::new(),
-                provider_kind: ProviderKind::OpenAI,
+                provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                 provider_runtime_id: ProviderId::new("openai-primary"),
                 name: "test-conn".to_string(),
                 priority: 1,
@@ -331,7 +331,7 @@ fn create_success_with_api_key_credentials() {
         .block_on(async {
             let result = usecase()
                 .create(CreateConnectionRequest {
-                    provider_kind: ProviderKind::OpenAI,
+                    provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                     provider_runtime_id: ProviderId::new("openai-primary"),
                     auth_type: AuthType::ApiKey,
                     name: "primary".to_string(),
@@ -362,7 +362,7 @@ fn create_success_with_oauth_credentials() {
         .block_on(async {
             let result = usecase()
                 .create(CreateConnectionRequest {
-                    provider_kind: ProviderKind::Gemini,
+                    provider: rook_core::descriptor_by_id("gemini").expect("gemini descriptor"),
                     provider_runtime_id: ProviderId::new("google-primary"),
                     auth_type: AuthType::OAuth,
                     name: "google-oauth".to_string(),
@@ -401,7 +401,7 @@ fn create_rejects_empty_name() {
         .block_on(async {
             let result = usecase()
                 .create(CreateConnectionRequest {
-                    provider_kind: ProviderKind::OpenAI,
+                    provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                     provider_runtime_id: ProviderId::new("openai-primary"),
                     auth_type: AuthType::ApiKey,
                     name: "".to_string(),
@@ -431,7 +431,7 @@ fn create_rejects_whitespace_only_name() {
         .block_on(async {
             let result = usecase()
                 .create(CreateConnectionRequest {
-                    provider_kind: ProviderKind::OpenAI,
+                    provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                     provider_runtime_id: ProviderId::new("openai-primary"),
                     auth_type: AuthType::ApiKey,
                     name: "   ".to_string(),
@@ -461,7 +461,7 @@ fn create_rejects_name_too_long() {
         .block_on(async {
             let result = usecase()
                 .create(CreateConnectionRequest {
-                    provider_kind: ProviderKind::OpenAI,
+                    provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                     provider_runtime_id: ProviderId::new("openai-primary"),
                     auth_type: AuthType::ApiKey,
                     name: "a".repeat(300),
@@ -491,7 +491,7 @@ fn create_rejects_priority_out_of_range_low() {
         .block_on(async {
             let result = usecase()
                 .create(CreateConnectionRequest {
-                    provider_kind: ProviderKind::OpenAI,
+                    provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                     provider_runtime_id: ProviderId::new("openai-primary"),
                     auth_type: AuthType::ApiKey,
                     name: "primary".to_string(),
@@ -525,7 +525,7 @@ fn create_rejects_priority_out_of_range_high() {
             // priority 255 should be accepted (within valid range 1..=255)
             let result = usecase()
                 .create(CreateConnectionRequest {
-                    provider_kind: ProviderKind::OpenAI,
+                    provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                     provider_runtime_id: ProviderId::new("openai-primary"),
                     auth_type: AuthType::ApiKey,
                     name: "primary".to_string(),
@@ -560,7 +560,7 @@ fn create_rejects_invalid_config_max_concurrent_zero() {
             };
             let result = usecase()
                 .create(CreateConnectionRequest {
-                    provider_kind: ProviderKind::OpenAI,
+                    provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                     provider_runtime_id: ProviderId::new("openai-primary"),
                     auth_type: AuthType::ApiKey,
                     name: "primary".to_string(),
@@ -601,7 +601,7 @@ fn create_rejects_invalid_config_thresholds_order() {
             };
             let result = usecase()
                 .create(CreateConnectionRequest {
-                    provider_kind: ProviderKind::OpenAI,
+                    provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                     provider_runtime_id: ProviderId::new("openai-primary"),
                     auth_type: AuthType::ApiKey,
                     name: "primary".to_string(),
@@ -631,7 +631,7 @@ fn create_rejects_empty_api_key_credential() {
         .block_on(async {
             let result = usecase()
                 .create(CreateConnectionRequest {
-                    provider_kind: ProviderKind::OpenAI,
+                    provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                     provider_runtime_id: ProviderId::new("openai-primary"),
                     auth_type: AuthType::ApiKey,
                     name: "primary".to_string(),
@@ -665,7 +665,7 @@ fn update_partial_update_changes_only_name() {
         .block_on(async {
             let conn = ProviderConnection {
                 id: ConnectionId::new(),
-                provider_kind: ProviderKind::OpenAI,
+                provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                 provider_runtime_id: ProviderId::new("openai-primary"),
                 name: "old-name".to_string(),
                 priority: 1,
@@ -724,7 +724,7 @@ fn update_preserves_credentials_when_not_provided() {
         .block_on(async {
             let conn = ProviderConnection {
                 id: ConnectionId::new(),
-                provider_kind: ProviderKind::OpenAI,
+                provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                 provider_runtime_id: ProviderId::new("openai-primary"),
                 name: "old-name".to_string(),
                 priority: 1,
@@ -786,7 +786,7 @@ fn update_replaces_credentials() {
         .block_on(async {
             let conn = ProviderConnection {
                 id: ConnectionId::new(),
-                provider_kind: ProviderKind::OpenAI,
+                provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                 provider_runtime_id: ProviderId::new("openai-primary"),
                 name: "test".to_string(),
                 priority: 1,
@@ -842,7 +842,7 @@ impl Default for UpdateConnectionRequest {
     fn default() -> Self {
         Self {
             expected_updated_at: Utc::now(),
-            provider_kind: None,
+            provider: None,
             provider_runtime_id: None,
             auth_type: None,
             name: None,
@@ -928,7 +928,7 @@ fn delete_returns_ok_for_existing_id() {
         .block_on(async {
             let conn = ProviderConnection {
                 id: ConnectionId::new(),
-                provider_kind: ProviderKind::OpenAI,
+                provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                 provider_runtime_id: ProviderId::new("openai-primary"),
                 name: "to-delete".to_string(),
                 priority: 1,
@@ -1250,7 +1250,7 @@ fn test_returns_unknown_when_provider_runtime_not_found() {
             // Insert a connection with a known id so we get past the repo lookup
             let conn = ProviderConnection {
                 id: ConnectionId::new(),
-                provider_kind: ProviderKind::OpenAI,
+                provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                 provider_runtime_id: ProviderId::new("openai-primary"),
                 name: "test".to_string(),
                 priority: 1,
@@ -1300,7 +1300,7 @@ fn test_returns_active_when_health_check_succeeds() {
         .block_on(async {
             let conn = ProviderConnection {
                 id: ConnectionId::new(),
-                provider_kind: ProviderKind::OpenAI,
+                provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                 provider_runtime_id: ProviderId::new("openai-primary"),
                 name: "test".to_string(),
                 priority: 1,
@@ -1362,7 +1362,7 @@ fn test_returns_unhealthy_when_health_check_fails() {
         .block_on(async {
             let conn = ProviderConnection {
                 id: ConnectionId::new(),
-                provider_kind: ProviderKind::OpenAI,
+                provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                 provider_runtime_id: ProviderId::new("openai-primary"),
                 name: "test".to_string(),
                 priority: 1,
@@ -1425,7 +1425,7 @@ fn test_returns_expired_oauth() {
             let expired_at = Utc::now().timestamp() - 3600;
             let conn = ProviderConnection {
                 id: ConnectionId::new(),
-                provider_kind: ProviderKind::Gemini,
+                provider: rook_core::descriptor_by_id("gemini").expect("gemini descriptor"),
                 provider_runtime_id: ProviderId::new("google-primary"),
                 name: "test".to_string(),
                 priority: 1,
@@ -1562,7 +1562,7 @@ impl ProviderBuilderPort for PausingBuilder {
 async fn concurrent_refreshes_publish_matching_snapshots_and_admission_limits() {
     let connection = ProviderConnection {
         id: ConnectionId::new(),
-        provider_kind: ProviderKind::OpenAI,
+        provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
         provider_runtime_id: ProviderId::new("dynamic"),
         name: "dynamic".into(),
         priority: 1,
@@ -1697,7 +1697,7 @@ fn refresh_registry_skips_inactive_connections() {
         .block_on(async {
             let active_conn = ProviderConnection {
                 id: ConnectionId::new(),
-                provider_kind: ProviderKind::OpenAI,
+                provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                 provider_runtime_id: ProviderId::new("openai-primary"),
                 name: "active".to_string(),
                 priority: 1,
@@ -1723,7 +1723,7 @@ fn refresh_registry_skips_inactive_connections() {
             };
             let inactive_conn = ProviderConnection {
                 id: ConnectionId::new(),
-                provider_kind: ProviderKind::Anthropic,
+                provider: rook_core::descriptor_by_id("anthropic").expect("anthropic descriptor"),
                 provider_runtime_id: ProviderId::new("anthropic-backup"),
                 name: "inactive".to_string(),
                 priority: 2,
@@ -1791,7 +1791,7 @@ fn refresh_registry_decrypts_and_builds_provider() {
         .block_on(async {
             let conn = ProviderConnection {
                 id: ConnectionId::new(),
-                provider_kind: ProviderKind::OpenAI,
+                provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                 provider_runtime_id: ProviderId::new("openai-primary"),
                 name: "primary".to_string(),
                 priority: 1,
@@ -1854,7 +1854,7 @@ fn refresh_registry_partial_failure_keeps_valid_providers() {
         .block_on(async {
             let conn_ok = ProviderConnection {
                 id: ConnectionId::new(),
-                provider_kind: ProviderKind::OpenAI,
+                provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                 provider_runtime_id: ProviderId::new("openai-primary"),
                 name: "ok".to_string(),
                 priority: 1,
@@ -1880,7 +1880,7 @@ fn refresh_registry_partial_failure_keeps_valid_providers() {
             };
             let conn_bad = ProviderConnection {
                 id: ConnectionId::new(),
-                provider_kind: ProviderKind::Anthropic,
+                provider: rook_core::descriptor_by_id("anthropic").expect("anthropic descriptor"),
                 provider_runtime_id: ProviderId::new("anthropic-bad"),
                 name: "bad".to_string(),
                 priority: 2,
@@ -1945,7 +1945,8 @@ fn refresh_registry_preserves_previous_provider_when_active_connection_fails_val
         .block_on(async {
             let mut connection = ProviderConnection {
                 id: ConnectionId::new(),
-                provider_kind: ProviderKind::AzureOpenAI,
+                provider: rook_core::descriptor_by_id("azure-openai")
+                    .expect("azure-openai descriptor"),
                 provider_runtime_id: ProviderId::new("azure-primary"),
                 name: "azure-primary".into(),
                 priority: 1,
@@ -2014,7 +2015,7 @@ fn refresh_registry_preserves_previous_provider_when_active_connection_build_fai
         .block_on(async {
             let connection = ProviderConnection {
                 id: ConnectionId::new(),
-                provider_kind: ProviderKind::OpenAI,
+                provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                 provider_runtime_id: ProviderId::new("openai-primary"),
                 name: "openai-primary".into(),
                 priority: 1,
@@ -2074,7 +2075,7 @@ fn refresh_registry_preserves_previous_provider_when_active_connection_fails_to_
         .block_on(async {
             let connection = ProviderConnection {
                 id: ConnectionId::new(),
-                provider_kind: ProviderKind::OpenAI,
+                provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                 provider_runtime_id: ProviderId::new("openai-primary"),
                 name: "primary".into(),
                 priority: 1,
@@ -2133,7 +2134,7 @@ fn refresh_registry_all_failures_results_in_empty_registry() {
         .block_on(async {
             let conn = ProviderConnection {
                 id: ConnectionId::new(),
-                provider_kind: ProviderKind::OpenAI,
+                provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                 provider_runtime_id: ProviderId::new("openai-primary"),
                 name: "primary".to_string(),
                 priority: 1,
@@ -2187,7 +2188,7 @@ fn create_calls_refresh_after_write() {
                 Arc::new(NoopProviderBuilder),
             );
             mc.create(CreateConnectionRequest {
-                provider_kind: ProviderKind::OpenAI,
+                provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                 provider_runtime_id: ProviderId::new("openai-primary"),
                 auth_type: AuthType::ApiKey,
                 name: "primary".to_string(),
@@ -2217,7 +2218,7 @@ fn update_calls_refresh_after_write() {
         .block_on(async {
             let existing_conn = ProviderConnection {
                 id: ConnectionId::new(),
-                provider_kind: ProviderKind::OpenAI,
+                provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                 provider_runtime_id: ProviderId::new("openai-primary"),
                 name: "primary".to_string(),
                 priority: 1,
@@ -2257,7 +2258,7 @@ fn update_calls_refresh_after_write() {
                 &existing_conn.id,
                 UpdateConnectionRequest {
                     expected_updated_at: existing_conn.updated_at,
-                    provider_kind: None,
+                    provider: None,
                     provider_runtime_id: None,
                     auth_type: None,
                     name: Some("updated-name".to_string()),
@@ -2286,7 +2287,7 @@ fn delete_calls_refresh_after_write() {
         .block_on(async {
             let existing_conn = ProviderConnection {
                 id: ConnectionId::new(),
-                provider_kind: ProviderKind::OpenAI,
+                provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                 provider_runtime_id: ProviderId::new("openai-primary"),
                 name: "primary".to_string(),
                 priority: 1,
@@ -2361,7 +2362,7 @@ fn provider_config_rejects_normalized_cloud_metadata_hosts() {
         assert!(
             matches!(
                 validate_provider_config(
-                    ProviderKind::OpenAI,
+                    rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                     &connection_config(url),
                     &rook_core::EndpointPolicy::default(),
                     false
@@ -2376,8 +2377,14 @@ fn provider_config_rejects_normalized_cloud_metadata_hosts() {
 #[test]
 fn provider_config_allows_explicit_private_provider_endpoints() {
     for (kind, url) in [
-        (ProviderKind::OpenAI, "http://10.0.0.12:8080/v1"),
-        (ProviderKind::Ollama, "http://127.0.0.1:11434"),
+        (
+            rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+            "http://10.0.0.12:8080/v1",
+        ),
+        (
+            rook_core::descriptor_by_id("ollama").expect("ollama descriptor"),
+            "http://127.0.0.1:11434",
+        ),
     ] {
         assert!(
             validate_provider_config(
@@ -2415,7 +2422,7 @@ fn refresh_registry_skips_stored_metadata_endpoint_before_decrypting() {
         .block_on(async {
             let conn = ProviderConnection {
                 id: ConnectionId::new(),
-                provider_kind: ProviderKind::OpenAI,
+                provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
                 provider_runtime_id: ProviderId::new("legacy-metadata-provider"),
                 name: "legacy metadata endpoint".to_string(),
                 priority: 1,
@@ -2518,4 +2525,50 @@ fn redirect_uri_wildcard_origin_does_not_authorize_arbitrary_host() {
     );
     let err = result.expect_err("wildcard must not authorize arbitrary hosts");
     assert!(matches!(err, ManageConnectionsError::OAuth(_)));
+}
+
+#[cfg(test)]
+mod descriptor_semantics_tests {
+    use super::*;
+
+    #[test]
+    fn oauth_scopes_come_from_the_descriptor_table() {
+        let azure = rook_core::descriptor_by_id("azure-openai").expect("azure descriptor");
+        let gemini = rook_core::descriptor_by_id("gemini").expect("gemini descriptor");
+        let openai = rook_core::descriptor_by_id("openai").expect("openai descriptor");
+        assert_eq!(
+            oauth_scopes(azure),
+            "https://cognitiveservices.azure.com/.default offline_access openid profile email"
+        );
+        assert_eq!(
+            oauth_scopes(gemini),
+            "https://www.googleapis.com/auth/generative-language.retriever openid email"
+        );
+        assert_eq!(oauth_scopes(openai), String::new());
+    }
+
+    #[test]
+    fn normalize_api_format_follows_the_protocol() {
+        let anthropic = rook_core::descriptor_by_id("anthropic").expect("anthropic descriptor");
+        let openai = rook_core::descriptor_by_id("openai").expect("openai descriptor");
+        let mut anthropic_config = ConnectionConfig {
+            max_concurrent: 1,
+            quota_window_thresholds: QuotaWindowThresholds {
+                warning: 0.7,
+                error: 0.9,
+            },
+            default_model: None,
+            base_url: None,
+            supported_models: Vec::new(),
+            api_format: None,
+        };
+        let mut openai_config = anthropic_config.clone();
+        normalize_api_format(anthropic, &mut anthropic_config);
+        normalize_api_format(openai, &mut openai_config);
+        assert_eq!(
+            anthropic_config.api_format,
+            Some(rook_core::ApiFormat::Anthropic)
+        );
+        assert_eq!(openai_config.api_format, Some(rook_core::ApiFormat::OpenAI));
+    }
 }

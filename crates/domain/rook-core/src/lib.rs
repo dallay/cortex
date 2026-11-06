@@ -21,6 +21,7 @@ pub use model::*;
 pub use model_capabilities::*;
 pub use ports::*;
 pub use provider_connection::*;
+pub use provider_descriptor::*;
 pub use quota::*;
 pub use stream_validation_error::StreamValidationError;
 

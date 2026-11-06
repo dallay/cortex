@@ -6,7 +6,7 @@ use dashmap::DashMap;
 use reqwest::Client;
 use rook_core::{
     CredentialEncryptionError, Credentials, EncryptedBlob, KeyManager, OAuthTokenPort,
-    ProviderConnection, ProviderKind, ProviderRepositoryPort, RepositoryError, TestStatus,
+    ProviderConnection, ProviderRepositoryPort, RepositoryError, TestStatus,
 };
 use shared_kernel::{ConnectionId, CortexError, CortexResult};
 
@@ -26,9 +26,9 @@ pub struct OAuthTokenManager {
 
 /// Code-level test hook for OAuth token endpoints.
 ///
-/// Production leaves every field as `None`, which keeps the fixed
-/// provider endpoints (`login.microsoftonline.com`,
-/// `oauth2.googleapis.com`). Integration tests set these to local mock
+/// Production leaves the map empty, which keeps the descriptor-declared
+/// provider endpoints. Integration tests set entries keyed by canonical
+/// provider id (for example `"azure-openai"` or `"gemini"`) to local mock
 /// servers. The values are never sourced from user input, so the SSRF
 /// invariant (no arbitrary user-supplied URLs) is preserved.
 /// Additionally, every override must use HTTPS or loopback HTTP (see
@@ -36,8 +36,14 @@ pub struct OAuthTokenManager {
 /// redirected to a remote cleartext endpoint.
 #[derive(Debug, Default, Clone)]
 pub struct TokenEndpointOverrides {
-    pub azure_token_url: Option<String>,
-    pub gemini_token_url: Option<String>,
+    pub endpoints: std::collections::HashMap<&'static str, String>,
+}
+
+impl TokenEndpointOverrides {
+    pub fn with_provider_endpoint(mut self, provider_id: &'static str, url: String) -> Self {
+        self.endpoints.insert(provider_id, url);
+        self
+    }
 }
 
 /// Whether a test endpoint override is acceptable.
@@ -107,6 +113,48 @@ impl OAuthTokenManager {
             refresh_locks: DashMap::new(),
             endpoint_overrides,
         }
+    }
+
+    /// Resolve the refresh token endpoint from the connection's descriptor,
+    /// honoring a test override keyed by provider id. The tenant segment is
+    /// validated with the same rule the OAuth flow uses; a bad tenant fails
+    /// the refresh instead of producing a malformed URL.
+    async fn token_endpoint_for(
+        &self,
+        connection: &mut ProviderConnection,
+        oauth_tenant_id: Option<&str>,
+    ) -> CortexResult<String> {
+        let Some(oauth) = connection.provider.oauth else {
+            self.mark_refresh_failed(connection).await;
+            return Err(CortexError::auth_failed(
+                "OAuth refresh is not supported for this provider",
+            ));
+        };
+        if let Some(override_url) = self
+            .endpoint_overrides
+            .endpoints
+            .get(connection.provider.id)
+        {
+            if !test_endpoint_override_allowed(override_url) {
+                self.mark_refresh_failed(connection).await;
+                return Err(CortexError::auth_failed(
+                    "OAuth endpoint override must use HTTPS or loopback HTTP",
+                ));
+            }
+            return Ok(override_url.clone());
+        }
+        let tenant = oauth_tenant_id.unwrap_or("common");
+        if tenant.is_empty()
+            || !tenant
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'.')
+        {
+            self.mark_refresh_failed(connection).await;
+            return Err(CortexError::auth_failed(
+                "OAuth tenant configuration invalid",
+            ));
+        }
+        Ok(oauth.resolve_endpoint(oauth.token_endpoint, tenant))
     }
 
     pub async fn refresh_expiring(&self) -> usize {
@@ -189,50 +237,9 @@ impl OAuthTokenManager {
             .map(|secret| self.decrypt(secret))
             .transpose()
             .map_err(|_| CortexError::auth_failed("OAuth credentials unavailable"))?;
-        let endpoint = match connection.provider_kind {
-            ProviderKind::AzureOpenAI => {
-                if let Some(override_url) = self.endpoint_overrides.azure_token_url.clone() {
-                    if !test_endpoint_override_allowed(&override_url) {
-                        self.mark_refresh_failed(&mut connection).await;
-                        return Err(CortexError::auth_failed(
-                            "OAuth endpoint override must use HTTPS or loopback HTTP",
-                        ));
-                    }
-                    override_url
-                } else {
-                    let tenant = oauth_tenant_id.as_deref().unwrap_or("common");
-                    if tenant.is_empty()
-                        || !tenant.bytes().all(|byte| {
-                            byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'.'
-                        })
-                    {
-                        self.mark_refresh_failed(&mut connection).await;
-                        return Err(CortexError::auth_failed(
-                            "OAuth tenant configuration invalid",
-                        ));
-                    }
-                    format!("https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token")
-                }
-            }
-            ProviderKind::Gemini => match self.endpoint_overrides.gemini_token_url.clone() {
-                Some(override_url) => {
-                    if !test_endpoint_override_allowed(&override_url) {
-                        self.mark_refresh_failed(&mut connection).await;
-                        return Err(CortexError::auth_failed(
-                            "OAuth endpoint override must use HTTPS or loopback HTTP",
-                        ));
-                    }
-                    override_url
-                }
-                None => "https://oauth2.googleapis.com/token".to_string(),
-            },
-            _ => {
-                self.mark_refresh_failed(&mut connection).await;
-                return Err(CortexError::auth_failed(
-                    "OAuth refresh is not supported for this provider",
-                ));
-            }
-        };
+        let endpoint = self
+            .token_endpoint_for(&mut connection, oauth_tenant_id.as_deref())
+            .await?;
 
         let scope = self
             .decrypt(&old_scope)

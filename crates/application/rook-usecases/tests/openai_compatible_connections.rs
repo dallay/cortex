@@ -14,7 +14,7 @@ use chrono::{DateTime, Utc};
 use rook_core::{
     ApiFormat, CompletionRequest, CompletionResponse, CortexError, CortexResult,
     CredentialEncryptionError, EndpointGrant, EndpointPolicyConfig, HealthStatus, KeyManager,
-    ModelId, ProviderConnection, ProviderKind, ProviderPort, ProviderRepositoryPort, RegistryError,
+    ModelId, ProviderConnection, ProviderPort, ProviderRepositoryPort, RegistryError,
     RepositoryError, StreamChunk,
 };
 use rook_usecases::manage_connections::{
@@ -258,7 +258,8 @@ fn create_request(
     models: &[&str],
 ) -> CreateConnectionRequest {
     CreateConnectionRequest {
-        provider_kind: ProviderKind::OpenAiCompatible,
+        provider: rook_core::descriptor_by_id("openai-compatible")
+            .expect("openai-compatible descriptor"),
         provider_runtime_id: ProviderId::new(runtime),
         auth_type: rook_core::AuthType::ApiKey,
         name: name.to_string(),
@@ -347,7 +348,7 @@ async fn two_compatible_connections_keep_independent_endpoints_credentials_and_m
             &first.id,
             UpdateConnectionRequest {
                 expected_updated_at: first.updated_at,
-                provider_kind: None,
+                provider: None,
                 provider_runtime_id: None,
                 auth_type: None,
                 name: None,
@@ -364,7 +365,7 @@ async fn two_compatible_connections_keep_independent_endpoints_credentials_and_m
             &second.id,
             UpdateConnectionRequest {
                 expected_updated_at: second.updated_at,
-                provider_kind: None,
+                provider: None,
                 provider_runtime_id: None,
                 auth_type: None,
                 name: None,
@@ -481,7 +482,7 @@ async fn disabling_and_updating_a_compatible_connection_changes_routing_without_
             &first.id,
             UpdateConnectionRequest {
                 expected_updated_at: first.updated_at,
-                provider_kind: None,
+                provider: None,
                 provider_runtime_id: None,
                 auth_type: None,
                 name: None,
@@ -498,7 +499,7 @@ async fn disabling_and_updating_a_compatible_connection_changes_routing_without_
             &second.id,
             UpdateConnectionRequest {
                 expected_updated_at: second.updated_at,
-                provider_kind: None,
+                provider: None,
                 provider_runtime_id: None,
                 auth_type: None,
                 name: None,
@@ -524,7 +525,7 @@ async fn disabling_and_updating_a_compatible_connection_changes_routing_without_
         &first.id,
         UpdateConnectionRequest {
             expected_updated_at: first_current.updated_at,
-            provider_kind: None,
+            provider: None,
             provider_runtime_id: None,
             auth_type: None,
             name: None,
@@ -546,7 +547,7 @@ async fn disabling_and_updating_a_compatible_connection_changes_routing_without_
             &first.id,
             UpdateConnectionRequest {
                 expected_updated_at: first_current.updated_at,
-                provider_kind: None,
+                provider: None,
                 provider_runtime_id: None,
                 auth_type: None,
                 name: None,
@@ -598,7 +599,7 @@ async fn disabling_and_updating_a_compatible_connection_changes_routing_without_
             &second.id,
             UpdateConnectionRequest {
                 expected_updated_at: second.updated_at,
-                provider_kind: None,
+                provider: None,
                 provider_runtime_id: None,
                 auth_type: None,
                 name: None,
@@ -674,7 +675,8 @@ async fn compatible_connection_test_cannot_bypass_the_connection_grant() {
     let (mc, _, _, _) = usecase(EndpointPolicyConfig::default());
     let error = mc
         .test_credentials(rook_usecases::manage_connections::TestCredentialsRequest {
-            provider_kind: ProviderKind::OpenAiCompatible,
+            provider: rook_core::descriptor_by_id("openai-compatible")
+                .expect("openai-compatible descriptor"),
             provider_runtime_id: ProviderId::new(RUNTIME_A),
             auth_type: rook_core::AuthType::ApiKey,
             credentials: CredentialsInput::ApiKey {
@@ -705,7 +707,7 @@ async fn loopback_compatible_endpoint_requires_exact_connection_grant_to_activat
 
     let activation = || UpdateConnectionRequest {
         expected_updated_at: connection.updated_at,
-        provider_kind: None,
+        provider: None,
         provider_runtime_id: None,
         auth_type: None,
         name: None,
@@ -764,7 +766,7 @@ async fn create_defaults_missing_api_format_for_anthropic_connections() {
         "key",
         &["model-a"],
     );
-    request.provider_kind = ProviderKind::Anthropic;
+    request.provider = rook_core::descriptor_by_id("anthropic").expect("anthropic descriptor");
     request.is_active = false;
     request.config.api_format = None;
 
@@ -783,7 +785,7 @@ async fn update_resets_inherited_api_format_when_provider_kind_changes() {
         "key",
         &["model-a"],
     );
-    request.provider_kind = ProviderKind::Anthropic;
+    request.provider = rook_core::descriptor_by_id("anthropic").expect("anthropic descriptor");
     request.is_active = false;
     request.config.api_format = None;
     let connection = mc.create(request).await.expect("connection is valid");
@@ -794,7 +796,10 @@ async fn update_resets_inherited_api_format_when_provider_kind_changes() {
             &connection.id,
             UpdateConnectionRequest {
                 expected_updated_at: connection.updated_at,
-                provider_kind: Some(ProviderKind::OpenAiCompatible),
+                provider: Some(
+                    rook_core::descriptor_by_id("openai-compatible")
+                        .expect("openai-compatible descriptor"),
+                ),
                 provider_runtime_id: None,
                 auth_type: None,
                 name: None,
@@ -829,7 +834,7 @@ async fn update_defaults_missing_api_format_for_openai_compatible_connections() 
             &connection.id,
             UpdateConnectionRequest {
                 expected_updated_at: connection.updated_at,
-                provider_kind: None,
+                provider: None,
                 provider_runtime_id: None,
                 auth_type: None,
                 name: None,
@@ -929,7 +934,7 @@ async fn compatible_connections_reject_oauth_and_missing_base_url() {
 fn update_request(connection: &ProviderConnection) -> UpdateConnectionRequest {
     UpdateConnectionRequest {
         expected_updated_at: connection.updated_at,
-        provider_kind: None,
+        provider: None,
         provider_runtime_id: None,
         auth_type: None,
         name: None,

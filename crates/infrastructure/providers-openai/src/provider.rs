@@ -20,9 +20,10 @@ use std::sync::Arc;
 pub fn parse_openai_rate_limit_headers(
     headers: &reqwest::header::HeaderMap,
     provider: ProviderId,
+    descriptor_id: &'static str,
     observed_at: chrono::DateTime<chrono::Utc>,
 ) -> Vec<rook_core::QuotaObservation> {
-    use rook_core::{ProviderKind, QuotaObservation};
+    use rook_core::QuotaObservation;
 
     let mut observations = Vec::new();
     for (metric, scope, prefix) in [
@@ -47,7 +48,7 @@ pub fn parse_openai_rate_limit_headers(
             continue;
         };
         observations.push(QuotaObservation {
-            provider_kind: ProviderKind::OpenAI,
+            provider_id: descriptor_id.to_string(),
             provider: provider.clone(),
             connection_id: None,
             metric: metric.to_string(),
@@ -138,6 +139,9 @@ async fn map_openai_http_error(
 #[derive(Debug, Clone)]
 pub struct OpenAIProviderConfig {
     pub id: ProviderId,
+    /// Canonical descriptor id of the provider this connection represents
+    /// (OpenAI-compatible and Azure reuse this adapter).
+    pub provider_id: &'static str,
     pub api_key: String,
     pub base_url: String,
     pub models: Vec<ModelId>,
@@ -283,8 +287,12 @@ impl OpenAIProvider {
         let Some(recorder) = self.quota_recorder.as_ref() else {
             return;
         };
-        let observations =
-            parse_openai_rate_limit_headers(headers, self.config.id.clone(), chrono::Utc::now());
+        let observations = parse_openai_rate_limit_headers(
+            headers,
+            self.config.id.clone(),
+            self.config.provider_id,
+            chrono::Utc::now(),
+        );
         if let Err(error) = recorder.record_observations(observations).await {
             tracing::warn!(%error, "failed to record OpenAI quota observations");
         }

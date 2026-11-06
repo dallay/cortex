@@ -897,6 +897,7 @@ async fn health_check_returns_unknown_when_not_supported() {
     // Anthropic provider returns HealthStatus::Unknown because
     // health_check is not supported via the Anthropic API.
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: "http://localhost".to_string(),
@@ -932,6 +933,7 @@ async fn complete_does_not_follow_redirects() {
         .mount(&source)
         .await;
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-redirect-test"),
         api_key: "sk-test".to_string(),
         base_url: source.uri(),
@@ -996,6 +998,7 @@ async fn complete_returns_valid_response_from_mock_server() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: mock_server.uri(),
@@ -1071,6 +1074,7 @@ async fn complete_parses_cache_tokens() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: mock_server.uri(),
@@ -1155,6 +1159,7 @@ async fn complete_returns_auth_error_on_401() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-invalid".to_string(),
         base_url: server.uri(),
@@ -1194,6 +1199,7 @@ async fn complete_returns_rate_limit_error_on_429() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1229,6 +1235,7 @@ async fn complete_returns_invalid_request_on_400() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1262,6 +1269,7 @@ async fn complete_sanitizes_error_body_sensitive_data() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1318,6 +1326,7 @@ async fn responses_stream_skips_well_formed_unknown_event_and_delta() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1363,6 +1372,7 @@ async fn stream_returns_chunks_on_anthropic_sse_success() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1418,6 +1428,7 @@ async fn stream_returns_error_on_http_429() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1455,6 +1466,7 @@ async fn stream_returns_error_on_http_401() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-invalid".to_string(),
         base_url: server.uri(),
@@ -1494,6 +1506,7 @@ async fn stream_parses_tool_use_finish_reason() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1542,6 +1555,7 @@ async fn stream_includes_system_message_in_request() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1598,6 +1612,7 @@ async fn complete_maps_pause_turn_to_stop_finish_reason() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1627,6 +1642,7 @@ async fn stream_maps_pause_turn_to_stop_finish_reason() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1668,6 +1684,7 @@ async fn stream_keeps_finish_reason_and_usage_when_stop_sequence_is_a_string() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1732,6 +1749,7 @@ fn tool_test_request() -> CompletionRequest {
 
 fn test_provider(server: &MockServer) -> std::sync::Arc<AnthropicProvider> {
     AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1981,7 +1999,7 @@ fn test_parse_anthropic_rate_limit_headers_all_metrics() {
 
     let provider = ProviderId::new("anthropic-test");
     let now = chrono::Utc::now();
-    let obs = parse_anthropic_rate_limit_headers(&headers, provider, now);
+    let obs = parse_anthropic_rate_limit_headers(&headers, provider, "anthropic", now);
 
     assert!(!obs.is_empty());
     let req_obs = obs.iter().find(|o| o.metric == "requests").unwrap();

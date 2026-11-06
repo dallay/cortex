@@ -41,6 +41,7 @@ async fn stream_results_from_body(
         .mount(&server)
         .await;
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -85,6 +86,7 @@ async fn responses_omitted_tool_ids_reach_generation_in_both_modes() {
                 .mount(&server)
                 .await;
             let provider = OpenAIProvider::new(OpenAIProviderConfig {
+                provider_id: "openai",
                 id: ProviderId::new("openai-test"),
                 api_key: "test".into(),
                 base_url: server.uri(),
@@ -178,6 +180,7 @@ async fn assert_tool_id_case(id: &serde_json::Value, stream: bool) {
         .mount(&server)
         .await;
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "test".into(),
         base_url: server.uri(),
@@ -277,6 +280,7 @@ async fn nullable_and_omitted_delta_ids_do_not_change_valid_tool_identity() {
         .mount(&server)
         .await;
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "test".into(),
         base_url: server.uri(),
@@ -342,6 +346,7 @@ async fn legacy_id_validation_still_includes_unselected_choices() {
             .mount(&server)
             .await;
         let provider = OpenAIProvider::new(OpenAIProviderConfig {
+            provider_id: "openai",
             id: ProviderId::new("openai-test"),
             api_key: "test".into(),
             base_url: server.uri(),
@@ -405,6 +410,7 @@ async fn responses_unknown_finish_rejects_frame_and_retains_usage() {
                 .mount(&server)
                 .await;
             let provider = OpenAIProvider::new(OpenAIProviderConfig {
+                provider_id: "openai",
                 id: ProviderId::new("openai-test"),
                 api_key: "test".into(),
                 base_url: server.uri(),
@@ -488,6 +494,7 @@ async fn health_check_returns_healthy_on_2xx() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -513,6 +520,7 @@ async fn health_check_returns_warning_on_429() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -543,6 +551,7 @@ async fn health_check_returns_unhealthy_on_401() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -573,6 +582,7 @@ async fn health_check_returns_unhealthy_on_403() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -603,6 +613,7 @@ async fn health_check_returns_unhealthy_on_500() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -627,6 +638,7 @@ async fn health_check_returns_unhealthy_on_500() {
 async fn health_check_returns_unhealthy_on_network_error() {
     // Port 1 is reserved and refuses connections — network error path.
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: "http://127.0.0.1:1".to_string(),
@@ -655,6 +667,7 @@ async fn health_check_returns_warning_on_no_key() {
     // No wiremock routes mounted — the probe must short-circuit before
     // touching the network.
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: String::new(),
         base_url: server.uri(),
@@ -684,6 +697,7 @@ async fn guarded_compatible_endpoint_blocks_untrusted_loopback_before_sending_cr
         .mount(&server)
         .await;
     let mut config = OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("compatible-test"),
         api_key: "secret-marker".to_string(),
         base_url: server.uri(),
@@ -726,6 +740,7 @@ async fn guarded_compatible_endpoint_does_not_follow_redirects_or_forward_creden
         .await;
     let provider = OpenAIProvider::new_with_endpoint_policy(
         OpenAIProviderConfig {
+            provider_id: "openai",
             id: ProviderId::new("compatible-redirect-test"),
             api_key: "secret-marker".to_string(),
             base_url: server.uri(),
@@ -760,6 +775,7 @@ async fn error_body_redacts_non_empty_secrets_shorter_than_eight_characters() {
         .mount(&server)
         .await;
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "k7".to_string(),
         base_url: server.uri(),
@@ -802,6 +818,7 @@ async fn trailing_slashes_in_base_url_are_removed_for_chat_and_health_requests()
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: format!("{}///", server.uri()),
@@ -849,6 +866,7 @@ async fn complete_returns_response_on_success() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -903,6 +921,7 @@ async fn stream_returns_chunks_on_openai_sse_success() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -980,6 +999,7 @@ async fn stream_preserves_fragmented_tool_call_deltas_and_interleaved_text() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1056,6 +1076,7 @@ async fn stream_returns_error_for_malformed_upstream_json_event() {
         .mount(&server)
         .await;
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1090,6 +1111,7 @@ async fn stream_returns_error_when_tool_arguments_are_incomplete_at_finish() {
         .mount(&server)
         .await;
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1123,6 +1145,7 @@ async fn stream_returns_error_when_connection_ends_before_tool_finish_reason() {
         .mount(&server)
         .await;
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1158,6 +1181,7 @@ async fn stream_returns_error_for_eof_inside_sse_event() {
         .mount(&server)
         .await;
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1198,6 +1222,7 @@ async fn stream_joins_multiple_data_lines_in_one_sse_event() {
         .mount(&server)
         .await;
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1350,6 +1375,7 @@ async fn complete_parses_cached_tokens_and_reasoning_tokens() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1409,6 +1435,7 @@ async fn stream_request_includes_include_usage_option() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1461,6 +1488,7 @@ async fn stream_request_includes_include_usage_option() {
 #[tokio::test]
 async fn provider_metadata_and_availability() {
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: "http://localhost".to_string(),
@@ -1475,6 +1503,7 @@ async fn provider_metadata_and_availability() {
     assert!(provider.is_available());
 
     let empty_key_provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: String::new(),
         base_url: "http://localhost".to_string(),
@@ -1506,6 +1535,7 @@ async fn complete_supports_all_roles() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1588,6 +1618,7 @@ async fn complete_returns_error_on_empty_choices() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1611,6 +1642,7 @@ async fn complete_returns_error_on_invalid_json() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1627,6 +1659,7 @@ async fn complete_returns_error_on_invalid_json() {
 #[tokio::test]
 async fn complete_returns_error_on_network_failure() {
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: "http://127.0.0.1:1".to_string(),
@@ -1643,6 +1676,7 @@ async fn complete_returns_error_on_network_failure() {
 #[tokio::test]
 async fn stream_returns_error_on_network_failure() {
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: "http://127.0.0.1:1".to_string(),
@@ -1673,6 +1707,7 @@ async fn stream_returns_error_when_tool_call_identity_changes() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1710,6 +1745,7 @@ async fn stream_parses_length_and_content_filter_finish_reasons() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1746,6 +1782,7 @@ async fn stream_returns_error_when_tool_calls_empty_at_finish() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1794,6 +1831,7 @@ async fn complete_parses_null_content_with_tool_calls() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),

@@ -1,4 +1,7 @@
-use rook_core::{AuthType, ConnectionConfig, ProviderKind, QuotaWindowThresholds, ValidationError};
+use rook_core::{
+    AuthType, ConnectionConfig, EndpointValidation, ModelListing, Protocol, ProviderDescriptor,
+    QuotaWindowThresholds, ValidationError,
+};
 use shared_kernel::ProviderId;
 
 pub(super) fn validate_base_fields(
@@ -41,29 +44,56 @@ pub(super) fn validate_config(config: &ConnectionConfig) -> Result<(), Validatio
 }
 
 pub(super) fn validate_provider_config(
-    provider_kind: ProviderKind,
+    provider: &'static ProviderDescriptor,
     config: &ConnectionConfig,
     endpoint_policy: &rook_core::EndpointPolicy,
     is_active: bool,
 ) -> Result<(), ValidationError> {
-    if provider_kind == ProviderKind::OpenAiCompatible {
-        let Some(base_url) = config.base_url.as_deref() else {
-            return Err(ValidationError::InvalidBaseUrl);
-        };
-        let endpoint =
-            reqwest::Url::parse(base_url).map_err(|_| ValidationError::InvalidBaseUrl)?;
-        if is_active {
-            endpoint_policy
-                .validate_url(&endpoint)
-                .map_err(|_| ValidationError::InvalidBaseUrl)?;
-        } else if endpoint.host_str().is_none()
-            || !endpoint.username().is_empty()
-            || endpoint.password().is_some()
-            || !matches!(endpoint.scheme(), "https" | "http")
-            || endpoint.host_str().is_some_and(is_cloud_metadata_host)
-        {
-            return Err(ValidationError::InvalidBaseUrl);
+    match provider.endpoint_validation {
+        EndpointValidation::OpenAiEndpointPolicy => {
+            validate_openai_endpoint(provider, config, endpoint_policy, is_active)
         }
+        EndpointValidation::AzureHost => validate_azure_endpoint(provider, config),
+        EndpointValidation::None => {
+            if let Some(base_url) = config.base_url.as_deref() {
+                if reqwest::Url::parse(base_url)
+                    .ok()
+                    .and_then(|url| url.host_str().map(is_cloud_metadata_host))
+                    .unwrap_or(false)
+                {
+                    return Err(ValidationError::CloudMetadataEndpointNotAllowed);
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+/// User-supplied OpenAI wire endpoint: URL policy plus the protocol's single
+/// API format, and declared models when the listing strategy requires them.
+fn validate_openai_endpoint(
+    provider: &'static ProviderDescriptor,
+    config: &ConnectionConfig,
+    endpoint_policy: &rook_core::EndpointPolicy,
+    is_active: bool,
+) -> Result<(), ValidationError> {
+    let Some(base_url) = config.base_url.as_deref() else {
+        return Err(ValidationError::InvalidBaseUrl);
+    };
+    let endpoint = reqwest::Url::parse(base_url).map_err(|_| ValidationError::InvalidBaseUrl)?;
+    if is_active {
+        endpoint_policy
+            .validate_url(&endpoint)
+            .map_err(|_| ValidationError::InvalidBaseUrl)?;
+    } else if endpoint.host_str().is_none()
+        || !endpoint.username().is_empty()
+        || endpoint.password().is_some()
+        || !matches!(endpoint.scheme(), "https" | "http")
+        || endpoint.host_str().is_some_and(is_cloud_metadata_host)
+    {
+        return Err(ValidationError::InvalidBaseUrl);
+    }
+    if provider.model_listing == ModelListing::SupportedModels {
         if config.supported_models.is_empty()
             || config
                 .supported_models
@@ -72,12 +102,21 @@ pub(super) fn validate_provider_config(
         {
             return Err(ValidationError::EmptySupportedModels);
         }
-        if config.api_format.unwrap_or(rook_core::ApiFormat::OpenAI) != rook_core::ApiFormat::OpenAI
-        {
-            return Err(ValidationError::UnsupportedApiFormat);
-        }
-        return Ok(());
     }
+    if provider.protocol == Protocol::OpenAiChat
+        && config.api_format.unwrap_or(rook_core::ApiFormat::OpenAI) != rook_core::ApiFormat::OpenAI
+    {
+        return Err(ValidationError::UnsupportedApiFormat);
+    }
+    Ok(())
+}
+
+/// Azure OpenAI resource endpoint: HTTPS host suffix rules plus a required
+/// deployment as the default model.
+fn validate_azure_endpoint(
+    provider: &'static ProviderDescriptor,
+    config: &ConnectionConfig,
+) -> Result<(), ValidationError> {
     if let Some(base_url) = config.base_url.as_deref() {
         if reqwest::Url::parse(base_url)
             .ok()
@@ -87,16 +126,14 @@ pub(super) fn validate_provider_config(
             return Err(ValidationError::CloudMetadataEndpointNotAllowed);
         }
     }
-
-    if provider_kind != ProviderKind::AzureOpenAI {
-        return Ok(());
-    }
-    let has_deployment = config
-        .default_model
-        .as_ref()
-        .is_some_and(|model| !model.as_str().trim().is_empty());
-    if !has_deployment {
-        return Err(ValidationError::AzureOpenAIRequiresDeployment);
+    if provider.model_listing == ModelListing::Deployment {
+        let has_deployment = config
+            .default_model
+            .as_ref()
+            .is_some_and(|model| !model.as_str().trim().is_empty());
+        if !has_deployment {
+            return Err(ValidationError::AzureOpenAIRequiresDeployment);
+        }
     }
     let Some(base_url) = config.base_url.as_deref() else {
         return Err(ValidationError::AzureOpenAIRequiresEndpoint);
@@ -160,23 +197,29 @@ fn is_cloud_metadata_ipv4(ip: std::net::Ipv4Addr) -> bool {
     (octets[0] == 169 && octets[1] == 254) || ip == std::net::Ipv4Addr::new(100, 100, 100, 200)
 }
 
-pub(super) fn normalize_api_format(provider_kind: ProviderKind, config: &mut ConnectionConfig) {
+pub(super) fn normalize_api_format(
+    provider: &'static ProviderDescriptor,
+    config: &mut ConnectionConfig,
+) {
     if config.api_format.is_none() {
-        config.api_format = Some(match provider_kind {
-            ProviderKind::Anthropic => rook_core::ApiFormat::Anthropic,
+        config.api_format = Some(match provider.protocol {
+            Protocol::AnthropicMessages => rook_core::ApiFormat::Anthropic,
             _ => rook_core::ApiFormat::OpenAI,
         });
     }
 }
 
 pub(super) fn validate_provider_auth_type(
-    provider_kind: ProviderKind,
+    provider: &'static ProviderDescriptor,
     auth_type: AuthType,
 ) -> Result<(), ValidationError> {
-    if provider_kind == ProviderKind::AzureOpenAI && auth_type != AuthType::OAuth {
+    if provider.endpoint_validation == EndpointValidation::AzureHost && auth_type != AuthType::OAuth
+    {
         return Err(ValidationError::AzureOpenAIRequiresOAuth);
     }
-    if provider_kind == ProviderKind::OpenAiCompatible && auth_type != AuthType::ApiKey {
+    if provider.endpoint_validation == EndpointValidation::OpenAiEndpointPolicy
+        && auth_type != AuthType::ApiKey
+    {
         return Err(ValidationError::AuthTypeCredentialMismatch);
     }
     Ok(())

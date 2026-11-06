@@ -2,8 +2,8 @@
 
 use chrono::{DateTime, Utc};
 use rook_core::{
-    evaluate_connection_quota, reduce_latest_observations, ProviderId, ProviderKind,
-    QuotaEligibilityPolicy, QuotaObservation, QuotaObservationQuery, QuotaState,
+    evaluate_connection_quota, reduce_latest_observations, ProviderId, QuotaEligibilityPolicy,
+    QuotaObservation, QuotaObservationQuery, QuotaState,
 };
 use shared_kernel::ConnectionId;
 
@@ -18,7 +18,7 @@ fn observation(
     observed_at: DateTime<Utc>,
 ) -> QuotaObservation {
     QuotaObservation {
-        provider_kind: ProviderKind::OpenAI,
+        provider_id: "openai".to_string(),
         provider: ProviderId::new("openai-runtime"),
         connection_id: Some(connection(connection_id)),
         metric: metric.to_string(),

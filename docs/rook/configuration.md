@@ -523,8 +523,8 @@ enabled = true
 >   -H "Content-Type: application/json" \
 >   -d '{
 >     "name": "openai-primary",
->     "provider_kind": "openai",
->     "auth_type": "api_key",
+>     "providerKind": "openai",
+>     "authType": "api_key",
 >     "credentials": { "api_key": "${OPENAI_API_KEY}" },
 >     "is_active": true,
 >     "priority": 1

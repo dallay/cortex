@@ -3,8 +3,8 @@ use std::sync::Arc;
 use axum::{extract::State, Json};
 use chrono::{Duration, Utc};
 use rook_core::{
-    effective_reset_at, ConnectionId, ProviderConnection, ProviderKind, QuotaObservationQuery,
-    RequestStatus, UsageFilters, UsageSummary,
+    effective_reset_at, AuthKind, ConnectionId, Protocol, ProviderConnection, ProviderDescriptor,
+    QuotaObservationQuery, RequestStatus, UsageFilters, UsageSummary,
 };
 
 use crate::{
@@ -75,12 +75,14 @@ pub async fn list_provider_quota(
     };
     let mut items = Vec::new();
 
-    for kind in all_provider_kinds() {
-        let item = summarize_provider_kind(
+    // The quota view lists exactly the provider set declared by the
+    // descriptor table — the table is the source of truth.
+    for descriptor in rook_core::PROVIDER_DESCRIPTORS {
+        let item = summarize_provider_descriptor(
             recorder,
             &connections,
             &upstream,
-            kind,
+            descriptor,
             generated_at,
             &windows,
         )
@@ -108,17 +110,17 @@ struct QuotaWindowBounds {
     last_7d_start: Option<chrono::DateTime<Utc>>,
 }
 
-async fn summarize_provider_kind(
+async fn summarize_provider_descriptor(
     recorder: &Arc<dyn rook_usecases::UsageRecorderPort>,
     connections: &[ProviderConnection],
     upstream: &UpstreamQuotaObservations,
-    kind: ProviderKind,
+    descriptor: &'static ProviderDescriptor,
     generated_at: chrono::DateTime<Utc>,
     windows: &QuotaWindowBounds,
 ) -> ProviderQuotaSummaryResponse {
     let provider_connections = connections
         .iter()
-        .filter(|c| c.provider_kind == kind)
+        .filter(|c| c.provider.id == descriptor.id)
         .collect::<Vec<_>>();
     let ids = provider_connections
         .iter()
@@ -144,7 +146,7 @@ async fn summarize_provider_kind(
     let upstream_observations = upstream_observations_for_kind(
         &upstream.observations,
         upstream.read_availability,
-        kind,
+        descriptor,
         generated_at,
     );
     let connection_count = provider_connections.len() as u32;
@@ -165,13 +167,16 @@ async fn summarize_provider_kind(
     let local_warning_level = classify_warning_level(&provider_connections, &connection_ratios);
 
     ProviderQuotaSummaryResponse {
-        provider_kind: kind.as_str().to_string(),
+        provider_kind: descriptor.id.to_string(),
         connection_count,
         active_connection_count,
         coverage: "cortex_routed",
         usage_availability: all_time.availability,
         account_quota: ProviderAccountQuotaResponse {
-            availability: if kind == ProviderKind::Ollama {
+            // A self-hosted Ollama has no upstream account quota.
+            availability: if descriptor.protocol == Protocol::OllamaNative
+                && descriptor.auth == AuthKind::ApiKey
+            {
                 "not_applicable"
             } else {
                 "not_provided"
@@ -553,12 +558,12 @@ fn classify_warning_level(conns: &[&ProviderConnection], ratios: &[Option<f32>])
 fn upstream_observations_for_kind(
     observations: &[rook_core::QuotaObservation],
     read_availability: &'static str,
-    kind: ProviderKind,
+    descriptor: &'static ProviderDescriptor,
     now: chrono::DateTime<Utc>,
 ) -> ProviderUpstreamObservationsResponse {
     let observations = observations
         .iter()
-        .filter(|observation| observation.provider_kind == kind)
+        .filter(|observation| observation.provider_id == descriptor.id)
         .map(|observation| {
             let reset_at = effective_reset_at(observation);
             let freshness = match reset_at {
@@ -595,16 +600,4 @@ fn upstream_observations_for_kind(
         availability,
         observations,
     }
-}
-
-fn all_provider_kinds() -> [ProviderKind; 7] {
-    [
-        ProviderKind::OpenAI,
-        ProviderKind::Anthropic,
-        ProviderKind::Gemini,
-        ProviderKind::Groq,
-        ProviderKind::Ollama,
-        ProviderKind::OllamaCloud,
-        ProviderKind::AzureOpenAI,
-    ]
 }

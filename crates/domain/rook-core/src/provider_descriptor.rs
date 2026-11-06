@@ -33,6 +33,50 @@ pub enum Protocol {
     OllamaNative,
 }
 
+/// How a connection's model list is established.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelListing {
+    /// Models come from the model catalog, keyed by descriptor id.
+    Catalog,
+    /// The connection declares its supported models explicitly.
+    SupportedModels,
+    /// The connection exposes a single deployment as its default model.
+    Deployment,
+}
+
+/// How a connection's base URL is validated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndpointValidation {
+    /// No endpoint of the provider's own; only the cloud-metadata guard applies.
+    None,
+    /// Generic OpenAI wire endpoint: user-supplied base URL, endpoint policy,
+    /// and the protocol's single API format.
+    OpenAiEndpointPolicy,
+    /// Azure OpenAI resource endpoint (HTTPS, `*.openai.azure.com` or
+    /// `*.services.ai.azure.com`, no query, no fragment).
+    AzureHost,
+}
+
+/// OAuth 2.0 wire configuration, declared as data. `{tenant}` in an endpoint
+/// template is substituted with the connection's tenant segment.
+#[derive(Debug, Clone, Copy)]
+pub struct OAuthConfig {
+    pub scopes: &'static str,
+    pub authorization_endpoint: &'static str,
+    pub token_endpoint: &'static str,
+    pub device_code_endpoint: Option<&'static str>,
+    pub userinfo_endpoint: &'static str,
+    /// Extra query parameters appended to the authorization URL.
+    pub extra_authorize_params: &'static [(&'static str, &'static str)],
+}
+
+impl OAuthConfig {
+    /// Substitute the `{tenant}` placeholder in an endpoint template.
+    pub fn resolve_endpoint(&self, template: &str, tenant: &str) -> String {
+        template.replace("{tenant}", tenant)
+    }
+}
+
 /// The authentication mechanism a provider expects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthKind {
@@ -80,6 +124,12 @@ pub struct ProviderDescriptor {
     pub default_base_url: &'static str,
     /// True when a connection must supply its own base URL.
     pub requires_base_url: bool,
+    /// How the provider's base URL is validated.
+    pub endpoint_validation: EndpointValidation,
+    /// How a connection's model list is established.
+    pub model_listing: ModelListing,
+    /// OAuth wire configuration; `None` for non-OAuth providers.
+    pub oauth: Option<OAuthConfig>,
     pub paths: WirePaths,
     /// Base URLs the provider officially documents; used by the canonical
     /// URL quota gate.
@@ -158,6 +208,9 @@ const fn openai() -> ProviderDescriptor {
         auth: AuthKind::ApiKey,
         default_base_url: "https://api.openai.com/v1",
         requires_base_url: false,
+        endpoint_validation: EndpointValidation::None,
+        model_listing: ModelListing::Catalog,
+        oauth: None,
         paths: openai_paths(),
         canonical_base_urls: &["https://api.openai.com/v1"],
         capability_ceiling: no_ceiling(),
@@ -173,6 +226,9 @@ const fn openai_compatible() -> ProviderDescriptor {
         auth: AuthKind::ApiKey,
         default_base_url: "",
         requires_base_url: true,
+        endpoint_validation: EndpointValidation::OpenAiEndpointPolicy,
+        model_listing: ModelListing::SupportedModels,
+        oauth: None,
         paths: openai_paths(),
         canonical_base_urls: &[],
         capability_ceiling: no_ceiling(),
@@ -188,6 +244,9 @@ const fn anthropic() -> ProviderDescriptor {
         auth: AuthKind::ApiKey,
         default_base_url: "https://api.anthropic.com",
         requires_base_url: false,
+        endpoint_validation: EndpointValidation::None,
+        model_listing: ModelListing::Catalog,
+        oauth: None,
         paths: WirePaths {
             chat: "/v1/messages",
             models: "/v1/models",
@@ -207,6 +266,9 @@ const fn ollama() -> ProviderDescriptor {
         auth: AuthKind::ApiKey,
         default_base_url: "http://localhost:11434",
         requires_base_url: true,
+        endpoint_validation: EndpointValidation::None,
+        model_listing: ModelListing::Catalog,
+        oauth: None,
         paths: ollama_paths(),
         canonical_base_urls: &["http://localhost:11434"],
         capability_ceiling: no_ceiling(),
@@ -223,6 +285,9 @@ const fn ollama_cloud() -> ProviderDescriptor {
         auth: AuthKind::ImportedToken,
         default_base_url: "https://ollama.com",
         requires_base_url: false,
+        endpoint_validation: EndpointValidation::None,
+        model_listing: ModelListing::Catalog,
+        oauth: None,
         paths: ollama_paths(),
         canonical_base_urls: &["https://ollama.com"],
         capability_ceiling: no_ceiling(),
@@ -238,6 +303,16 @@ const fn gemini() -> ProviderDescriptor {
         auth: AuthKind::OAuth,
         default_base_url: "https://generativelanguage.googleapis.com",
         requires_base_url: false,
+        endpoint_validation: EndpointValidation::None,
+        model_listing: ModelListing::Catalog,
+        oauth: Some(OAuthConfig {
+            scopes: "https://www.googleapis.com/auth/generative-language.retriever openid email",
+            authorization_endpoint: "https://accounts.google.com/o/oauth2/v2/auth",
+            token_endpoint: "https://oauth2.googleapis.com/token",
+            device_code_endpoint: None,
+            userinfo_endpoint: "https://openidconnect.googleapis.com/v1/userinfo",
+            extra_authorize_params: &[("access_type", "offline"), ("prompt", "consent")],
+        }),
         paths: WirePaths {
             chat: "/v1beta/models/{model}:generateContent",
             models: "/v1beta/models",
@@ -258,6 +333,20 @@ const fn azure_openai() -> ProviderDescriptor {
         auth: AuthKind::OAuth,
         default_base_url: "",
         requires_base_url: true,
+        endpoint_validation: EndpointValidation::AzureHost,
+        model_listing: ModelListing::Deployment,
+        oauth: Some(OAuthConfig {
+            scopes:
+                "https://cognitiveservices.azure.com/.default offline_access openid profile email",
+            authorization_endpoint:
+                "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize",
+            token_endpoint: "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
+            device_code_endpoint: Some(
+                "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/devicecode",
+            ),
+            userinfo_endpoint: "https://graph.microsoft.com/oidc/userinfo",
+            extra_authorize_params: &[],
+        }),
         paths: openai_paths(),
         canonical_base_urls: &[],
         capability_ceiling: no_ceiling(),
@@ -273,6 +362,9 @@ const fn groq() -> ProviderDescriptor {
         auth: AuthKind::ApiKey,
         default_base_url: "https://api.groq.com/openai/v1",
         requires_base_url: false,
+        endpoint_validation: EndpointValidation::None,
+        model_listing: ModelListing::Catalog,
+        oauth: None,
         paths: openai_paths(),
         canonical_base_urls: &["https://api.groq.com/openai/v1"],
         capability_ceiling: no_ceiling(),
@@ -288,6 +380,9 @@ const fn xai() -> ProviderDescriptor {
         auth: AuthKind::ApiKey,
         default_base_url: "https://api.x.ai/v1",
         requires_base_url: false,
+        endpoint_validation: EndpointValidation::None,
+        model_listing: ModelListing::Catalog,
+        oauth: None,
         paths: openai_paths(),
         canonical_base_urls: &["https://api.x.ai/v1"],
         capability_ceiling: no_ceiling(),
@@ -303,6 +398,9 @@ const fn mistral() -> ProviderDescriptor {
         auth: AuthKind::ApiKey,
         default_base_url: "https://api.mistral.ai/v1",
         requires_base_url: false,
+        endpoint_validation: EndpointValidation::None,
+        model_listing: ModelListing::Catalog,
+        oauth: None,
         paths: openai_paths(),
         canonical_base_urls: &["https://api.mistral.ai/v1"],
         capability_ceiling: no_ceiling(),
@@ -322,6 +420,9 @@ const fn deepseek() -> ProviderDescriptor {
         auth: AuthKind::ApiKey,
         default_base_url: "https://api.deepseek.com/v1",
         requires_base_url: false,
+        endpoint_validation: EndpointValidation::None,
+        model_listing: ModelListing::Catalog,
+        oauth: None,
         paths: openai_paths(),
         canonical_base_urls: &["https://api.deepseek.com/v1"],
         capability_ceiling: no_ceiling(),
@@ -337,6 +438,9 @@ const fn together() -> ProviderDescriptor {
         auth: AuthKind::ApiKey,
         default_base_url: "https://api.together.xyz/v1",
         requires_base_url: false,
+        endpoint_validation: EndpointValidation::None,
+        model_listing: ModelListing::Catalog,
+        oauth: None,
         paths: openai_paths(),
         canonical_base_urls: &["https://api.together.xyz/v1"],
         capability_ceiling: no_ceiling(),
@@ -352,6 +456,9 @@ const fn fireworks() -> ProviderDescriptor {
         auth: AuthKind::ApiKey,
         default_base_url: "https://api.fireworks.ai/inference/v1",
         requires_base_url: false,
+        endpoint_validation: EndpointValidation::None,
+        model_listing: ModelListing::Catalog,
+        oauth: None,
         paths: openai_paths(),
         canonical_base_urls: &["https://api.fireworks.ai/inference/v1"],
         capability_ceiling: no_ceiling(),
@@ -367,6 +474,9 @@ const fn cerebras() -> ProviderDescriptor {
         auth: AuthKind::ApiKey,
         default_base_url: "https://api.cerebras.ai/v1",
         requires_base_url: false,
+        endpoint_validation: EndpointValidation::None,
+        model_listing: ModelListing::Catalog,
+        oauth: None,
         paths: openai_paths(),
         canonical_base_urls: &["https://api.cerebras.ai/v1"],
         capability_ceiling: no_ceiling(),
@@ -382,6 +492,9 @@ const fn openrouter() -> ProviderDescriptor {
         auth: AuthKind::ApiKey,
         default_base_url: "https://openrouter.ai/api/v1",
         requires_base_url: false,
+        endpoint_validation: EndpointValidation::None,
+        model_listing: ModelListing::Catalog,
+        oauth: None,
         paths: openai_paths(),
         canonical_base_urls: &["https://openrouter.ai/api/v1"],
         capability_ceiling: no_ceiling(),
@@ -397,6 +510,9 @@ const fn nan() -> ProviderDescriptor {
         auth: AuthKind::ApiKey,
         default_base_url: "https://api.nan.builders/v1",
         requires_base_url: false,
+        endpoint_validation: EndpointValidation::None,
+        model_listing: ModelListing::Catalog,
+        oauth: None,
         paths: openai_paths(),
         canonical_base_urls: &["https://api.nan.builders/v1"],
         capability_ceiling: no_ceiling(),

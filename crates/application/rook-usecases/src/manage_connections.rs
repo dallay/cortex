@@ -6,9 +6,9 @@ use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use rook_core::{
     AuthType, ConnectionConfig, CredentialEncryptionError, Credentials, DecryptedCredentials,
-    EncryptedBlob, HealthStatus, KeyManager, ModelId, OAuthTokenPort, ProviderConnection,
-    ProviderKind, ProviderPort, ProviderRegistryPort, ProviderRepositoryPort, RepositoryError,
-    TestStatus, ValidationError,
+    EncryptedBlob, EndpointValidation, HealthStatus, KeyManager, ModelId, OAuthTokenPort, Protocol,
+    ProviderConnection, ProviderDescriptor, ProviderPort, ProviderRegistryPort,
+    ProviderRepositoryPort, RepositoryError, TestStatus, ValidationError,
 };
 use sha2::{Digest, Sha256};
 use shared_kernel::{ConnectionId, ProviderId};
@@ -56,14 +56,33 @@ pub struct ManageConnections {
 
 /// Code-level test hook for OAuth HTTP endpoints.
 ///
-/// Production uses `OAuthEndpointOverrides::default()` (all `None`), which
-/// keeps the fixed provider endpoints. Integration tests point these at
-/// local mock servers. Values are never sourced from user input or DTOs.
+/// Production uses `OAuthEndpointOverrides::default()` (empty), which keeps
+/// the descriptor-declared provider endpoints. Integration tests point
+/// entries at local mock servers. Values are never sourced from user input
+/// or DTOs. Endpoints are keyed by canonical provider id and endpoint kind
+/// (`"token"` or `"device_code"`).
 #[derive(Debug, Default, Clone)]
 pub struct OAuthEndpointOverrides {
-    pub azure_token_url: Option<String>,
-    pub gemini_token_url: Option<String>,
-    pub azure_devicecode_url: Option<String>,
+    pub endpoints: std::collections::HashMap<(&'static str, &'static str), String>,
+}
+
+impl OAuthEndpointOverrides {
+    pub fn with_provider_endpoint(
+        mut self,
+        provider_id: &'static str,
+        endpoint_kind: &'static str,
+        url: String,
+    ) -> Self {
+        self.endpoints.insert((provider_id, endpoint_kind), url);
+        self
+    }
+
+    fn get(&self, provider_id: &str, endpoint_kind: &str) -> Option<&String> {
+        self.endpoints
+            .iter()
+            .find(|((id, kind), _)| *id == provider_id && *kind == endpoint_kind)
+            .map(|(_, url)| url)
+    }
 }
 
 impl ManageConnections {
@@ -94,8 +113,12 @@ impl ManageConnections {
                 repo.clone(),
                 key_manager.clone(),
                 crate::oauth_tokens::TokenEndpointOverrides {
-                    azure_token_url: oauth_endpoint_overrides.azure_token_url.clone(),
-                    gemini_token_url: oauth_endpoint_overrides.gemini_token_url.clone(),
+                    endpoints: oauth_endpoint_overrides
+                        .endpoints
+                        .iter()
+                        .filter(|((_, kind), _)| *kind == "token")
+                        .map(|((provider_id, _), url)| (*provider_id, url.clone()))
+                        .collect(),
                 },
             ),
         );
@@ -171,14 +194,11 @@ impl ManageConnections {
 
     pub async fn start_oauth_flow(
         &self,
-        provider_kind: ProviderKind,
+        provider: &'static ProviderDescriptor,
         request: StartOAuthFlowRequest,
     ) -> ManageConnectionsResult<OAuthFlowStart> {
         self.prune_oauth_flows().await;
-        if !matches!(
-            provider_kind,
-            ProviderKind::AzureOpenAI | ProviderKind::Gemini
-        ) {
+        if provider.oauth.is_none() {
             return Err(ManageConnectionsError::OAuth(
                 "OAuth is not supported for this provider".to_string(),
             ));
@@ -186,8 +206,7 @@ impl ManageConnections {
         let existing_connection = match request.connection_id {
             Some(id) => {
                 let connection = self.get(&id).await?.ok_or(RepositoryError::NotFound(id))?;
-                if connection.provider_kind != provider_kind
-                    || connection.auth_type != AuthType::OAuth
+                if connection.provider.id != provider.id || connection.auth_type != AuthType::OAuth
                 {
                     return Err(ManageConnectionsError::OAuth(
                         "connection does not match provider OAuth type".to_string(),
@@ -236,7 +255,7 @@ impl ManageConnections {
             &request.config,
         )?;
         validate_provider_config(
-            provider_kind,
+            provider,
             &request.config,
             &rook_core::EndpointPolicy::default(),
             false,
@@ -253,7 +272,7 @@ impl ManageConnections {
                 None => String::new(),
             },
         };
-        if provider_kind == ProviderKind::Gemini && project_id.trim().is_empty() {
+        if provider.protocol == Protocol::GeminiGenerateContent && project_id.trim().is_empty() {
             return Err(ManageConnectionsError::OAuth(
                 "projectId is required for Gemini OAuth".to_string(),
             ));
@@ -262,7 +281,10 @@ impl ManageConnections {
             validate_oauth_redirect_uri(&request.redirect_uri)?;
         }
         if request.flow_type == OAuthFlowType::DeviceCode
-            && provider_kind != ProviderKind::AzureOpenAI
+            && provider
+                .oauth
+                .and_then(|oauth| oauth.device_code_endpoint)
+                .is_none()
         {
             return Err(ManageConnectionsError::OAuth(
                 "Device Code is only supported for Azure OpenAI".to_string(),
@@ -291,13 +313,13 @@ impl ManageConnections {
                 .map(|secret| self.key_manager.decrypt(secret.as_str()))
                 .transpose()?,
         };
-        let scopes = oauth_scopes(provider_kind);
+        let scopes = oauth_scopes(provider);
         let flow_id = ConnectionId::new().to_string();
         let state = Uuid::new_v4().simple().to_string();
         let code_verifier = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         let code_challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(code_verifier.as_bytes()));
         let pending_connection = PendingOAuthConnection {
-            provider_kind,
+            provider,
             provider_runtime_id: request.provider_runtime_id,
             name: request.name,
             priority: request.priority,
@@ -491,7 +513,7 @@ impl ManageConnections {
                 "connection is not OAuth-authenticated".to_string(),
             ));
         }
-        if connection.provider_kind == ProviderKind::Gemini {
+        if connection.provider.protocol == Protocol::GeminiGenerateContent {
             if let Credentials::OAuth { refresh_token, .. } = &connection.credentials {
                 if let (Some(client), Ok(token)) = (
                     self.oauth_http_client.as_ref(),
@@ -729,7 +751,7 @@ impl ManageConnections {
                     &id,
                     UpdateConnectionRequest {
                         expected_updated_at: existing.updated_at,
-                        provider_kind: Some(flow.connection.provider_kind),
+                        provider: Some(flow.connection.provider),
                         provider_runtime_id: Some(flow.connection.provider_runtime_id.clone()),
                         auth_type: Some(AuthType::OAuth),
                         name: Some(flow.connection.name.clone()),
@@ -744,7 +766,7 @@ impl ManageConnections {
         } else {
             let connection = self
                 .create(CreateConnectionRequest {
-                    provider_kind: flow.connection.provider_kind,
+                    provider: flow.connection.provider,
                     provider_runtime_id: flow.connection.provider_runtime_id.clone(),
                     auth_type: AuthType::OAuth,
                     name: flow.connection.name.clone(),
@@ -763,11 +785,10 @@ impl ManageConnections {
         connection: &PendingOAuthConnection,
         access_token: &str,
     ) -> ManageConnectionsResult<String> {
-        let endpoint = match connection.provider_kind {
-            ProviderKind::AzureOpenAI => "https://graph.microsoft.com/oidc/userinfo",
-            ProviderKind::Gemini => "https://openidconnect.googleapis.com/v1/userinfo",
-            _ => return Ok(String::new()),
+        let Some(oauth) = connection.provider.oauth else {
+            return Ok(String::new());
         };
+        let endpoint = oauth.userinfo_endpoint;
         let Some(client) = self.oauth_http_client.as_ref() else {
             return Ok(String::new());
         };
@@ -828,10 +849,12 @@ impl ManageConnections {
             request.priority,
             &request.config,
         )?;
-        if request.provider_kind == ProviderKind::OpenAiCompatible && request.is_active {
+        if request.provider.endpoint_validation == EndpointValidation::OpenAiEndpointPolicy
+            && request.is_active
+        {
             return Err(ValidationError::InvalidBaseUrl.into());
         }
-        if request.provider_kind == ProviderKind::OpenAiCompatible
+        if request.provider.endpoint_validation == EndpointValidation::OpenAiEndpointPolicy
             && request.config.base_url.as_deref().is_some_and(|base_url| {
                 reqwest::Url::parse(base_url)
                     .ok()
@@ -842,12 +865,12 @@ impl ManageConnections {
             return Err(ValidationError::InvalidBaseUrl.into());
         }
         validate_provider_config(
-            request.provider_kind,
+            request.provider,
             &request.config,
             &rook_core::EndpointPolicy::default(),
             false,
         )?;
-        validate_provider_auth_type(request.provider_kind, request.auth_type)?;
+        validate_provider_auth_type(request.provider, request.auth_type)?;
         let credentials = self.encrypt_credentials(&request.credentials)?;
         validate_credentials_not_expired(&credentials)?;
         if !credentials_matches_auth_type(request.auth_type, &credentials) {
@@ -856,10 +879,10 @@ impl ManageConnections {
 
         let now = Utc::now();
         let mut config = request.config;
-        normalize_api_format(request.provider_kind, &mut config);
+        normalize_api_format(request.provider, &mut config);
         let conn = ProviderConnection {
             id: ConnectionId::new(),
-            provider_kind: request.provider_kind,
+            provider: request.provider,
             provider_runtime_id: request.provider_runtime_id,
             name: request.name.trim().to_string(),
             priority: request.priority,
@@ -909,20 +932,20 @@ impl ManageConnections {
         let priority = request.priority.unwrap_or(existing.priority);
         let config_provided = request.config.is_some();
         let mut config = request.config.unwrap_or_else(|| existing.config.clone());
-        let provider_kind = request.provider_kind.unwrap_or(existing.provider_kind);
-        if !config_provided && provider_kind != existing.provider_kind {
+        let provider = request.provider.unwrap_or(existing.provider);
+        if !config_provided && !std::ptr::eq(provider, existing.provider) {
             config.api_format = None;
         }
-        normalize_api_format(provider_kind, &mut config);
+        normalize_api_format(provider, &mut config);
         let is_active = request.is_active.unwrap_or(existing.is_active);
         validate_base_fields(&provider_runtime_id, &name, priority, &config)?;
         let policy = self.policy_for(existing.id);
-        validate_provider_config(provider_kind, &config, &policy, is_active)?;
-        validate_provider_auth_type(provider_kind, auth_type)?;
+        validate_provider_config(provider, &config, &policy, is_active)?;
+        validate_provider_auth_type(provider, auth_type)?;
 
         let updated = ProviderConnection {
             id: existing.id,
-            provider_kind,
+            provider,
             provider_runtime_id,
             name: name.trim().to_string(),
             priority,
@@ -982,12 +1005,14 @@ impl ManageConnections {
             }
         }
 
-        if conn.provider_kind == ProviderKind::OpenAiCompatible && !conn.is_active {
+        if conn.provider.endpoint_validation == EndpointValidation::OpenAiEndpointPolicy
+            && !conn.is_active
+        {
             return Err(ValidationError::InvalidBaseUrl.into());
         }
-        if conn.provider_kind == ProviderKind::OpenAiCompatible {
+        if conn.provider.endpoint_validation == EndpointValidation::OpenAiEndpointPolicy {
             validate_provider_config(
-                conn.provider_kind,
+                conn.provider,
                 &conn.config,
                 &self.policy_for(conn.id),
                 conn.is_active,
@@ -1015,16 +1040,16 @@ impl ManageConnections {
         req: TestCredentialsRequest,
     ) -> ManageConnectionsResult<TestConnectionResult> {
         // Validate and encrypt credentials
-        if req.provider_kind == ProviderKind::OpenAiCompatible {
+        if req.provider.endpoint_validation == EndpointValidation::OpenAiEndpointPolicy {
             return Err(ValidationError::InvalidBaseUrl.into());
         }
         validate_provider_config(
-            req.provider_kind,
+            req.provider,
             &req.config,
             &rook_core::EndpointPolicy::default(),
             false,
         )?;
-        validate_provider_auth_type(req.provider_kind, req.auth_type)?;
+        validate_provider_auth_type(req.provider, req.auth_type)?;
         let encrypted = self.encrypt_credentials(&req.credentials)?;
         validate_credentials_not_expired(&encrypted)?;
 
@@ -1035,7 +1060,7 @@ impl ManageConnections {
         // Build ephemeral ProviderConnection (not persisted)
         let ephemeral_conn = ProviderConnection {
             id: ConnectionId::new(),
-            provider_kind: req.provider_kind,
+            provider: req.provider,
             provider_runtime_id: req.provider_runtime_id,
             name: "__test__".to_string(), // temporary name
             priority: 100,
@@ -1050,7 +1075,7 @@ impl ManageConnections {
 
         // Build provider via ProviderBuilderPort
         let build_input = ProviderBuildInput {
-            provider_kind: ephemeral_conn.provider_kind,
+            provider: ephemeral_conn.provider,
             connection_id: ephemeral_conn.id,
             provider_runtime_id: ephemeral_conn.provider_runtime_id.clone(),
             decrypted_credentials: self.decrypt_credentials(&ephemeral_conn.credentials)?,
@@ -1196,7 +1221,7 @@ impl ManageConnections {
             active_connection_ids.insert(conn.id);
             let runtime_id = ProviderId::new(conn.id.to_string());
             if let Err(error) = validate_provider_config(
-                conn.provider_kind,
+                conn.provider,
                 &conn.config,
                 &self.policy_for(conn.id),
                 conn.is_active,
@@ -1230,7 +1255,7 @@ impl ManageConnections {
             };
 
             let input = ProviderBuildInput {
-                provider_kind: conn.provider_kind,
+                provider: conn.provider,
                 connection_id: conn.id,
                 provider_runtime_id: conn.provider_runtime_id.clone(),
                 decrypted_credentials: decrypted,
@@ -1302,7 +1327,7 @@ impl ManageConnections {
 /// Information needed to construct a provider from a connection.
 #[derive(Clone)]
 pub struct ProviderBuildInput {
-    pub provider_kind: ProviderKind,
+    pub provider: &'static ProviderDescriptor,
     pub connection_id: ConnectionId,
     pub provider_runtime_id: ProviderId,
     pub decrypted_credentials: DecryptedCredentials,
@@ -1326,7 +1351,7 @@ pub trait ProviderBuilderPort: Send + Sync {
 
 #[derive(Debug, Clone)]
 pub struct CreateConnectionRequest {
-    pub provider_kind: ProviderKind,
+    pub provider: &'static ProviderDescriptor,
     pub provider_runtime_id: ProviderId,
     pub auth_type: AuthType,
     pub name: String,
@@ -1339,7 +1364,7 @@ pub struct CreateConnectionRequest {
 #[derive(Debug, Clone)]
 pub struct UpdateConnectionRequest {
     pub expected_updated_at: DateTime<Utc>,
-    pub provider_kind: Option<ProviderKind>,
+    pub provider: Option<&'static ProviderDescriptor>,
     pub provider_runtime_id: Option<ProviderId>,
     pub auth_type: Option<AuthType>,
     pub name: Option<String>,
@@ -1351,7 +1376,7 @@ pub struct UpdateConnectionRequest {
 
 #[derive(Debug, Clone)]
 pub struct TestCredentialsRequest {
-    pub provider_kind: ProviderKind,
+    pub provider: &'static ProviderDescriptor,
     pub provider_runtime_id: ProviderId,
     pub auth_type: AuthType,
     pub credentials: CredentialsInput,
@@ -1414,7 +1439,7 @@ pub struct OAuthFlowStart {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OAuthFlowStatus {
     pub flow_id: String,
-    pub provider_kind: String,
+    pub provider_id: String,
     pub status: String,
     pub message: Option<String>,
     pub connection_id: Option<ConnectionId>,
@@ -1422,7 +1447,7 @@ pub struct OAuthFlowStatus {
 
 #[derive(Debug, Clone)]
 struct PendingOAuthConnection {
-    provider_kind: ProviderKind,
+    provider: &'static ProviderDescriptor,
     provider_runtime_id: ProviderId,
     name: String,
     priority: u8,
@@ -1577,17 +1602,11 @@ fn test_status_from_health(health: HealthStatus) -> TestStatus {
     }
 }
 
-fn oauth_scopes(provider_kind: ProviderKind) -> String {
-    match provider_kind {
-        ProviderKind::AzureOpenAI => {
-            "https://cognitiveservices.azure.com/.default offline_access openid profile email"
-                .to_string()
-        }
-        ProviderKind::Gemini => {
-            "https://www.googleapis.com/auth/generative-language.retriever openid email".to_string()
-        }
-        _ => String::new(),
-    }
+fn oauth_scopes(provider: &ProviderDescriptor) -> String {
+    provider
+        .oauth
+        .map(|oauth| oauth.scopes.to_string())
+        .unwrap_or_default()
 }
 
 fn tenant_segment(connection: &PendingOAuthConnection) -> ManageConnectionsResult<&str> {
@@ -1607,58 +1626,49 @@ fn tenant_segment(connection: &PendingOAuthConnection) -> ManageConnectionsResul
     Ok(tenant)
 }
 
-fn authorization_endpoint(
-    connection: &PendingOAuthConnection,
-) -> ManageConnectionsResult<&'static str> {
-    match connection.provider_kind {
-        ProviderKind::AzureOpenAI => Ok("https://login.microsoftonline.com"),
-        ProviderKind::Gemini => Ok("https://accounts.google.com"),
-        _ => Err(ManageConnectionsError::OAuth(
-            "OAuth is not supported for this provider".to_string(),
-        )),
-    }
+fn authorization_endpoint(connection: &PendingOAuthConnection) -> ManageConnectionsResult<String> {
+    let oauth = connection.provider.oauth.ok_or_else(|| {
+        ManageConnectionsError::OAuth("OAuth is not supported for this provider".to_string())
+    })?;
+    Ok(oauth.resolve_endpoint(oauth.authorization_endpoint, tenant_segment(connection)?))
 }
 
 fn token_endpoint_with_overrides(
     connection: &PendingOAuthConnection,
     overrides: &OAuthEndpointOverrides,
 ) -> ManageConnectionsResult<String> {
-    match connection.provider_kind {
-        ProviderKind::AzureOpenAI => {
-            if let Some(override_url) = overrides.azure_token_url.clone() {
-                return checked_test_endpoint(override_url);
-            }
-            Ok(format!(
-                "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
-                tenant_segment(connection)?
-            ))
-        }
-        ProviderKind::Gemini => match overrides.gemini_token_url.clone() {
-            Some(override_url) => checked_test_endpoint(override_url),
-            None => Ok("https://oauth2.googleapis.com/token".to_string()),
-        },
-        _ => Err(ManageConnectionsError::OAuth(
+    let oauth = connection.provider.oauth.ok_or_else(|| {
+        ManageConnectionsError::OAuth(
             "OAuth refresh is not supported for this provider".to_string(),
-        )),
+        )
+    })?;
+    if let Some(override_url) = overrides.get(connection.provider.id, "token") {
+        return checked_test_endpoint(override_url.clone());
     }
+    Ok(oauth.resolve_endpoint(oauth.token_endpoint, tenant_segment(connection)?))
 }
 
 fn device_code_endpoint_with_overrides(
     connection: &PendingOAuthConnection,
     overrides: &OAuthEndpointOverrides,
 ) -> ManageConnectionsResult<String> {
-    if connection.provider_kind != ProviderKind::AzureOpenAI {
+    let Some(device_code_endpoint) = connection
+        .provider
+        .oauth
+        .and_then(|oauth| oauth.device_code_endpoint)
+    else {
         return Err(ManageConnectionsError::OAuth(
             "Device Code is only supported for Azure OpenAI".to_string(),
         ));
+    };
+    if let Some(override_url) = overrides.get(connection.provider.id, "device_code") {
+        return checked_test_endpoint(override_url.clone());
     }
-    if let Some(override_url) = overrides.azure_devicecode_url.clone() {
-        return checked_test_endpoint(override_url);
-    }
-    Ok(format!(
-        "https://login.microsoftonline.com/{}/oauth2/v2.0/devicecode",
-        tenant_segment(connection)?
-    ))
+    Ok(connection
+        .provider
+        .oauth
+        .expect("checked above")
+        .resolve_endpoint(device_code_endpoint, tenant_segment(connection)?))
 }
 
 /// Accept a test endpoint override only over HTTPS or loopback HTTP.
@@ -1681,19 +1691,7 @@ fn build_authorization_url(
     state: &str,
     code_challenge: &str,
 ) -> ManageConnectionsResult<String> {
-    let base = match connection.provider_kind {
-        ProviderKind::AzureOpenAI => format!(
-            "{}/{}/oauth2/v2.0/authorize",
-            authorization_endpoint(connection)?,
-            tenant_segment(connection)?
-        ),
-        ProviderKind::Gemini => format!("{}/o/oauth2/v2/auth", authorization_endpoint(connection)?),
-        _ => {
-            return Err(ManageConnectionsError::OAuth(
-                "OAuth is not supported for this provider".to_string(),
-            ));
-        }
-    };
+    let base = authorization_endpoint(connection)?;
     let mut url = reqwest::Url::parse(&base)
         .map_err(|_| ManageConnectionsError::OAuth("authorization endpoint invalid".into()))?;
     url.query_pairs_mut()
@@ -1705,10 +1703,10 @@ fn build_authorization_url(
         .append_pair("state", state)
         .append_pair("code_challenge", code_challenge)
         .append_pair("code_challenge_method", "S256");
-    if connection.provider_kind == ProviderKind::Gemini {
-        url.query_pairs_mut()
-            .append_pair("access_type", "offline")
-            .append_pair("prompt", "consent");
+    if let Some(oauth) = connection.provider.oauth {
+        for (key, value) in oauth.extra_authorize_params {
+            url.query_pairs_mut().append_pair(key, value);
+        }
     }
     Ok(url.into())
 }
@@ -1809,7 +1807,7 @@ async fn parse_token_response(
 fn flow_status(flow: &PendingOAuthFlow) -> OAuthFlowStatus {
     OAuthFlowStatus {
         flow_id: flow.flow_id.clone(),
-        provider_kind: flow.connection.provider_kind.as_str().to_string(),
+        provider_id: flow.connection.provider.id.to_string(),
         status: flow.status.clone(),
         message: flow.message.clone(),
         connection_id: flow.connection_id,

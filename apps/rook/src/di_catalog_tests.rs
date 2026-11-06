@@ -1,6 +1,6 @@
 use super::{
     Arc, ConnectionId, CortexResult, DecryptedCredentials, DynamicProviderBuilder, ModelId,
-    ProviderBuildInput, ProviderBuilderPort, ProviderId, ProviderKind, StaticModelCatalog,
+    ProviderBuildInput, ProviderBuilderPort, ProviderId, StaticModelCatalog,
 };
 use async_trait::async_trait;
 use rook_core::{CapabilityState, ModelDeclaration, OAuthTokenPort};
@@ -14,9 +14,12 @@ impl OAuthTokenPort for NoOAuth {
     }
 }
 
-fn input(kind: ProviderKind, connection_id: ConnectionId) -> ProviderBuildInput {
+fn input(
+    kind: &'static rook_core::ProviderDescriptor,
+    connection_id: ConnectionId,
+) -> ProviderBuildInput {
     ProviderBuildInput {
-        provider_kind: kind,
+        provider: kind,
         connection_id,
         provider_runtime_id: ProviderId::new("runtime"),
         decrypted_credentials: DecryptedCredentials::ApiKey {
@@ -48,11 +51,17 @@ async fn builder_keeps_connection_scoped_models_and_metadata_on_the_exact_adapte
         }),
     );
     let first_provider = builder
-        .build(input(ProviderKind::OpenAI, first))
+        .build(input(
+            rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+            first,
+        ))
         .await
         .unwrap();
     let second_provider = builder
-        .build(input(ProviderKind::OpenAI, second))
+        .build(input(
+            rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+            second,
+        ))
         .await
         .unwrap();
     assert!(first_provider.supports_model(&ModelId::new("private-model")));
@@ -86,7 +95,10 @@ async fn declarations_preserve_azure_and_compatible_membership_and_adapter_limit
             providers: Default::default(),
         }),
     );
-    let mut compatible = input(ProviderKind::OpenAiCompatible, ConnectionId::new());
+    let mut compatible = input(
+        rook_core::descriptor_by_id("openai-compatible").expect("openai-compatible descriptor"),
+        ConnectionId::new(),
+    );
     compatible.base_url = Some("https://upstream.example/v1".into());
     compatible.supported_models = vec![ModelId::new("physical")];
     compatible.endpoint_policy = rook_core::EndpointPolicyConfig {
@@ -103,13 +115,19 @@ async fn declarations_preserve_azure_and_compatible_membership_and_adapter_limit
     assert_eq!(metadata.vision.state, CapabilityState::Unsupported);
     assert_eq!(metadata.vision.source, "adapter");
     let gemini = builder
-        .build(input(ProviderKind::Gemini, ConnectionId::new()))
+        .build(input(
+            rook_core::descriptor_by_id("gemini").expect("gemini descriptor"),
+            ConnectionId::new(),
+        ))
         .await
         .unwrap();
     let metadata = gemini.model_capabilities(&ModelId::new("gemini-test"));
     assert_eq!(metadata.tools.state, CapabilityState::Unsupported);
     assert_eq!(metadata.streaming.state, CapabilityState::Unsupported);
-    let mut azure = input(ProviderKind::AzureOpenAI, ConnectionId::new());
+    let mut azure = input(
+        rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
+        ConnectionId::new(),
+    );
     azure.base_url = Some("https://example.openai.azure.com".into());
     azure.default_model = Some(ModelId::new("deployment"));
     azure.decrypted_credentials = DecryptedCredentials::OAuth {

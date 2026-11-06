@@ -4,7 +4,7 @@ use providers_groq::{GroqProvider, GroqProviderConfig};
 use providers_openai::provider::{OpenAIProvider, OpenAIProviderConfig};
 use rook::di::{build_provider_from_connection_with_recorder, is_canonical_base_url};
 use rook_core::{
-    CompletionRequest, DecryptedCredentials, ProviderKind, ProviderPort, QuotaObservation,
+    CompletionRequest, DecryptedCredentials, ProviderPort, QuotaObservation,
     QuotaObservationRecorderPort, Role,
 };
 use shared_kernel::{ConnectionId, CortexError, ProviderId, RequestId};
@@ -91,6 +91,7 @@ async fn openai_captures_http_error_and_ignores_recorder_failure() {
     });
     let provider = OpenAIProvider::new_with_quota_recorder(
         OpenAIProviderConfig {
+            provider_id: "openai",
             id: ProviderId::new("managed-openai-id"),
             api_key: "key".into(),
             base_url: server.uri(),
@@ -124,6 +125,7 @@ async fn successful_provider_response_is_not_changed_by_recorder_failure() {
     });
     let provider = OpenAIProvider::new_with_quota_recorder(
         OpenAIProviderConfig {
+            provider_id: "openai",
             id: ProviderId::new("openai-runtime"),
             api_key: "key".into(),
             base_url: server.uri(),
@@ -144,6 +146,7 @@ async fn anthropic_captures_success_before_body_consumption() {
     let recorder = Arc::new(Recorder::default());
     let provider = AnthropicProvider::new_with_quota_recorder(
         AnthropicProviderConfig {
+            provider_id: "anthropic",
             id: ProviderId::new("anthropic-runtime"),
             api_key: "key".into(),
             base_url: server.uri(),
@@ -172,6 +175,7 @@ async fn groq_captures_success_before_body_consumption() {
     let recorder = Arc::new(Recorder::default());
     let provider = GroqProvider::new_with_quota_recorder(
         GroqProviderConfig {
+            provider_id: "groq",
             id: ProviderId::new("groq-runtime"),
             api_key: "key".into(),
             base_url: Some(server.uri()),
@@ -198,11 +202,11 @@ async fn groq_captures_success_before_body_consumption() {
 #[tokio::test]
 async fn di_builder_filters_recorder_for_custom_urls() {
     assert!(is_canonical_base_url(
-        ProviderKind::OpenAI,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
         Some("https://api.openai.com/v1")
     ));
     assert!(!is_canonical_base_url(
-        ProviderKind::OpenAI,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
         Some("https://proxy.example.com/v1")
     ));
     let credentials = DecryptedCredentials::ApiKey {
@@ -213,7 +217,7 @@ async fn di_builder_filters_recorder_for_custom_urls() {
     let custom_recorder = Arc::new(Recorder::default());
     let custom_provider = build_provider_from_connection_with_recorder(
         &connection_id,
-        ProviderKind::OpenAI,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
         &credentials,
         Some(server.uri()),
         vec![],

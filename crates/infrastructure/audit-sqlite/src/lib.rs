@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use rook_core::{
-    ApiKeyId, AuditEntry, AuditPort, CostBreakdown, Pagination, ProviderKind, QuotaObservation,
+    ApiKeyId, AuditEntry, AuditPort, CostBreakdown, Pagination, QuotaObservation,
     QuotaObservationQuery, QuotaObservationRecorderPort, RequestStatus, UsageEntry, UsageFilters,
     UsageRecorderPort, UsageSummary,
 };
@@ -444,14 +444,16 @@ impl SqliteUsageRepository {
 
 /// Map one `provider_quota_observations` row into the domain model.
 fn map_quota_observation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QuotaObservation> {
-    let provider_kind: String = row.get(0)?;
-    let provider_kind = ProviderKind::try_from(provider_kind.as_str()).map_err(|_| {
-        rusqlite::Error::InvalidColumnType(
+    let provider_id: String = row.get(0)?;
+    // Legacy rows may still carry pre-migration spellings; the descriptor
+    // alias map resolves them so no stored observation is dropped.
+    if rook_core::descriptor_for(&provider_id).is_none() {
+        return Err(rusqlite::Error::InvalidColumnType(
             0,
             "provider_kind".to_string(),
             rusqlite::types::Type::Text,
-        )
-    })?;
+        ));
+    }
     let connection_id: Option<String> = row.get(2)?;
     let connection_id = connection_id
         .map(|id| {
@@ -490,7 +492,7 @@ fn map_quota_observation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QuotaO
         })?;
     let reset_after_milliseconds: Option<i64> = row.get(10)?;
     Ok(QuotaObservation {
-        provider_kind,
+        provider_id,
         provider: ProviderId::new(row.get::<_, String>(1)?),
         connection_id,
         metric: row.get(3)?,
@@ -571,7 +573,7 @@ fn persist_quota_observations(
                 reset_after_milliseconds, observed_at
              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
-                observation.provider_kind.as_str(),
+                observation.provider_id.as_str(),
                 observation.provider.to_string(),
                 observation.connection_id.map(|id| id.to_string()),
                 observation.metric,
@@ -1323,7 +1325,7 @@ mod usage_tests {
 
     fn quota_observation(provider: &str, connection_id: Option<ConnectionId>) -> QuotaObservation {
         QuotaObservation {
-            provider_kind: ProviderKind::OpenAI,
+            provider_id: "openai".to_string(),
             provider: ProviderId::new(provider),
             connection_id,
             metric: "requests".to_string(),

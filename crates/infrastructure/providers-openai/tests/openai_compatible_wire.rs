@@ -52,6 +52,7 @@ fn request(model: &str) -> CompletionRequest {
 fn provider(id: &str, api_key: &str, base_url: String, models: &[&str]) -> OpenAIProvider {
     OpenAIProvider::new_with_endpoint_policy(
         OpenAIProviderConfig {
+            provider_id: "openai",
             id: ProviderId::new(id),
             api_key: api_key.to_string(),
             base_url: base_url.clone(),
