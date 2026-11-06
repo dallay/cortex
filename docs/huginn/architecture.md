@@ -466,17 +466,9 @@ The CLI's current legacy configuration uses `HUGINN_BASE_URL`, `HUGINN_MODEL`,
 and `HUGINN_API_KEY`; consult the [Huginn configuration guide](README.md) for
 current setup details.
 
-## Validation Evidence
-
-The Huginn validation record documents focused test suites, architecture checks,
-and known platform limitations. See [validation.md](validation.md) for dated
-results. Those results are evidence for the recorded commit and environment; they
-do not guarantee that the same checks pass on the current checkout.
-
 ## Related Documentation
 
 - [README](README.md) — Usage guide and quick start
 - [providers.md](providers.md) — Provider configuration
 - [connections.md](connections.md) — Connection management
 - [authoring.md](authoring.md) — Plugin authoring guide
-- [validation.md](validation.md) — Testing and validation

@@ -5,9 +5,9 @@ Chained PRs recommended: No
 Chain strategy: pending
 400-line budget risk: Low
 
-### 1. License + copy 2 OmniRoute assets
+### 1. License + copy 2 reference-gateway assets
 
-- [x] Confirm `tmp/OmniRoute/LICENSE` is MIT (© 2026 diegosouzapw); add PR attribution. Create `dashboard/public/providers/`; copy `tmp/OmniRoute/public/providers/{anthropic-m.png → anthropic.png, gemini-cli.svg → gemini.svg}`.
+- [x] Confirm `tmp/reference-gateway/LICENSE` is MIT; add PR attribution. Create `dashboard/public/providers/`; copy `tmp/reference-gateway/public/providers/{anthropic-m.png → anthropic.png, gemini-cli.svg → gemini.svg}`.
 - Acceptance: attribution in PR; both files load at dev server.
 
 ### 2. Author 4 branded SVGs

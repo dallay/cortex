@@ -181,5 +181,5 @@ Separate deterministic tests exercise kernel lifecycle/rollback, edit approval a
 stale diffs, shell execution and descendant cleanup, path containment, interruption
 and resume, scoped instructions, compaction, HTTP and MCP transports, and CLI JSON.
 Public endpoints and Rook have not been asserted compatible. macOS deterministic
-checks do not establish Linux daily-use acceptance. Record full gate results in
-[validation](validation.md); real-model and Linux checks remain manual acceptance.
+checks do not establish Linux daily-use acceptance. Record full gate results;
+real-model and Linux checks remain manual acceptance.

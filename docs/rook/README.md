@@ -26,6 +26,7 @@ rook/
 ├── providers.md           ← Provider configuration
 ├── deployment.md          ← Deployment guide
 ├── product-requirements.md ← Product requirements
+├── router-roadmap.md      ← Router parity roadmap and issue specs
 └── adr/                   ← Architecture Decision Records
     └── README.md
 ```
@@ -34,6 +35,7 @@ rook/
 
 ### Product
 - [Product Requirements](product-requirements.md) — Product scope, requirements, and open questions
+- [Router Roadmap](router-roadmap.md) — Parity roadmap, phased issue specifications, and dependency graph
 
 ### Getting started
 1. [Configuration](configuration.md) — How to configure Rook
