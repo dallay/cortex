@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use shared_kernel::{CacheKey, ComboId, ConnectionId, ModelId, ProviderId, RequestId};
 use uuid::Uuid;
 
-use crate::{ApiKeyId, ProviderKind};
+use crate::ApiKeyId;
 
 // ============================================================================
 // User — admin user for MANAGEMENT routes
@@ -516,7 +516,8 @@ pub struct UsageEntry {
 pub struct QuotaObservation {
     /// Provider family and runtime instance are both retained: multiple configured
     /// runtimes of one family may report different limits.
-    pub provider_kind: ProviderKind,
+    #[serde(rename = "provider_id", alias = "provider_kind")]
+    pub provider_id: String,
     pub provider: ProviderId,
     pub connection_id: Option<ConnectionId>,
     pub metric: String,

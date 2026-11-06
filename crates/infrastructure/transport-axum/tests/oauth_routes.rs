@@ -334,7 +334,7 @@ use chrono::Utc as _UtcV2;
 use rook_core::{
     AuthType as _AuthTypeV2, ConnectionConfig as _ConnectionConfigV2,
     CredentialEncryptionError as _CredEncErrV2, Credentials as _CredsV2, EncryptedBlob as _BlobV2,
-    KeyManager as _KmV2, ProviderConnection as _ConnV2, ProviderKind as _KindV2,
+    KeyManager as _KmV2, ProviderConnection as _ConnV2, ProviderDescriptor as _KindV2,
     ProviderRegistryPort as _RegistryV2, ProviderRepositoryPort as _RepoV2,
     QuotaWindowThresholds as _QuotaV2, RegistryError as _RegErrV2, RepositoryError as _RepoErrV2,
     TestStatus as _StatusV2,
@@ -428,11 +428,15 @@ impl _BuilderV2 for FailingBuilderV2 {
     }
 }
 
-fn oauth_conn_v2(kind: _KindV2, expires_at: i64, status: _StatusV2) -> _ConnV2 {
+fn _kind_v2_desc(id: &'static str) -> &'static _KindV2 {
+    rook_core::descriptor_for(id).expect("descriptor")
+}
+
+fn oauth_conn_v2(kind: &'static _KindV2, expires_at: i64, status: _StatusV2) -> _ConnV2 {
     let now = _UtcV2::now();
     _ConnV2 {
         id: shared_kernel::ConnectionId::new(),
-        provider_kind: kind,
+        provider: kind,
         provider_runtime_id: shared_kernel::ProviderId::new("runtime-1"),
         name: "oauth-conn".to_string(),
         priority: 10,
@@ -471,7 +475,7 @@ fn api_key_conn_v2() -> _ConnV2 {
     let now = _UtcV2::now();
     _ConnV2 {
         id: shared_kernel::ConnectionId::new(),
-        provider_kind: _KindV2::OpenAI,
+        provider: _kind_v2_desc("openai"),
         provider_runtime_id: shared_kernel::ProviderId::new("runtime-1"),
         name: "api-key".to_string(),
         priority: 10,
@@ -509,9 +513,17 @@ async fn wired_router(
         Arc::new(PassThroughKm) as Arc<dyn _KmV2>,
         Arc::new(FailingBuilderV2) as Arc<dyn _BuilderV2>,
         _OverridesV2 {
-            azure_token_url: token_url.clone(),
-            gemini_token_url: token_url,
-            azure_devicecode_url: devicecode_url,
+            endpoints: token_url
+                .clone()
+                .into_iter()
+                .map(|url| (("azure-openai", "token"), url))
+                .chain(token_url.into_iter().map(|url| (("gemini", "token"), url)))
+                .chain(
+                    devicecode_url
+                        .into_iter()
+                        .map(|url| (("azure-openai", "device_code"), url)),
+                )
+                .collect(),
         },
     );
     let mut usecases = usecases_without_connections();
@@ -630,7 +642,7 @@ async fn status_flow_provider_mismatch_returns_not_found() {
 #[tokio::test]
 async fn status_reports_connected_connection() {
     let conn = oauth_conn_v2(
-        _KindV2::AzureOpenAI,
+        _kind_v2_desc("azure-openai"),
         _UtcV2::now().timestamp() + 3600,
         _StatusV2::NeverTested,
     );
@@ -649,7 +661,7 @@ async fn status_reports_connected_connection() {
 
 #[tokio::test]
 async fn status_reports_expired_connection() {
-    let conn = oauth_conn_v2(_KindV2::AzureOpenAI, 0, _StatusV2::NeverTested);
+    let conn = oauth_conn_v2(_kind_v2_desc("azure-openai"), 0, _StatusV2::NeverTested);
     let id = conn.id.to_string();
     let (router, _) = wired_router(vec![conn], None, None).await;
     let req = Request::builder()
@@ -668,7 +680,7 @@ async fn status_reports_expired_connection() {
 #[tokio::test]
 async fn status_reports_reauthentication_required() {
     let conn = oauth_conn_v2(
-        _KindV2::AzureOpenAI,
+        _kind_v2_desc("azure-openai"),
         _UtcV2::now().timestamp() + 3600,
         _StatusV2::Unhealthy {
             last_test_at: _UtcV2::now(),
@@ -693,7 +705,7 @@ async fn status_reports_reauthentication_required() {
 #[tokio::test]
 async fn status_prefers_reauthentication_over_expired_after_failed_refresh() {
     let conn = oauth_conn_v2(
-        _KindV2::AzureOpenAI,
+        _kind_v2_desc("azure-openai"),
         0,
         _StatusV2::Unhealthy {
             last_test_at: _UtcV2::now(),
@@ -757,7 +769,7 @@ async fn status_missing_ids_returns_bad_request_with_manager() {
 async fn refresh_expired_connection_returns_no_content() {
     let server = wiremock::MockServer::start().await;
     token_mock_server().mount(&server).await;
-    let conn = oauth_conn_v2(_KindV2::AzureOpenAI, 0, _StatusV2::NeverTested);
+    let conn = oauth_conn_v2(_kind_v2_desc("azure-openai"), 0, _StatusV2::NeverTested);
     let id = conn.id.to_string();
     let (router, repo) = wired_router(vec![conn], Some(server.uri()), None).await;
     let response = router
@@ -797,7 +809,7 @@ async fn refresh_malformed_id_returns_bad_request_with_manager() {
 #[tokio::test]
 async fn refresh_provider_mismatch_returns_not_found() {
     let conn = oauth_conn_v2(
-        _KindV2::AzureOpenAI,
+        _kind_v2_desc("azure-openai"),
         _UtcV2::now().timestamp() + 3600,
         _StatusV2::NeverTested,
     );
@@ -817,7 +829,7 @@ async fn refresh_provider_mismatch_returns_not_found() {
 #[tokio::test]
 async fn disconnect_azure_connection_returns_no_content() {
     let conn = oauth_conn_v2(
-        _KindV2::AzureOpenAI,
+        _kind_v2_desc("azure-openai"),
         _UtcV2::now().timestamp() + 3600,
         _StatusV2::NeverTested,
     );

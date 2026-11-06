@@ -41,6 +41,7 @@ async fn upstream_tool_call_fragments_survive_provider_domain_and_openai_wire() 
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "test-key".to_string(),
         base_url: server.uri(),

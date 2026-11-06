@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use rook_core::{
-    ApiKeyId, AuditEntry, AuditPort, CostBreakdown, Pagination, ProviderKind, QuotaObservation,
+    ApiKeyId, AuditEntry, AuditPort, CostBreakdown, Pagination, QuotaObservation,
     QuotaObservationQuery, QuotaObservationRecorderPort, RequestStatus, UsageEntry, UsageFilters,
     UsageRecorderPort, UsageSummary,
 };
@@ -444,14 +444,19 @@ impl SqliteUsageRepository {
 
 /// Map one `provider_quota_observations` row into the domain model.
 fn map_quota_observation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QuotaObservation> {
-    let provider_kind: String = row.get(0)?;
-    let provider_kind = ProviderKind::try_from(provider_kind.as_str()).map_err(|_| {
-        rusqlite::Error::InvalidColumnType(
-            0,
-            "provider_kind".to_string(),
-            rusqlite::types::Type::Text,
-        )
-    })?;
+    let provider_id: String = row.get(0)?;
+    // Legacy rows may still carry pre-migration spellings; the descriptor
+    // alias map resolves them so no stored observation is dropped.
+    let provider_id = rook_core::descriptor_for(&provider_id)
+        .ok_or_else(|| {
+            rusqlite::Error::InvalidColumnType(
+                0,
+                "provider_kind".to_string(),
+                rusqlite::types::Type::Text,
+            )
+        })?
+        .id
+        .to_string();
     let connection_id: Option<String> = row.get(2)?;
     let connection_id = connection_id
         .map(|id| {
@@ -490,7 +495,7 @@ fn map_quota_observation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QuotaO
         })?;
     let reset_after_milliseconds: Option<i64> = row.get(10)?;
     Ok(QuotaObservation {
-        provider_kind,
+        provider_id,
         provider: ProviderId::new(row.get::<_, String>(1)?),
         connection_id,
         metric: row.get(3)?,
@@ -571,7 +576,7 @@ fn persist_quota_observations(
                 reset_after_milliseconds, observed_at
              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
-                observation.provider_kind.as_str(),
+                observation.provider_id.as_str(),
                 observation.provider.to_string(),
                 observation.connection_id.map(|id| id.to_string()),
                 observation.metric,
@@ -1323,7 +1328,7 @@ mod usage_tests {
 
     fn quota_observation(provider: &str, connection_id: Option<ConnectionId>) -> QuotaObservation {
         QuotaObservation {
-            provider_kind: ProviderKind::OpenAI,
+            provider_id: "openai".to_string(),
             provider: ProviderId::new(provider),
             connection_id,
             metric: "requests".to_string(),
@@ -1337,6 +1342,22 @@ mod usage_tests {
             reset_after_milliseconds: Some(7_660),
             observed_at: timestamp(2),
         }
+    }
+
+    #[test]
+    fn quota_rows_canonicalize_aliases_and_case_variants() {
+        runtime().block_on(async {
+            let (_db_dir, repo) = usage_repo();
+            for stored in ["ollamacloud", "OLLAMA-CLOUD"] {
+                let mut observation = quota_observation(stored, None);
+                observation.provider_id = stored.to_string();
+                repo.record_observations(vec![observation]).await.unwrap();
+            }
+            repo.shutdown().await.unwrap();
+            let rows = repo.list_observations(None).await.unwrap();
+            assert_eq!(rows.len(), 2);
+            assert!(rows.iter().all(|row| row.provider_id == "ollama-cloud"));
+        });
     }
 
     #[test]
@@ -1441,6 +1462,31 @@ mod usage_tests {
             assert!(rows.iter().any(|row| {
                 row.connection_id == Some(other_connection) && row.remaining == Some(12.0)
             }));
+        });
+    }
+
+    #[test]
+    fn aliased_provider_ids_are_canonicalized_when_reading_observations() {
+        runtime().block_on(async {
+            let (_db_dir, repo) = usage_repo();
+            let connection = ConnectionId::new();
+
+            let mut legacy = quota_observation("legacy-runtime", Some(connection));
+            legacy.provider_id = "ollamacloud".to_string();
+            repo.record_observations(vec![legacy])
+                .await
+                .expect("record legacy observation");
+            wait_for_quota_rows(&repo, 1).await;
+
+            let rows = repo
+                .latest_observations(&QuotaObservationQuery::for_connections(vec![connection]))
+                .await
+                .expect("latest quota observations");
+            assert_eq!(rows.len(), 1);
+            assert_eq!(
+                rows[0].provider_id, "ollama-cloud",
+                "an aliased stored spelling must resolve to the canonical descriptor id"
+            );
         });
     }
 

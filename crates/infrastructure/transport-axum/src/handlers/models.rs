@@ -29,35 +29,38 @@ pub fn compute_models_by_provider(
     connections: &[ProviderConnection],
     catalog: &[ModelCatalogEntry],
 ) -> Vec<ProviderModelsGroup> {
+    use rook_core::ModelListing;
     let mut groups: Vec<ProviderModelsGroup> = connections
         .iter()
         .filter(|c| c.is_active)
         .map(|conn| {
-            let models: Vec<String> = if conn.provider_kind == rook_core::ProviderKind::AzureOpenAI
-            {
-                conn.config
+            // Model listing strategy is descriptor data: deployments expose
+            // their default model, supported-models providers expose their
+            // declared list, everyone else reads the catalog.
+            let models: Vec<String> = match conn.provider.model_listing {
+                ModelListing::Deployment => conn
+                    .config
                     .default_model
                     .as_ref()
                     .map(ToString::to_string)
                     .into_iter()
-                    .collect()
-            } else if conn.provider_kind == rook_core::ProviderKind::OpenAiCompatible {
-                conn.config
+                    .collect(),
+                ModelListing::SupportedModels => conn
+                    .config
                     .supported_models
                     .iter()
                     .map(ToString::to_string)
-                    .collect()
-            } else {
-                catalog
+                    .collect(),
+                ModelListing::Catalog => catalog
                     .iter()
-                    .filter(|entry| entry.provider_kind == conn.provider_kind)
+                    .filter(|entry| entry.provider_id == conn.provider.id)
                     .map(|entry| entry.model_id.clone())
-                    .collect()
+                    .collect(),
             };
             ProviderModelsGroup {
                 provider_id: conn.id.to_string(),
                 provider_name: conn.name.clone(),
-                provider_kind: conn.provider_kind.as_str().to_string(),
+                provider_kind: conn.provider.id.to_string(),
                 models,
             }
         })

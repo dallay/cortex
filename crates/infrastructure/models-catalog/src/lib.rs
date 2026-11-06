@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use rook_core::{
     ConnectionId, ModelCapabilities, ModelCatalogEntry, ModelCatalogPort, ModelDeclaration,
-    ProviderKind,
 };
 
 /// Immutable declarative catalog. Runtime discovery can supply IDs to `resolve`
@@ -22,9 +21,15 @@ impl StaticModelCatalog {
         Self::with_declarations(Vec::new()).expect("bundled catalog is valid")
     }
 
-    pub fn with_declarations(configured: Vec<ModelDeclaration>) -> Result<Self, String> {
-        let bundled = serde_json::from_str(include_str!("models.json"))
+    pub fn with_declarations(mut configured: Vec<ModelDeclaration>) -> Result<Self, String> {
+        let mut bundled: Vec<ModelDeclaration> = serde_json::from_str(include_str!("models.json"))
             .map_err(|e| format!("invalid bundled catalog: {e}"))?;
+        for entry in bundled.iter_mut().chain(configured.iter_mut()) {
+            entry.provider_id = rook_core::descriptor_for(&entry.provider_id)
+                .ok_or_else(|| format!("unknown provider id: {}", entry.provider_id))?
+                .id
+                .to_string();
+        }
         for (i, entry) in configured.iter().enumerate() {
             if entry.model_id.trim().is_empty() || entry.model_id.trim() != entry.model_id {
                 return Err(
@@ -35,7 +40,7 @@ impl StaticModelCatalog {
                 return Err("context_tokens must be positive".into());
             }
             if configured[..i].iter().any(|other| {
-                other.provider_kind == entry.provider_kind
+                other.provider_id == entry.provider_id
                     && other.connection_id == entry.connection_id
                     && other.model_id == entry.model_id
             }) {
@@ -48,7 +53,6 @@ impl StaticModelCatalog {
         })
     }
 }
-
 #[async_trait]
 impl ModelCatalogPort for StaticModelCatalog {
     async fn list(&self) -> Vec<ModelCatalogEntry> {
@@ -61,12 +65,29 @@ impl ModelCatalogPort for StaticModelCatalog {
         {
             if !out
                 .iter()
-                .any(|e| e.provider_kind == entry.provider_kind && e.model_id == entry.model_id)
+                .any(|e| e.provider_id == entry.provider_id && e.model_id == entry.model_id)
             {
                 out.push(ModelCatalogEntry {
                     model_id: entry.model_id.clone(),
-                    provider_kind: entry.provider_kind,
+                    provider_id: entry.provider_id.clone(),
                 });
+            }
+        }
+        // Descriptors with inline model lists contribute to the catalog so
+        // every listing site derives from the same table.
+        for descriptor in rook_core::PROVIDER_DESCRIPTORS {
+            if let rook_core::ModelSource::Static(models) = descriptor.models {
+                for model_id in models {
+                    if !out
+                        .iter()
+                        .any(|e| e.provider_id == descriptor.id && e.model_id == *model_id)
+                    {
+                        out.push(ModelCatalogEntry {
+                            model_id: (*model_id).to_string(),
+                            provider_id: descriptor.id.to_string(),
+                        });
+                    }
+                }
             }
         }
         out
@@ -74,7 +95,7 @@ impl ModelCatalogPort for StaticModelCatalog {
 
     async fn resolve(
         &self,
-        kind: ProviderKind,
+        provider: &'static rook_core::ProviderDescriptor,
         connection: Option<&ConnectionId>,
         model: &str,
     ) -> ModelCapabilities {
@@ -86,7 +107,7 @@ impl ModelCatalogPort for StaticModelCatalog {
         ] {
             for entry in entries
                 .iter()
-                .filter(|e| e.provider_kind == kind && e.model_id == model)
+                .filter(|e| e.provider_id == provider.id && e.model_id == model)
             {
                 let applies = if scoped {
                     connection.is_some() && entry.connection_id.as_ref() == connection
@@ -103,22 +124,20 @@ impl ModelCatalogPort for StaticModelCatalog {
 
     async fn list_for_connection(
         &self,
-        kind: ProviderKind,
+        provider: &'static rook_core::ProviderDescriptor,
         connection: &ConnectionId,
     ) -> Vec<ModelCatalogEntry> {
         let mut out = self.list().await;
-        for entry in self
-            .configured
-            .iter()
-            .filter(|e| e.provider_kind == kind && e.connection_id.as_ref() == Some(connection))
-        {
+        for entry in self.configured.iter().filter(|e| {
+            e.provider_id == provider.id && e.connection_id.as_ref() == Some(connection)
+        }) {
             if !out
                 .iter()
-                .any(|e| e.provider_kind == kind && e.model_id == entry.model_id)
+                .any(|e| e.provider_id == provider.id && e.model_id == entry.model_id)
             {
                 out.push(ModelCatalogEntry {
                     model_id: entry.model_id.clone(),
-                    provider_kind: kind,
+                    provider_id: provider.id.to_string(),
                 });
             }
         }

@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use rook_core::ports::ProviderRepositoryPort;
 use rook_core::provider_connection::{
-    AuthType, ConnectionConfig, Credentials, EncryptedBlob, ProviderConnection, ProviderKind,
+    AuthType, ConnectionConfig, Credentials, EncryptedBlob, ProviderConnection,
     QuotaWindowThresholds, RepositoryError, TestStatus,
 };
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
@@ -104,16 +104,7 @@ impl ProviderRepositoryPort for SqliteProviderRepository {
             return Err(RepositoryError::DuplicateId(conn_model.id));
         }
 
-        if tx
-            .query_row(
-                "SELECT 1 FROM provider_connections WHERE provider_kind = ?1 AND name = ?2",
-                params![conn_model.provider_kind.as_str(), conn_model.name],
-                |_| Ok(()),
-            )
-            .optional()
-            .map_err(db_error)?
-            .is_some()
-        {
+        if has_duplicate_name(&tx, conn_model)? {
             return Err(duplicate_connection(conn_model));
         }
 
@@ -131,6 +122,9 @@ impl ProviderRepositoryPort for SqliteProviderRepository {
 
         let mut conn = self.lock()?;
         let tx = conn.transaction().map_err(db_error)?;
+        if has_duplicate_name(&tx, conn_model)? {
+            return Err(duplicate_connection(conn_model));
+        }
         let rows = tx
             .execute(
                 UPDATE_PROVIDER_CONNECTION,
@@ -256,10 +250,32 @@ fn update_params(
     rusqlite::params_from_iter(values)
 }
 
+fn has_duplicate_name(
+    tx: &rusqlite::Transaction<'_>,
+    conn: &ProviderConnection,
+) -> Result<bool, RepositoryError> {
+    let mut statement = tx
+        .prepare("SELECT provider_kind FROM provider_connections WHERE name = ?1 AND id != ?2")
+        .map_err(db_error)?;
+    let providers = statement
+        .query_map(params![conn.name, conn.id.to_string()], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(db_error)?;
+    for provider in providers {
+        if rook_core::descriptor_for(&provider.map_err(db_error)?)
+            .is_some_and(|descriptor| descriptor.id == conn.provider.id)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn common_values(conn: &ProviderConnection) -> Vec<rusqlite::types::Value> {
     vec![
         conn.id.to_string().into(),
-        conn.provider_kind.as_str().to_string().into(),
+        conn.provider.as_str().to_string().into(),
         conn.provider_runtime_id.to_string().into(),
         conn.name.clone().into(),
         auth_type_str(conn.auth_type).to_string().into(),
@@ -285,7 +301,7 @@ fn common_values(conn: &ProviderConnection) -> Vec<rusqlite::types::Value> {
         match conn.config.api_format {
             Some(rook_core::ApiFormat::Anthropic) => "anthropic",
             Some(rook_core::ApiFormat::OpenAI) => "openai",
-            None if conn.provider_kind == ProviderKind::Anthropic => "anthropic",
+            None if conn.provider.protocol == rook_core::Protocol::AnthropicMessages => "anthropic",
             None => "openai",
         }
         .to_string()
@@ -351,7 +367,6 @@ fn row_to_connection(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderConnec
         "oauth" => AuthType::OAuth,
         _ => return Err(invalid_data("invalid auth_type")),
     };
-    let provider_kind = row.get::<_, String>("provider_kind")?;
     let test_status = row.get::<_, String>("test_status")?;
     let created_at = row.get::<_, String>("created_at")?;
     let updated_at = row.get::<_, String>("updated_at")?;
@@ -381,8 +396,8 @@ fn row_to_connection(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderConnec
     Ok(ProviderConnection {
         id: ConnectionId::parse_str(&row.get::<_, String>("id")?)
             .map_err(|_| invalid_data("invalid connection id"))?,
-        provider_kind: ProviderKind::try_from(provider_kind.as_str())
-            .map_err(|_| invalid_data("invalid provider kind"))?,
+        provider: rook_core::descriptor_for(&row.get::<_, String>("provider_kind")?)
+            .ok_or_else(|| invalid_data("unknown provider id"))?,
         provider_runtime_id: ProviderId::new(row.get::<_, String>("provider_runtime_id")?),
         name: row.get("name")?,
         priority: row.get::<_, i64>("priority")? as u8,
@@ -593,7 +608,7 @@ impl CredentialsExt for ProviderConnection {
 }
 
 fn duplicate_connection(conn: &ProviderConnection) -> RepositoryError {
-    RepositoryError::DuplicateConnection(format!("{}/{}", conn.provider_kind.as_str(), conn.name))
+    RepositoryError::DuplicateConnection(format!("{}/{}", conn.provider.as_str(), conn.name))
 }
 
 fn update_error(error: rusqlite::Error, conn: &ProviderConnection) -> RepositoryError {
@@ -636,7 +651,7 @@ mod tests {
     fn connection(name: &str, priority: u8, created_at: DateTime<Utc>) -> ProviderConnection {
         ProviderConnection {
             id: ConnectionId::new(),
-            provider_kind: ProviderKind::OpenAI,
+            provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
             provider_runtime_id: ProviderId::new(format!("runtime-{name}")),
             name: name.to_string(),
             priority,
@@ -662,6 +677,147 @@ mod tests {
         }
     }
 
+    #[test]
+    fn duplicate_names_reject_legacy_and_case_variant_provider_ids() {
+        runtime().block_on(async {
+            for stored in ["ollamacloud", "OLLAMA-CLOUD"] {
+                let temp = tempfile::NamedTempFile::new().unwrap();
+                let mut db = Connection::open(temp.path()).unwrap();
+                db_migration::run_on_connection(&mut db).unwrap();
+                let repo = SqliteProviderRepository::new(temp.path()).unwrap();
+                let mut original = connection("shared", 1, Utc::now());
+                original.provider = rook_core::descriptor_by_id("ollama-cloud").unwrap();
+                repo.create(&original).await.unwrap();
+                Connection::open(temp.path())
+                    .unwrap()
+                    .execute(
+                        "UPDATE provider_connections SET provider_kind = ?1",
+                        [stored],
+                    )
+                    .unwrap();
+                let mut duplicate = original.clone();
+                duplicate.id = ConnectionId::new();
+                assert!(matches!(
+                    repo.create(&duplicate).await,
+                    Err(RepositoryError::DuplicateConnection(_))
+                ));
+                duplicate.name = "different".to_string();
+                repo.create(&duplicate).await.unwrap();
+                let expected = duplicate.updated_at;
+                duplicate.name = "shared".to_string();
+                assert!(matches!(
+                    repo.update(&duplicate, expected).await,
+                    Err(RepositoryError::DuplicateConnection(_))
+                ));
+            }
+        });
+    }
+
+    #[test]
+    fn pre_migration_legacy_provider_spellings_load_through_the_alias_map() {
+        let temp_file = tempfile::Builder::new()
+            .prefix("rook-provider-legacy-spelling-")
+            .suffix(".sqlite")
+            .tempfile()
+            .expect("temporary database");
+        let path = temp_file.path();
+        {
+            let mut conn = Connection::open(path).expect("legacy database");
+            db_migration::run_on_connection(&mut conn).expect("migrations");
+            // Rows written before the descriptor-id migration carry the serde
+            // spellings of Ollama Cloud and Azure OpenAI.
+            for (kind, runtime) in [
+                ("ollamacloud", "runtime-legacy-ollamacloud"),
+                ("azureopenai", "runtime-legacy-azureopenai"),
+            ] {
+                conn.execute(
+                    "INSERT INTO provider_connections (
+                        id, provider_kind, provider_runtime_id, name, auth_type,
+                        priority, is_active, api_key_ct, max_concurrent, quota_warning,
+                        quota_error, test_status, created_at, updated_at
+                    ) VALUES (?1, ?2, ?3, ?4, 'apiKey',
+                        5, 1, 'enc:v1:legacy', 1, 0.7, 0.9, 'neverTested',
+                        '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                    params![ConnectionId::new().to_string(), kind, runtime, runtime],
+                )
+                .expect("legacy row");
+            }
+        }
+
+        runtime().block_on(async {
+            let repo = SqliteProviderRepository::new(path).expect("repo");
+            let connections = repo.list().await.expect("legacy connections load");
+            let mut ids: Vec<_> = connections.iter().map(|c| c.provider.id).collect();
+            ids.sort();
+            assert_eq!(ids, vec!["azure-openai", "ollama-cloud"]);
+        });
+    }
+
+    #[test]
+    fn the_descriptor_id_migration_canonicalizes_legacy_stored_rows() {
+        // Run the shipped V15 statements verbatim against rows carrying the
+        // legacy serde spellings.
+        let migration_sql =
+            include_str!("../../db-migration/src/migrations/V15__provider_descriptor_ids.sql");
+        let mut conn = Connection::open_in_memory().expect("database");
+        db_migration::run_on_connection(&mut conn).expect("migrations");
+        for kind in ["ollamacloud", "azureopenai"] {
+            conn.execute(
+                "INSERT INTO provider_connections (
+                    id, provider_kind, provider_runtime_id, name, auth_type,
+                    priority, is_active, api_key_ct, max_concurrent, quota_warning,
+                    quota_error, test_status, created_at, updated_at
+                ) VALUES (?1, ?2, ?3, ?4, 'apiKey',
+                    5, 1, 'enc:v1:legacy', 1, 0.7, 0.9, 'neverTested',
+                    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                params![
+                    ConnectionId::new().to_string(),
+                    kind,
+                    format!("runtime-{kind}"),
+                    kind
+                ],
+            )
+            .expect("legacy row");
+        }
+        // A canonical row may already share a name with a legacy row; the
+        // migration must resolve the collision without deleting either.
+        conn.execute(
+            "INSERT INTO provider_connections (
+                id, provider_kind, provider_runtime_id, name, auth_type,
+                priority, is_active, api_key_ct, max_concurrent, quota_warning,
+                quota_error, test_status, created_at, updated_at
+            ) VALUES (?1, 'ollama-cloud', 'runtime-canonical', 'ollamacloud', 'apiKey',
+                5, 1, 'enc:v1:canonical', 1, 0.7, 0.9, 'neverTested',
+                '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            params![ConnectionId::new().to_string()],
+        )
+        .expect("canonical row");
+        conn.execute_batch(migration_sql).expect("V15 applies");
+
+        let colliding: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM provider_connections WHERE name LIKE 'ollamacloud%'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(
+            colliding, 2,
+            "the collision is resolved by renaming, not deleting"
+        );
+
+        let mut kinds: Vec<String> = {
+            let mut stmt = conn
+                .prepare("SELECT DISTINCT provider_kind FROM provider_connections")
+                .expect("select");
+            stmt.query_map([], |row| row.get(0))
+                .expect("query")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("rows")
+        };
+        kinds.sort();
+        assert_eq!(kinds, vec!["azure-openai", "ollama-cloud"]);
+    }
     #[test]
     fn connections_created_before_the_model_declaration_migration_keep_working() {
         let temp_file = tempfile::Builder::new()
@@ -692,7 +848,7 @@ mod tests {
             let connections = repo.list().await.expect("legacy connection loads");
             assert_eq!(connections.len(), 1);
             let legacy = &connections[0];
-            assert_eq!(legacy.provider_kind, ProviderKind::OpenAI);
+            assert_eq!(legacy.provider.id, "openai");
             assert!(
                 legacy.config.supported_models.is_empty(),
                 "a legacy connection has no declared models"

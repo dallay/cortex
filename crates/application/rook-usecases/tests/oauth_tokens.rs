@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use rook_core::{
     AuthType, ConnectionConfig, CredentialEncryptionError, Credentials, EncryptedBlob, KeyManager,
-    OAuthTokenPort, ProviderConnection, ProviderKind, ProviderRepositoryPort,
-    QuotaWindowThresholds, RepositoryError, TestStatus,
+    OAuthTokenPort, ProviderConnection, ProviderRepositoryPort, QuotaWindowThresholds,
+    RepositoryError, TestStatus,
 };
 use rook_usecases::oauth_tokens::{
     refresh_interval, token_requires_refresh, OAuthTokenManager, TokenEndpointOverrides,
@@ -130,7 +130,7 @@ fn test_config() -> ConnectionConfig {
 }
 
 fn oauth_connection(
-    kind: ProviderKind,
+    kind: &'static rook_core::ProviderDescriptor,
     expires_at: i64,
     client_id: &str,
     tenant: Option<&str>,
@@ -138,7 +138,7 @@ fn oauth_connection(
     let now = Utc::now();
     ProviderConnection {
         id: ConnectionId::new(),
-        provider_kind: kind,
+        provider: kind,
         provider_runtime_id: ProviderId::new("runtime-1"),
         name: "oauth-conn".to_string(),
         priority: 10,
@@ -167,7 +167,7 @@ fn api_key_connection() -> ProviderConnection {
     let now = Utc::now();
     ProviderConnection {
         id: ConnectionId::new(),
-        provider_kind: ProviderKind::OpenAI,
+        provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
         provider_runtime_id: ProviderId::new("runtime-1"),
         name: "api-key".to_string(),
         priority: 10,
@@ -186,7 +186,7 @@ fn api_key_connection() -> ProviderConnection {
 #[tokio::test]
 async fn fresh_token_returns_decrypted_without_http() {
     let conn = oauth_connection(
-        ProviderKind::Gemini,
+        rook_core::descriptor_by_id("gemini").expect("gemini descriptor"),
         Utc::now().timestamp() + 3600,
         "client",
         None,
@@ -224,7 +224,12 @@ async fn api_key_credentials_are_rejected() {
 
 #[tokio::test]
 async fn missing_client_id_marks_unhealthy() {
-    let conn = oauth_connection(ProviderKind::Gemini, 0, "", None);
+    let conn = oauth_connection(
+        rook_core::descriptor_by_id("gemini").expect("gemini descriptor"),
+        0,
+        "",
+        None,
+    );
     let id = conn.id;
     let repo = Arc::new(MemoryRepo::new(vec![conn]));
     let manager = OAuthTokenManager::new(repo.clone(), Arc::new(PassThroughKeyManager));
@@ -239,7 +244,12 @@ async fn missing_client_id_marks_unhealthy() {
 
 #[tokio::test]
 async fn invalid_tenant_marks_unhealthy() {
-    let conn = oauth_connection(ProviderKind::AzureOpenAI, 0, "client", Some("bad tenant!"));
+    let conn = oauth_connection(
+        rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
+        0,
+        "client",
+        Some("bad tenant!"),
+    );
     let id = conn.id;
     let repo = Arc::new(MemoryRepo::new(vec![conn]));
     let manager = OAuthTokenManager::new(repo.clone(), Arc::new(PassThroughKeyManager));
@@ -254,7 +264,12 @@ async fn invalid_tenant_marks_unhealthy() {
 
 #[tokio::test]
 async fn unsupported_provider_marks_unhealthy() {
-    let conn = oauth_connection(ProviderKind::OpenAI, 0, "client", None);
+    let conn = oauth_connection(
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+        0,
+        "client",
+        None,
+    );
     let id = conn.id;
     let repo = Arc::new(MemoryRepo::new(vec![conn]));
     let manager = OAuthTokenManager::new(repo.clone(), Arc::new(PassThroughKeyManager));
@@ -269,7 +284,12 @@ async fn unsupported_provider_marks_unhealthy() {
 
 #[tokio::test]
 async fn decrypt_failure_returns_unavailable() {
-    let conn = oauth_connection(ProviderKind::Gemini, 0, "client", None);
+    let conn = oauth_connection(
+        rook_core::descriptor_by_id("gemini").expect("gemini descriptor"),
+        0,
+        "client",
+        None,
+    );
     let id = conn.id;
     let repo = Arc::new(MemoryRepo::new(vec![conn]));
     let manager = OAuthTokenManager::new(repo, Arc::new(FailingDecryptKeyManager));
@@ -295,7 +315,7 @@ async fn azure_refresh_rotates_tokens_and_marks_active() {
         .await;
 
     let conn = oauth_connection(
-        ProviderKind::AzureOpenAI,
+        rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
         0,
         "azure-client",
         Some("tenant-1"),
@@ -306,8 +326,10 @@ async fn azure_refresh_rotates_tokens_and_marks_active() {
         repo.clone(),
         Arc::new(PassThroughKeyManager),
         TokenEndpointOverrides {
-            azure_token_url: Some(format!("http://localhost:{}", server.address().port())),
-            gemini_token_url: None,
+            endpoints: std::collections::HashMap::from([(
+                "azure-openai",
+                format!("http://localhost:{}", server.address().port()),
+            )]),
         },
     );
     let token = manager.access_token(&id, true).await.expect("refresh");
@@ -344,15 +366,22 @@ async fn ipv6_loopback_token_override_is_accepted() {
         .mount(&server)
         .await;
 
-    let conn = oauth_connection(ProviderKind::AzureOpenAI, 0, "client", Some("tenant-1"));
+    let conn = oauth_connection(
+        rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
+        0,
+        "client",
+        Some("tenant-1"),
+    );
     let id = conn.id;
     let repo = Arc::new(MemoryRepo::new(vec![conn]));
     let manager = OAuthTokenManager::with_endpoint_overrides(
         repo,
         Arc::new(PassThroughKeyManager),
         TokenEndpointOverrides {
-            azure_token_url: Some(format!("http://[::1]:{port}/token")),
-            gemini_token_url: None,
+            endpoints: std::collections::HashMap::from([(
+                "azure-openai",
+                format!("http://[::1]:{port}/token"),
+            )]),
         },
     );
 
@@ -373,15 +402,19 @@ async fn gemini_refresh_keeps_old_scope_and_id_token_when_absent() {
         .mount(&server)
         .await;
 
-    let conn = oauth_connection(ProviderKind::Gemini, 0, "gemini-client", None);
+    let conn = oauth_connection(
+        rook_core::descriptor_by_id("gemini").expect("gemini descriptor"),
+        0,
+        "gemini-client",
+        Some("not/a/valid/path/tenant"),
+    );
     let id = conn.id;
     let repo = Arc::new(MemoryRepo::new(vec![conn]));
     let manager = OAuthTokenManager::with_endpoint_overrides(
         repo.clone(),
         Arc::new(PassThroughKeyManager),
         TokenEndpointOverrides {
-            azure_token_url: None,
-            gemini_token_url: Some(server.uri()),
+            endpoints: std::collections::HashMap::from([("gemini", server.uri())]),
         },
     );
     let token = manager.access_token(&id, true).await.expect("refresh");
@@ -410,15 +443,19 @@ async fn refresh_http_failure_marks_unhealthy() {
         .mount(&server)
         .await;
 
-    let conn = oauth_connection(ProviderKind::Gemini, 0, "gemini-client", None);
+    let conn = oauth_connection(
+        rook_core::descriptor_by_id("gemini").expect("gemini descriptor"),
+        0,
+        "gemini-client",
+        None,
+    );
     let id = conn.id;
     let repo = Arc::new(MemoryRepo::new(vec![conn]));
     let manager = OAuthTokenManager::with_endpoint_overrides(
         repo.clone(),
         Arc::new(PassThroughKeyManager),
         TokenEndpointOverrides {
-            azure_token_url: None,
-            gemini_token_url: Some(server.uri()),
+            endpoints: std::collections::HashMap::from([("gemini", server.uri())]),
         },
     );
     let err = manager.access_token(&id, true).await.expect_err("http 400");
@@ -438,15 +475,19 @@ async fn refresh_invalid_payload_marks_unhealthy() {
         .mount(&server)
         .await;
 
-    let conn = oauth_connection(ProviderKind::Gemini, 0, "gemini-client", None);
+    let conn = oauth_connection(
+        rook_core::descriptor_by_id("gemini").expect("gemini descriptor"),
+        0,
+        "gemini-client",
+        None,
+    );
     let id = conn.id;
     let repo = Arc::new(MemoryRepo::new(vec![conn]));
     let manager = OAuthTokenManager::with_endpoint_overrides(
         repo.clone(),
         Arc::new(PassThroughKeyManager),
         TokenEndpointOverrides {
-            azure_token_url: None,
-            gemini_token_url: Some(server.uri()),
+            endpoints: std::collections::HashMap::from([("gemini", server.uri())]),
         },
     );
     let err = manager
@@ -470,13 +511,23 @@ async fn refresh_expiring_skips_inactive_api_key_and_fresh() {
         .mount(&server)
         .await;
 
-    let mut expired = oauth_connection(ProviderKind::Gemini, 0, "c", None);
+    let mut expired = oauth_connection(
+        rook_core::descriptor_by_id("gemini").expect("gemini descriptor"),
+        0,
+        "c",
+        None,
+    );
     expired.name = "expired".to_string();
-    let mut inactive = oauth_connection(ProviderKind::Gemini, 0, "c", None);
+    let mut inactive = oauth_connection(
+        rook_core::descriptor_by_id("gemini").expect("gemini descriptor"),
+        0,
+        "c",
+        None,
+    );
     inactive.name = "inactive".to_string();
     inactive.is_active = false;
     let mut fresh = oauth_connection(
-        ProviderKind::Gemini,
+        rook_core::descriptor_by_id("gemini").expect("gemini descriptor"),
         Utc::now().timestamp() + 3600,
         "c",
         None,
@@ -495,8 +546,7 @@ async fn refresh_expiring_skips_inactive_api_key_and_fresh() {
         repo,
         Arc::new(PassThroughKeyManager),
         TokenEndpointOverrides {
-            azure_token_url: None,
-            gemini_token_url: Some(server.uri()),
+            endpoints: std::collections::HashMap::from([("gemini", server.uri())]),
         },
     );
     let refreshed = manager.refresh_expiring().await;
@@ -522,7 +572,12 @@ async fn stale_health_check_write_cannot_overwrite_rotated_tokens() {
         .mount(&server)
         .await;
 
-    let conn = oauth_connection(ProviderKind::Gemini, 0, "client", None);
+    let conn = oauth_connection(
+        rook_core::descriptor_by_id("gemini").expect("gemini descriptor"),
+        0,
+        "client",
+        None,
+    );
     let id = conn.id;
     let repo = Arc::new(MemoryRepo::new(vec![conn]));
     // Health check reads the row before the refresh lands (stale snapshot).
@@ -533,8 +588,7 @@ async fn stale_health_check_write_cannot_overwrite_rotated_tokens() {
         repo.clone(),
         Arc::new(PassThroughKeyManager),
         TokenEndpointOverrides {
-            azure_token_url: None,
-            gemini_token_url: Some(server.uri()),
+            endpoints: std::collections::HashMap::from([("gemini", server.uri())]),
         },
     );
     manager.access_token(&id, true).await.expect("refresh");
@@ -573,15 +627,22 @@ async fn stale_health_check_write_cannot_overwrite_rotated_tokens() {
 
 #[tokio::test]
 async fn remote_cleartext_token_override_is_rejected() {
-    let conn = oauth_connection(ProviderKind::AzureOpenAI, 0, "client", Some("tenant-1"));
+    let conn = oauth_connection(
+        rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
+        0,
+        "client",
+        Some("tenant-1"),
+    );
     let id = conn.id;
     let repo = Arc::new(MemoryRepo::new(vec![conn]));
     let manager = OAuthTokenManager::with_endpoint_overrides(
         repo.clone(),
         Arc::new(PassThroughKeyManager),
         TokenEndpointOverrides {
-            azure_token_url: Some("http://evil.example/token".to_string()),
-            gemini_token_url: None,
+            endpoints: std::collections::HashMap::from([(
+                "azure-openai",
+                "http://evil.example/token".to_string(),
+            )]),
         },
     );
     let err = manager
@@ -595,7 +656,12 @@ async fn remote_cleartext_token_override_is_rejected() {
 
 #[tokio::test]
 async fn userinfo_remote_cleartext_override_is_rejected_before_request() {
-    let conn = oauth_connection(ProviderKind::AzureOpenAI, 0, "client", Some("tenant-1"));
+    let conn = oauth_connection(
+        rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
+        0,
+        "client",
+        Some("tenant-1"),
+    );
     let id = conn.id;
     let repo = Arc::new(MemoryRepo::new(vec![conn]));
     let endpoint = "http://localhost:80@evil.invalid/token";
@@ -605,10 +671,7 @@ async fn userinfo_remote_cleartext_override_is_rejected_before_request() {
         repo,
         Arc::new(PassThroughKeyManager),
         TokenEndpointOverrides {
-            // The reserved .invalid domain ensures an accidentally accepted
-            // override cannot deliver the fixture's refresh token remotely.
-            azure_token_url: Some(endpoint.to_string()),
-            gemini_token_url: None,
+            endpoints: std::collections::HashMap::from([("azure-openai", endpoint.to_string())]),
         },
     );
 
@@ -621,17 +684,22 @@ async fn userinfo_remote_cleartext_override_is_rejected_before_request() {
 
 #[tokio::test]
 async fn https_endpoint_override_reaches_the_http_client() {
-    let conn = oauth_connection(ProviderKind::AzureOpenAI, 0, "client", Some("tenant-1"));
+    let conn = oauth_connection(
+        rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
+        0,
+        "client",
+        Some("tenant-1"),
+    );
     let id = conn.id;
     let repo = Arc::new(MemoryRepo::new(vec![conn]));
     let manager = OAuthTokenManager::with_endpoint_overrides(
         repo,
         Arc::new(PassThroughKeyManager),
         TokenEndpointOverrides {
-            // Port zero cannot host a server, but a rejection here must come
-            // from the connection attempt, not URL policy validation.
-            azure_token_url: Some("https://localhost:0/token".to_string()),
-            gemini_token_url: None,
+            endpoints: std::collections::HashMap::from([(
+                "azure-openai",
+                "https://localhost:0/token".to_string(),
+            )]),
         },
     );
 
@@ -644,15 +712,22 @@ async fn https_endpoint_override_reaches_the_http_client() {
 
 #[tokio::test]
 async fn remote_cleartext_gemini_override_is_rejected() {
-    let conn = oauth_connection(ProviderKind::Gemini, 0, "client", None);
+    let conn = oauth_connection(
+        rook_core::descriptor_by_id("gemini").expect("gemini descriptor"),
+        0,
+        "client",
+        None,
+    );
     let id = conn.id;
     let repo = Arc::new(MemoryRepo::new(vec![conn]));
     let manager = OAuthTokenManager::with_endpoint_overrides(
         repo.clone(),
         Arc::new(PassThroughKeyManager),
         TokenEndpointOverrides {
-            azure_token_url: None,
-            gemini_token_url: Some("http://evil.example/token".to_string()),
+            endpoints: std::collections::HashMap::from([(
+                "gemini",
+                "http://evil.example/token".to_string(),
+            )]),
         },
     );
     let err = manager

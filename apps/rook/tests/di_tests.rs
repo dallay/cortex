@@ -9,10 +9,157 @@ use rook::di::{
     build_rate_limiter_config, generate_setup_token, is_canonical_base_url, ProviderBuildError,
     ProviderConnectionBuildOptions,
 };
-use rook_core::{ApiKeyTier, ConnectionId, DecryptedCredentials, ModelId, ProviderKind};
+use rook_core::{ApiKeyTier, CompletionRequest, ConnectionId, DecryptedCredentials, ModelId, Role};
 
 fn conn_id() -> ConnectionId {
     ConnectionId::default()
+}
+
+fn completion_request(model: &str) -> CompletionRequest {
+    CompletionRequest {
+        id: shared_kernel::RequestId::new(),
+        model: ModelId::new(model),
+        messages: vec![rook_core::Message {
+            role: Role::User,
+            content: rook_core::MessageContent::Text("hello".into()),
+            tool_calls: vec![],
+        }],
+        stream: false,
+        max_tokens: None,
+        temperature: None,
+        tools: None,
+        tool_choice: None,
+        metadata: rook_core::RequestMetadata {
+            origin: "test".into(),
+            cacheable: false,
+            priority: 0,
+            api_key_id: None,
+            requested_tier: None,
+            combo_id: None,
+        },
+        restrictions: Default::default(),
+    }
+}
+
+#[tokio::test]
+async fn migrated_openai_providers_route_with_bearer_auth() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .and(wiremock::matchers::header(
+            "authorization",
+            "Bearer migration-test-key",
+        ))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "chatcmpl-migration",
+                "model": "test-model",
+                "choices": [{
+                    "message": {"role": "assistant", "content": "ok"},
+                    "finish_reason": "stop"
+                }],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+            })),
+        )
+        .expect(8)
+        .mount(&server)
+        .await;
+
+    let request = completion_request("test-model");
+
+    for provider_id in [
+        "xai",
+        "mistral",
+        "deepseek",
+        "together",
+        "fireworks",
+        "cerebras",
+        "openrouter",
+        "nan",
+    ] {
+        let descriptor = rook_core::descriptor_by_id(provider_id).expect("descriptor");
+        let provider = build_provider_from_connection(
+            &ConnectionId::new(),
+            descriptor,
+            &DecryptedCredentials::ApiKey {
+                api_key: "migration-test-key".into(),
+            },
+            Some(server.uri()),
+            vec![ModelId::new("test-model")],
+        )
+        .unwrap_or_else(|error| panic!("{provider_id} should build: {error}"));
+        assert!(provider.is_available(), "{provider_id} should authenticate");
+        provider
+            .complete(&request)
+            .await
+            .unwrap_or_else(|error| panic!("{provider_id} should route: {error}"));
+    }
+
+    assert_eq!(server.received_requests().await.unwrap().len(), 8);
+}
+
+#[tokio::test]
+async fn groq_uses_descriptor_default_url_and_wire_paths() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/descriptor/chat"))
+        .and(wiremock::matchers::header(
+            "authorization",
+            "Bearer groq-test-key",
+        ))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "chatcmpl-groq",
+                "model": "test-model",
+                "choices": [{
+                    "message": {"role": "assistant", "content": "ok"},
+                    "finish_reason": "stop"
+                }],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+            })),
+        )
+        .mount(&server)
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/descriptor/health"))
+        .and(wiremock::matchers::header(
+            "authorization",
+            "Bearer groq-test-key",
+        ))
+        .respond_with(wiremock::ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let mut descriptor = *rook_core::descriptor_by_id("groq").expect("Groq descriptor");
+    descriptor.default_base_url = Box::leak(server.uri().into_boxed_str());
+    descriptor.paths = rook_core::WirePaths {
+        chat: "/descriptor/chat",
+        models: "/descriptor/models",
+        health: "/descriptor/health",
+    };
+    let descriptor = Box::leak(Box::new(descriptor));
+    let provider = build_provider_from_connection(
+        &ConnectionId::new(),
+        descriptor,
+        &DecryptedCredentials::ApiKey {
+            api_key: "groq-test-key".into(),
+        },
+        None,
+        vec![ModelId::new("test-model")],
+    )
+    .expect("Groq provider should build from descriptor data");
+
+    assert!(matches!(
+        provider.health_check().await,
+        rook_core::HealthStatus::Healthy { .. }
+    ));
+    provider
+        .complete(&completion_request("test-model"))
+        .await
+        .expect("Groq completion should use descriptor chat path");
+
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2);
 }
 
 #[test]
@@ -32,7 +179,7 @@ fn azure_openai_connection_uses_configured_deployment_as_model() {
 
     let provider = build_provider_from_connection(
         &conn_id(),
-        ProviderKind::AzureOpenAI,
+        rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
         &credentials,
         Some("https://example.openai.azure.com".to_string()),
         vec![ModelId::new("deployment-chat")],
@@ -49,7 +196,7 @@ fn azure_openai_rejects_static_api_key_authentication() {
     };
     let result = build_provider_from_connection(
         &conn_id(),
-        ProviderKind::AzureOpenAI,
+        rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
         &credentials,
         Some("https://example.openai.azure.com".to_string()),
         vec![ModelId::new("deployment-chat")],
@@ -563,8 +710,13 @@ fn build_provider_from_connection_openai_uses_default_base_url() {
         api_key: "sk-test-key".to_string(),
     };
     let id = conn_id();
-    let result =
-        build_provider_from_connection(&id, ProviderKind::OpenAI, &creds, None, Vec::new());
+    let result = build_provider_from_connection(
+        &id,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+        &creds,
+        None,
+        Vec::new(),
+    );
     let provider = result.expect("expected Ok for OpenAI with default base_url");
     assert_eq!(provider.id().as_str(), id.to_string());
 }
@@ -579,7 +731,7 @@ fn build_provider_from_connection_openai_uses_override() {
     let override_url = "https://custom.openai.example.com/v1".to_string();
     let result = build_provider_from_connection(
         &id,
-        ProviderKind::OpenAI,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
         &creds,
         Some(override_url),
         Vec::new(),
@@ -595,8 +747,13 @@ fn build_provider_from_connection_ollama_requires_base_url() {
         api_key: String::new(),
     };
     let id = conn_id();
-    let result =
-        build_provider_from_connection(&id, ProviderKind::Ollama, &creds, None, Vec::new());
+    let result = build_provider_from_connection(
+        &id,
+        rook_core::descriptor_by_id("ollama").expect("ollama descriptor"),
+        &creds,
+        None,
+        Vec::new(),
+    );
     let err = match result {
         Ok(provider) => panic!(
             "expected OllamaRequiresBaseUrl error, got Ok({:?})",
@@ -620,7 +777,7 @@ fn build_provider_from_connection_ollama_uses_override() {
     let id = conn_id();
     let result = build_provider_from_connection(
         &id,
-        ProviderKind::Ollama,
+        rook_core::descriptor_by_id("ollama").expect("ollama descriptor"),
         &creds,
         Some("http://localhost:11434".to_string()),
         Vec::new(),
@@ -645,8 +802,13 @@ fn build_provider_from_connection_oauth_access_token_used_as_api_key() {
         oauth_tenant_id: None,
     };
     let id = conn_id();
-    let result =
-        build_provider_from_connection(&id, ProviderKind::OpenAI, &creds, None, Vec::new());
+    let result = build_provider_from_connection(
+        &id,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+        &creds,
+        None,
+        Vec::new(),
+    );
     assert!(
         result.is_ok(),
         "expected Ok — OAuth access_token should work as api_key"
@@ -662,8 +824,13 @@ fn build_provider_from_connection_ollama_cloud_uses_default_base_url() {
         api_key: "ollama-cloud-key".to_string(),
     };
     let id = conn_id();
-    let result =
-        build_provider_from_connection(&id, ProviderKind::OllamaCloud, &creds, None, Vec::new());
+    let result = build_provider_from_connection(
+        &id,
+        rook_core::descriptor_by_id("ollama-cloud").expect("ollama-cloud descriptor"),
+        &creds,
+        None,
+        Vec::new(),
+    );
     let provider = result.expect("expected Ok for OllamaCloud with default base_url");
     assert_eq!(provider.id().as_str(), id.to_string());
 }
@@ -677,7 +844,7 @@ fn build_provider_from_connection_ollama_cloud_uses_override() {
     let id = conn_id();
     let result = build_provider_from_connection(
         &id,
-        ProviderKind::OllamaCloud,
+        rook_core::descriptor_by_id("ollama-cloud").expect("ollama-cloud descriptor"),
         &creds,
         Some("https://staging.ollama.example.com".to_string()),
         Vec::new(),
@@ -695,8 +862,13 @@ fn build_provider_from_connection_passes_models_to_openai_provider() {
     };
     let id = conn_id();
     let models = vec![ModelId::new("gpt-4o"), ModelId::new("gpt-4o-mini")];
-    let result =
-        build_provider_from_connection(&id, ProviderKind::OpenAI, &creds, None, models.clone());
+    let result = build_provider_from_connection(
+        &id,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+        &creds,
+        None,
+        models.clone(),
+    );
     let provider = result.expect("expected Ok");
     let supported = provider.supported_models();
     assert_eq!(
@@ -727,7 +899,7 @@ fn build_provider_from_connection_passes_models_to_ollama_cloud_provider() {
     ];
     let result = build_provider_from_connection(
         &id,
-        ProviderKind::OllamaCloud,
+        rook_core::descriptor_by_id("ollama-cloud").expect("ollama-cloud descriptor"),
         &creds,
         None,
         models.clone(),
@@ -756,8 +928,13 @@ fn build_provider_from_connection_empty_models_list() {
         api_key: "sk-test-key".to_string(),
     };
     let id = conn_id();
-    let result =
-        build_provider_from_connection(&id, ProviderKind::OpenAI, &creds, None, Vec::new());
+    let result = build_provider_from_connection(
+        &id,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+        &creds,
+        None,
+        Vec::new(),
+    );
     let provider = result.expect("expected Ok");
     let supported = provider.supported_models();
     assert!(
@@ -771,11 +948,17 @@ fn build_provider_from_connection_empty_models_list() {
 #[test]
 fn canonical_base_url_default_none_retains_recorder() {
     assert!(
-        is_canonical_base_url(ProviderKind::OpenAI, None),
+        is_canonical_base_url(
+            rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+            None
+        ),
         "OpenAI default (None) must retain quota capture"
     );
     assert!(
-        is_canonical_base_url(ProviderKind::Anthropic, None),
+        is_canonical_base_url(
+            rook_core::descriptor_by_id("anthropic").expect("anthropic descriptor"),
+            None
+        ),
         "Anthropic default (None) must retain quota capture"
     );
 }
@@ -785,19 +968,19 @@ fn canonical_base_url_default_none_retains_recorder() {
 fn canonical_base_url_explicit_canonical_retains_recorder() {
     // OpenAI accepts with and without /v1 (UI sends /v1, backend default omits it).
     assert!(is_canonical_base_url(
-        ProviderKind::OpenAI,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
         Some("https://api.openai.com")
     ));
     assert!(is_canonical_base_url(
-        ProviderKind::OpenAI,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
         Some("https://api.openai.com/v1")
     ));
     assert!(is_canonical_base_url(
-        ProviderKind::Anthropic,
+        rook_core::descriptor_by_id("anthropic").expect("anthropic descriptor"),
         Some("https://api.anthropic.com")
     ));
     assert!(is_canonical_base_url(
-        ProviderKind::Groq,
+        rook_core::descriptor_by_id("groq").expect("groq descriptor"),
         Some("https://api.groq.com/openai/v1")
     ));
 }
@@ -807,25 +990,28 @@ fn canonical_base_url_explicit_canonical_retains_recorder() {
 fn canonical_base_url_custom_rejects_recorder() {
     assert!(
         !is_canonical_base_url(
-            ProviderKind::OpenAI,
+            rook_core::descriptor_by_id("openai").expect("openai descriptor"),
             Some("https://custom.openai.example.com/v1")
         ),
         "custom OpenAI proxy must disable quota capture"
     );
     assert!(
-        !is_canonical_base_url(ProviderKind::Anthropic, Some("https://proxy.example.com")),
+        !is_canonical_base_url(
+            rook_core::descriptor_by_id("anthropic").expect("anthropic descriptor"),
+            Some("https://proxy.example.com")
+        ),
         "custom Anthropic proxy must disable quota capture"
     );
     assert!(
         !is_canonical_base_url(
-            ProviderKind::Groq,
+            rook_core::descriptor_by_id("groq").expect("groq descriptor"),
             Some("https://custom.groq.example.com/openai/v1")
         ),
         "custom Groq proxy must disable quota capture"
     );
     // Mock servers are http + port => always custom.
     assert!(!is_canonical_base_url(
-        ProviderKind::OpenAI,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
         Some("http://127.0.0.1:8080")
     ));
 }
@@ -834,7 +1020,10 @@ fn canonical_base_url_custom_rejects_recorder() {
 #[test]
 fn canonical_base_url_groq_none_retains_recorder() {
     assert!(
-        is_canonical_base_url(ProviderKind::Groq, None),
+        is_canonical_base_url(
+            rook_core::descriptor_by_id("groq").expect("groq descriptor"),
+            None
+        ),
         "Groq default (None) must retain quota capture"
     );
 }
@@ -843,46 +1032,49 @@ fn canonical_base_url_groq_none_retains_recorder() {
 #[test]
 fn canonical_base_url_normalization() {
     assert!(is_canonical_base_url(
-        ProviderKind::OpenAI,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
         Some("  https://api.openai.com/v1/  ")
     ));
     assert!(is_canonical_base_url(
-        ProviderKind::OpenAI,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
         Some("https://API.OPENAI.COM/V1")
     ));
     assert!(is_canonical_base_url(
-        ProviderKind::OpenAI,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
         Some("https://api.openai.com/")
     ));
     assert!(is_canonical_base_url(
-        ProviderKind::Anthropic,
+        rook_core::descriptor_by_id("anthropic").expect("anthropic descriptor"),
         Some("https://API.ANTHROPIC.COM")
     ));
     assert!(is_canonical_base_url(
-        ProviderKind::Groq,
+        rook_core::descriptor_by_id("groq").expect("groq descriptor"),
         Some("https://api.groq.com/openai/v1/")
     ));
     // Anthropic must NOT tolerate /v1; Groq requires the full /openai/v1 path.
     assert!(!is_canonical_base_url(
-        ProviderKind::Anthropic,
+        rook_core::descriptor_by_id("anthropic").expect("anthropic descriptor"),
         Some("https://api.anthropic.com/v1")
     ));
     assert!(!is_canonical_base_url(
-        ProviderKind::Groq,
+        rook_core::descriptor_by_id("groq").expect("groq descriptor"),
         Some("https://api.groq.com")
     ));
     assert!(!is_canonical_base_url(
-        ProviderKind::Groq,
+        rook_core::descriptor_by_id("groq").expect("groq descriptor"),
         Some("https://api.groq.com/v1")
     ));
     // Scheme must be https; empty and schemeless values are custom.
     assert!(!is_canonical_base_url(
-        ProviderKind::OpenAI,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
         Some("http://api.openai.com/v1")
     ));
-    assert!(!is_canonical_base_url(ProviderKind::OpenAI, Some("")));
     assert!(!is_canonical_base_url(
-        ProviderKind::OpenAI,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+        Some("")
+    ));
+    assert!(!is_canonical_base_url(
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
         Some("api.openai.com/v1")
     ));
 }
@@ -915,7 +1107,7 @@ fn oauth_creds() -> DecryptedCredentials {
 fn openai_builds_oauth_backed_provider_with_token_port() {
     let provider = build_provider_from_connection_with_recorder(
         &conn_id(),
-        ProviderKind::OpenAI,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
         &oauth_creds(),
         None,
         vec![ModelId::new("gpt-4o")],
@@ -930,7 +1122,7 @@ fn openai_builds_oauth_backed_provider_with_token_port() {
 fn gemini_builds_oauth_backed_provider_with_token_port() {
     let provider = build_provider_from_connection_with_recorder(
         &conn_id(),
-        ProviderKind::Gemini,
+        rook_core::descriptor_by_id("gemini").expect("gemini descriptor"),
         &oauth_creds(),
         None,
         vec![ModelId::new("gemini-2.0-flash")],
@@ -945,7 +1137,7 @@ fn gemini_builds_oauth_backed_provider_with_token_port() {
 fn gemini_without_token_port_uses_access_token_as_api_key() {
     let provider = build_provider_from_connection_with_recorder(
         &conn_id(),
-        ProviderKind::Gemini,
+        rook_core::descriptor_by_id("gemini").expect("gemini descriptor"),
         &oauth_creds(),
         None,
         vec![ModelId::new("gemini-2.0-flash")],
@@ -960,7 +1152,7 @@ fn gemini_without_token_port_uses_access_token_as_api_key() {
 fn azure_builds_oauth_backed_provider_with_token_port() {
     let provider = build_provider_from_connection_with_recorder(
         &conn_id(),
-        ProviderKind::AzureOpenAI,
+        rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
         &oauth_creds(),
         Some("https://example.openai.azure.com".to_string()),
         vec![ModelId::new("deployment-chat")],
@@ -996,7 +1188,7 @@ fn build_provider_for_openai_compatible_exposes_declared_models_and_connection_i
     ];
     let provider = build_provider_from_connection_with_policy(
         &id,
-        ProviderKind::OpenAiCompatible,
+        rook_core::descriptor_by_id("openai-compatible").expect("openai-compatible descriptor"),
         &creds,
         Some("https://upstream.example.com/v1".to_string()),
         models.clone(),
@@ -1023,7 +1215,7 @@ fn build_provider_for_openai_compatible_requires_base_url() {
     };
     let error = expect_build_error(build_provider_from_connection_with_policy(
         &conn_id(),
-        ProviderKind::OpenAiCompatible,
+        rook_core::descriptor_by_id("openai-compatible").expect("openai-compatible descriptor"),
         &creds,
         None,
         vec![ModelId::new("physical-model")],
@@ -1055,7 +1247,7 @@ fn build_provider_for_openai_compatible_rejects_oauth_credentials() {
     };
     let error = expect_build_error(build_provider_from_connection_with_policy(
         &conn_id(),
-        ProviderKind::OpenAiCompatible,
+        rook_core::descriptor_by_id("openai-compatible").expect("openai-compatible descriptor"),
         &creds,
         Some("https://upstream.example.com/v1".to_string()),
         vec![ModelId::new("physical-model")],
@@ -1078,7 +1270,7 @@ fn build_provider_for_openai_compatible_rejects_unsafe_endpoints() {
     };
     let error = expect_build_error(build_provider_from_connection_with_policy(
         &conn_id(),
-        ProviderKind::OpenAiCompatible,
+        rook_core::descriptor_by_id("openai-compatible").expect("openai-compatible descriptor"),
         &creds,
         Some("http://169.254.169.254/v1".to_string()),
         vec![ModelId::new("physical-model")],
@@ -1108,18 +1300,33 @@ fn test_build_provider_from_connection() {
     };
 
     // OpenAI
-    let openai =
-        build_provider_from_connection(&conn_id, ProviderKind::OpenAI, &creds, None, vec![]);
+    let openai = build_provider_from_connection(
+        &conn_id,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+        &creds,
+        None,
+        vec![],
+    );
     assert!(openai.is_ok());
 
     // Anthropic
-    let anthropic =
-        build_provider_from_connection(&conn_id, ProviderKind::Anthropic, &creds, None, vec![]);
+    let anthropic = build_provider_from_connection(
+        &conn_id,
+        rook_core::descriptor_by_id("anthropic").expect("anthropic descriptor"),
+        &creds,
+        None,
+        vec![],
+    );
     assert!(anthropic.is_ok());
 
     // Ollama without base_url -> error
-    let ollama_err =
-        build_provider_from_connection(&conn_id, ProviderKind::Ollama, &creds, None, vec![]);
+    let ollama_err = build_provider_from_connection(
+        &conn_id,
+        rook_core::descriptor_by_id("ollama").expect("ollama descriptor"),
+        &creds,
+        None,
+        vec![],
+    );
     assert!(matches!(
         ollama_err,
         Err(rook::di::ProviderBuildError::OllamaRequiresBaseUrl)
@@ -1128,7 +1335,7 @@ fn test_build_provider_from_connection() {
     // Ollama with base_url -> ok
     let ollama_ok = build_provider_from_connection(
         &conn_id,
-        ProviderKind::Ollama,
+        rook_core::descriptor_by_id("ollama").expect("ollama descriptor"),
         &creds,
         Some("http://localhost:11434".to_string()),
         vec![],
@@ -1239,4 +1446,16 @@ async fn test_noop_cache_port() {
     assert_eq!(cache.delete_by_signature("sig").await.unwrap(), 0);
     assert!(cache.stats().await.is_ok());
     assert!(cache.clear().await.is_ok());
+}
+
+#[test]
+fn bare_host_quota_exception_is_openai_only() {
+    let openai = rook_core::descriptor_by_id("openai").unwrap();
+    let xai = rook_core::descriptor_by_id("xai").unwrap();
+    assert!(is_canonical_base_url(
+        openai,
+        Some("https://api.openai.com")
+    ));
+    assert!(!is_canonical_base_url(xai, Some("https://api.x.ai")));
+    assert!(is_canonical_base_url(xai, Some("https://api.x.ai/v1")));
 }

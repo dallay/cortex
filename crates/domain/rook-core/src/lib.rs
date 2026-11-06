@@ -10,6 +10,7 @@ pub mod model_capabilities;
 pub mod ports;
 pub mod probes;
 pub mod provider_connection;
+pub mod provider_descriptor;
 pub mod quota;
 pub mod stream_validation_error;
 
@@ -20,6 +21,7 @@ pub use model::*;
 pub use model_capabilities::*;
 pub use ports::*;
 pub use provider_connection::*;
+pub use provider_descriptor::*;
 pub use quota::*;
 pub use stream_validation_error::StreamValidationError;
 

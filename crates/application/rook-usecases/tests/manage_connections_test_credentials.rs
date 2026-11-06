@@ -6,9 +6,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use rook_core::{
     ApiFormat, AuthType, BoxStream, CompletionRequest, CompletionResponse, ConnectionConfig,
-    CortexResult, HealthStatus, ModelId, ProviderConnection, ProviderId, ProviderKind,
-    ProviderPort, ProviderRegistryPort, ProviderRepositoryPort, QuotaWindowThresholds,
-    RegistryError, RepositoryError, StreamChunk,
+    CortexResult, HealthStatus, ModelId, ProviderConnection, ProviderId, ProviderPort,
+    ProviderRegistryPort, ProviderRepositoryPort, QuotaWindowThresholds, RegistryError,
+    RepositoryError, StreamChunk,
 };
 use rook_usecases::{
     manage_connections::{
@@ -232,7 +232,7 @@ fn test_credentials_returns_healthy_for_valid_credentials() {
 
             let result = mc
                 .test_credentials(TestCredentialsRequest {
-                    provider_kind: ProviderKind::Ollama,
+                    provider: rook_core::descriptor_by_id("ollama").expect("ollama descriptor"),
                     provider_runtime_id: ProviderId::new("ollama-primary"),
                     auth_type: AuthType::ApiKey,
                     credentials: CredentialsInput::ApiKey {
@@ -293,7 +293,7 @@ fn test_credentials_does_not_persist_to_database() {
             );
 
             mc.test_credentials(TestCredentialsRequest {
-                provider_kind: ProviderKind::Ollama,
+                provider: rook_core::descriptor_by_id("ollama").expect("ollama descriptor"),
                 provider_runtime_id: ProviderId::new("ollama-primary"),
                 auth_type: AuthType::ApiKey,
                 credentials: CredentialsInput::ApiKey {
@@ -339,7 +339,7 @@ fn test_credentials_validates_empty_api_key() {
 
             let result = mc
                 .test_credentials(TestCredentialsRequest {
-                    provider_kind: ProviderKind::Ollama,
+                    provider: rook_core::descriptor_by_id("ollama").expect("ollama descriptor"),
                     provider_runtime_id: ProviderId::new("ollama-primary"),
                     auth_type: AuthType::ApiKey,
                     credentials: CredentialsInput::ApiKey {
@@ -391,7 +391,7 @@ async fn run_test_credentials() -> rook_usecases::manage_connections::TestConnec
         latency_ms: 0,
     });
     mc.test_credentials(TestCredentialsRequest {
-        provider_kind: ProviderKind::Ollama,
+        provider: rook_core::descriptor_by_id("ollama").expect("ollama descriptor"),
         provider_runtime_id: ProviderId::new("ollama-primary"),
         auth_type: AuthType::ApiKey,
         credentials: CredentialsInput::ApiKey {
@@ -437,7 +437,7 @@ fn mapper_warning_returns_valid_true_status_warning_with_warning_text() {
             });
             let res = mc
                 .test_credentials(TestCredentialsRequest {
-                    provider_kind: ProviderKind::Ollama,
+                    provider: rook_core::descriptor_by_id("ollama").expect("ollama descriptor"),
                     provider_runtime_id: ProviderId::new("ollama-primary"),
                     auth_type: AuthType::ApiKey,
                     credentials: CredentialsInput::ApiKey {
@@ -472,7 +472,7 @@ fn mapper_unhealthy_returns_valid_false_status_unhealthy_with_error() {
             });
             let res = mc
                 .test_credentials(TestCredentialsRequest {
-                    provider_kind: ProviderKind::Ollama,
+                    provider: rook_core::descriptor_by_id("ollama").expect("ollama descriptor"),
                     provider_runtime_id: ProviderId::new("ollama-primary"),
                     auth_type: AuthType::ApiKey,
                     credentials: CredentialsInput::ApiKey {
@@ -509,7 +509,8 @@ fn mapper_unknown_returns_valid_true_status_unknown_with_reason_as_warning() {
             });
             let res = mc
                 .test_credentials(TestCredentialsRequest {
-                    provider_kind: ProviderKind::Anthropic,
+                    provider: rook_core::descriptor_by_id("anthropic")
+                        .expect("anthropic descriptor"),
                     provider_runtime_id: ProviderId::new("anthropic-primary"),
                     auth_type: AuthType::ApiKey,
                     credentials: CredentialsInput::ApiKey {
@@ -533,4 +534,68 @@ fn mapper_unknown_returns_valid_true_status_unknown_with_reason_as_warning() {
                 "method should be 'not_supported' for Unknown"
             );
         });
+}
+
+// ---------------------------------------------------------------------------
+// Provider auth-kind gating: OAuth credentials require a provider that
+// accepts them, otherwise the connection saves and fails on refresh later.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn create_rejects_oauth_credentials_for_a_provider_without_oauth_support() {
+    let mc = ManageConnections::new(
+        Arc::new(InMemoryProviderRepository::default()),
+        Arc::new(NoopRegistry),
+        Arc::new(NoopKeyManager),
+        Arc::new(NoopProviderBuilder::new(Arc::new(MockProvider::new(
+            ProviderId::new("nan-primary"),
+            HealthStatus::Healthy {
+                provider: ProviderId::new("nan-primary"),
+                latency_ms: 0,
+            },
+        )))),
+    );
+
+    let request = rook_usecases::manage_connections::CreateConnectionRequest {
+        provider: rook_core::descriptor_by_id("nan").expect("nan descriptor"),
+        provider_runtime_id: ProviderId::new("nan-primary"),
+        auth_type: AuthType::OAuth,
+        name: "nan-oauth".to_string(),
+        priority: 1,
+        is_active: false,
+        credentials: CredentialsInput::OAuth {
+            email: "user@example.com".to_string(),
+            access_token: "access".to_string(),
+            refresh_token: "refresh".to_string(),
+            expires_at: Utc::now().timestamp() + 3600,
+            scope: "scope".to_string(),
+            id_token: String::new(),
+            project_id: String::new(),
+            oauth_client_id: "client".to_string(),
+            oauth_client_secret: None,
+            oauth_tenant_id: None,
+        },
+        config: ConnectionConfig {
+            max_concurrent: 1,
+            quota_window_thresholds: QuotaWindowThresholds {
+                warning: 0.7,
+                error: 0.9,
+            },
+            default_model: None,
+            base_url: None,
+            api_format: None,
+            supported_models: Vec::new(),
+        },
+    };
+
+    let error = mc
+        .create(request)
+        .await
+        .expect_err("OAuth credentials must be rejected for a provider without OAuth support");
+    assert!(matches!(
+        error,
+        rook_usecases::manage_connections::ManageConnectionsError::Validation(
+            rook_core::ValidationError::AuthTypeCredentialMismatch
+        )
+    ));
 }

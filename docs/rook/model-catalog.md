@@ -1,9 +1,8 @@
-> **`provider_kind` spelling contract.** The bundled catalog uses the serde
-> serialization of `ProviderKind` (`lowercase`, so `ollamacloud` and
-> `azureopenai`), while `ProviderKind::as_str()` returns the hyphenated form
-> (`ollama-cloud`, `azure-openai`). Both spellings deserialize: the hyphenated
-> forms are registered as serde aliases. Keep new catalog entries in the serde
-> spelling.
+> **`provider_id` spelling contract.** The bundled catalog keys declarations by
+> canonical provider descriptor id (`openai`, `ollama-cloud`, `azure-openai`).
+> The legacy serde spellings (`ollamacloud`, `azureopenai`) are still accepted
+> on read through the descriptor alias map, but new entries must use the
+> canonical id, and unknown ids are rejected at load time.
 # Model catalog and eligibility
 
 Rook separates three facts: the presence of an identifier, the model's
@@ -19,7 +18,7 @@ allow registering verified capabilities:
 
 ```toml
 [[model_catalog]]
-provider_kind = "openai"
+provider_id = "openai"
 model_id = "verified-deployment"
 
 [model_catalog.capabilities]
@@ -30,7 +29,7 @@ reasoning = "unknown"
 context_tokens = 8192
 
 [[model_catalog]]
-provider_kind = "openai"
+provider_id = "openai"
 model_id = "verified-deployment"
 connection_id = "c56a4180-65aa-42ec-a945-5fd21dec0538"
 
