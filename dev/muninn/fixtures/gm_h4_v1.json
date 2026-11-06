@@ -67,6 +67,15 @@
           "Olive Turner|PERSON"
         ]
       }
+    ],
+    "relation_extra_columns": [
+      "created_at",
+      "derived",
+      "evidence",
+      "id",
+      "relation_type",
+      "source_message_ids",
+      "support"
     ]
   },
   "gm03": {

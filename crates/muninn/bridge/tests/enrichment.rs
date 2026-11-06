@@ -765,7 +765,8 @@ async fn geocode_entity_writes_the_coordinates_once_a_writer_exists() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["status"], json!("found"));
+    // The pinned vocabulary calls a stored point a success.
+    assert_eq!(body["status"], json!("success"));
     assert_eq!(body["persisted"], json!(true));
     assert_eq!(body["cache_hit"], json!(false));
     assert_eq!(

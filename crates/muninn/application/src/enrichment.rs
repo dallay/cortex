@@ -259,6 +259,7 @@ impl EnrichmentService {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum GeocodeStatus {
+    #[serde(rename = "success")]
     Found,
     NotFound,
     Failed,

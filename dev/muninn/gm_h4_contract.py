@@ -351,8 +351,8 @@ def _gm02(document, fixture):
         if not isinstance(relation['type'], str) or not relation['type']:
             raise ContractError(location + '.type: non-empty string required')
         number(relation['confidence'], location + '.confidence')
-        if relation['extra_columns'] != []:
-            raise ContractError(location + '.extra_columns: undeclared relation column')
+        if sorted(relation['extra_columns']) != sorted(spec['relation_extra_columns']):
+            raise ContractError(location + '.extra_columns: differs from the declared set')
         relations.append({name: relation[name] for name in RELATION_FIELDS})
     return {'messages': messages,
             'entities': sorted(entities, key=lambda item: item['key']),
