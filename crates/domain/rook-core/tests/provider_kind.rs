@@ -88,9 +88,20 @@ fn nan_is_declared_with_its_catalogued_models() {
 #[test]
 fn oauth_credential_capability_preserves_existing_provider_combinations() {
     for descriptor in PROVIDER_DESCRIPTORS {
+        let accepts = !matches!(
+            descriptor.id,
+            "openai-compatible"
+                | "xai"
+                | "mistral"
+                | "deepseek"
+                | "together"
+                | "fireworks"
+                | "cerebras"
+                | "openrouter"
+                | "nan"
+        );
         assert_eq!(
-            descriptor.accepts_oauth_credentials,
-            !matches!(descriptor.id, "nan" | "openai-compatible"),
+            descriptor.accepts_oauth_credentials, accepts,
             "{}",
             descriptor.id
         );

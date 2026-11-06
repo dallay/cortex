@@ -53,19 +53,6 @@ impl StaticModelCatalog {
         })
     }
 }
-
-/// Resolve canonical or legacy provider ids to the canonical descriptor id
-/// before duplicate validation and storage, so a legacy spelling never
-/// silently misses its provider's listings and capabilities.
-fn canonicalize(mut declarations: Vec<ModelDeclaration>) -> Result<Vec<ModelDeclaration>, String> {
-    for declaration in &mut declarations {
-        let descriptor = rook_core::descriptor_for(&declaration.provider_id)
-            .ok_or_else(|| format!("unknown provider id: {}", declaration.provider_id))?;
-        declaration.provider_id = descriptor.id.to_string();
-    }
-    Ok(declarations)
-}
-
 #[async_trait]
 impl ModelCatalogPort for StaticModelCatalog {
     async fn list(&self) -> Vec<ModelCatalogEntry> {
