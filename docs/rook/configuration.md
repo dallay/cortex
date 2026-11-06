@@ -52,17 +52,14 @@ default_tier = "free"
 [rate_limiting.tiers.free]
 requests_per_minute = 100
 requests_per_day = 1000
-tokens_per_minute = 10000
 
 [rate_limiting.tiers.pro]
 requests_per_minute = 1000
 requests_per_day = 100000
-tokens_per_minute = 100000
 
 [rate_limiting.tiers.enterprise]
 requests_per_minute = 10000
 requests_per_day = 10000000
-tokens_per_minute = 1000000
 
 [rate_limiting.ip_limits]
 requests_per_minute = 30
@@ -288,17 +285,14 @@ default_tier = "free"
 [rate_limiting.tiers.free]
 requests_per_minute = 100
 requests_per_day = 1000
-tokens_per_minute = 10000
 
 [rate_limiting.tiers.pro]
 requests_per_minute = 1000
 requests_per_day = 100000
-tokens_per_minute = 100000
 
 [rate_limiting.tiers.enterprise]
 requests_per_minute = 10000
 requests_per_day = 10000000
-tokens_per_minute = 1000000
 
 [rate_limiting.ip_limits]
 requests_per_minute = 30
@@ -317,7 +311,6 @@ Each tier (`free`, `pro`, `enterprise`) supports:
 |------------------------|-----------|-------------------------------------------|
 | `requests_per_minute`  | u32       | Maximum requests per minute (required)    |
 | `requests_per_day`     | u32       | Maximum requests per day (optional)       |
-| `tokens_per_minute`    | u32       | Maximum tokens per minute (optional)      |
 
 **IP rate limits:**
 

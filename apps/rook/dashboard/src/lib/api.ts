@@ -187,7 +187,6 @@ export interface RateLimitRuleResponse {
 	target: string;
 	requests_per_minute: number;
 	requests_per_day: number | null;
-	tokens_per_minute: number | null;
 }
 
 export interface CreateRateLimitRequest {
@@ -195,7 +194,6 @@ export interface CreateRateLimitRequest {
 	target: string;
 	requests_per_minute: number;
 	requests_per_day?: number | null;
-	tokens_per_minute?: number | null;
 }
 
 export type CircuitState = "open" | "closed" | "halfopen";
