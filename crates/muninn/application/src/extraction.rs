@@ -34,9 +34,10 @@ impl IngestionExtraction {
         match options.extraction_mode.unwrap_or(ExtractionMode::Auto) {
             ExtractionMode::Skip => return Ok(plan),
             ExtractionMode::Auto
-                if options
-                    .extract_entities
-                    .unwrap_or_else(|| options.extraction_mode.is_some()) =>
+                // Pinned default: `add_message(extract_entities=True)`, so a
+                // configured pipeline extracts even when the caller passes no
+                // explicit mode. Without an extractor the arm below is a no-op.
+                if options.extract_entities.unwrap_or(true) =>
             {
                 if let Some(extractor) = &self.extractor {
                     let result = extractor

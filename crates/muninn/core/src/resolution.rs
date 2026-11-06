@@ -14,6 +14,10 @@ pub struct ResolutionConfig {
     pub semantic_threshold: f64,
     pub candidate_limit: i64,
     pub match_same_type_only: bool,
+    /// Pinned `DeduplicationConfig.use_fuzzy_matching`. The authoritative
+    /// oracle deployment lacks the optional rapidfuzz extra, so its ImportError
+    /// path disables fuzzy scoring entirely.
+    pub use_fuzzy_matching: bool,
     pub use_embedding_blocking: bool,
     pub resolve_on_ingest: bool,
     pub context_window_chars: usize,
@@ -29,6 +33,7 @@ impl Default for ResolutionConfig {
             semantic_threshold: 0.8,
             candidate_limit: 12,
             match_same_type_only: true,
+            use_fuzzy_matching: true,
             use_embedding_blocking: true,
             resolve_on_ingest: true,
             context_window_chars: 90,

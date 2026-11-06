@@ -165,6 +165,23 @@ class ReferenceAdapter:
         with self.driver.session() as session:
             return session.run(statement, **parameters).data()
 
+    def _settle_mentions(self, message_id, timeout=15.0):
+        """Wait until the pinned auto extraction linked this message.
+
+        The pinned pipeline links mentions after the write returns, so a
+        capture that reads immediately would under-count. Polls the graph for
+        a bounded window and gives up silently: the frozen contract still
+        fails closed when a mention is genuinely absent.
+        """
+        statement = ('MATCH (m:Message {id: $id})-[r:MENTIONS]->() '
+                     'RETURN count(r) AS count')
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            rows = self.query(statement, {'id': message_id})
+            if rows and rows[0]['count']:
+                return
+            time.sleep(0.1)
+
     async def call(self, operation, **arguments):
         if operation == 'add_message':
             from neo4j_agent_memory.schema.models import EntityRef
@@ -179,7 +196,10 @@ class ReferenceAdapter:
                 extract_relations=arguments.get('extract_relations') or False,
                 generate_embedding=arguments.get('generate_embedding', True),
                 user_identifier=arguments.get('user_identifier'))
-            return {'id': str(message.id), 'content': message.content}
+            identifier = str(message.id)
+            if arguments.get('extraction_mode', 'auto') == 'auto':
+                self._settle_mentions(identifier)
+            return {'id': identifier, 'content': message.content}
         if operation == 'add_entity':
             entity, deduplication = await self.client.long_term.add_entity(
                 arguments['name'], arguments['entity_type'],
@@ -404,6 +424,34 @@ def gm03_section(side, texts, model):
     return capture_gm03(texts, extract, side)
 
 
+def start_sidecar(model, timeout=60.0):
+    """Run the product's spaCy stage on container loopback and wait for it.
+
+    The sidecar loads the same pinned model the reference uses in-process, so
+    both engines extract with identical model weights and label mapping.
+    """
+    import socket
+    import subprocess
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+    process = subprocess.Popen(
+        [sys.executable, str(Path(__file__).with_name('spacy_service.py')),
+         '--model', model, '--port', str(port)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError('extraction sidecar exited before readiness')
+        with socket.socket() as probe:
+            probe.settimeout(1.0)
+            if probe.connect_ex(('127.0.0.1', port)) == 0:
+                return process, port
+        time.sleep(0.2)
+    process.terminate()
+    raise RuntimeError('extraction sidecar readiness exhausted')
+
+
 def main():
     side = validate_side(os.environ['GM_H4_SIDE'])
     sources = Path('/references')
@@ -425,15 +473,19 @@ def main():
             consume_binary('/built/muninn', binary, os.environ['GM_H4_BINARY_SHA256'])
             providers = RecordedProviders(frozen_fixture()['gm06']['providers'])
             recorded = RecordedHttpServer(providers)
+            sidecar, sidecar_port = start_sidecar(model_path())
             # The bridge builds its stages from the same configuration surface
-            # a deployment uses; recorded fixtures stand in for the live roots.
+            # a deployment uses; recorded fixtures stand in for the live roots
+            # and the sidecar serves the same pinned spaCy model in-process.
             os.environ.update({
+                'NAM_EXTRACTION__PROVIDER': 'spacy',
+                'NAM_EXTRACTION__ENDPOINT': f'http://127.0.0.1:{sidecar_port}/extract',
                 'NAM_ENRICHMENT__ENABLED': 'true',
                 'NAM_ENRICHMENT__PROVIDERS': 'wikimedia',
                 'NAM_ENRICHMENT__WIKIMEDIA_BASE_URL': recorded.base + '/api/rest_v1',
                 'NAM_GEOCODING__ENABLED': 'true',
                 'NAM_GEOCODING__PROVIDER': 'nominatim',
-                'NAM_GEOCODING__BASE_URL': recorded.base + '/search',
+                'NAM_GEOCODING__BASE_URL': recorded.base,
             })
             product, url = start_bridge(binary, uri, password)
             adapter = ProductAdapter(url, driver, providers)
@@ -494,6 +546,11 @@ def main():
     finally:
         if side == 'product':
             recorded_server.stop()
+            sidecar.terminate()
+            try:
+                sidecar.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                sidecar.kill()
         if original is not None:
             import httpx
             httpx.AsyncClient = original

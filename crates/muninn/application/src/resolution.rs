@@ -1,86 +1,84 @@
 //! Single-entity resolution, separate from preference/fact duplicate folding.
 use muninn_core::model::Entity;
 use muninn_core::ports::Scored;
-use muninn_core::resolution::{DeduplicationAction, DeduplicationResult, ResolutionConfig};
+use muninn_core::resolution::{DeduplicationResult, ResolutionConfig};
 
 /// Select one candidate. The persistence adapter owns blocking, not graph writes.
+///
+/// The pinned `find_duplicate` loop is reproduced exactly: candidates arrive
+/// pre-thresholded at the flag boundary by the vector query, `best_score`
+/// starts at zero with strict-improvement selection, fuzzy scoring combines
+/// `(embedding + fuzz.ratio) / 2` over the name and canonical name only and
+/// always consumes the candidate, and there is no exact-match shortcut.
 pub fn resolve(
     name: &str,
     entity_type: &str,
     candidates: Vec<Scored<Entity>>,
     config: &ResolutionConfig,
 ) -> DeduplicationResult {
-    let mut best = DeduplicationResult::default();
+    let mut best: Option<DeduplicationResult> = None;
+    let mut best_score = 0.0_f64;
     let limit = usize::try_from(config.candidate_limit).unwrap_or(usize::MAX);
     for hit in candidates
         .into_iter()
         .filter(|hit| !config.match_same_type_only || hit.item.entity_type == entity_type)
         .take(limit)
     {
-        let surfaces = std::iter::once(hit.item.name.as_str())
-            .chain(hit.item.canonical_name.as_deref())
-            .chain(hit.item.aliases.iter().map(String::as_str));
-        let exact = muninn_core::resolution::matches_surface(&hit.item, name);
-        let mut fuzzy: f64 = 0.0;
-        for surface in surfaces {
-            fuzzy = fuzzy.max(token_sort_ratio(name, surface));
+        let score = hit.score.clamp(0.0, 1.0);
+        // The pinned vector query pre-filters candidates at flag_threshold;
+        // reproduce that boundary here because test doubles inject raw scores.
+        if score < config.review_threshold {
+            continue;
         }
-        let semantic = if config.use_embedding_blocking
-            && hit.score.is_finite()
-            && hit.score >= config.semantic_threshold
-        {
-            hit.score.clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        let (score, kind) = if exact {
-            (1.0, "exact")
-        } else if fuzzy >= config.fuzzy_threshold {
-            if semantic > 0.0 {
-                ((semantic + fuzzy) / 2.0, "both")
-            } else {
-                (fuzzy, "fuzzy")
+        let mut fuzzy_handled = false;
+        if config.use_fuzzy_matching {
+            let canonical = hit.item.canonical_name.as_deref().unwrap_or(&hit.item.name);
+            let fuzzy = ratio(name, &hit.item.name).max(ratio(name, canonical));
+            if fuzzy >= config.fuzzy_threshold {
+                fuzzy_handled = true;
+                let combined = (score + fuzzy) / 2.0;
+                if combined > best_score {
+                    best_score = combined;
+                    best = Some(DeduplicationResult {
+                        is_duplicate: true,
+                        action: config.action(combined),
+                        matched_entity_id: Some(hit.item.id),
+                        matched_entity_name: Some(hit.item.name.clone()),
+                        similarity_score: combined,
+                        match_type: Some("both".into()),
+                    });
+                }
             }
-        } else {
-            (semantic, "embedding")
-        };
-        let action = config.action(score);
-        if action != DeduplicationAction::None
-            && (!best.is_duplicate
-                || score > best.similarity_score
-                || (score == best.similarity_score
-                    && kind == "exact"
-                    && best.match_type.as_deref() != Some("exact")))
-        {
-            best = DeduplicationResult {
+        }
+        if !fuzzy_handled && score > best_score {
+            best_score = score;
+            best = Some(DeduplicationResult {
                 is_duplicate: true,
-                action,
+                action: config.action(score),
                 matched_entity_id: Some(hit.item.id),
-                matched_entity_name: Some(hit.item.name),
+                matched_entity_name: Some(hit.item.name.clone()),
                 similarity_score: score,
-                match_type: Some(kind.into()),
-            };
+                match_type: Some("embedding".into()),
+            });
         }
     }
-    best
+    best.unwrap_or_default()
 }
 
-/// RapidFuzz token_sort_ratio composition and normalized indel similarity.
-/// Linear-space LCS avoids a quadratic allocation; no optional model dependency.
-fn token_sort_ratio(left: &str, right: &str) -> f64 {
-    fn sorted(value: &str) -> Vec<char> {
-        let folded = value.to_lowercase();
-        let mut tokens: Vec<_> = folded.split_whitespace().collect();
-        tokens.sort_unstable();
-        tokens.join(" ").chars().collect()
-    }
-    let left = sorted(left);
-    let right = sorted(right);
+/// RapidFuzz `fuzz.ratio`: normalized indel similarity over the lowercased raw
+/// strings. Linear-space LCS avoids a quadratic allocation; no model dependency.
+fn ratio(left: &str, right: &str) -> f64 {
+    let left: Vec<char> = left.to_lowercase().chars().collect();
+    let right: Vec<char> = right.to_lowercase().chars().collect();
+    indel_similarity(&left, &right)
+}
+
+fn indel_similarity(left: &[char], right: &[char]) -> f64 {
     if left.is_empty() || right.is_empty() {
         return 0.0;
     }
     let mut row = vec![0_usize; right.len() + 1];
-    for a in &left {
+    for a in left {
         let mut diagonal = 0;
         for (index, b) in right.iter().enumerate() {
             let previous = row[index + 1];

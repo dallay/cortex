@@ -1887,26 +1887,27 @@ async fn resolution_below_auto_merge_stays_pending() {
 }
 
 #[tokio::test]
-async fn resolution_exact_and_token_sort_work_without_an_embedder() {
-    for name in ["zzzzzzzzzzzzzzzzzzzz", "Mary Jane"] {
-        let store = resolution_store(0.0);
-        let candidate_name = if name == "Mary Jane" {
-            "Jane Mary"
-        } else {
-            name
-        };
-        let mut candidate = store.entities.lock().unwrap()[0].clone();
-        candidate.name = candidate_name.into();
-        candidate.canonical_name = Some(candidate_name.into());
-        store.entities.lock().unwrap()[0] = candidate.clone();
-        let (status, value) = resolution_post(store.clone(), serde_json::json!({"name":name,"entity_type":"PERSON","resolve":true,"generate_embedding":false})).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(value["deduplication"]["action"], "merged");
-        assert_eq!(value["id"], candidate.id.to_string());
-        assert_eq!(value["deduplication"]["similarity_score"], 1.0);
-        assert_eq!(store.entities.lock().unwrap().len(), 1);
-        assert!(store.same_as.lock().unwrap().is_empty());
-    }
+async fn resolution_fuzzy_combines_with_the_embedding_score() {
+    // Pinned combination: (embedding + fuzz.ratio) / 2 over the name and the
+    // canonical name. Without an embedding (score 0.0) even a similar name
+    // stays below the flag boundary, because fuzzy never scores alone.
+    let store = resolution_store(0.0);
+    let (status, value) = resolution_post(store.clone(), serde_json::json!({"name":"qqqqqqqqqqqqqqqqqqqq","entity_type":"PERSON","resolve":true,"generate_embedding":false})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(value["deduplication"]["action"], "none");
+    assert_eq!(store.entities.lock().unwrap().len(), 2);
+    assert!(store.same_as.lock().unwrap().is_empty());
+    // With an embedding at 0.87 (just above the flag boundary), a perfect
+    // fuzzy score combines to (0.87 + 1.0) / 2: merged with match_type both.
+    let store = resolution_store(0.87);
+    let (status, value) = resolution_post(store.clone(), serde_json::json!({"name":"zzzzzzzzzzzzzzzzzzzz","entity_type":"PERSON","resolve":true,"generate_embedding":false})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(value["deduplication"]["action"], "merged");
+    assert_eq!(value["deduplication"]["match_type"], "both");
+    let combined = (0.87_f64 + 1.0) / 2.0;
+    assert!((value["deduplication"]["similarity_score"].as_f64().unwrap() - combined).abs() < 1e-9);
+    assert_eq!(store.entities.lock().unwrap().len(), 1);
+    assert!(store.same_as.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -1957,24 +1958,44 @@ async fn resolution_same_type_and_candidate_budget_are_enforced() {
 }
 
 #[tokio::test]
-async fn resolution_candidate_budget_excludes_later_candidates() {
-    for (limit, expected) in [(1, "none"), (12, "merged")] {
-        let store = resolution_store(0.0);
+async fn resolution_candidate_budget_limits_consulted_candidates() {
+    // Pinned `find_duplicate`: the vector query returns at most candidate_limit
+    // rows, so a budget of one consults only the first candidate.
+    for (limit, expected) in [(1, "merged"), (12, "merged")] {
+        let store = resolution_store(0.9);
         let mut later = target_entity(Uuid::new_v4());
         later.entity_type = "PERSON".into();
         later.name = "different candidate".into();
-        later.aliases = vec!["incoming".into()];
         store.entities.lock().unwrap().push(later);
         let (status, value) = resolution_post(store.clone(), serde_json::json!({"name":"incoming","entity_type":"PERSON","deduplicate":true,"resolution":{"candidate_limit":limit}})).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(value["deduplication"]["action"], expected);
         assert_eq!(*store.candidate_requests.lock().unwrap(), vec![limit]);
         assert!(store.same_as.lock().unwrap().is_empty());
-        assert_eq!(
-            store.entities.lock().unwrap().len(),
-            if limit == 1 { 3 } else { 2 }
-        );
+        assert_eq!(store.entities.lock().unwrap().len(), 2);
     }
+}
+
+#[tokio::test]
+async fn resolution_aliases_are_never_scored() {
+    // Pinned fuzzy scoring checks only the name and canonical name; an alias
+    // matching the incoming name must not create a match (score 0.0 stays
+    // below the flag boundary, so the result is the distinct default).
+    let store = resolution_store(0.0);
+    let mut aliased = target_entity(Uuid::new_v4());
+    aliased.entity_type = "PERSON".into();
+    aliased.name = "different candidate".into();
+    aliased.aliases = vec!["incoming".into()];
+    store.entities.lock().unwrap().push(aliased);
+    let (status, value) = resolution_post(
+        store.clone(),
+        serde_json::json!({"name":"incoming","entity_type":"PERSON","deduplicate":true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(value["deduplication"]["action"], "none");
+    assert_eq!(store.entities.lock().unwrap().len(), 3);
+    assert!(store.same_as.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -1991,8 +2012,9 @@ async fn resolution_exact_alias_beats_an_equal_vector_score() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(result["id"], exact.id.to_string());
-    assert_eq!(result["deduplication"]["match_type"], "exact");
+    // Pinned selection keeps the first strict improvement: both candidates
+    // carry the same embedding score, and aliases are never scored.
+    assert_eq!(result["deduplication"]["match_type"], "embedding");
     assert_eq!(store.entities.lock().unwrap().len(), 2);
     assert!(store.same_as.lock().unwrap().is_empty());
 }

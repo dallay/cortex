@@ -98,10 +98,19 @@ async def capture_gm02(adapter, fixture=None):
                          'mode': scenario['mode'], 'content': scenario['text']})
         owners[str(created['id'])] = scenario['key']
     entities, identifiers = inventory(adapter.query)
+    import sys
+    unscoped = adapter.query('MATCH (m:Message)-[r:MENTIONS]->(e:Entity) '
+                            'RETURN m.id AS message, e.id AS entity, '
+                            'properties(r) AS properties', {})
+    print(f'[gm02-diag] side={adapter.side} unscoped={len(unscoped)} '
+          f'declared={len(owners)}', file=sys.stderr, flush=True)
+    for row in unscoped[:4]:
+        print('[gm02-diag] row:', row['message'], '->', row['entity'],
+              file=sys.stderr, flush=True)
     mentions = []
     # GM-02 compares the mentions its own scenarios created; messages seeded by
     # other sections are captured and validated by their own sections.
-    for row in adapter.query(MENTIONS, {'message_ids': sorted(owners.values())}):
+    for row in adapter.query(MENTIONS, {'message_ids': sorted(owners)}):
         properties = row['properties']
         unknown = set(properties) - set(MENTIONS_SHARED) - set(MENTIONS_PRODUCT_ONLY)
         if unknown:
@@ -146,7 +155,7 @@ async def capture_gm04(adapter, fixture=None):
     for attempt in spec['attempts']:
         result = await adapter.call('add_entity', name=attempt['name'],
                                     entity_type=attempt['entity_type'], resolve=True,
-                                    deduplicate=True)
+                                    deduplicate=True, resolution=spec.get('config'))
         entity, deduplication = result['entity'], result['deduplication']
         matched = None
         if deduplication['matched_entity_id'] is not None:

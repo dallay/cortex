@@ -28,7 +28,12 @@ configuration when resolution is disabled.
 
 ## Defaults and source conflict
 
-The authority is agent-memory `9d45af5529ecb5f2fe352013468a11087f3163d4`:
+The pinned deployment measured by GM-04 runs without the optional rapidfuzz
+extra, so the reference's ImportError path disables fuzzy scoring entirely;
+the frozen GM-04 fixture therefore declares `use_fuzzy_matching: false` for
+both engines (the product honors it, the reference reaches the same state
+through its missing dependency). The authority for the algorithm itself is
+agent-memory `9d45af5529ecb5f2fe352013468a11087f3163d4`:
 `src/neo4j_agent_memory/config/settings.py:423–510` and
 `memory/long_term.py:33–107,725–896,1692–1811`.
 

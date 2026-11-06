@@ -13,7 +13,10 @@
     "session_id": "gm-h4-synthetic-session",
     "role": "user",
     "seeded": [
-      {"name": "Dana Reyes", "type": "PERSON"}
+      {
+        "name": "Dana Reyes",
+        "type": "PERSON"
+      }
     ],
     "scenarios": [
       {
@@ -32,53 +35,108 @@
         "key": "skip",
         "mode": "skip",
         "text": "Alice met Acme Corporation in Paris on 4 May 2024.",
-        "explicit_mentions": [{"name": "Skip Probe", "type": "ORGANIZATION"}],
+        "explicit_mentions": [
+          {
+            "name": "Skip Probe",
+            "type": "ORGANIZATION"
+          }
+        ],
         "expected_mentions": [],
-        "absent_entities": ["Skip Probe|ORGANIZATION"]
+        "absent_entities": [
+          "Skip Probe|ORGANIZATION"
+        ]
       },
       {
         "key": "explicit",
         "mode": "explicit",
         "text": "Approved synthetic entity references.",
         "explicit_mentions": [
-          {"id_of": "Dana Reyes|PERSON"},
-          {"name": "Olive Turner", "type": "PERSON"},
-          {"name": "Unlinked Unknown Name"}
+          {
+            "id_of": "Dana Reyes|PERSON"
+          },
+          {
+            "name": "Olive Turner",
+            "type": "PERSON"
+          },
+          {
+            "name": "Unlinked Unknown Name"
+          }
         ],
-        "expected_mentions": ["Dana Reyes|PERSON", "Olive Turner|PERSON"]
+        "expected_mentions": [
+          "Dana Reyes|PERSON",
+          "Olive Turner|PERSON"
+        ]
       }
     ]
   },
   "gm03": {
     "texts": [
-      {"key": "auto", "text": "Alice met Acme Corporation in Paris on 4 May 2024."},
-      {"key": "unicode", "text": "Zoe Q. Moritz visited Cafe Lumiere in Zurich."},
-      {"key": "mixed", "text": "The Quarterly Report was filed in Tokyo by the Norlund Institute on 12 March 2025."},
-      {"key": "empty", "text": ""},
-      {"key": "whitespace", "text": "   "}
+      {
+        "key": "auto",
+        "text": "Alice met Acme Corporation in Paris on 4 May 2024."
+      },
+      {
+        "key": "unicode",
+        "text": "Zoe Q. Moritz visited Cafe Lumiere in Zurich."
+      },
+      {
+        "key": "mixed",
+        "text": "The Quarterly Report was filed in Tokyo by the Norlund Institute on 12 March 2025."
+      },
+      {
+        "key": "empty",
+        "text": ""
+      },
+      {
+        "key": "whitespace",
+        "text": "   "
+      }
     ]
   },
   "gm04": {
     "seeds": [
-      {"name": "Gm H4 Candidate Alpine", "type": "PERSON"},
-      {"name": "Gm H4 Candidate Alpine", "type": "OBJECT"},
-      {"name": "Gm H4 Candidate Boreal", "type": "OBJECT"},
-      {"name": "Gm H4 Candidate Alpine", "type": "LOCATION"},
-      {"name": "Gm H4 Candidate Boreal", "type": "LOCATION"},
-      {"name": "Gm H4 Candidate Cypress", "type": "LOCATION"}
+      {
+        "name": "Gm H4 Candidate Alpine",
+        "type": "PERSON"
+      },
+      {
+        "name": "Gm H4 Candidate Alpine",
+        "type": "OBJECT"
+      },
+      {
+        "name": "Gm H4 Candidate Boreal",
+        "type": "OBJECT"
+      },
+      {
+        "name": "Gm H4 Candidate Alpine",
+        "type": "LOCATION"
+      },
+      {
+        "name": "Gm H4 Candidate Boreal",
+        "type": "LOCATION"
+      },
+      {
+        "name": "Gm H4 Candidate Cypress",
+        "type": "LOCATION"
+      }
     ],
     "attempts": [
       {
         "key": "prefix-1",
         "name": "Gm H4 Cypress Candidate",
         "entity_type": "PERSON",
-        "pool": ["Gm H4 Candidate Alpine|PERSON"]
+        "pool": [
+          "Gm H4 Candidate Alpine|PERSON"
+        ]
       },
       {
         "key": "prefix-2",
         "name": "Gm H4 Cypress Candidate",
         "entity_type": "OBJECT",
-        "pool": ["Gm H4 Candidate Alpine|OBJECT", "Gm H4 Candidate Boreal|OBJECT"]
+        "pool": [
+          "Gm H4 Candidate Alpine|OBJECT",
+          "Gm H4 Candidate Boreal|OBJECT"
+        ]
       },
       {
         "key": "prefix-3",
@@ -94,7 +152,9 @@
         "key": "exact",
         "name": "Gm H4 Candidate Alpine",
         "entity_type": "OBJECT",
-        "pool": ["Gm H4 Candidate Alpine|OBJECT"],
+        "pool": [
+          "Gm H4 Candidate Alpine|OBJECT"
+        ],
         "expect_band": "merged",
         "expect_score": 1.0
       },
@@ -102,7 +162,9 @@
         "key": "exact-repeat",
         "name": "Gm H4 Candidate Alpine",
         "entity_type": "OBJECT",
-        "pool": ["Gm H4 Candidate Alpine|OBJECT"],
+        "pool": [
+          "Gm H4 Candidate Alpine|OBJECT"
+        ],
         "expect_band": "merged",
         "expect_score": 1.0
       },
@@ -114,7 +176,10 @@
         "expect_band": "none",
         "expect_score": 0.0
       }
-    ]
+    ],
+    "config": {
+      "use_fuzzy_matching": false
+    }
   },
   "gm06": {
     "clock_slack_seconds": 0.05,
@@ -125,12 +190,23 @@
       "wikidata_id",
       "image_url"
     ],
-    "reference_only_properties": ["enrichment_data"],
-    "product_only_properties": ["enriched_summary", "diffbot_uri"],
-    "uncompared_properties": ["enriched_at"],
+    "reference_only_properties": [
+      "enrichment_data"
+    ],
+    "product_only_properties": [
+      "enriched_summary",
+      "diffbot_uri"
+    ],
+    "uncompared_properties": [
+      "enriched_at"
+    ],
     "spacing": {
-      "wikimedia": {"rate_limit_seconds": 0.5},
-      "nominatim": {"rate_limit_seconds": 1.0}
+      "wikimedia": {
+        "rate_limit_seconds": 0.5
+      },
+      "nominatim": {
+        "rate_limit_seconds": 1.0
+      }
     },
     "providers": {
       "wikimedia-success": {
@@ -144,9 +220,13 @@
           "type": "standard",
           "pageid": 6106,
           "wikibase_item": "Q6106",
-          "thumbnail": {"source": "https://upload.example.invalid/gm-h6-atlas.png"},
+          "thumbnail": {
+            "source": "https://upload.example.invalid/gm-h6-atlas.png"
+          },
           "content_urls": {
-            "desktop": {"page": "https://en.wikipedia.org/wiki/Gm_H6_Atlas_Institute"}
+            "desktop": {
+              "page": "https://en.wikipedia.org/wiki/Gm_H6_Atlas_Institute"
+            }
           }
         }
       },
@@ -154,19 +234,27 @@
         "provider": "wikimedia",
         "path": "/api/rest_v1/page/summary/Gm_H6_Absent_Figure",
         "status": 404,
-        "body": {"title": "Not found"}
+        "body": {
+          "title": "Not found"
+        }
       },
       "wikimedia-search-empty": {
         "provider": "wikimedia",
         "path": "/w/api.php",
         "status": 200,
-        "body": {"query": {"search": []}}
+        "body": {
+          "query": {
+            "search": []
+          }
+        }
       },
       "wikimedia-failure": {
         "provider": "wikimedia",
         "path": "/api/rest_v1/page/summary/Gm_H6_Unstable_Company",
         "status": 503,
-        "body": {"title": "Unavailable"}
+        "body": {
+          "title": "Unavailable"
+        }
       },
       "nominatim-success": {
         "provider": "nominatim",
@@ -191,7 +279,10 @@
         "name": "Gm H6 Atlas Institute",
         "type": "ORGANIZATION",
         "expect_status": "success",
-        "requests": {"reference": 1, "product": 1},
+        "requests": {
+          "reference": 1,
+          "product": 1
+        },
         "expect_properties": {
           "enriched_description": "synthetic research institute",
           "enrichment_provider": "wikimedia",
@@ -208,7 +299,10 @@
         "type": "ORGANIZATION",
         "expect_status": "success",
         "replay_of": "enrich-success",
-        "requests": {"reference": 0, "product": 0}
+        "requests": {
+          "reference": 0,
+          "product": 0
+        }
       },
       {
         "provider": "wikimedia",
@@ -217,7 +311,10 @@
         "name": "Gm H6 Absent Figure",
         "type": "PERSON",
         "expect_status": "not_found",
-        "requests": {"reference": 2, "product": 1}
+        "requests": {
+          "reference": 2,
+          "product": 1
+        }
       },
       {
         "provider": "wikimedia",
@@ -226,7 +323,10 @@
         "name": "Gm H6 Unstable Company",
         "type": "ORGANIZATION",
         "expect_status": "error",
-        "requests": {"reference": 1, "product": 1}
+        "requests": {
+          "reference": 1,
+          "product": 1
+        }
       },
       {
         "provider": "nominatim",
@@ -235,17 +335,32 @@
         "name": "Gm H6 Harbour Place",
         "type": "LOCATION",
         "expect_status": "success",
-        "requests": {"reference": 1, "product": 1},
-        "expect_location": {"latitude": 51.5074, "longitude": -0.1278}
+        "requests": {
+          "reference": 1,
+          "product": 1
+        },
+        "expect_location": {
+          "latitude": 51.5074,
+          "longitude": -0.1278
+        }
       }
     ]
   },
   "gm07": {
     "session": "gm-h4-search-session",
-    "scope": {"owner": "gm-h7-owner-a", "other": "gm-h7-owner-b"},
+    "scope": {
+      "owner": "gm-h7-owner-a",
+      "other": "gm-h7-owner-b"
+    },
     "entities": [
-      {"name": "Gm H7 Northern Depot", "type": "LOCATION"},
-      {"name": "Gm H7 Southern Depot", "type": "LOCATION"}
+      {
+        "name": "Gm H7 Northern Depot",
+        "type": "LOCATION"
+      },
+      {
+        "name": "Gm H7 Southern Depot",
+        "type": "LOCATION"
+      }
     ],
     "edges": [
       {
@@ -275,19 +390,32 @@
         "text": "Owner B keeps its own northern depot ledger."
       }
     ],
-    "vector": {"query": "depot network", "limit": 3},
-    "text": {"query": "inbound parcel", "limit": 2},
-    "graph": {"source": "Gm H7 Northern Depot|LOCATION"},
+    "vector": {
+      "query": "depot network",
+      "limit": 3
+    },
+    "text": {
+      "query": "inbound parcel",
+      "limit": 2
+    },
+    "graph": {
+      "source": "Gm H7 Northern Depot|LOCATION"
+    },
     "isolation": {
       "query": "northern depot",
       "limit": 3,
-      "reference_included": ["gm07-owner-b"],
+      "reference_included": [
+        "gm07-owner-b"
+      ],
       "product_included": []
     },
     "context": {
       "query": "inbound parcel",
       "max_items": 3,
-      "sections": ["## Conversation History", "## Relevant Knowledge"]
+      "sections": [
+        "## Conversation History",
+        "## Relevant Knowledge"
+      ]
     }
   }
 }

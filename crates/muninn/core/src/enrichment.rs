@@ -287,6 +287,7 @@ impl GeocodingConfig {
 #[serde(rename_all = "lowercase")]
 pub enum EnrichmentStatus {
     Success,
+    #[serde(rename = "not_found")]
     NotFound,
     Error,
     RateLimited,
