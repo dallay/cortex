@@ -140,10 +140,14 @@ impl IngestionExtraction {
         }
         let mut names = HashMap::new();
         for (entity, embedding) in plan.entities {
+            // The declared reference configuration runs ingest extraction with
+            // resolution strategy `none`: extracted entities are created, not
+            // vector-deduplicated. The all-positive hash vectors would collide
+            // every same-type candidate above auto_merge otherwise.
             let options = AddEntityOptions {
                 subtype: entity.subtype.clone(),
                 generate_embedding: false,
-                resolution: Some(Default::default()),
+                resolution: None,
                 ..Default::default()
             };
             let (stored, _) = self

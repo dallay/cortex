@@ -312,7 +312,9 @@ impl EnrichmentProvider for WikimediaEnrichment {
             provider: self.name().to_owned(),
             status: EnrichmentStatus::Success,
             description: summary.description,
-            summary: summary.extract,
+            // The pinned enrichment stage never writes enriched_summary; the
+            // raw extract travels in the enrichment_data payload instead.
+            summary: None,
             wikipedia_url: wikipedia_url.clone(),
             wikidata_id: summary.wikibase_item,
             diffbot_uri: None,
@@ -667,11 +669,9 @@ mod tests {
             result.description.as_deref(),
             Some("Polish and naturalised-French physicist and chemist (1867-1934)")
         );
-        assert!(result
-            .summary
-            .as_deref()
-            .unwrap()
-            .starts_with("Marie Salomea Sklodowska Curie"));
+        // The pinned stage never writes enriched_summary; the raw extract
+        // travels in the enrichment_data payload instead.
+        assert_eq!(result.summary, None);
         assert_eq!(
             result.wikipedia_url.as_deref(),
             Some("https://en.wikipedia.org/wiki/Marie_Curie")

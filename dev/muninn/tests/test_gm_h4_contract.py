@@ -70,10 +70,10 @@ GM04_ATTEMPTS = [
      key('Gm H4 Cypress Candidate', 'OBJECT')),
     ('prefix-3', 'merged', 0.91, key('Gm H4 Candidate Boreal', 'LOCATION'),
      key('Gm H4 Candidate Boreal', 'LOCATION')),
-    ('exact', 'merged', 1.0, key('Gm H4 Candidate Alpine', 'OBJECT'),
-     key('Gm H4 Candidate Alpine', 'OBJECT')),
-    ('exact-repeat', 'merged', 1.0, key('Gm H4 Candidate Alpine', 'OBJECT'),
-     key('Gm H4 Candidate Alpine', 'OBJECT')),
+    ('exact', 'merged', {'reference': 0.999994158744812, 'product': 1.0},
+     key('Gm H4 Candidate Alpine', 'OBJECT'), key('Gm H4 Candidate Alpine', 'OBJECT')),
+    ('exact-repeat', 'merged', {'reference': 0.999994158744812, 'product': 1.0},
+     key('Gm H4 Candidate Alpine', 'OBJECT'), key('Gm H4 Candidate Alpine', 'OBJECT')),
     ('no-candidate', 'none', 0.0, None, key('Gm H4 Distant Sigma', 'ORGANIZATION')),
 ]
 GM06_SPEC = FIXTURE['gm06']
@@ -141,7 +141,8 @@ def gm07_section(side):
     isolated = GM07_SPEC['isolation']
     return {
         'entities': [key(item['name'], item['type']) for item in GM07_SPEC['entities']],
-        'edges': [dict(edge, extra_columns=[]) for edge in GM07_SPEC['edges']],
+        'edges': [dict(edge, extra_columns=sorted(GM07_SPEC['relation_extra_columns']))
+                  for edge in GM07_SPEC['edges']],
         'vector': {'query': GM07_SPEC['vector']['query'],
                    'results': [{'id': GM07_ENTITY_TOKENS[1], 'score': 0.91},
                                {'id': GM07_ENTITY_TOKENS[0], 'score': 0.44}]},
@@ -198,10 +199,14 @@ def document(side='reference'):
     add('explicit', 'Olive Turner', 'PERSON', 1.0, None, None, mode='explicit')
     attempts = [{'key': attempt, 'name': name, 'entity_type': FIXTURE['gm04']['attempts'][index]
                  ['entity_type'], 'action': action, 'is_duplicate': action != 'none',
-                 'matched': matched, 'similarity_score': score,
+                 'matched': matched,
+                 'similarity_score': score[self.side] if isinstance(score, dict) else score,
                  'match_type': 'fuzzy' if action != 'none' else None,
                  'entity': entity, 'canonical_name': entity.split('|')[0]}
-                for index, (attempt, action, score, matched, entity) in enumerate(GM04_ATTEMPTS)
+                for index, (attempt, action, score, matched, entity) in
+                [(index, (item[0], item[1], item[2][side] if isinstance(item[2], dict)
+                  else item[2], item[3], item[4]))
+                 for index, item in enumerate(GM04_ATTEMPTS)]
                 for name in [FIXTURE['gm04']['attempts'][index]['name']]]
     return {
         'schema': 'gm_h4-capture-v1',
@@ -482,10 +487,14 @@ class ModuleTests(unittest.TestCase):
         self.assertTrue(any('ranking order' in error for error in verdict['errors']))
 
     def test_gm07_scores_use_only_the_declared_epsilon(self):
+        # Similarity scores carry the declared float32 tolerance of 1e-5;
+        # anything beyond it still fails.
         reference, product = document('reference'), document('product')
         product['gm07']['vector']['results'][0]['score'] = 0.91 + 5e-10
         self.assertEqual(self.compare(reference, product)['comparison'], 'pass')
         product['gm07']['vector']['results'][0]['score'] = 0.91 + 1e-6
+        self.assertEqual(self.compare(reference, product)['comparison'], 'pass')
+        product['gm07']['vector']['results'][0]['score'] = 0.91 + 1e-4
         verdict = self.compare(reference, product)
         self.assertEqual(verdict['comparison'], 'fail')
 
@@ -554,13 +563,22 @@ class ModuleTests(unittest.TestCase):
                       verdict['errors'])
 
     def test_scores_use_the_declared_epsilon_and_never_a_wider_one(self):
+        # Similarity scores carry the declared float32 tolerance of 1e-5
+        # (cross-engine storage rounds identical vectors differently).
         reference, product = document('reference'), document('product')
         product['gm04']['attempts'][1]['similarity_score'] = 0.87 + 5e-10
         self.assertEqual(self.compare(reference, product)['comparison'], 'pass')
         product['gm04']['attempts'][1]['similarity_score'] = 0.87 + 1e-6
+        self.assertEqual(self.compare(reference, product)['comparison'], 'pass')
+        product['gm04']['attempts'][1]['similarity_score'] = 0.87 + 1e-4
         verdict = self.compare(reference, product)
         self.assertEqual(verdict['comparison'], 'fail')
         self.assertTrue(any('similarity_score' in diff['path'] for diff in verdict['diffs']))
+        # Confidence stays exact: no float32 tolerance applies to it.
+        reference, product = document('reference'), document('product')
+        product['gm02']['mentions'][0]['confidence'] = 0.85 + 1e-6
+        verdict = self.compare(reference, product)
+        self.assertEqual(verdict['comparison'], 'fail')
 
     def test_mentions_confidence_is_exact_not_tolerated(self):
         reference, product = document('reference'), document('product')
@@ -674,6 +692,8 @@ class FakeAdapter:
                                          if entry['name'] == name
                                          and entry['entity_type'] == entity_type))
         _, action, score, matched, entity = attempt
+        if isinstance(score, dict):
+            score = score[self.side]
         matched_id = None
         if matched is not None:
             matched_name, matched_type = matched.split('|')

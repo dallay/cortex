@@ -165,7 +165,10 @@
           "Gm H4 Candidate Alpine|OBJECT"
         ],
         "expect_band": "merged",
-        "expect_score": 1.0
+        "expect_score": {
+          "reference": 0.999994158744812,
+          "product": 1.0
+        }
       },
       {
         "key": "exact-repeat",
@@ -175,7 +178,10 @@
           "Gm H4 Candidate Alpine|OBJECT"
         ],
         "expect_band": "merged",
-        "expect_score": 1.0
+        "expect_score": {
+          "reference": 0.999994158744812,
+          "product": 1.0
+        }
       },
       {
         "key": "no-candidate",
@@ -425,6 +431,16 @@
         "## Conversation History",
         "## Relevant Knowledge"
       ]
-    }
-  }
+    },
+    "relation_extra_columns": [
+      "created_at",
+      "derived",
+      "evidence",
+      "id",
+      "relation_type",
+      "source_message_ids",
+      "support"
+    ]
+  },
+  "similarity_epsilon": 1e-05
 }

@@ -104,6 +104,10 @@ impl ShortTermMemory {
         options: AddMessageOptions,
     ) -> MemoryResult<Message> {
         let scope = self.enforce_multi_tenant(options.user_identifier.as_deref())?;
+        // The caller explicitly configured extraction. The pinned default
+        // (`extraction_mode="auto"`, `extract_entities=True`) also extracts on
+        // every message when a pipeline is configured, so the plan below runs
+        // whenever ingestion is wired even without explicit arguments.
         let configured = options.extraction_mode.is_some()
             || options.extract_entities.is_some()
             || !options.explicit_mentions.is_empty();
@@ -154,7 +158,10 @@ impl ShortTermMemory {
                 return Ok(existing.message);
             }
         }
-        let plan = if configured {
+        let plan = if configured || self.ingestion.is_some() {
+            // Pinned default: `extraction_mode="auto"`. Without explicit args
+            // the plan's Auto arm decides, and stays a no-op when the binary
+            // configured no extraction stage.
             let ingestion = self
                 .ingestion
                 .as_ref()

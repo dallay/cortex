@@ -1445,16 +1445,27 @@ async fn extraction_explicit_only_links_supplied_references_with_existing_preced
 
 #[tokio::test]
 async fn extraction_skip_disabled_and_unconfigured_preserve_no_extraction() {
-    for extra in [
-        serde_json::json!({"extraction_mode":"skip","explicit_mentions":[{"name":"Typed","type":"PERSON"}]}),
-        serde_json::json!({"extraction_mode":"auto","extract_entities":false}),
-        serde_json::json!({}),
+    // The pinned default extracts on every message once a stage is configured,
+    // so the unconfigured case now expects one call; skip and
+    // extract_entities=false still suppress it entirely.
+    for (extra, expected_calls) in [
+        (
+            serde_json::json!({"extraction_mode":"skip","explicit_mentions":[{"name":"Typed","type":"PERSON"}]}),
+            0,
+        ),
+        (
+            serde_json::json!({"extraction_mode":"auto","extract_entities":false}),
+            0,
+        ),
+        (serde_json::json!({}), 1),
     ] {
         let calls = Arc::new(Mutex::new(AddCalls::default()));
         let store = Arc::new(RecordingLongTerm::default());
+        // The unconfigured case runs the pinned auto default, so the stage
+        // must work; skip and extract_entities=false never reach it.
         let extractor = Arc::new(IngestExtractor {
             calls: AtomicUsize::new(0),
-            fail: true,
+            fail: false,
         });
         let (status, _) = ingest_post(
             ingest_state(calls.clone(), store.clone(), extractor.clone(), None),
@@ -1462,9 +1473,16 @@ async fn extraction_skip_disabled_and_unconfigured_preserve_no_extraction() {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(extractor.calls.load(Ordering::SeqCst), 0);
-        assert!(store.entities.lock().unwrap().is_empty());
-        assert!(store.mentions.lock().unwrap().is_empty());
+        assert_eq!(extractor.calls.load(Ordering::SeqCst), expected_calls);
+        if expected_calls == 0 {
+            assert!(store.entities.lock().unwrap().is_empty());
+            assert!(store.mentions.lock().unwrap().is_empty());
+        } else {
+            // The working stage extracted and persisted the pinned 0.85 span;
+            // its 0.849999 sibling stays below the pinned confidence filter.
+            assert_eq!(store.entities.lock().unwrap().len(), 1);
+            assert_eq!(store.mentions.lock().unwrap().len(), 1);
+        }
         assert_eq!(calls.lock().unwrap().appended.len(), 1);
     }
 }
@@ -1681,7 +1699,9 @@ async fn extraction_explicit_ambiguity_missing_ids_and_name_only_never_fall_back
 
 #[tokio::test]
 async fn extraction_unconfigured_preserves_operation_payload_metadata_owner_and_vectors() {
-    for configured in [false, true] {
+    // Without a stage the legacy payload is byte-for-byte preserved; with one,
+    // the pinned auto default extracts, so this pins the no-stage half.
+    for configured in [false] {
         let calls = Arc::new(Mutex::new(AddCalls::default()));
         let store = Arc::new(RecordingLongTerm::default());
         let stage = Arc::new(IngestExtractor {

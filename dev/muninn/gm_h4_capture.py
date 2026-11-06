@@ -98,15 +98,6 @@ async def capture_gm02(adapter, fixture=None):
                          'mode': scenario['mode'], 'content': scenario['text']})
         owners[str(created['id'])] = scenario['key']
     entities, identifiers = inventory(adapter.query)
-    import sys
-    unscoped = adapter.query('MATCH (m:Message)-[r:MENTIONS]->(e:Entity) '
-                            'RETURN m.id AS message, e.id AS entity, '
-                            'properties(r) AS properties', {})
-    print(f'[gm02-diag] side={adapter.side} unscoped={len(unscoped)} '
-          f'declared={len(owners)}', file=sys.stderr, flush=True)
-    for row in unscoped[:4]:
-        print('[gm02-diag] row:', row['message'], '->', row['entity'],
-              file=sys.stderr, flush=True)
     mentions = []
     # GM-02 compares the mentions its own scenarios created; messages seeded by
     # other sections are captured and validated by their own sections.
@@ -116,12 +107,16 @@ async def capture_gm02(adapter, fixture=None):
         if unknown:
             raise ContractError('gm02.mentions: undeclared MENTIONS column '
                                 + str(sorted(unknown)))
-        provenance = {name: deepcopy(properties[name]) for name in MENTIONS_PRODUCT_ONLY
-                      if name in properties} or None
-        if provenance and 'source_message_ids' in provenance:
-            provenance['source_message_ids'] = [
-                _declared(value, owners, 'gm02.mentions.provenance.source_message_ids')
-                for value in provenance['source_message_ids']]
+        provenance = {name: deepcopy(properties.get(name))
+                      for name in MENTIONS_PRODUCT_ONLY}
+        if any(value is not None for value in provenance.values()):
+            if provenance['source_message_ids'] is not None:
+                provenance['source_message_ids'] = [
+                    _declared(value, owners,
+                              'gm02.mentions.provenance.source_message_ids')
+                    for value in provenance['source_message_ids']]
+        else:
+            provenance = None
         mentions.append({
             'message': _declared(row['message'], owners, 'gm02.mentions'),
             'entity': _declared(row['entity'], identifiers, 'gm02.mentions'),
