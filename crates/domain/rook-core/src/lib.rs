@@ -10,6 +10,7 @@ pub mod model_capabilities;
 pub mod ports;
 pub mod probes;
 pub mod provider_connection;
+pub mod provider_descriptor;
 pub mod quota;
 pub mod stream_validation_error;
 

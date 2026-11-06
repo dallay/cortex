@@ -1,0 +1,490 @@
+//! The provider descriptor table — the single declarative source of what a
+//! provider is.
+//!
+//! Provider identity, protocol, auth mechanism, base URL, wire paths,
+//! canonical hosts, capability ceiling and model source are declared here and
+//! nowhere else. Code that needs provider semantics consults the table; a
+//! new provider is a table entry, not a new match arm.
+
+use crate::model_capabilities::CapabilityState;
+
+/// Upper bound of what a provider's protocol can express, declared as data.
+/// Absence of evidence stays `CapabilityState::Unknown`; Tier-1 declarations
+/// arrive with the unified catalog.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Capabilities {
+    pub tools: CapabilityState,
+    pub vision: CapabilityState,
+    pub reasoning: CapabilityState,
+    pub streaming: CapabilityState,
+    pub context_tokens: Option<u64>,
+}
+
+/// The wire protocol a provider speaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Protocol {
+    /// OpenAI Chat Completions (`POST {base}/chat/completions`).
+    OpenAiChat,
+    /// Anthropic Messages (`POST {base}/v1/messages`).
+    AnthropicMessages,
+    /// Gemini GenerateContent (`POST {base}/v1beta/models/{model}:generateContent`).
+    GeminiGenerateContent,
+    /// Ollama native (`POST {base}/api/chat`).
+    OllamaNative,
+}
+
+/// The authentication mechanism a provider expects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthKind {
+    /// Static API key supplied by the user.
+    ApiKey,
+    /// OAuth 2.0 flow with refresh tokens.
+    OAuth,
+    /// A bearer token imported from elsewhere (no refresh flow).
+    ImportedToken,
+}
+
+/// Provider-relative request paths, carried as data.
+///
+/// `{model}` in `chat` is a placeholder substituted by the protocol adapter.
+#[derive(Debug, Clone, Copy)]
+pub struct WirePaths {
+    pub chat: &'static str,
+    pub models: &'static str,
+    pub health: &'static str,
+}
+
+/// Where a descriptor's model list comes from.
+#[derive(Debug, Clone, Copy)]
+pub enum ModelSource {
+    /// Model ids declared inline with the descriptor.
+    Static(&'static [&'static str]),
+    /// The bundled `models-catalog` JSON, keyed by descriptor id.
+    Catalog,
+    /// Model discovery against the provider at runtime.
+    Dynamic,
+}
+
+/// A declared provider.
+#[derive(Debug, Clone, Copy)]
+pub struct ProviderDescriptor {
+    /// Canonical persisted and serialized identity (kebab-case).
+    pub id: &'static str,
+    /// Legacy spellings accepted on read so pre-migration rows never fail.
+    pub aliases: &'static [&'static str],
+    pub protocol: Protocol,
+    pub auth: AuthKind,
+    /// Base URL used when the user does not override it.
+    /// Empty means the provider has no truthful default: the user must
+    /// supply one (`requires_base_url` is true).
+    pub default_base_url: &'static str,
+    /// True when a connection must supply its own base URL.
+    pub requires_base_url: bool,
+    pub paths: WirePaths,
+    /// Base URLs the provider officially documents; used by the canonical
+    /// URL quota gate.
+    pub canonical_base_urls: &'static [&'static str],
+    /// Upper bound of capabilities the protocol can express.
+    pub capability_ceiling: Capabilities,
+    pub models: ModelSource,
+}
+
+impl ProviderDescriptor {
+    /// Whether `value` names this descriptor canonically or by alias.
+    pub fn matches(&self, value: &str) -> bool {
+        self.id.eq_ignore_ascii_case(value)
+            || self.aliases.iter().any(|a| a.eq_ignore_ascii_case(value))
+    }
+
+    /// The identity serialized to clients and persisted to disk.
+    pub fn as_str(&self) -> &'static str {
+        self.id
+    }
+}
+
+/// Every declared provider. The fixed-size enumerations that used to live in
+/// `all_provider_kinds`, `format_for` and the dashboard union were fan-out
+/// copies of this table; iterate this instead.
+pub const PROVIDER_DESCRIPTORS: &[ProviderDescriptor] = &[
+    openai(),
+    openai_compatible(),
+    anthropic(),
+    ollama(),
+    ollama_cloud(),
+    gemini(),
+    azure_openai(),
+    groq(),
+    xai(),
+    mistral(),
+    deepseek(),
+    together(),
+    fireworks(),
+    cerebras(),
+    openrouter(),
+    nan(),
+];
+
+const fn no_ceiling() -> Capabilities {
+    Capabilities {
+        tools: CapabilityState::Unknown,
+        vision: CapabilityState::Unknown,
+        reasoning: CapabilityState::Unknown,
+        streaming: CapabilityState::Unknown,
+        context_tokens: None,
+    }
+}
+
+const fn openai_paths() -> WirePaths {
+    WirePaths {
+        chat: "/chat/completions",
+        models: "/models",
+        health: "/models",
+    }
+}
+
+const fn ollama_paths() -> WirePaths {
+    WirePaths {
+        chat: "/api/chat",
+        models: "/api/tags",
+        health: "/api/tags",
+    }
+}
+
+const fn openai() -> ProviderDescriptor {
+    ProviderDescriptor {
+        id: "openai",
+        aliases: &[],
+        protocol: Protocol::OpenAiChat,
+        auth: AuthKind::ApiKey,
+        default_base_url: "https://api.openai.com/v1",
+        requires_base_url: false,
+        paths: openai_paths(),
+        canonical_base_urls: &["https://api.openai.com/v1"],
+        capability_ceiling: no_ceiling(),
+        models: ModelSource::Catalog,
+    }
+}
+
+const fn openai_compatible() -> ProviderDescriptor {
+    ProviderDescriptor {
+        id: "openai-compatible",
+        aliases: &[],
+        protocol: Protocol::OpenAiChat,
+        auth: AuthKind::ApiKey,
+        default_base_url: "",
+        requires_base_url: true,
+        paths: openai_paths(),
+        canonical_base_urls: &[],
+        capability_ceiling: no_ceiling(),
+        models: ModelSource::Dynamic,
+    }
+}
+
+const fn anthropic() -> ProviderDescriptor {
+    ProviderDescriptor {
+        id: "anthropic",
+        aliases: &[],
+        protocol: Protocol::AnthropicMessages,
+        auth: AuthKind::ApiKey,
+        default_base_url: "https://api.anthropic.com",
+        requires_base_url: false,
+        paths: WirePaths {
+            chat: "/v1/messages",
+            models: "/v1/models",
+            health: "/v1/models",
+        },
+        canonical_base_urls: &["https://api.anthropic.com"],
+        capability_ceiling: no_ceiling(),
+        models: ModelSource::Catalog,
+    }
+}
+
+const fn ollama() -> ProviderDescriptor {
+    ProviderDescriptor {
+        id: "ollama",
+        aliases: &[],
+        protocol: Protocol::OllamaNative,
+        auth: AuthKind::ApiKey,
+        default_base_url: "http://localhost:11434",
+        requires_base_url: true,
+        paths: ollama_paths(),
+        canonical_base_urls: &["http://localhost:11434"],
+        capability_ceiling: no_ceiling(),
+        models: ModelSource::Catalog,
+    }
+}
+
+const fn ollama_cloud() -> ProviderDescriptor {
+    ProviderDescriptor {
+        id: "ollama-cloud",
+        // Pre-migration rows and serde output spelled it `ollamacloud`.
+        aliases: &["ollamacloud"],
+        protocol: Protocol::OllamaNative,
+        auth: AuthKind::ImportedToken,
+        default_base_url: "https://ollama.com",
+        requires_base_url: false,
+        paths: ollama_paths(),
+        canonical_base_urls: &["https://ollama.com"],
+        capability_ceiling: no_ceiling(),
+        models: ModelSource::Catalog,
+    }
+}
+
+const fn gemini() -> ProviderDescriptor {
+    ProviderDescriptor {
+        id: "gemini",
+        aliases: &[],
+        protocol: Protocol::GeminiGenerateContent,
+        auth: AuthKind::OAuth,
+        default_base_url: "https://generativelanguage.googleapis.com",
+        requires_base_url: false,
+        paths: WirePaths {
+            chat: "/v1beta/models/{model}:generateContent",
+            models: "/v1beta/models",
+            health: "/v1beta/models",
+        },
+        canonical_base_urls: &["https://generativelanguage.googleapis.com"],
+        capability_ceiling: no_ceiling(),
+        models: ModelSource::Catalog,
+    }
+}
+
+const fn azure_openai() -> ProviderDescriptor {
+    ProviderDescriptor {
+        id: "azure-openai",
+        // Pre-migration rows and serde output spelled it `azureopenai`.
+        aliases: &["azureopenai"],
+        protocol: Protocol::OpenAiChat,
+        auth: AuthKind::OAuth,
+        default_base_url: "",
+        requires_base_url: true,
+        paths: openai_paths(),
+        canonical_base_urls: &[],
+        capability_ceiling: no_ceiling(),
+        models: ModelSource::Dynamic,
+    }
+}
+
+const fn groq() -> ProviderDescriptor {
+    ProviderDescriptor {
+        id: "groq",
+        aliases: &[],
+        protocol: Protocol::OpenAiChat,
+        auth: AuthKind::ApiKey,
+        default_base_url: "https://api.groq.com/openai/v1",
+        requires_base_url: false,
+        paths: openai_paths(),
+        canonical_base_urls: &["https://api.groq.com/openai/v1"],
+        capability_ceiling: no_ceiling(),
+        models: ModelSource::Catalog,
+    }
+}
+
+const fn xai() -> ProviderDescriptor {
+    ProviderDescriptor {
+        id: "xai",
+        aliases: &[],
+        protocol: Protocol::OpenAiChat,
+        auth: AuthKind::ApiKey,
+        default_base_url: "https://api.x.ai/v1",
+        requires_base_url: false,
+        paths: openai_paths(),
+        canonical_base_urls: &["https://api.x.ai/v1"],
+        capability_ceiling: no_ceiling(),
+        models: ModelSource::Static(&["grok-2", "grok-2-mini"]),
+    }
+}
+
+const fn mistral() -> ProviderDescriptor {
+    ProviderDescriptor {
+        id: "mistral",
+        aliases: &[],
+        protocol: Protocol::OpenAiChat,
+        auth: AuthKind::ApiKey,
+        default_base_url: "https://api.mistral.ai/v1",
+        requires_base_url: false,
+        paths: openai_paths(),
+        canonical_base_urls: &["https://api.mistral.ai/v1"],
+        capability_ceiling: no_ceiling(),
+        models: ModelSource::Static(&[
+            "mistral-large-latest",
+            "mistral-small-latest",
+            "codestral-latest",
+        ]),
+    }
+}
+
+const fn deepseek() -> ProviderDescriptor {
+    ProviderDescriptor {
+        id: "deepseek",
+        aliases: &[],
+        protocol: Protocol::OpenAiChat,
+        auth: AuthKind::ApiKey,
+        default_base_url: "https://api.deepseek.com/v1",
+        requires_base_url: false,
+        paths: openai_paths(),
+        canonical_base_urls: &["https://api.deepseek.com/v1"],
+        capability_ceiling: no_ceiling(),
+        models: ModelSource::Static(&["deepseek-chat", "deepseek-reasoner"]),
+    }
+}
+
+const fn together() -> ProviderDescriptor {
+    ProviderDescriptor {
+        id: "together",
+        aliases: &[],
+        protocol: Protocol::OpenAiChat,
+        auth: AuthKind::ApiKey,
+        default_base_url: "https://api.together.xyz/v1",
+        requires_base_url: false,
+        paths: openai_paths(),
+        canonical_base_urls: &["https://api.together.xyz/v1"],
+        capability_ceiling: no_ceiling(),
+        models: ModelSource::Static(&["meta-llama/Llama-3.3-70B-Instruct-Turbo"]),
+    }
+}
+
+const fn fireworks() -> ProviderDescriptor {
+    ProviderDescriptor {
+        id: "fireworks",
+        aliases: &[],
+        protocol: Protocol::OpenAiChat,
+        auth: AuthKind::ApiKey,
+        default_base_url: "https://api.fireworks.ai/inference/v1",
+        requires_base_url: false,
+        paths: openai_paths(),
+        canonical_base_urls: &["https://api.fireworks.ai/inference/v1"],
+        capability_ceiling: no_ceiling(),
+        models: ModelSource::Static(&["accounts/fireworks/models/llama-v3p3-70b-instruct"]),
+    }
+}
+
+const fn cerebras() -> ProviderDescriptor {
+    ProviderDescriptor {
+        id: "cerebras",
+        aliases: &[],
+        protocol: Protocol::OpenAiChat,
+        auth: AuthKind::ApiKey,
+        default_base_url: "https://api.cerebras.ai/v1",
+        requires_base_url: false,
+        paths: openai_paths(),
+        canonical_base_urls: &["https://api.cerebras.ai/v1"],
+        capability_ceiling: no_ceiling(),
+        models: ModelSource::Static(&["llama3.1-8b", "llama-3.3-70b"]),
+    }
+}
+
+const fn openrouter() -> ProviderDescriptor {
+    ProviderDescriptor {
+        id: "openrouter",
+        aliases: &[],
+        protocol: Protocol::OpenAiChat,
+        auth: AuthKind::ApiKey,
+        default_base_url: "https://openrouter.ai/api/v1",
+        requires_base_url: false,
+        paths: openai_paths(),
+        canonical_base_urls: &["https://openrouter.ai/api/v1"],
+        capability_ceiling: no_ceiling(),
+        models: ModelSource::Static(&["openai/gpt-4o", "anthropic/claude-sonnet-4"]),
+    }
+}
+
+const fn nan() -> ProviderDescriptor {
+    ProviderDescriptor {
+        id: "nan",
+        aliases: &[],
+        protocol: Protocol::OpenAiChat,
+        auth: AuthKind::ApiKey,
+        default_base_url: "https://api.nan.builders/v1",
+        requires_base_url: false,
+        paths: openai_paths(),
+        canonical_base_urls: &["https://api.nan.builders/v1"],
+        capability_ceiling: no_ceiling(),
+        models: ModelSource::Static(&[
+            "deepseek-v4-flash",
+            "glm5.3-flash",
+            "qwen3.8-flash",
+            "gemma4",
+        ]),
+    }
+}
+
+/// Resolve a canonical or legacy provider id to its descriptor.
+pub fn descriptor_for(value: &str) -> Option<&'static ProviderDescriptor> {
+    PROVIDER_DESCRIPTORS.iter().find(|d| d.matches(value))
+}
+
+/// Resolve by exact canonical id.
+pub fn descriptor_by_id(id: &str) -> Option<&'static ProviderDescriptor> {
+    PROVIDER_DESCRIPTORS.iter().find(|d| d.id == id)
+}
+
+/// The canonical ids in table order — the single provider set every
+/// enumeration site (quota view, `/v1/models`, dashboard catalog) must
+/// derive from.
+pub fn provider_ids() -> impl Iterator<Item = &'static str> {
+    PROVIDER_DESCRIPTORS.iter().map(|d| d.id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_descriptor_is_fully_declared() {
+        assert_eq!(PROVIDER_DESCRIPTORS.len(), 16);
+        for descriptor in PROVIDER_DESCRIPTORS {
+            assert!(!descriptor.id.is_empty());
+            assert!(
+                !descriptor.default_base_url.is_empty() || descriptor.requires_base_url,
+                "{} must declare a base URL or require one",
+                descriptor.id
+            );
+            assert!(!descriptor.paths.chat.is_empty());
+            assert!(!descriptor.paths.models.is_empty());
+            assert!(!descriptor.paths.health.is_empty());
+            let has_models = match descriptor.models {
+                ModelSource::Static(models) => !models.is_empty(),
+                ModelSource::Catalog | ModelSource::Dynamic => true,
+            };
+            assert!(
+                has_models,
+                "{} must declare at least one model source",
+                descriptor.id
+            );
+        }
+    }
+
+    #[test]
+    fn table_is_queryable_by_id_and_alias() {
+        assert_eq!(descriptor_by_id("openai").unwrap().id, "openai");
+        // Legacy serde spellings resolve through the alias map.
+        assert_eq!(
+            descriptor_for("ollamacloud").map(|d| d.id),
+            Some("ollama-cloud")
+        );
+        assert_eq!(
+            descriptor_for("azureopenai").map(|d| d.id),
+            Some("azure-openai")
+        );
+        assert_eq!(
+            descriptor_for("OLLAMA-CLOUD").map(|d| d.id),
+            Some("ollama-cloud")
+        );
+        assert!(descriptor_for("unknown").is_none());
+    }
+
+    #[test]
+    fn nan_is_declared_with_its_catalogued_models() {
+        let nan = descriptor_by_id("nan").expect("nan descriptor");
+        assert_eq!(nan.default_base_url, "https://api.nan.builders/v1");
+        assert_eq!(nan.protocol, Protocol::OpenAiChat);
+        match nan.models {
+            ModelSource::Static(models) => {
+                assert!(models.contains(&"deepseek-v4-flash"));
+                assert!(models.contains(&"glm5.3-flash"));
+            }
+            other => panic!("nan must declare static models, got {other:?}"),
+        }
+    }
+}
