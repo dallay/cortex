@@ -1010,7 +1010,6 @@ describe("Rook OAuth API client", () => {
 			target: "key-1",
 			requests_per_minute: 60,
 			requests_per_day: 1000,
-			tokens_per_minute: null,
 		};
 		const fetchMock = vi
 			.fn()

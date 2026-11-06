@@ -14,7 +14,7 @@ living documentation treat Huginn as the canonical name.
 
 ## Decision index
 
-`Accepted` indicates that a direction was chosen; it does not by itself confirm that it is implemented or verified. The relationships below summarize refinements and partial supersessions. See [`validation.md`](../validation.md) and each delivery's documents for implementation evidence.
+`Accepted` indicates that a direction was chosen; it does not by itself confirm that it is implemented or verified. The relationships below summarize refinements and partial supersessions. See each delivery's documents for implementation evidence.
 
 | ADR | Decision | Current status and relationship |
 | --- | --- | --- |

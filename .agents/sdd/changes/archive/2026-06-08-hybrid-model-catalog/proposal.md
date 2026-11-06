@@ -2,7 +2,7 @@
 
 ## Intent
 
-Rook's `StaticModelCatalog` currently exposes only 3-5 hardcoded models per provider, making models like `ollamacloud/qwen3-coder-next` unavailable in the dashboard's API key restriction UI. The goal is to expand the catalog to cover all Ollama Cloud models (mirroring OmniRoute's provider registry) and establish the architecture for future dynamic introspection per provider.
+Rook's `StaticModelCatalog` currently exposes only 3-5 hardcoded models per provider, making models like `ollamacloud/qwen3-coder-next` unavailable in the dashboard's API key restriction UI. The goal is to expand the catalog to cover all Ollama Cloud models (mirroring the reference gateway's provider registry) and establish the architecture for future dynamic introspection per provider.
 
 **Why**: Users cannot restrict API keys to models they actually want to use. The catalog must reflect the real model zoo available through each provider connection.
 
@@ -10,7 +10,7 @@ Rook's `StaticModelCatalog` currently exposes only 3-5 hardcoded models per prov
 
 ### In Scope
 
-- Expand `StaticModelCatalog` with all Ollama Cloud models from OmniRoute's registry (8+ models)
+- Expand `StaticModelCatalog` with all Ollama Cloud models from the reference gateway's registry (8+ models)
 - Add `qwen3-coder-next` and related Qwen/Coder models to Ollama Cloud catalog entry
 - Design extensible catalog structure (static base + override layer) for future dynamic discovery
 - Define the wire format for `GET /api/models` response to support model grouping by provider kind
@@ -42,13 +42,13 @@ ModelCatalogPort (trait)
  └── ExpandedCatalog (proposed — static base + runtime overrides)
 ```
 
-**Phase 1 (this change)**: Expand the hardcoded `catalog()` function in `crates/infrastructure/models-catalog/src/lib.rs` to include all Ollama Cloud models from OmniRoute's `providerRegistry.ts`.
+**Phase 1 (this change)**: Expand the hardcoded `catalog()` function in `crates/infrastructure/models-catalog/src/lib.rs` to include all Ollama Cloud models from the reference gateway's `providerRegistry.ts`.
 
 **Phase 2 (future)**: Add a `DynamicModelCatalog` implementation that fetches from provider's `/v1/models` or `/api/tags` endpoints and merges with the static base.
 
 ### Ollama Cloud Models to Add
 
-From OmniRoute's `providerRegistry.ts`:
+From the reference gateway's `providerRegistry.ts`:
 
 - `deepseek-v4-pro` (reasoning)
 - `deepseek-v4-flash` (reasoning)
@@ -76,8 +76,8 @@ From OmniRoute's `providerRegistry.ts`:
 
 | Risk                                               | Likelihood | Mitigation                                              |
 |----------------------------------------------------|------------|---------------------------------------------------------|
-| Catalog drift (OmniRoute adds models)              | Medium     | Schedule periodic sync from OmniRoute registry          |
-| Model name format mismatch (`ollamacloud/` prefix) | Low        | Use exact IDs from OmniRoute; verify against actual API |
+| Catalog drift (the reference gateway adds models)              | Medium     | Schedule periodic sync from reference-gateway registry          |
+| Model name format mismatch (`ollamacloud/` prefix) | Low        | Use exact IDs from the reference gateway; verify against actual API |
 | Memory bloat from excessive model entries          | Low        | Cap static catalog at ~50 models per provider kind      |
 
 ## Rollback Plan
@@ -88,7 +88,7 @@ From OmniRoute's `providerRegistry.ts`:
 
 ## Dependencies
 
-- OmniRoute `providerRegistry.ts` as source of truth for Ollama Cloud model IDs
+- The reference gateway's `providerRegistry.ts` as source of truth for Ollama Cloud model IDs
 - `ModelCatalogPort` trait in `rook-core/src/ports.rs` (unchanged interface)
 
 ## Success Criteria

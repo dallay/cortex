@@ -2041,7 +2041,8 @@ async fn request_tools_are_normalized_to_native_anthropic_shape() {
             "tools": [{
                 "name": "lookup",
                 "description": "Find things",
-                "input_schema": {"type": "object"}
+                "input_schema": {"type": "object"},
+                "cache_control": {"type": "ephemeral"}
             }],
             "tool_choice": {"type": "auto"}
         })))
@@ -2059,6 +2060,7 @@ async fn request_tools_are_normalized_to_native_anthropic_shape() {
     req.metadata.origin = "openai".into();
     req.tools = Some(json!([{
         "type": "function",
+        "cache_control": {"type": "ephemeral"},
         "function": {"name": "lookup", "description": "Find things", "parameters": {"type": "object"}}
     }]));
     req.tool_choice = Some(json!("auto"));
@@ -2105,4 +2107,32 @@ async fn request_tool_choice_function_form_maps_to_native_tool_selection() {
         result.is_ok(),
         "wire request must satisfy the native-tool_choice matcher: {result:?}"
     );
+}
+
+#[tokio::test]
+async fn malformed_function_tool_choice_returns_request_error_before_sending() {
+    use serde_json::json;
+
+    let server = MockServer::start().await;
+    let provider = test_provider(&server);
+    for choice in [
+        json!({"type": "function"}),
+        json!({"type": "function", "function": null}),
+        json!({"type": "function", "function": []}),
+        json!({"type": "function", "function": "lookup"}),
+        json!({"type": "function", "function": {}}),
+        json!({"type": "function", "function": {"name": null}}),
+        json!({"type": "function", "function": {"name": 42}}),
+    ] {
+        let mut req = make_test_request("claude-3-5-sonnet");
+        req.tool_choice = Some(choice.clone());
+        let error = provider.complete(&req).await.unwrap_err();
+        assert!(error.is_invalid_request(), "choice={choice}: {error}");
+        let error = match provider.stream(&req).await {
+            Err(error) => error,
+            Ok(_) => panic!("malformed choice accepted: {choice}"),
+        };
+        assert!(error.is_invalid_request(), "choice={choice}: {error}");
+    }
+    assert!(server.received_requests().await.unwrap().is_empty());
 }

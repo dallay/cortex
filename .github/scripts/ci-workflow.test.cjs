@@ -15,6 +15,36 @@ function jobBlock(id) {
   return block[1];
 }
 
+const gitleaksConfig = fs.readFileSync(path.join(__dirname, '../../.gitleaks.toml'), 'utf8');
+
+function gitleaksAllowlistSections(ruleBody) {
+  const sections = [];
+  let current = null;
+  for (const line of ruleBody.split('\n')) {
+    if (/^\s*\[\[rules\.allowlists\]\]\s*$/.test(line)) {
+      current = [];
+      sections.push(current);
+      continue;
+    }
+    if (current) current.push(line);
+  }
+  return sections.map((section) => section.join('\n'));
+}
+
+function gitleaksRules(config) {
+  const globalMatch = config.match(/^\[allowlist\][\s\S]*$/m);
+  const globalSection = globalMatch ? globalMatch[0] : '';
+  const rulesText = globalMatch ? config.slice(0, globalMatch.index) : config;
+  const bodies = rulesText.split(/^\[\[rules\]\]\s*$/m).slice(1);
+  return {
+    globalSection,
+    rules: bodies.map((body) => ({
+      id: body.match(/^\s*id = "([^"]+)"/m)?.[1],
+      allowlists: gitleaksAllowlistSections(body),
+    })),
+  };
+}
+
 function evaluateBooleanExpression(expression) {
   const tokens = [];
   const tokenPattern = /\s*(\|\||&&|==|[()]|true|false|"[^"\\]*(?:\\.[^"\\]*)*"|'[^']*')/gy;
@@ -250,6 +280,36 @@ it('ejecuta siempre las pruebas CI y exige su resultado real', () => {
   assert.match(jobBlock('required'), /^      - ci-contract\s*$/m);
   assert.match(jobBlock('required'), /RESULT_CI_CONTRACT: \$\{\{ needs\.ci-contract\.result \}\}/);
   assert.doesNotMatch(jobBlock('required'), /continue-on-error:/);
+});
+
+it('acota la excepción de Gitleaks del fixture GM-05 a su archivo y su valor', () => {
+  const { globalSection, rules } = gitleaksRules(gitleaksConfig);
+  const generic = rules.find((rule) => rule.id === 'generic_secret');
+  assert.ok(generic, 'regla generic_secret presente');
+
+  const scoped = generic.allowlists.filter((section) => section.includes('dev/muninn'));
+  assert.equal(scoped.length, 1, 'una sola allowlist de la regla menciona dev/muninn');
+  const block = scoped[0];
+  assert.ok(block.includes('condition = "AND"'), 'condición AND para acotar la coincidencia');
+  assert.ok(block.includes('regexTarget = "match"'), 'el objetivo es la coincidencia completa');
+  assert.ok(
+    block.includes(`paths = ['''^dev/muninn/tests/test_gm05_build\\.py$''']`),
+    'ruta exacta del test GM-05',
+  );
+  assert.ok(
+    block.includes(`regexes = ['''(?i)^token\\s*=\\s*"synthetic-test-value$''']`),
+    'valor exacto del token sintético',
+  );
+  assert.doesNotMatch(block, /condition = "OR"/);
+
+  for (const rule of rules.filter((candidate) => candidate.id !== 'generic_secret')) {
+    assert.ok(
+      !rule.allowlists.some((section) => section.includes('dev/muninn') || section.includes('synthetic-test-value')),
+      `la regla ${rule.id} no declara excepciones del fixture GM-05`,
+    );
+  }
+
+  assert.doesNotMatch(globalSection, /dev\/muninn|synthetic-test-value/, 'sin allowlist global para el fixture');
 });
 
 it('conecta cada dependencia de Required con el runner sin perder resultados', () => {

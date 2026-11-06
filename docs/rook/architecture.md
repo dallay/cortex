@@ -219,10 +219,12 @@ applicable metrics or the freshness window.
 
 HTTP transport layer. All wire-format logic lives here.
 
-- **`routes.rs`** — axum router with four endpoints
+- **`routes.rs`** — axum router assembling the client-facing `/v1` routes together with the auth, bootstrap, resilience, API-key, rate-limit, usage and cache routers
 - **`openai_adapter.rs`** — OpenAI wire format ↔ domain model translation
 - **`anthropic_adapter.rs`** — Anthropic `/v1/messages` wire format ↔ domain model
+- **`responses_routes.rs`, `responses_adapter.rs`, `responses_stream.rs`** — the stateless `/v1/responses` surface, its request conversion and its streaming event encoder
 - **`provider_routes.rs`** — `/api/providers` CRUD endpoints, mounted only when enabled
+- **`oauth_routes.rs`, `combo_routes.rs`, `alias_routes.rs`, `models_routes.rs`** — dedicated routers for OAuth connections, combos, combo/model aliases and the model catalog
 - **`provider_dto.rs`** — provider connection JSON DTOs; responses always include `credentials: {}`
 
 ### Provider crates (`providers-openai`, `providers-anthropic`, `providers-ollama`, `providers-gemini`, `providers-groq`)

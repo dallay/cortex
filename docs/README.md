@@ -42,7 +42,6 @@ docs/
 │   ├── inference-adapters.md
 │   ├── linux-daily-use.md
 │   ├── providers.md
-│   ├── validation.md
 │   └── adr/               ← Huginn-specific ADRs
 │       ├── README.md
 │       ├── 0001-*.md ... 0015-*.md

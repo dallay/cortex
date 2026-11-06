@@ -1484,7 +1484,6 @@ mod tests {
             target: "key_1".into(),
             requests_per_minute: 1,
             requests_per_day: None,
-            tokens_per_minute: None,
             burst: None,
             provider_limits: HashMap::new(),
         });

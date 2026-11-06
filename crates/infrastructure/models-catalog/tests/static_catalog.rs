@@ -105,7 +105,7 @@ async fn list_returns_at_least_one_entry_per_supported_provider_kind() {
     }
 }
 
-/// Ollama Cloud models — must include the 9 models from OmniRoute registry.
+/// Ollama Cloud models — must include the 9 models from the reference-gateway registry.
 /// This verifies the expanded catalog is working correctly.
 const OLLAMA_CLOUD_EXPECTED_MODEL_IDS: &[&str] = &[
     "ollamacloud/deepseek-v4-pro",

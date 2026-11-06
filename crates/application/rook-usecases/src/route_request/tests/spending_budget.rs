@@ -586,3 +586,39 @@ async fn a_cancelled_budgeted_stream_never_releases_the_reservation() {
         "an abandoned stream must not release the reservation: the cost is unknown"
     );
 }
+
+#[tokio::test]
+async fn budgeted_request_is_admitted_when_catalog_pricing_bounds_the_cost() {
+    let events: EventLog = Arc::new(Mutex::new(Vec::new()));
+    // The adapter exposes no bound of its own; the catalog pricing must supply it.
+    let unbounded = Arc::new(BoundedProvider::new("priced-provider", events.clone()));
+    let mut metadata = std::collections::HashMap::new();
+    metadata.insert(TEST_MODEL.clone(), rook_core::ModelCapabilities::default());
+    let provider = Arc::new(
+        crate::catalogued_provider::CataloguedProvider::new(
+            unbounded,
+            metadata,
+            rook_core::ModelCapabilities::default(),
+        )
+        .with_pricing(Arc::new(crate::PricingConfig::from_entry(
+            "priced-provider",
+            TEST_MODEL.as_str(),
+            0.5,
+            1.5,
+        ))),
+    );
+    let ledger = Arc::new(RecordingLedger::new(events.clone()));
+    let mut req = budgeted_request();
+    req.stream = false;
+    req.max_tokens = Some(100);
+
+    let usecase = usecase_with_budget(provider, ledger);
+    usecase
+        .execute(req)
+        .await
+        .expect("budgeted request must be admitted");
+    assert!(
+        events.lock().unwrap().contains(&BudgetEvent::Reserve),
+        "the guard must have reserved against the derived bound"
+    );
+}

@@ -22,7 +22,7 @@ host = "127.0.0.1"   # default: "127.0.0.1"
 port = 3773          # default: 3773
 
 [routing]
-strategy = "priority"  # "priority" | "round-robin" | "model-based"
+strategy = "priority"  # "priority" | "round-robin"
 
 [cache]
 enabled = true
@@ -52,17 +52,14 @@ default_tier = "free"
 [rate_limiting.tiers.free]
 requests_per_minute = 100
 requests_per_day = 1000
-tokens_per_minute = 10000
 
 [rate_limiting.tiers.pro]
 requests_per_minute = 1000
 requests_per_day = 100000
-tokens_per_minute = 100000
 
 [rate_limiting.tiers.enterprise]
 requests_per_minute = 10000
 requests_per_day = 10000000
-tokens_per_minute = 1000000
 
 [rate_limiting.ip_limits]
 requests_per_minute = 30
@@ -88,7 +85,9 @@ requests_per_minute = 30
 | `strategy`      | enum   | `"priority"` | Routing strategy. See Routing Strategies       |
 | `default_combo` | string | `null`       | Default combo UUID; only applied without `X-Rook-Combo` or a `rook/*` alias |
 
-Supported values for `strategy`: `priority`, `round-robin`, `model-based`
+Supported values for `strategy`: `priority`, `round-robin`.
+
+Weighted random selection exists internally for combo use but is not configurable here; unknown values are rejected at startup.
 
 ### `[[combos]]` — Multi-step Fallback Chains
 
@@ -286,17 +285,14 @@ default_tier = "free"
 [rate_limiting.tiers.free]
 requests_per_minute = 100
 requests_per_day = 1000
-tokens_per_minute = 10000
 
 [rate_limiting.tiers.pro]
 requests_per_minute = 1000
 requests_per_day = 100000
-tokens_per_minute = 100000
 
 [rate_limiting.tiers.enterprise]
 requests_per_minute = 10000
 requests_per_day = 10000000
-tokens_per_minute = 1000000
 
 [rate_limiting.ip_limits]
 requests_per_minute = 30
@@ -315,7 +311,6 @@ Each tier (`free`, `pro`, `enterprise`) supports:
 |------------------------|-----------|-------------------------------------------|
 | `requests_per_minute`  | u32       | Maximum requests per minute (required)    |
 | `requests_per_day`     | u32       | Maximum requests per day (optional)       |
-| `tokens_per_minute`    | u32       | Maximum tokens per minute (optional)      |
 
 **IP rate limits:**
 
@@ -498,10 +493,6 @@ Providers are tried in priority order. First available provider that supports th
 ### `round-robin`
 
 Providers are rotated in round-robin order (among available providers that support the model).
-
-### `model-based`
-
-Selects provider by model ID prefix. Not yet fully implemented (falls back to priority).
 
 ## Full Example
 
