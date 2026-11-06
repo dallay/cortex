@@ -991,15 +991,14 @@ fn settings_pty_escape_closes_modal_without_cancelling_stream() {
     pty.wait_for("┌Settings");
     pty.send("\x1b");
     pty.wait_until_screen_not_contains("┌Settings");
+    // Ratatui may split changed cells across cursor-addressed writes. Assert on
+    // the reconstructed screen, not on contiguous text in the raw PTY bytes.
+    pty.wait_for("Settings discarded");
     pty.wait_for("Assistant: STREAM_COMPLETE");
-    let output = pty.output();
+    let rendered = format!("{}\n{}", pty.scrollback_text(), pty.screen_text());
     assert!(
-        output.contains("Settings discarded"),
-        "Esc must report the discarded settings:\n{output}"
-    );
-    assert!(
-        !output.contains("operation cancelled"),
-        "Esc cancelled the active stream:\n{output}"
+        !rendered.contains("operation cancelled"),
+        "Esc cancelled the active stream:\n{rendered}"
     );
     pty.send("\x03");
     pty.finish(true);
