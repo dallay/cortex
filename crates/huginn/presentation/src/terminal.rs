@@ -49,7 +49,7 @@ static MODIFY_OTHER_KEYS_ACTIVE: AtomicBool = AtomicBool::new(false);
 static KITTY_KEYBOARD_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Lines the transcript moves per page when scrolling the history.
 const HISTORY_PAGE: usize = 10;
-const HELP: &str = "Enter sends; Shift+Enter (on compatible terminals), Alt+Enter or Ctrl+J inserts a newline. PgUp/PgDn scroll the transcript. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals require typing the fresh code; PgUp/PgDn scroll the complete preview. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
+const HELP: &str = "Enter sends; Shift+Enter (on compatible terminals), Alt+Enter or Ctrl+J inserts a newline. PgUp/PgDn scroll the transcript. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals are inline: Left/Right selects, Enter confirms, Esc rejects, Ctrl+F shows details, and Up/Down or PgUp/PgDn scrolls the complete preview. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
 
 #[cfg(unix)]
 fn begin_keyboard_protocol() -> std::io::Result<()> {
@@ -561,7 +561,16 @@ type SettingsView = (
 );
 
 enum OverlayView {
-    Approval(String, u64, String, String, usize),
+    Approval(
+        String,
+        String,
+        String,
+        String,
+        Vec<huginn_core::ApprovalDecision>,
+        usize,
+        bool,
+        usize,
+    ),
     Dialog(String, String, Vec<String>, usize, usize),
     Workflow(
         String,
@@ -656,10 +665,31 @@ impl View {
                         ))
                     }
                     crate::overlay::Payload::Approval(m) => OverlayView::Approval(
+                        safe(&m.request.action),
+                        safe(&m.request.id),
+                        if m.request
+                            .resource
+                            .as_ref()
+                            .is_some_and(|resource| resource.sensitive)
+                        {
+                            "sensitive resource".into()
+                        } else {
+                            crate::approval::effect_line(&m.request.preview)
+                                .map(|line| safe(&line))
+                                .or_else(|| {
+                                    m.request.resource.as_ref().map(|resource| {
+                                        format!(
+                                            "resource {}",
+                                            safe(&resource.canonical_path.display().to_string())
+                                        )
+                                    })
+                                })
+                                .unwrap_or_else(|| format!("{} request", safe(&m.request.action)))
+                        },
                         approval_preview(&m.request.action, m.number, &m.request.preview),
-                        m.number,
-                        m.code.clone(),
-                        m.typed.clone(),
+                        m.allowed_decisions.clone(),
+                        m.selected,
+                        m.expanded,
                         m.scroll,
                     ),
                     crate::overlay::Payload::Help => OverlayView::Help(active.help_scroll),
@@ -736,6 +766,11 @@ impl Driver {
         if !viewport_is_viable(size) {
             if let Some(modal) = self.ui.lock().modal_mut() {
                 modal.armed = false;
+                modal.selected = modal
+                    .allowed_decisions
+                    .iter()
+                    .position(|decision| *decision == huginn_core::ApprovalDecision::Reject)
+                    .unwrap_or(0);
             }
             return Ok(());
         }
@@ -751,7 +786,7 @@ impl Driver {
         let last_scroll = self.draw_frame(&view)?;
         self.update_modal_scroll(&view, last_scroll);
         // Only a completed paint in a viable viewport may arm an approval.
-        if matches!(view.overlay, Some(OverlayView::Approval(_, _, _, _, _))) {
+        if matches!(view.overlay, Some(OverlayView::Approval(..))) {
             arm_approval_after_draw(&self.ui, view.overlay_identity);
         }
         Ok(())
@@ -775,11 +810,12 @@ impl Driver {
     }
 
     fn update_modal_scroll(&self, view: &View, last_scroll: usize) {
-        if let Some(OverlayView::Approval(_, _, code, _, _)) = &view.overlay {
+        if let Some(OverlayView::Approval(_, id, _, _, _, _, expanded, _)) = &view.overlay {
             let mut state = self.ui.lock();
             if state.overlays.snapshot() == view.overlay_identity {
-                if let Some(modal) = state.modal_mut().filter(|modal| &modal.code == code) {
+                if let Some(modal) = state.modal_mut().filter(|modal| &modal.request.id == id) {
                     modal.last_scroll = last_scroll;
+                    modal.details_rendered = *expanded;
                 }
             }
         }
@@ -812,7 +848,7 @@ impl Driver {
             return Self::render_help(frame, area, overlay);
         }
         if let Some(overlay @ OverlayView::Approval(..)) = &view.overlay {
-            return Self::render_approval(frame, area, overlay);
+            return Self::render_main_with_approval(frame, area, view, overlay);
         }
         if let Some(overlay @ OverlayView::Workflow(..)) = &view.overlay {
             return Self::render_workflow(frame, area, overlay);
@@ -847,38 +883,143 @@ impl Driver {
         0
     }
 
-    /// Renders the approval overlay and returns the scroll position it owns.
-    fn render_approval(frame: &mut Frame, area: Rect, overlay: &OverlayView) -> usize {
-        let OverlayView::Approval(preview, number, code, typed, scroll) = overlay else {
+    /// Renders the conversation and its contextual approval panel together.
+    fn render_main_with_approval(
+        frame: &mut Frame,
+        area: Rect,
+        view: &View,
+        overlay: &OverlayView,
+    ) -> usize {
+        let OverlayView::Approval(
+            action,
+            id,
+            summary,
+            preview,
+            decisions,
+            selected,
+            expanded,
+            preview_scroll,
+        ) = overlay
+        else {
             return 0;
         };
-
-        let [body, footer] =
-            Layout::vertical([Constraint::Min(1), Constraint::Length(2)]).areas(area);
-        let lines = wrapped(preview, body.width.saturating_sub(2));
-        let last = lines
-            .len()
-            .saturating_sub(usize::from(body.height.saturating_sub(2)));
-        let scroll_state = last;
-        let visible: Vec<_> = lines
-            .into_iter()
-            .skip((*scroll).min(last))
-            .take(usize::from(body.height.saturating_sub(2)))
-            .collect();
-        frame.render_widget(
-            Paragraph::new(visible.join("\n")).block(
-                Block::bordered()
-                    .title(format!("Permission #{} — full preview (PgUp/PgDn)", number)),
-            ),
-            body,
-        );
-        let instructions = if footer.width < 42 {
-            format!("Approve: {code}\nCode: {typed}")
+        let desired_panel_height = if *expanded { 8 } else { 5 };
+        let composer_height = if area.height >= desired_panel_height + 5 {
+            4
         } else {
-            format!("Type {code} then Enter to approve; Esc denies\nConfirmation: {typed}")
+            1
         };
-        frame.render_widget(Paragraph::new(instructions), footer);
-        scroll_state
+        let panel_height =
+            desired_panel_height.min(area.height.saturating_sub(composer_height + 1));
+        let compact = panel_height < 8;
+        let [history, panel, composer] = Layout::vertical([
+            Constraint::Min(1),
+            Constraint::Length(panel_height),
+            Constraint::Length(composer_height),
+        ])
+        .areas(area);
+        let mut transcript = view
+            .history
+            .iter()
+            .flat_map(|block| wrapped(block, history.width))
+            .collect::<Vec<_>>();
+        if !view.tail.is_empty() {
+            transcript.extend(wrapped(&view.tail, history.width));
+        }
+        let height = usize::from(history.height);
+        let scroll = view
+            .history_scroll
+            .min(transcript.len().saturating_sub(height));
+        let start = transcript.len().saturating_sub(height + scroll);
+        let visible = transcript
+            .into_iter()
+            .skip(start)
+            .take(height)
+            .collect::<Vec<_>>();
+        frame.render_widget(Paragraph::new(markdown(visible)), history);
+
+        let action_names = decisions
+            .iter()
+            .map(|decision| match decision {
+                huginn_core::ApprovalDecision::Reject => "Reject",
+                huginn_core::ApprovalDecision::ApproveOnce => "Approve once",
+                huginn_core::ApprovalDecision::ApproveForSession => "Allow for session",
+            })
+            .collect::<Vec<_>>();
+        let selector = action_names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                if index == *selected {
+                    format!("›{name}")
+                } else {
+                    name.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("   ");
+        let mut content = if compact {
+            format!("{} · {} · #{}\n{}", action, summary, id, selector)
+        } else {
+            format!(
+                "{} · {} · request #{}\n{}\n{}",
+                action,
+                summary,
+                id,
+                if *expanded {
+                    "Details (Ctrl+F; ↑↓/PgUp/PgDn scroll):"
+                } else {
+                    "Ctrl+F details"
+                },
+                selector
+            )
+        };
+        let last = if *expanded {
+            let lines = wrapped(preview, panel.width.saturating_sub(2));
+            // Compact view uses its third content row for one diff line. A
+            // regular panel reserves summary, hint, and selector rows.
+            let viewport = usize::from(panel.height.saturating_sub(if compact { 4 } else { 5 }));
+            let last = lines.len().saturating_sub(viewport);
+            if compact {
+                content = format!("{} · {} · #{}\n{}", action, summary, id, selector);
+            }
+            content.push('\n');
+            content.push_str(
+                &lines
+                    .iter()
+                    .skip(usize::min(*preview_scroll, last))
+                    .take(viewport)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
+            last
+        } else {
+            0
+        };
+        frame.render_widget(
+            Paragraph::new(content).block(Block::bordered().title(if compact {
+                "Approval"
+            } else {
+                "Approval — ←/→ select · Enter confirm · Esc reject · Ctrl+F details"
+            })),
+            panel,
+        );
+        if compact {
+            frame.render_widget(Paragraph::new("Approval pending"), composer);
+        } else {
+            frame.render_widget(
+                Paragraph::new("History remains visible; paste does not confirm").block(
+                    Block::bordered().title(if view.busy {
+                        "Compose next prompt — Esc cancels turn"
+                    } else {
+                        "Huginn"
+                    }),
+                ),
+                composer,
+            );
+        }
+        last
     }
 
     /// Renders the workflow overlay and returns the scroll position it owns.
@@ -1265,8 +1406,7 @@ Enter save Esc close"
 
     fn arm_modal(&mut self, epoch: u64, shown_focus: u64) -> Result<u64> {
         let focus = self.ui.lock().focus();
-        // Discard queued keys/pastes before showing a new challenge. The
-        // unpredictable challenge additionally defeats late buffered input.
+        // Discard queued keys/pastes before showing a new permission choice.
         while let Some(event) = self.next_input(shown_focus)? {
             discard_input(event);
         }
@@ -1653,7 +1793,7 @@ impl Ui {
             Effect::Close => self.close_overlay(ticket, focus),
             Effect::CancelForm => self.cancel_workflow_at(ticket),
             Effect::BackForm => self.back_workflow_at(ticket),
-            Effect::Resolve(approved) => self.resolve_modal_at(approved, ticket),
+            Effect::Resolve(decision) => self.resolve_modal_at(decision, ticket),
             Effect::Submit => {
                 self.submit_workflow_at(ticket);
             }
@@ -2049,6 +2189,69 @@ mod tests {
             overlay_identity: None,
             completion: Suggestions::default(),
         }
+    }
+
+    #[test]
+    fn approval_is_inline_with_history_and_policy_actions() {
+        let view = test_view(OverlayView::Approval(
+            "native.write_file".into(),
+            "req-42".into(),
+            "create note.txt".into(),
+            "Effect: create file note.txt\n+++ note.txt\n+body".into(),
+            vec![
+                huginn_core::ApprovalDecision::Reject,
+                huginn_core::ApprovalDecision::ApproveOnce,
+                huginn_core::ApprovalDecision::ApproveForSession,
+            ],
+            0,
+            false,
+            0,
+        ));
+        let mut view = view;
+        view.history = vec!["User: keep this context".into()];
+        let text = frame_text(&view, 80, 24);
+
+        for expected in [
+            "User: keep this context",
+            "native.write_file",
+            "create note.txt",
+            "#req-42",
+            "›Reject",
+            "Approve once",
+            "Allow for session",
+        ] {
+            assert!(text.contains(expected), "missing {expected:?}: {text}");
+        }
+        assert!(
+            !text.contains("+body"),
+            "diff is hidden until expanded: {text}"
+        );
+    }
+
+    #[test]
+    fn expanded_approval_keeps_diff_and_policy_actions_visible() {
+        let view = test_view(OverlayView::Approval(
+            "native.edit_file".into(),
+            "req-expanded".into(),
+            "edit note.txt".into(),
+            "Approval preview\nDIFF_VISIBLE_LINE\n+new content".into(),
+            vec![
+                huginn_core::ApprovalDecision::Reject,
+                huginn_core::ApprovalDecision::ApproveOnce,
+            ],
+            0,
+            true,
+            0,
+        ));
+
+        let text = frame_text(&view, 80, 14);
+
+        assert!(text.contains("DIFF_VISIBLE_LINE"), "diff missing: {text}");
+        assert!(text.contains("›Reject"), "Reject choice missing: {text}");
+        assert!(
+            text.contains("Approve once"),
+            "approval choice missing: {text}"
+        );
     }
 
     #[tokio::test]

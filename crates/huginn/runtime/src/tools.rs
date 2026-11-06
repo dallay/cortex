@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use huginn_core::{
     tools::{tool_registration_id, ToolRegistration, ToolRegistrationService},
-    AgentError, ApprovalRequest, PreparedAction, Result, Tool, ToolCall, ToolContext,
-    ToolDefinition, ToolRegistry,
+    AgentError, ApprovalProvenance, ApprovalRequest, ApprovalResource, PreparedAction, Result,
+    Tool, ToolCall, ToolContext, ToolDefinition, ToolRegistry,
 };
 use serde_json::{json, Value};
 use std::{
@@ -23,6 +23,8 @@ struct RegisteredTool {
     visible: std::sync::atomic::AtomicBool,
     revoked: huginn_core::CancellationToken,
     generation: u64,
+    native_file_builtin: bool,
+    name: String,
 }
 impl RegisteredTool {
     fn active(&self) -> bool {
@@ -41,7 +43,30 @@ impl Tool for RegisteredTool {
         tokio::select! {
             biased;
             _ = self.revoked.cancelled() => Err(AgentError::Cancelled),
-            result = self.inner.prepare(call, ctx) => result,
+            result = self.inner.prepare(call, ctx) => result.map(|mut prepared| {
+                if let Some(request) = prepared.approval.as_mut() {
+                    request.provenance = Some(ApprovalProvenance::Untrusted);
+                    request.resource = None;
+                    if self.native_file_builtin
+                        && matches!(self.name.as_str(), "write_file" | "edit_file")
+                        && request.action == format!("native.{}", self.name)
+                    {
+                        if let Some(path) = prepared.payload["resolved"].as_str().map(PathBuf::from) {
+                            let root = ctx.workspace.canonicalize();
+                            if path.is_absolute()
+                                && root.as_ref().is_ok_and(|root| path.starts_with(root))
+                            {
+                                request.resource = Some(ApprovalResource {
+                                    sensitive: huginn_guards::sensitive(&path),
+                                    canonical_path: path,
+                                });
+                                request.provenance = Some(ApprovalProvenance::NativeFileBuiltin);
+                            }
+                        }
+                    }
+                }
+                prepared
+            }),
         }
     }
     async fn execute(&self, action: PreparedAction, ctx: &ToolContext) -> Result<String> {
@@ -86,7 +111,7 @@ impl Registry {
         Ok(registry)
     }
     pub fn insert(&self, tool: Arc<dyn Tool>) -> Result<()> {
-        self.insert_entry(tool, 0, true)?;
+        self.insert_entry(tool, 0, true, false)?;
         Ok(())
     }
     fn insert_entry(
@@ -94,6 +119,7 @@ impl Registry {
         tool: Arc<dyn Tool>,
         generation: u64,
         visible: bool,
+        native_file_builtin: bool,
     ) -> Result<Arc<RegisteredTool>> {
         let name = tool.definition().name;
         let mut tools = self
@@ -104,6 +130,8 @@ impl Registry {
             return Err(AgentError::Tool(format!("duplicate tool {name}")));
         }
         let entry = Arc::new(RegisteredTool {
+            name: name.clone(),
+            native_file_builtin,
             inner: tool,
             visible: std::sync::atomic::AtomicBool::new(visible),
             revoked: huginn_core::CancellationToken::new(),
@@ -135,7 +163,43 @@ impl Registry {
         let mut entries = vec![];
         for tool in tools {
             let name = tool.definition().name;
-            let entry = self.insert_entry(tool, ctx.generation(), false)?;
+            let entry = self.insert_entry(tool, ctx.generation(), false, false)?;
+            ctx.own_resource(ToolLease {
+                registry: self.clone(),
+                name,
+                entry: entry.clone(),
+            });
+            entries.push(entry);
+        }
+        let registry = self.clone();
+        ctx.on_commit(move || {
+            let _guard = registry
+                .tools
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for entry in entries {
+                entry
+                    .visible
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
+        });
+        Ok(())
+    }
+    fn register_native_file_builtins(
+        &self,
+        ctx: &mut huginn_core::kernel::PluginContext,
+        tools: Vec<Arc<dyn Tool>>,
+    ) -> Result<()> {
+        let mut entries = vec![];
+        for tool in tools {
+            let name = tool.definition().name;
+            if !matches!(name.as_str(), "write_file" | "edit_file") {
+                return Err(AgentError::Composition(
+                    "only native file mutation builtins can receive session-grant provenance"
+                        .into(),
+                ));
+            }
+            let entry = self.insert_entry(tool, ctx.generation(), false, true)?;
             ctx.own_resource(ToolLease {
                 registry: self.clone(),
                 name,
@@ -162,7 +226,7 @@ impl Registry {
         let mut leases = vec![];
         for tool in tools {
             let name = tool.definition().name;
-            let entry = self.insert_entry(tool, 0, false)?;
+            let entry = self.insert_entry(tool, 0, false, false)?;
             leases.push(ToolLease {
                 registry: self.clone(),
                 name,
@@ -269,6 +333,21 @@ impl huginn_core::kernel::Plugin for NativeToolPlugin {
     async fn activate(&mut self, ctx: &mut huginn_core::kernel::PluginContext) -> Result<()> {
         let registry = ctx.resolve::<Registry>(&registry_id())?;
         registry.register(ctx, self.0.clone())
+    }
+}
+pub(crate) struct NativeBuiltinToolPlugin(pub Vec<Arc<dyn Tool>>);
+#[async_trait]
+impl huginn_core::kernel::Plugin for NativeBuiltinToolPlugin {
+    fn manifest(&self) -> huginn_core::kernel::Manifest {
+        huginn_core::kernel::Manifest {
+            id: "native.file-builtins".into(),
+            provides: vec![],
+            requires: vec![registry_id()],
+        }
+    }
+    async fn activate(&mut self, ctx: &mut huginn_core::kernel::PluginContext) -> Result<()> {
+        let registry = ctx.resolve::<Registry>(&registry_id())?;
+        registry.register_native_file_builtins(ctx, self.0.clone())
     }
 }
 pub fn registry_id() -> huginn_core::kernel::ServiceId {
@@ -440,6 +519,8 @@ impl Tool for NativeTool {
                     id: call.id.clone(),
                     action: "native.shell".into(),
                     preview: format!("Directory: {}\nCommand: {command}", ctx.workspace.display()),
+                    resource: None,
+                    provenance: None,
                 }),
                 payload: call.arguments.clone(),
             });
@@ -516,6 +597,8 @@ impl Tool for NativeTool {
                     id: call.id.clone(),
                     action: format!("native.{}", self.definition().name),
                     preview: diff,
+                    resource: None,
+                    provenance: None,
                 }),
                 payload,
             });
@@ -830,4 +913,102 @@ async fn run_shell(command: &str, ctx: &ToolContext, timeout_secs: u64) -> Resul
         String::from_utf8_lossy(&reads.0),
         String::from_utf8_lossy(&reads.1)
     )))
+}
+
+#[cfg(all(test, unix))]
+mod approval_resource_tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    struct SwapSymlinkDuringPrepare {
+        alias: PathBuf,
+        replacement: PathBuf,
+    }
+
+    #[async_trait]
+    impl Tool for SwapSymlinkDuringPrepare {
+        fn definition(&self) -> ToolDefinition {
+            ToolDefinition {
+                name: "write_file".into(),
+                description: String::new(),
+                input_schema: json!({"type":"object"}),
+            }
+        }
+
+        async fn prepare(&self, call: &ToolCall, ctx: &ToolContext) -> Result<PreparedAction> {
+            let prepared_path = resolve_path(&ctx.workspace, "link", true)?;
+            std::fs::remove_file(&self.alias)?;
+            symlink(&self.replacement, &self.alias)?;
+            Ok(PreparedAction {
+                approval: Some(ApprovalRequest {
+                    id: call.id.clone(),
+                    action: "native.write_file".into(),
+                    preview: "prepared action".into(),
+                    resource: None,
+                    provenance: None,
+                }),
+                payload: json!({"path":"link", "resolved":prepared_path}),
+            })
+        }
+
+        async fn execute(&self, _: PreparedAction, _: &ToolContext) -> Result<String> {
+            Ok(String::new())
+        }
+    }
+
+    #[tokio::test]
+    async fn approval_resource_uses_the_prepared_canonical_path_after_symlink_swap() {
+        let workspace = tempfile::tempdir().unwrap();
+        let prepared_target = workspace.path().join("prepared.txt");
+        let replacement_target = workspace.path().join("replacement.txt");
+        std::fs::write(&prepared_target, "prepared").unwrap();
+        std::fs::write(&replacement_target, "replacement").unwrap();
+        let alias = workspace.path().join("link");
+        symlink(&prepared_target, &alias).unwrap();
+        let tool = RegisteredTool {
+            inner: Arc::new(SwapSymlinkDuringPrepare {
+                alias,
+                replacement: replacement_target,
+            }),
+            visible: std::sync::atomic::AtomicBool::new(true),
+            revoked: huginn_core::CancellationToken::new(),
+            generation: 1,
+            native_file_builtin: true,
+            name: "write_file".into(),
+        };
+        let action = tool
+            .prepare(
+                &ToolCall {
+                    id: "swap".into(),
+                    name: "write_file".into(),
+                    arguments: json!({"path":"link", "content":"new"}),
+                },
+                &ToolContext {
+                    workspace: workspace.path().to_path_buf(),
+                    cancellation: huginn_core::CancellationToken::new(),
+                    selected_skills: vec![],
+                },
+            )
+            .await
+            .unwrap();
+        let prepared_path = PathBuf::from(action.payload["resolved"].as_str().unwrap());
+        let stamped_path = &action
+            .approval
+            .as_ref()
+            .unwrap()
+            .resource
+            .as_ref()
+            .unwrap()
+            .canonical_path;
+
+        assert_eq!(stamped_path, &prepared_path);
+        assert_ne!(
+            stamped_path,
+            &workspace
+                .path()
+                .canonicalize()
+                .unwrap()
+                .join("replacement.txt")
+        );
+    }
 }

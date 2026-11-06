@@ -20,8 +20,16 @@ use std::{
 struct Policy(bool);
 #[async_trait]
 impl ApprovalPolicy for Policy {
-    async fn approve(&self, _: &ApprovalRequest, _: CancellationToken) -> Result<bool> {
-        Ok(self.0)
+    async fn approve(
+        &self,
+        _: &ApprovalRequest,
+        _: CancellationToken,
+    ) -> Result<huginn_core::ApprovalDecision> {
+        Ok(if self.0 {
+            huginn_core::ApprovalDecision::ApproveOnce
+        } else {
+            huginn_core::ApprovalDecision::Reject
+        })
     }
 }
 #[derive(Default)]
@@ -98,8 +106,13 @@ fn write_invoked_skill(workspace: &std::path::Path, body: &str) {
 struct DenyPrompt;
 #[async_trait]
 impl huginn_core::ApprovalPrompt for DenyPrompt {
-    async fn request_decision(&self, _: &ApprovalRequest, _: CancellationToken) -> Result<bool> {
-        Ok(false)
+    async fn request_decision(
+        &self,
+        _: &ApprovalRequest,
+        _: &[huginn_core::ApprovalDecision],
+        _: CancellationToken,
+    ) -> Result<huginn_core::ApprovalDecision> {
+        Ok(huginn_core::ApprovalDecision::Reject)
     }
 }
 

@@ -10,11 +10,11 @@ use huginn_plugin_api::{
     kernel::{Manifest, Plugin, PluginContext},
     v1::agent::{
         agent_loop_id, complete_turn_ends, inference_hooks_id, model_id, sessions_id,
-        tool_hooks_id, AgentLoop, ApprovalPolicy, ApprovalRequest, CancellationToken, Event,
-        EventSink, InferenceHooksService, InstructionSource, LoopService, Message, ModelDelta,
-        ModelProvider, ModelRequest, ModelService, PreparedAction, Role, ServiceSlotHandle,
-        Session, SessionOperation, SessionStore, SessionsService, SteeringQueue, StepId, Tool,
-        ToolCall, ToolContext, ToolDefinition, ToolHooksService, ToolRegistry,
+        tool_hooks_id, AgentLoop, ApprovalDecision, ApprovalPolicy, ApprovalRequest,
+        CancellationToken, Event, EventSink, InferenceHooksService, InstructionSource, LoopService,
+        Message, ModelDelta, ModelProvider, ModelRequest, ModelService, PreparedAction, Role,
+        ServiceSlotHandle, Session, SessionOperation, SessionStore, SessionsService, SteeringQueue,
+        StepId, Tool, ToolCall, ToolContext, ToolDefinition, ToolHooksService, ToolRegistry,
     },
     v1::hooks::{InferenceHooks, ToolHooks},
     AgentError, Result,
@@ -313,9 +313,9 @@ impl StepLoop {
                     sink.emit(Event::ApprovalResolved {
                         step,
                         id: request.id.clone(),
-                        approved,
+                        approved: approved != ApprovalDecision::Reject,
                     });
-                    if !approved {
+                    if approved == ApprovalDecision::Reject {
                         return Err(AgentError::Tool(format!(
                             "action denied by the user: {}",
                             request.action
@@ -860,4 +860,130 @@ pub fn step_loop_plugin_leased(
         instructions,
         config,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct ProtectedTool(Arc<AtomicUsize>);
+
+    #[async_trait]
+    impl Tool for ProtectedTool {
+        fn definition(&self) -> ToolDefinition {
+            ToolDefinition {
+                name: "protected".into(),
+                description: "protected test effect".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+            }
+        }
+
+        async fn prepare(&self, call: &ToolCall, _: &ToolContext) -> Result<PreparedAction> {
+            Ok(PreparedAction {
+                approval: Some(ApprovalRequest {
+                    id: call.id.clone(),
+                    action: "test.protected".into(),
+                    preview: "protected effect".into(),
+                    resource: None,
+                    provenance: None,
+                }),
+                payload: serde_json::json!({}),
+            })
+        }
+
+        async fn execute(&self, _: PreparedAction, _: &ToolContext) -> Result<String> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok("executed".into())
+        }
+    }
+
+    struct SingleTool(Arc<ProtectedTool>);
+
+    impl ToolRegistry for SingleTool {
+        fn definitions(&self) -> Vec<ToolDefinition> {
+            vec![self.0.definition()]
+        }
+
+        fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
+            (name == "protected").then(|| self.0.clone() as Arc<dyn Tool>)
+        }
+    }
+
+    struct Decision(ApprovalDecision);
+
+    #[async_trait]
+    impl ApprovalPolicy for Decision {
+        async fn approve(
+            &self,
+            _: &ApprovalRequest,
+            _: CancellationToken,
+        ) -> Result<ApprovalDecision> {
+            Ok(self.0)
+        }
+    }
+
+    #[derive(Default)]
+    struct Events(std::sync::Mutex<Vec<Event>>);
+
+    impl EventSink for Events {
+        fn emit(&self, event: Event) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
+
+    #[tokio::test]
+    async fn approve_for_session_executes_effect_while_reject_does_not() {
+        for (decision, expected_executions, expected_approval) in [
+            (ApprovalDecision::ApproveForSession, 1, true),
+            (ApprovalDecision::Reject, 0, false),
+        ] {
+            let executions = Arc::new(AtomicUsize::new(0));
+            let loop_impl = StepLoop {
+                model: None,
+                sessions: None,
+                leased: None,
+                tools: Arc::new(SingleTool(Arc::new(ProtectedTool(executions.clone())))),
+                instructions: Arc::new(NoInstructions),
+                config: StepLoopConfig::default(),
+            };
+            let mut session = Session::new("/workspace".into());
+            let events = Events::default();
+
+            loop_impl
+                .dispatch(
+                    ToolCall {
+                        id: "approval-call".into(),
+                        name: "protected".into(),
+                        arguments: serde_json::json!({}),
+                    },
+                    &mut session,
+                    &Decision(decision),
+                    &events,
+                    StepId(1),
+                    CancellationToken::new(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(
+                executions.load(Ordering::SeqCst),
+                expected_executions,
+                "{decision:?}"
+            );
+            assert!(events.0.lock().unwrap().iter().any(|event| matches!(
+                event,
+                Event::ApprovalResolved { approved, .. } if *approved == expected_approval
+            )));
+        }
+    }
+
+    struct NoInstructions;
+
+    #[async_trait]
+    impl InstructionSource for NoInstructions {
+        async fn load(&self, _: &std::path::Path) -> Result<String> {
+            Ok(String::new())
+        }
+    }
 }

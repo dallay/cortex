@@ -416,18 +416,43 @@ pub trait ApprovalPolicy: Send + Sync {
         &self,
         request: &ApprovalRequest,
         cancel: CancellationToken,
-    ) -> Result<bool>;
+    ) -> Result<ApprovalDecision>;
+}
+
+pub enum ApprovalDecision {
+    Reject,
+    ApproveOnce,
+    ApproveForSession,
 }
 ```
 
 ### ApprovalRequest Actions
 
-The `ApprovalRequest` contains an action identifier and a preview. Current native
+The `ApprovalRequest` contains an action identifier, preview and optional canonical
+resource identity. Current native
 mutations use `native.write_file` or `native.edit_file`; shell execution uses
 `native.shell`; MCP calls identify the server and tool, for example
 `mcp.github.search`. The host policy decides whether to prompt or honor an
-explicit one-invocation grant. There is no fixed `FileWrite`/`BashCommand` enum
-in the core contract.
+explicit one-invocation grant. The policy passes its allowed decisions to the
+presentation prompt; the presentation cannot add decisions. Current policy
+offers `ApproveForSession` only for runtime-verified native `write_file` and
+`edit_file` builtins with an exact canonical workspace path that is not sensitive.
+The volatile grant matches only the exact action and path. Runtime registration
+overwrites tool-supplied resource and provenance metadata; public plugin registration
+cannot receive native-builtin provenance. Provenance is in-memory only and is omitted
+from serialized approval history. Sensitive canonical resource identities remain
+available to the live authorization flow but are omitted from serialized approval
+history; non-sensitive canonical paths remain available for historical traces.
+Approval previews are serialized only when the request has a resource explicitly
+classified as non-sensitive. Requests without a resource remain compatible with
+legacy deserialization and retain their preview in memory, but persistence omits that
+preview because its sensitivity cannot be established. Sensitive resources and
+their previews are also omitted; known non-sensitive resources and previews remain
+available for historical traces.
+Sensitive resources offer only `Reject` and `ApproveOnce`. Legacy action-only grants cannot authorize file mutations,
+`native.shell` or any `mcp.` action; shell and MCP effects require fresh approval
+for each invocation. There is no fixed
+`FileWrite`/`BashCommand` enum in the core contract.
 
 ## Session Persistence
 

@@ -24,9 +24,17 @@ struct Approvals {
 }
 #[async_trait]
 impl ApprovalPolicy for Approvals {
-    async fn approve(&self, request: &ApprovalRequest, _: CancellationToken) -> Result<bool> {
+    async fn approve(
+        &self,
+        request: &ApprovalRequest,
+        _: CancellationToken,
+    ) -> Result<huginn_core::ApprovalDecision> {
         self.seen.lock().unwrap().push(request.action.clone());
-        Ok(self.allow)
+        Ok(if self.allow {
+            huginn_core::ApprovalDecision::ApproveOnce
+        } else {
+            huginn_core::ApprovalDecision::Reject
+        })
     }
 }
 const fn request() -> ModelRequest {

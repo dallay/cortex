@@ -137,12 +137,14 @@ pub struct Modal {
     pub epoch: u64,
     pub number: u64,
     pub request: ApprovalRequest,
-    pub code: String,
-    pub typed: String,
     pub armed: bool,
     pub scroll: usize,
     pub last_scroll: usize,
-    reply: Option<oneshot::Sender<bool>>,
+    pub allowed_decisions: Vec<huginn_core::ApprovalDecision>,
+    pub selected: usize,
+    pub expanded: bool,
+    pub details_rendered: bool,
+    reply: Option<oneshot::Sender<huginn_core::ApprovalDecision>>,
 }
 #[cfg(test)]
 impl Modal {
@@ -154,12 +156,19 @@ impl Modal {
                 id: "test".into(),
                 action: "native.edit".into(),
                 preview: "preview".into(),
+                resource: None,
+                provenance: None,
             },
-            code: "12345678".into(),
-            typed: String::new(),
             armed: false,
             scroll: 0,
             last_scroll: 0,
+            allowed_decisions: vec![
+                huginn_core::ApprovalDecision::Reject,
+                huginn_core::ApprovalDecision::ApproveOnce,
+            ],
+            selected: 0,
+            expanded: false,
+            details_rendered: false,
             reply: None,
         }
     }
@@ -167,10 +176,6 @@ impl Modal {
 impl Modal {
     pub fn scroll_up(&mut self) {
         self.scroll = self.scroll.min(self.last_scroll).saturating_sub(1);
-    }
-    /// Only the terminal owner calls this with fresh, non-paste key input.
-    pub fn confirm(&mut self) -> bool {
-        self.armed && self.typed == self.code
     }
 }
 
@@ -1442,9 +1447,20 @@ impl Ui {
     }
     pub fn resolve_modal(&self, approved: bool) {
         let ticket = self.lock().overlays.ticket();
-        self.resolve_modal_at(approved, ticket);
+        self.resolve_modal_at(
+            if approved {
+                huginn_core::ApprovalDecision::ApproveOnce
+            } else {
+                huginn_core::ApprovalDecision::Reject
+            },
+            ticket,
+        );
     }
-    pub(crate) fn resolve_modal_at(&self, approved: bool, ticket: TransitionTicket) {
+    pub(crate) fn resolve_modal_at(
+        &self,
+        decision: huginn_core::ApprovalDecision,
+        ticket: TransitionTicket,
+    ) {
         let retired = {
             let mut state = self.lock();
             if state.overlays.ticket() != ticket {
@@ -1457,8 +1473,35 @@ impl Ui {
             state.overlays.close(id)
         };
         if let Some(Payload::Approval(mut modal)) = retired.map(ActiveOverlay::into_payload) {
+            let decision = if modal.allowed_decisions.contains(&decision)
+                && !(decision != huginn_core::ApprovalDecision::Reject
+                    && modal.expanded
+                    && (!modal.details_rendered || modal.scroll < modal.last_scroll))
+                && !self.stop.is_cancelled()
+            {
+                decision
+            } else {
+                huginn_core::ApprovalDecision::Reject
+            };
+            let resource = modal
+                .request
+                .resource
+                .as_ref()
+                .filter(|resource| !resource.sensitive)
+                .map(|resource| format!(" · {}", resource.canonical_path.display()))
+                .unwrap_or_default();
+            let outcome = match decision {
+                huginn_core::ApprovalDecision::Reject => "Rejected",
+                huginn_core::ApprovalDecision::ApproveOnce => "Approved once",
+                huginn_core::ApprovalDecision::ApproveForSession => "Approved for session",
+            };
+            self.lock().conversation.push(format!(
+                "{outcome} · {} · request {}{resource}",
+                safe(&modal.request.action),
+                safe(&modal.request.id)
+            ));
             if let Some(reply) = modal.reply.take() {
-                let _ = reply.send(approved && modal.confirm() && !self.stop.is_cancelled());
+                let _ = reply.send(decision);
             }
         }
         self.dirty.notify_one();
@@ -1654,8 +1697,9 @@ impl ApprovalPrompt for Ui {
     async fn request_decision(
         &self,
         request: &ApprovalRequest,
+        allowed_decisions: &[huginn_core::ApprovalDecision],
         cancel: CancellationToken,
-    ) -> Result<bool> {
+    ) -> Result<huginn_core::ApprovalDecision> {
         let _serial = tokio::select! {
             _ = cancel.cancelled() => return Err(huginn_core::AgentError::Cancelled),
             _ = self.stop.cancelled() => return Err(huginn_core::AgentError::Cancelled),
@@ -1682,11 +1726,16 @@ impl ApprovalPrompt for Ui {
                 epoch,
                 number,
                 request: request.clone(),
-                code: uuid::Uuid::new_v4().simple().to_string()[..8].into(),
-                typed: String::new(),
                 armed: false,
                 scroll: 0,
                 last_scroll: 0,
+                allowed_decisions: allowed_decisions.to_vec(),
+                selected: allowed_decisions
+                    .iter()
+                    .position(|decision| *decision == huginn_core::ApprovalDecision::Reject)
+                    .unwrap_or(0),
+                expanded: false,
+                details_rendered: false,
                 reply: Some(sender),
             });
             let operation = state.current_operation;
@@ -1706,7 +1755,7 @@ impl ApprovalPrompt for Ui {
         };
         drop(outcome);
         let Some(overlay_id) = overlay_id else {
-            return Ok(false);
+            return Ok(huginn_core::ApprovalDecision::Reject);
         };
         // A dropped/aborted request future must not leave permission authority
         // installed. Identity protects a later request from this destructor.
@@ -1724,7 +1773,14 @@ impl ApprovalPrompt for Ui {
             biased;
             _ = cancel.cancelled() => Err(huginn_core::AgentError::Cancelled),
             _ = self.stop.cancelled() => Err(huginn_core::AgentError::Cancelled),
-            answer = receiver => Ok(answer.unwrap_or(false)),
+            answer = receiver => {
+                let decision = answer.unwrap_or(huginn_core::ApprovalDecision::Reject);
+                Ok(if allowed_decisions.contains(&decision) {
+                    decision
+                } else {
+                    huginn_core::ApprovalDecision::Reject
+                })
+            },
         };
         let retired = {
             let mut state = self.lock();

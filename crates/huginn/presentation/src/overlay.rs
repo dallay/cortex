@@ -92,7 +92,7 @@ pub(crate) enum InputEffect {
     BackForm,
     Submit,
     Choose,
-    Resolve(bool),
+    Resolve(huginn_core::ApprovalDecision),
     DiscardSettings(bool),
     ApplySettings,
     AddProvider,
@@ -234,22 +234,38 @@ impl Payload {
     ) -> InputEffect {
         use InputEffect as Effect;
         if cancel {
-            return Effect::Resolve(false);
+            return Effect::Resolve(huginn_core::ApprovalDecision::Reject);
         }
+        if ctrl && matches!(key.code, KeyCode::Char('f' | 'F')) {
+            modal.expanded = !modal.expanded;
+            if modal.expanded {
+                modal.details_rendered = false;
+            }
+            return Effect::None;
+        }
+        let count = modal.allowed_decisions.len();
         match key.code {
-            KeyCode::PageDown | KeyCode::Down => modal.scroll = modal.scroll.saturating_add(1),
-            KeyCode::PageUp | KeyCode::Up => modal.scroll_up(),
-            KeyCode::Home => modal.scroll = 0,
-            KeyCode::End => modal.scroll = modal.last_scroll,
-            KeyCode::Char(ch)
-                if modal.armed && !ctrl && ch.is_ascii_hexdigit() && modal.typed.len() < 8 =>
-            {
-                modal.typed.push(ch)
+            KeyCode::Left if count > 0 => modal.selected = modal.selected.saturating_sub(1),
+            KeyCode::Right if count > 0 => modal.selected = (modal.selected + 1).min(count - 1),
+            KeyCode::PageDown | KeyCode::Down if modal.expanded => {
+                modal.scroll = (modal.scroll + 1).min(modal.last_scroll)
             }
-            KeyCode::Backspace => {
-                modal.typed.pop();
+            KeyCode::PageUp | KeyCode::Up if modal.expanded => modal.scroll_up(),
+            KeyCode::Home if modal.expanded => modal.scroll = 0,
+            KeyCode::End if modal.expanded => modal.scroll = modal.last_scroll,
+            KeyCode::Enter
+                if modal.armed
+                    && modal.expanded
+                    && (!modal.details_rendered || modal.scroll < modal.last_scroll) => {}
+            KeyCode::Enter if modal.armed => {
+                return Effect::Resolve(
+                    modal
+                        .allowed_decisions
+                        .get(modal.selected)
+                        .copied()
+                        .unwrap_or(huginn_core::ApprovalDecision::Reject),
+                );
             }
-            KeyCode::Enter if modal.armed => return Effect::Resolve(modal.confirm()),
             _ => {}
         }
         Effect::None

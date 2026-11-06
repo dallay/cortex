@@ -10,17 +10,6 @@ fn start(mode: &str, cursor: bool) -> Pty {
     Pty::start(command, cursor)
 }
 
-fn approval_code(pty: &Pty) -> String {
-    pty.wait_for("Type ");
-    let output = pty.screen_text();
-    let start = output.rfind("Type ").expect("approval challenge is shown") + 5;
-    let code = output
-        .get(start..start + 8)
-        .expect("approval challenge contains eight characters");
-    assert!(code.chars().all(|ch| ch.is_ascii_hexdigit()), "{output}");
-    code.to_string()
-}
-
 fn screen_row(screen: &str, fragment: &str) -> usize {
     screen
         .lines()
@@ -494,62 +483,56 @@ fn invalidating_secret_contribution_discards_queued_input() {
     assert!(!output.contains("INVALIDATED_CREDENTIAL"));
 }
 #[test]
-fn stale_and_paste_confirmation_cannot_approve_then_fresh_code_can() {
-    // Capture a challenge and cancel it so the next approval must not accept
-    // that stale code. Wait for each visible state before sending input: a
-    // batched prompt + confirmation can race the modal's first render under
-    // coverage instrumentation.
-    let mut stale = start("normal", true);
-    stale.wait_for("Huginn");
-    stale.send("approve\r");
-    stale.wait_for("PREVIEW_FIRST");
-    let stale_code = approval_code(&stale);
-    stale.send("\x1b");
-    stale.wait_for("DENIED");
-    stale.send("\x03");
-    stale.finish(true);
-
-    // A previously valid code typed as ordinary keys still cannot approve a
-    // later request. Confirm the text reached the modal before pressing Enter.
+fn inline_approval_defaults_to_reject_navigates_and_ignores_paste() {
     let mut pty = start("normal", true);
     pty.wait_for("Huginn");
     pty.send("approve\r");
-    pty.wait_for("PREVIEW_FIRST");
-    let ordinary_current_code = approval_code(&pty);
-    assert_ne!(
-        stale_code, ordinary_current_code,
-        "each approval needs a fresh code"
+    pty.wait_for("›Reject");
+    let prompt = pty.screen_text();
+    assert!(
+        prompt.contains("›Reject"),
+        "Reject must be selected first: {prompt}"
     );
-    pty.send(&stale_code);
-    pty.wait_for(&format!("Confirmation: {stale_code}"));
-    pty.send("\r");
-    pty.wait_for("DENIED");
-    pty.send("\x03");
-    pty.finish(true);
-
-    // Pasting that same stale code is an independent rejection path.
-    let mut pty = start("normal", true);
-    pty.wait_for("Huginn");
-    pty.send("approve\r");
-    pty.wait_for("PREVIEW_FIRST");
-    let paste_current_code = approval_code(&pty);
-    assert_ne!(
-        stale_code, paste_current_code,
-        "each approval needs a fresh code"
+    assert!(
+        prompt.contains("User: approve"),
+        "conversation remains visible: {prompt}"
     );
-    pty.send(&format!("\x1b[200~{stale_code}\x1b[201~"));
-    pty.send("\r");
-    pty.wait_for("DENIED");
-    pty.send("\x03");
-    pty.finish(true);
-
-    // Only the current challenge, typed as ordinary key events, approves.
-    let mut pty = start("normal", true);
-    pty.wait_for("Huginn");
-    pty.send("approve\r");
+    pty.send("\x06");
     pty.wait_for("PREVIEW_FIRST");
-    let fresh = approval_code(&pty);
-    pty.send(&format!("{fresh}\r"));
+    pty.send("\x1b[C\r");
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert!(
+        !pty.output().contains("APPROVED"),
+        "approval cannot resolve before the expanded diff is scrolled to its end"
+    );
+    assert!(
+        pty.screen_text().contains("›Approve once"),
+        "the inline approval remains active while the diff is incomplete"
+    );
+    pty.send(&"\x1b[B".repeat(20));
+    pty.wait_for("diff-line-19");
+    let middle = pty.screen_text();
+    assert!(
+        middle.contains("diff-line-19"),
+        "the middle of the complete diff must be reachable: {middle}"
+    );
+    pty.send("\x1b[F");
+    pty.wait_for("PREVIEW_LAST");
+    let expanded = pty.screen_text();
+    assert!(
+        expanded.contains("PREVIEW_LAST"),
+        "last diff line must be visible: {expanded}"
+    );
+    pty.wait_for("›Approve once");
+    let expanded = pty.screen_text();
+    assert!(
+        expanded.contains("›Approve once"),
+        "actions must remain visible with the diff: {expanded}"
+    );
+    pty.send("\x1b[200~\r\x1b[201~");
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert!(!pty.output().contains("APPROVED"), "paste cannot authorize");
+    pty.send("\x1b[C\r");
     pty.wait_for("APPROVED");
     pty.send("\x03");
     pty.finish(true);
@@ -758,7 +741,7 @@ fn assert_revoked_selection(mode: &str, enter: &str, approval: bool) {
     pty.wait_for("REPLACEMENT_READY");
     if approval {
         std::fs::write(root.path().join("show-approval"), "").unwrap();
-        pty.wait_for("MODAL_PROBE");
+        pty.wait_for("›Reject");
         pty.send("\x1b");
         pty.wait_for("APPROVAL_CLOSED");
     }
@@ -1016,23 +999,13 @@ fn approval_resize_below_minimum_disarms_until_a_fresh_draw() {
     let mut pty = Pty::start_sized(command, true, 8, 20);
     pty.wait_for("Huginn");
     pty.send("approve\r");
-    pty.wait_for("Permission #");
-    let screen = pty.screen_text();
-    let challenge = screen
-        .find("Approve: ")
-        .map(|start| start + "Approve: ".len())
-        .expect("approval challenge is shown");
-    let stale_code = screen[challenge..challenge + 8].to_string();
-    assert!(
-        stale_code.chars().all(|ch| ch.is_ascii_hexdigit()),
-        "{screen}"
-    );
+    pty.wait_for("›Reject");
 
-    // A valid code submitted while the terminal is below the viable inline
+    // A valid choice submitted while the terminal is below the viable inline
     // viewport must not authorize the request.
     pty.resize(1, 1);
     std::thread::sleep(std::time::Duration::from_millis(100));
-    pty.send(&format!("{stale_code}\r"));
+    pty.send("\x1b[C\r");
     std::thread::sleep(std::time::Duration::from_millis(250));
     assert!(
         !pty.output().contains("APPROVED"),
@@ -1042,13 +1015,8 @@ fn approval_resize_below_minimum_disarms_until_a_fresh_draw() {
 
     // Restore the viewport and confirm a fresh draw re-arms the same request.
     pty.resize(8, 20);
-    pty.wait_for("Approve: ");
-    let screen = pty.screen_text();
-    assert!(
-        screen.contains("Code:"),
-        "approval code field missing:\n{screen}"
-    );
-    pty.send(&format!("{stale_code}\r"));
+    pty.wait_for("›Reject");
+    pty.send("\x1b[C\r");
     pty.wait_output_for("APPROVED");
     pty.send("\x03");
     pty.finish(true);
@@ -1201,11 +1169,13 @@ fn composer_and_fresh_approval_work_after_100_streaming_resizes() {
         "the committed user transcript must remain visible after 100 streaming resizes:\n{screen}"
     );
     // Verify the composer still accepts an independent command and a fresh
-    // approval code after all resize transitions.
+    // approval choice after all resize transitions.
     pty.send("approve\r");
-    pty.wait_for("PREVIEW_FIRST");
-    let code = approval_code(&pty);
-    pty.send(&format!("{code}\r"));
+    pty.wait_for("›Reject");
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    pty.send("\x1b[C");
+    pty.wait_for("›Approve once");
+    pty.send("\r");
     pty.wait_for("APPROVED");
     pty.send("\x03");
     pty.finish(true);

@@ -749,16 +749,18 @@ async fn tui_chat(
                     id: uuid::Uuid::new_v4().to_string(),
                     action: "session.compact".into(),
                     preview: "Older history will be summarized by the model. Original messages stay in the database. No effects are replayed.".into(),
+                    resource: None,
+                    provenance: None,
                 };
                 match policy.approve(&request, cancel.clone()).await {
-                    Ok(true) => {
+                    Ok(huginn_core::ApprovalDecision::ApproveOnce) => {
                         interruptible(
                             cancel.clone(),
                             implementation.0.compact(session, &scoped_events, cancel),
                         )
                         .await
                     }
-                    Ok(false) => {
+                    Ok(_) => {
                         ui.notification("Compaction skipped.".into());
                         Ok(())
                     }

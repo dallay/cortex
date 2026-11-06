@@ -87,19 +87,30 @@ impl ApprovalPrompt for LinePrompt {
     async fn request_decision(
         &self,
         request: &ApprovalRequest,
+        allowed_decisions: &[huginn_core::ApprovalDecision],
         cancel: CancellationToken,
-    ) -> Result<bool> {
+    ) -> Result<huginn_core::ApprovalDecision> {
         self.display(request);
         let Some(input) = &self.input else {
             eprintln!("Denied: no interactive approval or explicit action grant.");
-            return Ok(false);
+            return Ok(huginn_core::ApprovalDecision::Reject);
         };
         eprint!("Approve this exact change? [y/N] ");
         std::io::stderr().flush()?;
         let line = tokio::select! {_=cancel.cancelled()=>return Err(AgentError::Cancelled),line=input.line()=>line?};
-        Ok(line
+        let decision = if line
             .as_deref()
-            .is_some_and(|s| matches!(s.trim(), "y" | "Y" | "yes")))
+            .is_some_and(|s| matches!(s.trim(), "y" | "Y" | "yes"))
+        {
+            huginn_core::ApprovalDecision::ApproveOnce
+        } else {
+            huginn_core::ApprovalDecision::Reject
+        };
+        Ok(if allowed_decisions.contains(&decision) {
+            decision
+        } else {
+            huginn_core::ApprovalDecision::Reject
+        })
     }
 }
 pub struct Output {
@@ -258,15 +269,22 @@ mod tests {
             id: "first".into(),
             action: "native.shell".into(),
             preview: "Directory: /tmp/work\nCommand: echo hi".into(),
+            resource: None,
+            provenance: None,
         };
         // Drive two `approve()` calls synchronously via a oneshot runtime.
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .expect("runtime must build");
-        let first_approved = runtime.block_on(policy.request_decision(&request, cancel.clone()));
+        let allowed = [
+            huginn_core::ApprovalDecision::Reject,
+            huginn_core::ApprovalDecision::ApproveOnce,
+        ];
+        let first_approved =
+            runtime.block_on(policy.request_decision(&request, &allowed, cancel.clone()));
         assert!(first_approved.is_ok());
-        let second_approved = runtime.block_on(policy.request_decision(&request, cancel));
+        let second_approved = runtime.block_on(policy.request_decision(&request, &allowed, cancel));
         assert!(second_approved.is_ok());
         // The two calls advanced the counter to 2 within the same turn.
         assert_eq!(policy.turn_count(), 2);
