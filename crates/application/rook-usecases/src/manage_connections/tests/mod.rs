@@ -1689,6 +1689,103 @@ async fn concurrent_refreshes_publish_matching_snapshots_and_admission_limits() 
 }
 
 #[tokio::test]
+async fn fetch_oauth_email_sends_bearer_token_to_https_endpoint() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio_rustls::{rustls, TlsAcceptor};
+
+    let certified_key = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let certificate = certified_key.cert.der().clone();
+    let tls_config = rustls::ServerConfig::builder_with_provider(
+        rustls::crypto::ring::default_provider().into(),
+    )
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_no_client_auth()
+    .with_single_cert(
+        vec![certificate.clone()],
+        rustls::pki_types::PrivateKeyDer::try_from(certified_key.signing_key.serialize_der())
+            .unwrap(),
+    )
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!(
+        "https://localhost:{}/userinfo",
+        listener.local_addr().unwrap().port()
+    );
+    let server = async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut socket = TlsAcceptor::from(Arc::new(tls_config))
+            .accept(socket)
+            .await
+            .unwrap();
+        let mut request = Vec::new();
+        loop {
+            let mut buffer = [0; 1024];
+            let size = socket.read(&mut buffer).await.unwrap();
+            assert!(size > 0, "request ended before its headers");
+            request.extend_from_slice(&buffer[..size]);
+            assert!(request.len() <= 8192, "request headers too large");
+            if request.ends_with(b"\r\n\r\n") {
+                break;
+            }
+        }
+        let request = String::from_utf8(request).unwrap();
+        assert!(request.starts_with("GET /userinfo HTTP/1.1\r\n"));
+        assert!(request.lines().any(|line| {
+            line.split_once(':').is_some_and(|(name, value)| {
+                name.eq_ignore_ascii_case("authorization")
+                    && value.trim() == "Bearer sensitive-access-token"
+            })
+        }));
+        let body = r#"{"email":"oauth-user@example.com"}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        socket.write_all(response.as_bytes()).await.unwrap();
+        socket.shutdown().await.unwrap();
+    };
+
+    let mut provider = *rook_core::descriptor_by_id("gemini").expect("Gemini descriptor");
+    let mut oauth = provider.oauth.expect("Gemini OAuth configuration");
+    oauth.userinfo_endpoint = Box::leak(endpoint.into_boxed_str());
+    provider.oauth = Some(oauth);
+    let connection = PendingOAuthConnection {
+        provider: Box::leak(Box::new(provider)),
+        provider_runtime_id: ProviderId::new("gemini-test"),
+        name: "Gemini test".into(),
+        priority: 0,
+        is_active: true,
+        config: config(),
+        client_id: "client-id".into(),
+        client_secret: None,
+        tenant_id: None,
+        redirect_uri: "http://localhost/callback".into(),
+        project_id: String::new(),
+        scopes: String::new(),
+        existing_connection_id: None,
+    };
+    let mut manager = usecase();
+    manager.oauth_http_client = Some(
+        reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .add_root_certificate(reqwest::Certificate::from_der(certificate.as_ref()).unwrap())
+            .build()
+            .unwrap(),
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let (email, ()) = tokio::join!(
+            manager.fetch_oauth_email(&connection, "sensitive-access-token"),
+            server
+        );
+        assert_eq!(email.unwrap(), "oauth-user@example.com");
+    })
+    .await
+    .expect("HTTPS userinfo lookup timed out");
+}
+
+#[tokio::test]
 async fn fetch_oauth_email_does_not_send_bearer_token_to_http_endpoint() {
     use wiremock::{matchers::any, Mock, MockServer, ResponseTemplate};
 
