@@ -1466,6 +1466,31 @@ mod usage_tests {
     }
 
     #[test]
+    fn aliased_provider_ids_are_canonicalized_when_reading_observations() {
+        runtime().block_on(async {
+            let (_db_dir, repo) = usage_repo();
+            let connection = ConnectionId::new();
+
+            let mut legacy = quota_observation("legacy-runtime", Some(connection));
+            legacy.provider_id = "ollamacloud".to_string();
+            repo.record_observations(vec![legacy])
+                .await
+                .expect("record legacy observation");
+            wait_for_quota_rows(&repo, 1).await;
+
+            let rows = repo
+                .latest_observations(&QuotaObservationQuery::for_connections(vec![connection]))
+                .await
+                .expect("latest quota observations");
+            assert_eq!(rows.len(), 1);
+            assert_eq!(
+                rows[0].provider_id, "ollama-cloud",
+                "an aliased stored spelling must resolve to the canonical descriptor id"
+            );
+        });
+    }
+
+    #[test]
     fn latest_observations_returns_the_newest_series_per_connection() {
         runtime().block_on(async {
             let (_db_dir, repo) = usage_repo();

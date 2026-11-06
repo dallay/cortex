@@ -38,6 +38,24 @@ impl QuotaObservationRecorderPort for NullRecorder {
     }
 }
 
+#[test]
+fn canonical_gate_keeps_the_bare_host_exception_openai_only() {
+    let openai = rook_core::descriptor_by_id("openai").expect("openai descriptor");
+    let xai = rook_core::descriptor_by_id("xai").expect("xai descriptor");
+    assert!(
+        capture_enabled(openai, Some("https://api.openai.com")),
+        "OpenAI's declared bare-host canonical base keeps capture"
+    );
+    assert!(
+        !capture_enabled(xai, Some("https://api.x.ai")),
+        "a bare host outside xAI's declared /v1 base must not capture"
+    );
+    assert!(
+        capture_enabled(xai, Some("https://api.x.ai/v1")),
+        "xAI's declared canonical base keeps capture"
+    );
+}
+
 /// Returns whether a connection with this endpoint would capture quota signals.
 fn capture_enabled(kind: &'static rook_core::ProviderDescriptor, base_url: Option<&str>) -> bool {
     quota_recorder_for_connection(

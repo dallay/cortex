@@ -984,8 +984,9 @@ pub fn is_canonical_base_url(
         norm_path = "";
     }
     let norm_path = norm_path.to_ascii_lowercase();
-    // Canonical hosts come from the descriptor table. OpenAI's documented
-    // base also accepts the bare host (path-less) spelling.
+    // Canonical hosts come from the descriptor table. Only entries declared
+    // in the table accept capture; the bare-host OpenAI spelling is declared
+    // as its own canonical base so no other provider inherits the tolerance.
     descriptor.canonical_base_urls.iter().any(|canonical| {
         let Some((_, c_rest)) = canonical.split_once("://") else {
             return false;

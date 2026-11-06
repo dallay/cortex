@@ -132,6 +132,10 @@ pub struct ProviderDescriptor {
     pub model_listing: ModelListing,
     /// OAuth wire configuration; `None` for non-OAuth providers.
     pub oauth: Option<OAuthConfig>,
+    /// Whether OAuth credentials may be saved for this provider. Providers
+    /// with an OAuth flow accept them; some adapters (OpenAI) accept OAuth
+    /// tokens as credentials without a flow.
+    pub accepts_oauth_credentials: bool,
     pub paths: WirePaths,
     /// Base URLs the provider officially documents; used by the canonical
     /// URL quota gate.
@@ -204,6 +208,7 @@ const fn ollama_paths() -> WirePaths {
 
 const fn openai() -> ProviderDescriptor {
     ProviderDescriptor {
+        accepts_oauth_credentials: true,
         id: "openai",
         aliases: &[],
         protocol: Protocol::OpenAiChat,
@@ -215,7 +220,7 @@ const fn openai() -> ProviderDescriptor {
         model_listing: ModelListing::Catalog,
         oauth: None,
         paths: openai_paths(),
-        canonical_base_urls: &["https://api.openai.com/v1"],
+        canonical_base_urls: &["https://api.openai.com/v1", "https://api.openai.com"],
         capability_ceiling: no_ceiling(),
         models: ModelSource::Catalog,
     }
@@ -223,6 +228,7 @@ const fn openai() -> ProviderDescriptor {
 
 const fn openai_compatible() -> ProviderDescriptor {
     ProviderDescriptor {
+        accepts_oauth_credentials: false,
         id: "openai-compatible",
         aliases: &[],
         protocol: Protocol::OpenAiChat,
@@ -242,6 +248,7 @@ const fn openai_compatible() -> ProviderDescriptor {
 
 const fn anthropic() -> ProviderDescriptor {
     ProviderDescriptor {
+        accepts_oauth_credentials: true,
         id: "anthropic",
         aliases: &[],
         protocol: Protocol::AnthropicMessages,
@@ -265,6 +272,7 @@ const fn anthropic() -> ProviderDescriptor {
 
 const fn ollama() -> ProviderDescriptor {
     ProviderDescriptor {
+        accepts_oauth_credentials: true,
         id: "ollama",
         aliases: &[],
         protocol: Protocol::OllamaNative,
@@ -285,6 +293,7 @@ const fn ollama() -> ProviderDescriptor {
 
 const fn ollama_cloud() -> ProviderDescriptor {
     ProviderDescriptor {
+        accepts_oauth_credentials: true,
         id: "ollama-cloud",
         // Pre-migration rows and serde output spelled it `ollamacloud`.
         aliases: &["ollamacloud"],
@@ -305,6 +314,7 @@ const fn ollama_cloud() -> ProviderDescriptor {
 
 const fn gemini() -> ProviderDescriptor {
     ProviderDescriptor {
+        accepts_oauth_credentials: true,
         id: "gemini",
         aliases: &[],
         protocol: Protocol::GeminiGenerateContent,
@@ -336,6 +346,7 @@ const fn gemini() -> ProviderDescriptor {
 
 const fn azure_openai() -> ProviderDescriptor {
     ProviderDescriptor {
+        accepts_oauth_credentials: true,
         id: "azure-openai",
         // Pre-migration rows and serde output spelled it `azureopenai`.
         aliases: &["azureopenai"],
@@ -367,6 +378,7 @@ const fn azure_openai() -> ProviderDescriptor {
 
 const fn groq() -> ProviderDescriptor {
     ProviderDescriptor {
+        accepts_oauth_credentials: true,
         id: "groq",
         aliases: &[],
         protocol: Protocol::OpenAiChat,
@@ -386,6 +398,7 @@ const fn groq() -> ProviderDescriptor {
 
 const fn xai() -> ProviderDescriptor {
     ProviderDescriptor {
+        accepts_oauth_credentials: false,
         id: "xai",
         aliases: &[],
         protocol: Protocol::OpenAiChat,
@@ -405,6 +418,7 @@ const fn xai() -> ProviderDescriptor {
 
 const fn mistral() -> ProviderDescriptor {
     ProviderDescriptor {
+        accepts_oauth_credentials: false,
         id: "mistral",
         aliases: &[],
         protocol: Protocol::OpenAiChat,
@@ -428,6 +442,7 @@ const fn mistral() -> ProviderDescriptor {
 
 const fn deepseek() -> ProviderDescriptor {
     ProviderDescriptor {
+        accepts_oauth_credentials: false,
         id: "deepseek",
         aliases: &[],
         protocol: Protocol::OpenAiChat,
@@ -447,6 +462,7 @@ const fn deepseek() -> ProviderDescriptor {
 
 const fn together() -> ProviderDescriptor {
     ProviderDescriptor {
+        accepts_oauth_credentials: false,
         id: "together",
         aliases: &[],
         protocol: Protocol::OpenAiChat,
@@ -466,6 +482,7 @@ const fn together() -> ProviderDescriptor {
 
 const fn fireworks() -> ProviderDescriptor {
     ProviderDescriptor {
+        accepts_oauth_credentials: false,
         id: "fireworks",
         aliases: &[],
         protocol: Protocol::OpenAiChat,
@@ -485,6 +502,7 @@ const fn fireworks() -> ProviderDescriptor {
 
 const fn cerebras() -> ProviderDescriptor {
     ProviderDescriptor {
+        accepts_oauth_credentials: false,
         id: "cerebras",
         aliases: &[],
         protocol: Protocol::OpenAiChat,
@@ -504,6 +522,7 @@ const fn cerebras() -> ProviderDescriptor {
 
 const fn openrouter() -> ProviderDescriptor {
     ProviderDescriptor {
+        accepts_oauth_credentials: false,
         id: "openrouter",
         aliases: &[],
         protocol: Protocol::OpenAiChat,
@@ -523,6 +542,7 @@ const fn openrouter() -> ProviderDescriptor {
 
 const fn nan() -> ProviderDescriptor {
     ProviderDescriptor {
+        accepts_oauth_credentials: false,
         id: "nan",
         aliases: &[],
         protocol: Protocol::OpenAiChat,

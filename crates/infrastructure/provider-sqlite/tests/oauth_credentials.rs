@@ -2,7 +2,7 @@ use chrono::Utc;
 use provider_sqlite::SqliteProviderRepository;
 use rook_core::{
     AuthType, ConnectionConfig, ConnectionId, Credentials, EncryptedBlob, ProviderConnection,
-    ProviderRepositoryPort, QuotaWindowThresholds, TestStatus,
+    ProviderRepositoryPort, QuotaWindowThresholds, RepositoryError, TestStatus,
 };
 use shared_kernel::ProviderId;
 
@@ -57,4 +57,64 @@ async fn oauth_client_configuration_round_trips_through_v6_columns() {
 
     assert_eq!(loaded.provider.id, "azure-openai");
     assert_eq!(loaded.credentials, connection.credentials);
+}
+
+#[tokio::test]
+async fn create_rejects_names_colliding_with_a_legacy_alias_row() {
+    let temp_file = tempfile::Builder::new()
+        .prefix("rook-provider-alias-unique-")
+        .suffix(".sqlite")
+        .tempfile()
+        .expect("temporary database");
+    let path = temp_file.path();
+    {
+        let mut conn = rusqlite::Connection::open(path).expect("database");
+        db_migration::run_on_connection(&mut conn).expect("migrations");
+        // A pre-canonicalization row carrying the legacy serde spelling.
+        conn.execute(
+            "INSERT INTO provider_connections (
+                id, provider_kind, provider_runtime_id, name, auth_type,
+                priority, is_active, api_key_ct, max_concurrent, quota_warning,
+                quota_error, test_status, created_at, updated_at
+            ) VALUES (?1, 'ollamacloud', 'runtime-legacy', 'shared-name', 'apiKey',
+                5, 1, 'enc:v1:legacy', 1, 0.7, 0.9, 'neverTested',
+                '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            rusqlite::params![shared_kernel::ConnectionId::new().to_string()],
+        )
+        .expect("legacy row");
+    }
+
+    let repo = SqliteProviderRepository::new(path).expect("repo");
+    let canonical = ProviderConnection {
+        id: shared_kernel::ConnectionId::new(),
+        provider: rook_core::descriptor_by_id("ollama-cloud").expect("ollama-cloud descriptor"),
+        provider_runtime_id: shared_kernel::ProviderId::new("runtime-new"),
+        name: "shared-name".to_string(),
+        priority: 1,
+        is_active: true,
+        auth_type: AuthType::ApiKey,
+        credentials: Credentials::ApiKey {
+            api_key: EncryptedBlob("enc:v1:new".to_string()),
+        },
+        config: ConnectionConfig {
+            max_concurrent: 1,
+            quota_window_thresholds: QuotaWindowThresholds {
+                warning: 0.7,
+                error: 0.9,
+            },
+            default_model: None,
+            base_url: None,
+            api_format: None,
+            supported_models: Vec::new(),
+        },
+        test_status: TestStatus::NeverTested,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+
+    let result = repo.create(&canonical).await;
+    assert!(
+        matches!(result, Err(RepositoryError::DuplicateConnection(_))),
+        "an alias row must collide with the canonical spelling"
+    );
 }

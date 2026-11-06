@@ -779,7 +779,32 @@ mod tests {
             )
             .expect("legacy row");
         }
+        // A canonical row may already share a name with a legacy row; the
+        // migration must resolve the collision without deleting either.
+        conn.execute(
+            "INSERT INTO provider_connections (
+                id, provider_kind, provider_runtime_id, name, auth_type,
+                priority, is_active, api_key_ct, max_concurrent, quota_warning,
+                quota_error, test_status, created_at, updated_at
+            ) VALUES (?1, 'ollama-cloud', 'runtime-canonical', 'ollamacloud', 'apiKey',
+                5, 1, 'enc:v1:canonical', 1, 0.7, 0.9, 'neverTested',
+                '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            params![ConnectionId::new().to_string()],
+        )
+        .expect("canonical row");
         conn.execute_batch(migration_sql).expect("V15 applies");
+
+        let colliding: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM provider_connections WHERE name LIKE 'ollamacloud%'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(
+            colliding, 2,
+            "the collision is resolved by renaming, not deleting"
+        );
 
         let mut kinds: Vec<String> = {
             let mut stmt = conn

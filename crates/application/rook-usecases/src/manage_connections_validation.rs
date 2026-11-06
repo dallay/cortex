@@ -222,5 +222,10 @@ pub(super) fn validate_provider_auth_type(
     {
         return Err(ValidationError::AuthTypeCredentialMismatch);
     }
+    // OAuth credentials require a provider that accepts them; otherwise the
+    // connection saves fine and later fails on token refresh.
+    if auth_type == AuthType::OAuth && !provider.accepts_oauth_credentials {
+        return Err(ValidationError::AuthTypeCredentialMismatch);
+    }
     Ok(())
 }

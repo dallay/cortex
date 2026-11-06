@@ -1,6 +1,8 @@
 use chrono::Utc;
 use rook_core::{AuthType, TestStatus};
-use rook_usecases::manage_connections::CreateConnectionRequest;
+use rook_usecases::manage_connections::{
+    CreateConnectionRequest, UpdateConnectionRequest as UsecaseUpdateConnectionRequest,
+};
 use shared_kernel::ProviderId;
 use transport_axum::provider_dto::*;
 

@@ -535,3 +535,67 @@ fn mapper_unknown_returns_valid_true_status_unknown_with_reason_as_warning() {
             );
         });
 }
+
+// ---------------------------------------------------------------------------
+// Provider auth-kind gating: OAuth credentials require a provider that
+// accepts them, otherwise the connection saves and fails on refresh later.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn create_rejects_oauth_credentials_for_a_provider_without_oauth_support() {
+    let mc = ManageConnections::new(
+        Arc::new(InMemoryProviderRepository::default()),
+        Arc::new(NoopRegistry),
+        Arc::new(NoopKeyManager),
+        Arc::new(NoopProviderBuilder::new(Arc::new(MockProvider::new(
+            ProviderId::new("nan-primary"),
+            HealthStatus::Healthy {
+                provider: ProviderId::new("nan-primary"),
+                latency_ms: 0,
+            },
+        )))),
+    );
+
+    let request = rook_usecases::manage_connections::CreateConnectionRequest {
+        provider: rook_core::descriptor_by_id("nan").expect("nan descriptor"),
+        provider_runtime_id: ProviderId::new("nan-primary"),
+        auth_type: AuthType::OAuth,
+        name: "nan-oauth".to_string(),
+        priority: 1,
+        is_active: false,
+        credentials: CredentialsInput::OAuth {
+            email: "user@example.com".to_string(),
+            access_token: "access".to_string(),
+            refresh_token: "refresh".to_string(),
+            expires_at: Utc::now().timestamp() + 3600,
+            scope: "scope".to_string(),
+            id_token: String::new(),
+            project_id: String::new(),
+            oauth_client_id: "client".to_string(),
+            oauth_client_secret: None,
+            oauth_tenant_id: None,
+        },
+        config: ConnectionConfig {
+            max_concurrent: 1,
+            quota_window_thresholds: QuotaWindowThresholds {
+                warning: 0.7,
+                error: 0.9,
+            },
+            default_model: None,
+            base_url: None,
+            api_format: None,
+            supported_models: Vec::new(),
+        },
+    };
+
+    let error = mc
+        .create(request)
+        .await
+        .expect_err("OAuth credentials must be rejected for a provider without OAuth support");
+    assert!(matches!(
+        error,
+        rook_usecases::manage_connections::ManageConnectionsError::Validation(
+            rook_core::ValidationError::AuthTypeCredentialMismatch
+        )
+    ));
+}
