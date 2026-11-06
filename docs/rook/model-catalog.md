@@ -1,3 +1,9 @@
+> **`provider_kind` spelling contract.** The bundled catalog uses the serde
+> serialization of `ProviderKind` (`lowercase`, so `ollamacloud` and
+> `azureopenai`), while `ProviderKind::as_str()` returns the hyphenated form
+> (`ollama-cloud`, `azure-openai`). Both spellings deserialize: the hyphenated
+> forms are registered as serde aliases. Keep new catalog entries in the serde
+> spelling.
 # Model catalog and eligibility
 
 Rook separates three facts: the presence of an identifier, the model's
