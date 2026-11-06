@@ -12,6 +12,8 @@ use std::{
 
 use tokio::sync::Mutex;
 
+use super::token_bucket::TokenBucket;
+
 /// Rate limit exceeded error with retry-after information
 #[derive(Debug, Clone, PartialEq)]
 pub struct RateLimitExceeded {
@@ -19,63 +21,6 @@ pub struct RateLimitExceeded {
     pub limit: u64,
     pub remaining: u64,
     pub reset_unix: u64,
-}
-
-/// Token bucket for a single IP address
-#[derive(Debug, Clone)]
-struct TokenBucket {
-    tokens: f64,
-    last_refill: Instant,
-}
-
-impl TokenBucket {
-    fn new(capacity: u64) -> Self {
-        Self {
-            tokens: capacity as f64,
-            last_refill: Instant::now(),
-        }
-    }
-
-    /// Refill tokens based on elapsed time
-    fn refill(&mut self, capacity: u64, refill_per_second: f64) {
-        let elapsed = self.last_refill.elapsed().as_secs_f64();
-        let refill_amount = elapsed * refill_per_second;
-        self.tokens = (self.tokens + refill_amount).min(capacity as f64);
-        self.last_refill = Instant::now();
-    }
-
-    /// Try to consume one token
-    fn try_consume(&mut self, capacity: u64, refill_per_second: f64) -> bool {
-        self.refill(capacity, refill_per_second);
-        if self.tokens >= 1.0 {
-            self.tokens -= 1.0;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Current token count
-    fn tokens(&self) -> f64 {
-        self.tokens
-    }
-
-    /// Time until next token is available (capped at 1 hour to prevent u64::MAX overflow)
-    fn retry_after(&self, _capacity: u64, refill_per_second: f64) -> Duration {
-        if self.tokens >= 1.0 {
-            Duration::ZERO
-        } else {
-            let tokens_needed = 1.0 - self.tokens;
-            let secs = if refill_per_second > 0.0 {
-                (tokens_needed / refill_per_second).ceil() as u64
-            } else {
-                // Avoid division by zero; cap at 1 hour
-                3600
-            };
-            // Cap at 1 hour to prevent u64::MAX overflow on very low refill rates
-            Duration::from_secs(secs.clamp(1, 3600))
-        }
-    }
 }
 
 /// IP rate limiter using per-IP token bucket algorithm
@@ -134,12 +79,12 @@ impl IpRateLimiter {
 
         // TTL eviction: remove buckets idle for longer than idle_ttl
         // A bucket is "idle" when last_refill is old — meaning no requests came in
-        buckets.retain(|_, bucket| now.duration_since(bucket.last_refill) < self.idle_ttl);
+        buckets.retain(|_, bucket| now.duration_since(bucket.last_refill()) < self.idle_ttl);
 
         // Size cap: if still over max_entries, evict oldest by last_refill time
         if buckets.len() >= self.max_entries {
             let mut entries: Vec<_> = buckets.iter().collect();
-            entries.sort_by_key(|(_, b)| b.last_refill);
+            entries.sort_by_key(|(_, b)| b.last_refill());
             let ips_to_remove: Vec<_> = entries
                 .into_iter()
                 .take(buckets.len() - self.max_entries)
@@ -170,10 +115,7 @@ impl IpRateLimiter {
         if bucket.try_consume(self.capacity, self.refill_per_second) {
             Ok(())
         } else {
-            let retry_after_secs = bucket
-                .retry_after(self.capacity, self.refill_per_second)
-                .as_secs()
-                .max(1);
+            let retry_after_secs = bucket.retry_after(self.refill_per_second).as_secs().max(1);
             let reset_unix = unix_now() + retry_after_secs;
             Err(RateLimitExceeded {
                 retry_after_secs,

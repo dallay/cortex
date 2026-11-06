@@ -4,6 +4,7 @@ pub mod api_key_rate_limiter;
 pub mod csrf_guard;
 pub mod ip_rate_limiter;
 pub mod login_rate_limiter;
+pub mod token_bucket;
 
 pub use api_key_rate_limiter::{
     ApiKeyRateLimiter, RateLimitExceeded as ApiKeyRateLimitExceeded, RateLimitSnapshot,
