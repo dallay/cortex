@@ -217,7 +217,7 @@ Requires an admin session and a configured rate-limit store. If the store is dis
 | `DELETE` | `/api/rate-limits/{id}` | Deletes a rule; returns `204` |
 | `GET` | `/api/rate-limits/{scope}/{target}/status` | Returns current counters, remaining quota, reset time, and active limits |
 
-Create requests use `scope` (`api-key`, `ip-address`, or `global`), `target`, required positive `requests_per_minute`, optional `requests_per_day`, and optional `tokens_per_minute`. `tokens_per_minute` is not enforced and is rejected with `400 UNSUPPORTED_LIMIT` when supplied. Updates accept optional request-per-minute/day limits. Validation errors return `400 VALIDATION_ERROR`; missing rules return `404`; duplicate identities return conflict. Global rules require target `global`; IP targets must parse as IP addresses.
+Create requests use `scope` (`api-key`, `ip-address`, or `global`), `target`, required positive `requests_per_minute`, and optional `requests_per_day`. Unknown fields are rejected. Updates accept optional request-per-minute/day limits. Validation errors return `400 VALIDATION_ERROR`; missing rules return `404`; duplicate identities return conflict. Global rules require target `global`; IP targets must parse as IP addresses.
 
 ## Telemetry
 
