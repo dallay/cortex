@@ -73,6 +73,95 @@ def _register_core_tools(mcp):
 
 
 class RepositoryTests(unittest.TestCase):
+    def test_integrity_manifest_rejects_traversal_before_read_or_materialization(self):
+        module = load_reference()
+        import hashlib
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sources = root / "sources"
+            sources.mkdir()
+            outside = sources / "outside.py"
+            outside.write_bytes(b"outside trusted root\n")
+            manifest = {"fixture": {"package_root": "../", "files": {
+                "../outside.py": hashlib.sha256(outside.read_bytes()).hexdigest()
+            }}}
+            destination = root / "materialized"
+            from unittest.mock import patch
+            original_read_bytes = Path.read_bytes
+            reads_outside = []
+
+            def track_reads(path):
+                if path == outside:
+                    reads_outside.append(path)
+                return original_read_bytes(path)
+
+            with patch.object(Path, "read_bytes", track_reads):
+                with self.assertRaises(ValueError):
+                    module.verify_source_tree(sources, manifest)
+                with self.assertRaises(ValueError):
+                    module.materialize_sources(sources, manifest, destination)
+            self.assertEqual(reads_outside, [])
+            self.assertFalse(destination.exists())
+            self.assertEqual(outside.read_bytes(), b"outside trusted root\n")
+
+    def test_integrity_manifest_rejects_symlink_escape_before_read_or_materialization(self):
+        module = load_reference()
+        import hashlib
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sources = root / "sources"
+            repository = sources / "fixture"
+            outside = root / "outside"
+            outside.mkdir()
+            repository.mkdir(parents=True)
+            outside_file = outside / "api.py"
+            outside_file.write_bytes(b"outside trusted root\n")
+            (repository / "src").symlink_to(outside, target_is_directory=True)
+            manifest = {"fixture": {"package_root": "src", "files": {
+                "src/api.py": hashlib.sha256(outside_file.read_bytes()).hexdigest()
+            }}}
+            destination = root / "materialized"
+            original_read_bytes = Path.read_bytes
+            reads_outside = []
+
+            def track_reads(path):
+                if path == outside_file:
+                    reads_outside.append(path)
+                return original_read_bytes(path)
+
+            with patch.object(Path, "read_bytes", track_reads):
+                with self.assertRaises(ValueError):
+                    module.verify_source_tree(sources, manifest)
+                with self.assertRaises(ValueError):
+                    module.materialize_sources(sources, manifest, destination)
+            self.assertEqual(reads_outside, [])
+            self.assertFalse(destination.exists())
+            self.assertEqual(outside_file.read_bytes(), b"outside trusted root\n")
+
+    def test_normal_and_shared_integrity_manifests_keep_existing_behavior(self):
+        module = load_reference()
+        import hashlib
+        import json
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "sources/fixture/src"
+            package.mkdir(parents=True)
+            (package / "api.py").write_bytes(b"trusted\n")
+            manifest = {"fixture": {"package_root": "src", "files": {
+                "src/api.py": hashlib.sha256(b"trusted\n").hexdigest()
+            }}}
+            module.verify_source_tree(root / "sources", manifest)
+            destination = root / "execution"
+            module.materialize_sources(root / "sources", manifest, destination)
+            self.assertEqual((destination / "fixture/src/api.py").read_bytes(), b"trusted\n")
+
+            shared = json.loads((SCRIPT.parent / "source-integrity.json").read_text())
+            self.assertIn("agent-memory-tck", shared)
+
     def test_integrity_rejects_unverified_bytecode(self):
         module = load_reference()
         import hashlib

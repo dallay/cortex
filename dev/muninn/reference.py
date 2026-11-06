@@ -160,6 +160,18 @@ def build_integrity(root, references):
 
 def verify_source_tree(root, integrity):
     """Rechaza bytes distintos y archivos adicionales dentro del paquete."""
+    root = Path(root)
+    for name, reference in integrity.items():
+        repository = Path(name)
+        package_root = Path(reference["package_root"])
+        filenames = [Path(filename) for filename in reference["files"]]
+        paths = [repository, package_root, *filenames]
+        if any(path.is_absolute() or ".." in path.parts for path in paths):
+            raise ValueError(f"Ruta fuera de la raíz permitida: {name}")
+        repository_root = (root / repository).resolve()
+        for relative in (package_root, *filenames):
+            if not (repository_root / relative).resolve().is_relative_to(repository_root):
+                raise ValueError(f"Ruta fuera de la raíz permitida: {name}/{relative}")
     for name, reference in integrity.items():
         path = root / name
         for filename, expected in reference["files"].items():

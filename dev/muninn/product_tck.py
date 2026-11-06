@@ -10,14 +10,37 @@ import tempfile
 
 from product_chain_fixture import ProductFixture
 from product_tck_report import validate_profile_result
+from product_tck_selector import select_profiles
 from reference import verify_source_tree
-from rust_tck_spike import SILVER_SPLIT_PROFILES, load_normative_lock, profile_selector
+from rust_tck_spike import (SILVER_SPLIT_PROFILES, load_normative_lock,
+                            profile_selector as rust_profile_selector)
 from tck_runner import prepare_suite
 
 
 # El perfil combinado `silver` no se ejecuta aquí: mezclaría H2 (largo plazo) con
 # los casos de reasoning de H3 en una sola evidencia.
-PROFILES = ('messages', 'chains', 'search', 'schema', 'bronze', *SILVER_SPLIT_PROFILES)
+GOLD_CROSS_MEMORY_PROFILE = 'gold-cross-memory'
+GOLD_CROSS_MEMORY_FILE = 'v1/test_cross_memory.py'
+GOLD_CROSS_MEMORY_CASES = 18
+PROFILES = ('messages', 'chains', 'search', 'schema', 'bronze', *SILVER_SPLIT_PROFILES,
+            GOLD_CROSS_MEMORY_PROFILE)
+
+
+def profile_selector(profile, items, suite=None):
+    """Select the pinned cross-memory Gold marker cases without broadening scope."""
+    if profile != GOLD_CROSS_MEMORY_PROFILE:
+        return rust_profile_selector(profile, items, suite)
+    if suite is None:
+        raise ValueError('El perfil Gold requiere el source suite fijado')
+    selected = {item['nodeid'] for item in items
+                if item['nodeid'].startswith(GOLD_CROSS_MEMORY_FILE + '::')
+                and 'gold' in item['markers']}
+    if len(selected) != GOLD_CROSS_MEMORY_CASES:
+        raise ValueError(f'El inventario Gold cross-memory debe contener exactamente {GOLD_CROSS_MEMORY_CASES} IDs')
+    if any(not nodeid.startswith(GOLD_CROSS_MEMORY_FILE + '::') for nodeid in selected):
+        raise ValueError('El inventario Gold cross-memory contiene IDs fuera del archivo fijado')
+    arguments = [str(Path(suite) / nodeid) for nodeid in sorted(selected)]
+    return selected, arguments
 
 
 def main():
@@ -25,7 +48,13 @@ def main():
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--sources', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--profile', action='append', choices=PROFILES, metavar='PROFILE',
+                        help='Ejecuta solo el perfil indicado; se puede repetir')
     args = parser.parse_args()
+    try:
+        profiles = select_profiles(args.profile, PROFILES)
+    except ValueError as error:
+        parser.error(str(error))
     base = Path(__file__).resolve().parent
     lock = load_normative_lock(base)
     verify_source_tree(args.sources.parent, {args.sources.name: lock})
@@ -68,7 +97,7 @@ def pytest_collection_modifyitems(items):
             raise RuntimeError('No se pudo coleccionar TCK normativo')
         items = json.loads(inventory.read_text())
         results = {}
-        for profile in PROFILES:
+        for profile in profiles:
             selected, selector = profile_selector(profile, items, suite)
             report = args.output.resolve() / (profile + '.json')
             with (args.output / (profile + '.log')).open('w') as log:

@@ -26,10 +26,10 @@ from uuid import uuid4
 from gm01_runner import _copy_file
 from gm05_build import digest, snapshot_sources
 from gm05_runner import NEO4J_IMAGE
-from gm08_runner import FAITHFUL, RUST, TOOLCHAIN, bind, preflight
+from gm08_runner import FAITHFUL, RUST, TOOLCHAIN, bind
 from gm_h4_contract import (DECLARATIONS, EPSILON, GM06_DIVERGENCES, GM07_DIVERGENCES,
                             compare_gm_h4, declarations_sha256)
-from reference import materialize_sources
+from reference import materialize_sources, verify_repository, verify_source_tree
 
 ROOT = Path(__file__).resolve().parents[2]
 BASE = ROOT / 'dev/muninn'
@@ -44,8 +44,30 @@ HELPERS = (
     'gm08_capture.py',
     'gm05_adapters.py', 'gm05_capture.py', 'gm05_contract.py', 'gm05_runner.py',
     'gm05_build.py', 'gm01_runner.py', 'spacy_service.py', 'reference.py',
-    'source-integrity.json', 'fixtures/gm_h4_v1.json',
+    'source-integrity.json', 'gm_h4_source_integrity.json', 'fixtures/gm_h4_v1.json',
 )
+
+H4_TCK_COMMIT = 'b6c72c36bb7486881b87053ee1610f2caf972fb6'
+
+
+def preflight(sources, cargo_caches=()):
+    """Verify H4's normative TCK independently of shared GM-05/GM-08 pins."""
+    for cache in cargo_caches:
+        if not cache.is_dir():
+            raise ValueError('requested offline cargo cache is absent')
+    integrity = json.loads((BASE / 'gm_h4_source_integrity.json').read_text())
+    expected = {'agent-memory': '9d45af5529ecb5f2fe352013468a11087f3163d4',
+                'agent-memory-tck': H4_TCK_COMMIT}
+    selected = {name: integrity[name] for name in expected}
+    for name, commit in expected.items():
+        if not (sources / name).is_dir():
+            raise ValueError('required verified reference checkout absent')
+        if selected[name]['commit'] != commit:
+            raise ValueError('reference pin mismatch')
+        verify_repository(sources / name, commit)
+    verify_source_tree(sources, selected)
+    return selected
+
 
 def dump(path, value):
     path.write_text(json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + '\n')

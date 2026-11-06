@@ -149,7 +149,7 @@ model, not an accuracy measurement and not a Gold or differential result.
   `--network none`.
 - Nothing was pushed, published, retagged or staged.
 
-## What remains unmeasured
+## U5a status at the time of that unit
 
 - Extraction quality: precision/recall/F1 of this model on any fixture, and
   statistics for merge and ranking, are **NOT_RUN**. No baseline exists, so no
@@ -171,9 +171,9 @@ the unchanged-GM05 witnesses and per-file hashes are retained under
 ## U5b GM-02/03/04 harness
 
 The GM-02 (extraction modes), GM-03 (spaCy fidelity) and GM-04 (resolution and
-deduplication) harness is implemented and deterministic-tested. **No real
-measurement has run**: the H4 differential belongs to U6, and every verdict
-below is `NOT_RUN` until that unit captures both sides. The harness is built by
+deduplication) harness is implemented and deterministic-tested. At the U5b
+implementation cutoff, no real measurement had run; U6 later captured both
+sides as recorded below. The harness is built by
 composing the accepted components rather than adding a framework: `gm05_build`
 for the source-bound offline build, `gm08_runner` for the dory lifecycle,
 preflight and faithful-copy helper, `gm08_peer` for the loopback bridge,
@@ -219,8 +219,8 @@ The only numeric tolerance is an absolute **`1e-9`** applied to resolution
 similarity scores, `SAME_AS` confidence and the GM-07 entity/message scores.
 Every other value — including `MENTIONS` confidence, band thresholds, spans,
 labels, the geocode point and ranked order — is compared exactly. The
-declaration digest is
-`557a76a869332d2339ede4d79ac7becaa0f03da4ebd8c51ed05677e5328ed95d`
+declaration digest for the current live measurement is
+`57caed06516c58af2ddcc73ae2e36ffc52b99e68748d42a55b502f67cede2122`
 (SHA-256 over `gm_h4_contract.DECLARATIONS`: the nineteen carried rules plus
 `GM06-01..07` and `GM07-01..07`, 33 in total). Any observed difference that
 would need a wider tolerance is a finding to report, never a relaxation.
@@ -353,5 +353,52 @@ the same class as `H4-U5B-F1`, recorded here instead of being tolerated.
   same controlled vectors, so ties are not expected; if a real run produces a
   tie the positional comparison fails and the finding is reported, never
   smoothed by sorting.
-- **GM-06/GM-07 accuracy, Gold cross-memory, Silver38, live Neo4j and MiniLM
-  resolution remain NOT_RUN.**
+- **GM-06/GM-07 accuracy and MiniLM numerical acceptance remain NOT_RUN.**
+  Semantic extraction quality is **UNVERIFIABLE for this H4 closure by human
+  disposition**: no approved labeled corpus, scoring formula/baseline, or
+  threshold exists. No quality score is claimed. Current live differential,
+  Silver38 and Gold cross-memory TCK results are recorded below. Gold does not assert
+  `Preference-[:ABOUT]->Entity`; that relation has a separate live test.
+
+## U6 current live differential
+
+The current-source run is retained at
+`.agents/rpi/plan/tasks/muninn-h4-extraction-connected-memory/evidence/gm-h4-live-27/`.
+Its summary records TCK commit
+`b6c72c36bb7486881b87053ee1610f2caf972fb6`, reference commit
+`9d45af5529ecb5f2fe352013468a11087f3163d4`, the `muninn-h4-oracle-spacy:20261105`
+image, and the current workspace source manifest. GM-02, GM-03, GM-04, GM-06,
+and GM-07 each report `pass` with no diffs. The sole numeric epsilon is `1e-9`,
+the declaration digest is
+`57caed06516c58af2ddcc73ae2e36ffc52b99e68748d42a55b502f67cede2122`, and no
+deviations were declared. The receipt confirms container cleanup, source and
+snapshot integrity, and removal of temporary runner state.
+
+This is a pass for the declared differential only. The receipt retains
+`h4_acceptance: not_established` and `native_live: NOT_RUN`.
+
+## Current-source Silver38 and Gold cross-memory
+
+`product-tck-live-03/summary.json` records two profiles against the product
+binary, using a fresh isolated Neo4j fixture and the normative b6c7 TCK tree:
+
+- `silver-long-term`: all **38/38** selected cases passed; selected and observed
+  node IDs match, and the report validator returned `valid: true`.
+- `gold-cross-memory`: all **18/18** Gold-marked cases in
+  `v1/test_cross_memory.py` passed; selected and observed node IDs match, and
+  the report validator returned `valid: true`.
+
+The Gold profile is limited to the exact 18 pinned cross-memory cases. It does
+not test the `Preference-[:ABOUT]->Entity` edge. The ABOUT live acceptance is a
+separate U3 check and is not counted as Gold. These TCK passes do not measure
+general extraction precision, recall or F1.
+
+## H4 milestone disposition
+
+On 2026-11-06, the human owner accepted H4 with semantic extraction quality
+explicitly classified as **`UNVERIFIABLE`**. No quality score or full feature
+parity claim is made. The approval does not change historical runner receipts:
+U6's `h4_acceptance: not_established` and `native_live: NOT_RUN` remain as
+recorded for that runner and invocation. Separate live ABOUT, Silver38 and Gold
+receipts are listed above. This disposition is limited to H4 and does not
+accept H5, H6, H7, or the full parity specification.

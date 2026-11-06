@@ -4,7 +4,9 @@ import importlib.util
 from pathlib import Path
 import sys
 import tempfile
+import types
 import unittest
+from unittest import mock
 
 
 def runner():
@@ -20,6 +22,58 @@ def runner():
 
 
 class SelectionTests(unittest.TestCase):
+    def test_gold_cross_memory_selects_exact_pinned_gold_marker_inventory(self):
+        base = Path(__file__).resolve().parents[1]
+        sys.path.insert(0, str(base))
+        try:
+            fixture_module = types.ModuleType("product_chain_fixture")
+            fixture_module.ProductFixture = object
+            with mock.patch.dict(sys.modules, {"product_chain_fixture": fixture_module}):
+                import product_tck
+        finally:
+            sys.path.pop(0)
+
+        expected = {
+            "v1/test_cross_memory.py::TestCrossMemoryEntityReferences::test_entity_in_long_term_and_reasoning",
+            "v1/test_cross_memory.py::TestCrossMemoryEntityReferences::test_end_to_end_conversation_with_entities_and_reasoning",
+            "v1/test_cross_memory.py::TestCrossMemoryEntityReferences::test_entity_enriched_across_sessions",
+            "v1/test_cross_memory.py::TestCrossMemoryEntityReferences::test_fact_references_entity_names",
+            "v1/test_cross_memory.py::TestCrossMemoryEntityReferences::test_preference_stored_alongside_entity",
+            "v1/test_cross_memory.py::TestCrossMemoryEntityReferences::test_reasoning_trace_references_conversation",
+            "v1/test_cross_memory.py::TestAddRelationship::test_add_relationship_between_entities",
+            "v1/test_cross_memory.py::TestAddRelationship::test_add_relationship_bidirectional_traversal",
+            "v1/test_cross_memory.py::TestAddRelationship::test_add_relationship_multiple_types",
+            "v1/test_cross_memory.py::TestAddRelationship::test_add_relationship_returns_valid_id",
+            "v1/test_cross_memory.py::TestMergeDuplicateEntities::test_merge_duplicate_entities",
+            "v1/test_cross_memory.py::TestMergeDuplicateEntities::test_merge_preserves_relationships",
+            "v1/test_cross_memory.py::TestGetSimilarTraces::test_get_similar_traces",
+            "v1/test_cross_memory.py::TestGetSimilarTraces::test_get_similar_traces_respects_limit",
+            "v1/test_cross_memory.py::TestGetSimilarTraces::test_get_similar_traces_empty_database",
+            "v1/test_cross_memory.py::TestMultiAgentMemorySharing::test_entity_created_by_one_session_visible_to_another",
+            "v1/test_cross_memory.py::TestMultiAgentMemorySharing::test_reasoning_traces_isolated_by_session",
+            "v1/test_cross_memory.py::TestMultiAgentMemorySharing::test_conversations_isolated_but_entities_shared",
+        }
+        suite = Path("/synthetic/pinned-suite")
+        items = [{"nodeid": nodeid, "markers": ["gold"]} for nodeid in sorted(expected)]
+        items += [{"nodeid": "v1/test_schema.py::TestSchema::test_unmarked", "markers": []},
+                  {"nodeid": "v1/test_cross_memory.py::TestLive::test_preference_about_entity",
+                   "markers": []}]
+
+        self.assertIn("gold-cross-memory", product_tck.PROFILES)
+        selected, arguments = product_tck.profile_selector("gold-cross-memory", items, suite)
+        self.assertEqual(selected, expected)
+        self.assertEqual(arguments, [str(suite / nodeid) for nodeid in sorted(expected)])
+
+        report = {"exitcode": 0, "tests": [
+            {"nodeid": nodeid, "outcome": "passed", "setup": {"outcome": "passed"},
+             "call": {"outcome": "passed"}, "teardown": {"outcome": "passed"}}
+            for nodeid in sorted(expected)],
+            "summary": {"passed": 18, "total": 18}}
+        product_tck.validate_profile_result(selected, 0, report)
+
+        with self.assertRaises(ValueError):
+            product_tck.profile_selector("gold-cross-memory", items[:-3], suite)
+
     def test_chains_preserves_sessions_and_requires_both_new_groups(self):
         module = runner()
         groups = ("TestGetConversation", "TestListSessions", "TestClearSession", "TestDeleteMessage",

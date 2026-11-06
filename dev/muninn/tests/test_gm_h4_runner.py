@@ -105,6 +105,45 @@ class CommandTests(unittest.TestCase):
             self.assertFalse(output.exists())
 
 
+class PreflightTests(unittest.TestCase):
+    def sources(self, tck_name):
+        import gm_h4_runner
+        temp = tempfile.TemporaryDirectory(prefix='gm-h4-preflight-')
+        root = Path(temp.name)
+        (root / 'agent-memory').symlink_to(BASE / '.cache/sources/agent-memory')
+        (root / 'agent-memory-tck').symlink_to(BASE / '.cache/sources' / tck_name)
+        self.addCleanup(temp.cleanup)
+        return gm_h4_runner, root
+
+    def test_h4_accepts_only_normative_b6c7_tck_tree(self):
+        runner, sources = self.sources('tck-b6c7')
+        integrity = runner.preflight(sources)
+        self.assertEqual(integrity['agent-memory-tck']['commit'],
+                         'b6c72c36bb7486881b87053ee1610f2caf972fb6')
+
+    def test_h4_rejects_shared_consumer_e60_tck_tree(self):
+        runner, sources = self.sources('agent-memory-tck')
+        with self.assertRaises(ValueError):
+            runner.preflight(sources)
+
+    def test_gm05_and_gm08_keep_the_shared_e60_preflight_pin(self):
+        from gm08_runner import preflight
+        self.assertIn('e60b410f1046dc21db50f9aba48e171dc8a9b5a1',
+                      preflight.__code__.co_consts)
+        shared = json.loads((BASE / 'source-integrity.json').read_text())
+        self.assertEqual(shared['agent-memory-tck']['commit'],
+                         'e60b410f1046dc21db50f9aba48e171dc8a9b5a1')
+
+    def test_peer_loads_the_h4_integrity_manifest_not_the_shared_one(self):
+        import gm_h4_peer
+        integrity = gm_h4_peer.load_integrity_manifest()
+        self.assertEqual(integrity['agent-memory-tck']['commit'],
+                         'b6c72c36bb7486881b87053ee1610f2caf972fb6')
+        shared = json.loads((BASE / 'source-integrity.json').read_text())
+        self.assertEqual(shared['agent-memory-tck']['commit'],
+                         'e60b410f1046dc21db50f9aba48e171dc8a9b5a1')
+        self.assertIn('gm_h4_source_integrity.json', __import__('gm_h4_runner').HELPERS)
+
 class SummaryTests(unittest.TestCase):
     def skeleton(self):
         import gm_h4_runner

@@ -452,10 +452,15 @@ def start_sidecar(model, timeout=60.0):
     raise RuntimeError('extraction sidecar readiness exhausted')
 
 
+def load_integrity_manifest():
+    """Load the H4-specific pins shipped in the hash-verified harness."""
+    return json.loads(Path(__file__).with_name('gm_h4_source_integrity.json').read_text())
+
+
 def main():
     side = validate_side(os.environ['GM_H4_SIDE'])
     sources = Path('/references')
-    integrity = json.loads(Path(__file__).with_name('source-integrity.json').read_text())
+    integrity = load_integrity_manifest()
     verify_source_tree(sources, {key: integrity[key]
                                  for key in ('agent-memory', 'agent-memory-tck')})
     sys.path[:0] = [str(sources / 'agent-memory/src'), str(sources / 'agent-memory-tck')]

@@ -118,13 +118,18 @@ Deterministic coverage:
   `MATCH`/`MERGE` shape, adds no property clause, and no preference read path
   gains an `ABOUT` traversal.
 
-The ignored `neo4j/tests/cross_memory_edges.rs` target asserts the live graph
-shape, property-free replay and owner isolation on a **new authenticated empty
-synthetic** fixture with caller-owned teardown. Ignored means **NOT_RUN**.
+The ignored-by-default `neo4j/tests/cross_memory_edges.rs` target asserts the
+live graph shape, property-free replay and owner isolation on a **new
+authenticated empty synthetic** fixture with caller-owned teardown. The
+explicit live run passed 1/1 on Neo4j 5.26; exit code and fixture cleanup are
+recorded under
+`.agents/rpi/plan/tasks/muninn-h4-about-live-acceptance/evidence/`.
 
 Not claimed: no TCK scenario asserts `ABOUT`, so this is spec-and-code parity
-for one edge, not TCK parity. GM-02/03/04/06/07 cross-memory differentials,
-Silver, Gold, live Neo4j execution and milestone acceptance remain pending.
+for one edge, not TCK parity. GM-02/03/04/06/07 differential, Silver38 and
+Gold cross-memory TCK gates have separate current PASS receipts under
+`.agents/rpi/plan/tasks/muninn-h4-extraction-connected-memory/evidence/`.
+Those passes do not establish overall H4 acceptance or full product parity.
 H2 A4 stays terminal and H3 keeps its accepted gaps.
 
 Raw commands, streams, exits and source hashes live under
