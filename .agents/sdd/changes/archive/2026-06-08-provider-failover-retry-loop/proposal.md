@@ -6,7 +6,7 @@
 
 **Goal**: Implement bounded retry logic with provider failover — when a provider fails with a recoverable error (rate limit, exhaustion, temporary failure), the router should try the next available provider before giving up.
 
-**Reference**: OmniRoute (in `tmp/OmniRoute`) implements this pattern in `handleSingleModelChat()` with:
+**Reference**: the reference gateway (in `tmp/the reference gateway`) implements this pattern in `handleSingleModelChat()` with:
 
 - `excludeConnectionIds` to track failed providers
 - Bounded retry loop (max 3-4 attempts)

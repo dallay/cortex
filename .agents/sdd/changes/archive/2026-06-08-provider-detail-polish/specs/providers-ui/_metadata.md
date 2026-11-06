@@ -22,7 +22,7 @@ nonGoals:
   - Backend changes of any kind
   - Bulk actions on the catalog (multi-select enable/disable/delete)
   - Distribute Proxies (auto-rebalance priority/weight)
-  - Static catalog of 228 providers (OmniRoute parity)
+  - Static catalog of 228 providers (reference-gateway parity)
   - OAuth authorization redirect/initiation (form shape only)
   - Per-provider quota implementation (placeholder only)
   - Real-time connection status push (WebSocket / SSE)
@@ -33,6 +33,6 @@ followUp:
   - "OAuth authorization flow for OAuth-supporting kinds"
   - "Bulk actions on the catalog"
   - "Distribute Proxies"
-  - "Author SVG variants of the 4 newly-authored icons that match the OmniRoute visual language"
+  - "Author SVG variants of the 4 newly-authored icons that match the reference-gateway visual language"
   - "Themable branded icons (dark/light mode via `currentColor`)"
 ---

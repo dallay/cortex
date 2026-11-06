@@ -2,13 +2,13 @@
 
 ## Technical Approach
 
-Expand the `StaticModelCatalog` to include all Ollama Cloud models from OmniRoute's `providerRegistry.ts`. The change is purely data expansion — no architectural changes.
+Expand the `StaticModelCatalog` to include all Ollama Cloud models from the reference gateway's `providerRegistry.ts`. The change is purely data expansion — no architectural changes.
 
 ## Architecture Decisions
 
 | Decision          | Choice                               | Rationale                                                                                   |
 |-------------------|--------------------------------------|---------------------------------------------------------------------------------------------|
-| Model ID format   | `ollamacloud/{model-name}`           | Consistent with OmniRoute's `ollamacloud` alias; prefixed to disambiguate from local Ollama |
+| Model ID format   | `ollamacloud/{model-name}`           | Consistent with the reference gateway's `ollamacloud` alias; prefixed to disambiguate from local Ollama |
 | ProviderKind      | `ProviderKind::OllamaCloud`          | Already exists; no new enum variant needed                                                  |
 | Data organization | Grouped by `provider_kind` in arrays | Mirrors existing pattern; easy to scan and maintain                                         |
 
@@ -28,7 +28,7 @@ catalog() → Vec<ModelCatalogEntry>
 
 | File                                              | Action | Description                                                 |
 |---------------------------------------------------|--------|-------------------------------------------------------------|
-| `crates/infrastructure/models-catalog/src/lib.rs` | Modify | Replace `ollama_cloud` array with full OmniRoute model list |
+| `crates/infrastructure/models-catalog/src/lib.rs` | Modify | Replace `ollama_cloud` array with full reference-gateway model list |
 
 ## Current Code Structure
 
@@ -47,7 +47,7 @@ fn catalog() -> Vec<ModelCatalogEntry> {
 
 ## What to Add
 
-Replace the `ollama_cloud` array with the full list from OmniRoute's `ollama-cloud` provider entry:
+Replace the `ollama_cloud` array with the full list from the reference gateway's `ollama-cloud` provider entry:
 
 ```rust
 let ollama_cloud = [
@@ -63,7 +63,7 @@ let ollama_cloud = [
 ];
 ```
 
-Model ID is prefixed with `ollamacloud/` to match OmniRoute's convention and distinguish from local Ollama models in API key restriction UI.
+Model ID is prefixed with `ollamacloud/` to match the reference gateway's convention and distinguish from local Ollama models in API key restriction UI.
 
 ## Interfaces / Contracts
 
@@ -93,7 +93,7 @@ None.
 
 ## Summary
 
-- **Approach**: Replace placeholder `ollama_cloud` array with full OmniRoute model list
+- **Approach**: Replace placeholder `ollama_cloud` array with full reference-gateway model list
 - **Key Decisions**: Prefix all model IDs with `ollamacloud/` for disambiguation
 - **Files Affected**: 1 file modified
 - **Testing**: Unit test + integration via Playwright

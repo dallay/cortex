@@ -52,4 +52,4 @@ crates/infrastructure/providers-openai/src/provider.rs:151-161, where the
 streaming path returns the `content` delta only and drops `tool_calls`. It is
 current-state evidence, not an assertion that future Rook versions cannot
 support the integration. The full inspection and its consequences for the agent
-are recorded in `docs/agent/validation.md` § Rook compatibility result.
+are recorded in the delivery documents.

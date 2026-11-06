@@ -159,9 +159,9 @@
 | No spec covers 429-from-upstream semantics in the test-connection path.                                        | The proposal should add a new requirement capturing "429 during a credential probe is a valid signal with a warning, not a failure." |
 | `provider-connections-transport/spec.md:240-265` documents 4 response shapes; missing is the warning shape.    | The wire-spec delta needs to add 2-3 new response examples (warning, method-tagged, no-token).                                       |
 
-## 5. Reference: OmniRoute pattern (already adopted in the orchestrator's brief)
+## 5. Reference: external gateway pattern (already adopted in the orchestrator's brief)
 
-> From `tmp/OmniRoute/src/lib/providers/validation.ts` — 3-layer probe
+> From `tmp/reference-gateway/src/lib/providers/validation.ts` — 3-layer probe
 > (auth introspection, lightweight read, mini chat fallback) with 429 treated
 > as `valid: true` + `warning: "Rate limited, but credentials are valid"`.
 > **This is the design pattern the user already agreed to.**
