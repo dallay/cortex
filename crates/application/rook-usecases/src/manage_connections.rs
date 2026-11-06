@@ -792,6 +792,12 @@ impl ManageConnections {
         let Some(client) = self.oauth_http_client.as_ref() else {
             return Ok(String::new());
         };
+        let Ok(endpoint) = reqwest::Url::parse(endpoint) else {
+            return Ok(String::new());
+        };
+        if endpoint.scheme() != "https" {
+            return Ok(String::new());
+        }
         // The userinfo endpoint is a compile-time constant in the descriptor table,
         // never derived from user input. The rook-core descriptor_table test
         // `every_oauth_endpoint_uses_https` enforces HTTPS for every OAuth endpoint.

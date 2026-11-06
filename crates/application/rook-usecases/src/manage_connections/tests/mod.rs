@@ -1688,6 +1688,48 @@ async fn concurrent_refreshes_publish_matching_snapshots_and_admission_limits() 
     drop(second_stream);
 }
 
+#[tokio::test]
+async fn fetch_oauth_email_does_not_send_bearer_token_to_http_endpoint() {
+    use wiremock::{matchers::any, Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "email": "oauth-user@example.com"
+        })))
+        .mount(&server)
+        .await;
+
+    let mut provider = *rook_core::descriptor_by_id("gemini").expect("Gemini descriptor");
+    let mut oauth = provider.oauth.expect("Gemini OAuth configuration");
+    oauth.userinfo_endpoint = Box::leak(server.uri().into_boxed_str());
+    provider.oauth = Some(oauth);
+    let provider = Box::leak(Box::new(provider));
+    let connection = PendingOAuthConnection {
+        provider,
+        provider_runtime_id: ProviderId::new("gemini-test"),
+        name: "Gemini test".into(),
+        priority: 0,
+        is_active: true,
+        config: config(),
+        client_id: "client-id".into(),
+        client_secret: None,
+        tenant_id: None,
+        redirect_uri: "http://localhost/callback".into(),
+        project_id: String::new(),
+        scopes: String::new(),
+        existing_connection_id: None,
+    };
+
+    let email = usecase()
+        .fetch_oauth_email(&connection, "sensitive-access-token")
+        .await
+        .expect("userinfo lookup should fail closed");
+
+    assert_eq!(server.received_requests().await.unwrap().len(), 0);
+    assert!(email.is_empty());
+}
+
 // 5.6 - refresh_registry skips inactive connections
 #[test]
 fn refresh_registry_skips_inactive_connections() {
