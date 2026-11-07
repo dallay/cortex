@@ -58,8 +58,20 @@ fn nan_is_declared_with_its_catalogued_models() {
     assert_eq!(nan.protocol, Protocol::OpenAiChat);
     match nan.models {
         ModelSource::Static(models) => {
-            assert!(models.contains(&"deepseek-v4-flash"));
-            assert!(models.contains(&"glm5.3-flash"));
+            for expected in [
+                "deepseek-v4-flash",
+                "glm5.3",
+                "glm5.3-flash",
+                "qwen3.8-flash",
+                "qwen3.6",
+                "mimo-v2.6-flash",
+                "gemma4",
+            ] {
+                assert!(
+                    models.contains(&expected),
+                    "nan model list must contain {expected}"
+                );
+            }
         }
         other => panic!("nan must declare static models, got {other:?}"),
     }
