@@ -35,7 +35,7 @@
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.6.4",
+		"@biomejs/biome": "2.6.5",
 		"@codecov/vite-plugin": "2.0.1",
 		"@playwright/test": "1.64.1",
 		"@tailwindcss/vite": "4.3.4",
