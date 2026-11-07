@@ -4,6 +4,22 @@
 
 import type { ProviderKind } from "@/config/providerCatalog";
 
+export interface ProviderDescriptorResponse {
+	id: ProviderKind;
+	label: string;
+	protocol: string;
+	authKinds: string[];
+	capabilityCeiling: {
+		tools: string;
+		vision: string;
+		reasoning: string;
+		streaming: string;
+		contextTokens: number | null;
+	};
+	supportsOAuth: boolean;
+	iconKey: string;
+}
+
 /**
  * Wire format for `authType` in API requests/responses.
  *
@@ -921,6 +937,10 @@ function createApiClient() {
 		// Provider management (requires session auth)
 		async getProviders(): Promise<ProviderConnectionResponse[]> {
 			return request<ProviderConnectionResponse[]>("/api/providers");
+		},
+
+		async getProviderDescriptors(): Promise<ProviderDescriptorResponse[]> {
+			return request<ProviderDescriptorResponse[]>("/api/provider-descriptors");
 		},
 
 		async getProvider(id: string): Promise<ProviderConnectionResponse> {

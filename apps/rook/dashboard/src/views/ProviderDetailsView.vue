@@ -1,4 +1,4 @@
-<script lang="ts" setup>
+<script setup lang="ts">
 /**
  * ProviderDetailsView — per-kind connection management screen.
  *
@@ -26,27 +26,30 @@ import LoadingState from "@/components/LoadingState.vue";
 import ProviderIcon from "@/components/ProviderIcon.vue";
 import {Button} from "@/components/ui/button";
 import {useAvailableModels} from "@/composables/useAvailableModels";
+import {useProviderDescriptors} from "@/composables/useProviderDescriptors";
 import {useProviders} from "@/composables/useProviders";
-import {findCatalogEntry, PROVIDER_KINDS, type ProviderKind,} from "@/config/providerCatalog";
+import type {
+  ProviderKind,
+} from "@/config/providerCatalog";
 
 const route = useRoute();
 const router = useRouter();
 const {t} = useI18n();
 
-const validKinds = new Set<string>(PROVIDER_KINDS.map((p) => p.kind));
+const { catalog, fetch: fetchDescriptors, loading: descriptorsLoading, error: descriptorsError } = useProviderDescriptors();
 
 const providerKindParam = computed<ProviderKind | null>(() => {
   const param = route.params.providerKind;
-  if (typeof param === "string" && validKinds.has(param)) {
+  if (typeof param === "string" && catalog.value.some((entry) => entry.kind === param)) {
     return param as ProviderKind;
   }
   return null;
 });
 
 watch(
-  providerKindParam,
-  (value) => {
-    if (value === null) {
+  [providerKindParam, descriptorsLoading, descriptorsError],
+  ([value]) => {
+    if (value === null && catalog.value.length && !descriptorsLoading.value && !descriptorsError.value) {
       router.replace("/providers");
     }
   },
@@ -55,11 +58,13 @@ watch(
 
 const entry = computed(() => {
   const kind = providerKindParam.value;
-  return kind ? findCatalogEntry(kind) : null;
+  return kind ? catalog.value.find((entry) => entry.kind === kind) ?? null : null;
 });
 
 const providerName = computed(() =>
-  entry.value ? t(entry.value.displayNameKey) : "",
+  entry.value?.displayNameKey
+    ? t(entry.value.displayNameKey)
+    : (entry.value?.label ?? ""),
 );
 
 const {providers, loading, error, fetch, test, update, remove, refreshOAuth} =
@@ -67,6 +72,7 @@ const {providers, loading, error, fetch, test, update, remove, refreshOAuth} =
 const {modelsByProvider, fetch: fetchModels} = useAvailableModels();
 
 onMounted(() => {
+  fetchDescriptors();
   fetch();
   fetchModels();
 });
@@ -140,7 +146,7 @@ async function handleOAuthRefresh(id: string) {
   }
 }
 
-async function handleToggle({id, enabled}: { id: string; enabled: boolean }) {
+async function handleToggle({ id, enabled }: { id: string; enabled: boolean }) {
   const conn = providers.value.find((p) => p.id === id);
   if (!conn) return;
   busyIds.value = new Set([...busyIds.value, id]);
@@ -193,12 +199,12 @@ function closeProviderDialog() {
   <div v-if="entry" class="space-y-6">
     <div class="flex items-center gap-2">
       <Button
-        :data-testid="'back-to-catalog'"
-        size="sm"
         variant="ghost"
+        size="sm"
+        :data-testid="'back-to-catalog'"
         @click="router.push('/providers')"
       >
-        <ArrowLeft class="h-4 w-4 mr-1"/>
+        <ArrowLeft class="h-4 w-4 mr-1" />
         {{ t('providers.details.backToCatalog') }}
       </Button>
     </div>
@@ -208,73 +214,73 @@ function closeProviderDialog() {
         <!-- Title: link to the provider's official site when brandUrl is set -->
         <a
           v-if="entry.brandUrl"
-          :aria-label="$t('providers.details.opensInNewTab', { providerName })"
           :href="entry.brandUrl"
-          class="inline-flex items-center gap-1.5 text-2xl font-semibold tracking-tight hover:underline focus-visible:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary rounded-sm"
-          rel="noopener noreferrer"
           target="_blank"
+          rel="noopener noreferrer"
+          :aria-label="$t('providers.details.opensInNewTab', { providerName })"
+          class="inline-flex items-center gap-1.5 text-2xl font-semibold tracking-tight hover:underline focus-visible:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary rounded-sm"
         >
           <ProviderIcon
-            :decorative="false"
-            :height="28"
             :kind="entry.kind"
-            :width="28"
             loading="eager"
+            :width="28"
+            :height="28"
+            :decorative="false"
           />
           <span>{{ providerName }}</span>
-          <ExternalLink :size="16" aria-hidden="true" class="opacity-60 shrink-0"/>
+          <ExternalLink :size="16" class="opacity-60 shrink-0" aria-hidden="true"/>
         </a>
         <h1
           v-else
           class="text-2xl font-semibold tracking-tight inline-flex items-center gap-1.5"
         >
           <ProviderIcon
-            :decorative="false"
-            :height="28"
             :kind="entry.kind"
-            :width="28"
             loading="eager"
+            :width="28"
+            :height="28"
+            :decorative="false"
           />
           <span>{{ providerName }}</span>
         </h1>
         <p class="text-muted-foreground mt-1">
-          {{ t('providers.details.subtitle', {providerName}) }}
+          {{ t('providers.details.subtitle', { providerName }) }}
         </p>
       </div>
       <Button :data-testid="'add-connection'" @click="openAddDialog">
-        <Plus class="h-4 w-4 mr-1"/>
+        <Plus class="h-4 w-4 mr-1" />
         {{ t('providers.details.addConnection') }}
       </Button>
     </div>
 
-    <ErrorBanner v-if="error" :message="error" @retry="fetch"/>
+    <ErrorBanner v-if="error" :message="error" @retry="fetch" />
 
-    <LoadingState v-if="loading && connections.length === 0"/>
+    <LoadingState v-if="loading && connections.length === 0" />
 
     <div v-else-if="connections.length > 0" class="space-y-3">
       <ConnectionListItem
         v-for="conn in connections"
         :key="conn.id"
-        :busy="isBusy(conn.id)"
         :connection="conn"
         :models="modelsByConnection.get(conn.id)"
         :testing="isTesting(conn.id)"
-        @delete="handleDelete"
-        @edit="openEditDialog"
-        @refresh="handleOAuthRefresh"
+        :busy="isBusy(conn.id)"
         @test="handleTest"
+        @refresh="handleOAuthRefresh"
+        @edit="openEditDialog"
+        @delete="handleDelete"
         @toggle="handleToggle"
       />
     </div>
 
     <EmptyState
       v-else
-      :data-testid="'provider-empty-state'"
       :title="t('providers.details.noConnections', { providerName })"
+      :data-testid="'provider-empty-state'"
     >
       <template #actions>
         <Button @click="openAddDialog">
-          <Plus class="h-4 w-4 mr-1"/>
+          <Plus class="h-4 w-4 mr-1" />
           {{ t('providers.details.addConnection') }}
         </Button>
       </template>
@@ -284,18 +290,24 @@ function closeProviderDialog() {
       v-model:open="addDialogOpen"
       :provider-kind="providerKindParam ?? undefined"
       mode="create"
-      @deleted="closeProviderDialog"
       @saved="closeProviderDialog"
+      @deleted="closeProviderDialog"
     />
 
     <AddProviderDialog
-      :connection-id="editingId ?? undefined"
       :open="editDialogOpen"
+      :connection-id="editingId ?? undefined"
       :provider-kind="providerKindParam ?? undefined"
       mode="edit"
-      @deleted="closeProviderDialog"
-      @saved="closeProviderDialog"
       @update:open="editDialogOpen = $event"
+      @saved="closeProviderDialog"
+      @deleted="closeProviderDialog"
     />
   </div>
+  <LoadingState v-else-if="descriptorsLoading" />
+  <ErrorBanner
+    v-else-if="descriptorsError"
+    :message="descriptorsError"
+    @retry="fetchDescriptors"
+  />
 </template>

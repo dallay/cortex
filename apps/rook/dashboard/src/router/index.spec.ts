@@ -2,6 +2,25 @@ import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 
+const mockDescriptorState = vi.hoisted(() => ({
+	catalog: {
+		value: [
+			{
+				kind: "openai",
+				label: "OpenAI",
+				displayNameKey: "providers.kinds.openai",
+			},
+		],
+	},
+	fetch: vi.fn().mockResolvedValue(undefined),
+	loading: { value: false },
+	error: { value: null as string | null },
+}));
+
+vi.mock("@/composables/useProviderDescriptors", () => ({
+	useProviderDescriptors: () => mockDescriptorState,
+}));
+
 type GuardResult = boolean | string | { name: string };
 
 describe("auth router guard", () => {
@@ -119,22 +138,22 @@ describe("auth router guard", () => {
 
 		const beforeEnter = providerDetailsRoute?.beforeEnter as (
 			to: Partial<RouteLocationNormalizedLoaded>,
-		) => unknown;
+		) => Promise<unknown>;
 
 		// Valid provider kind
-		const validResult = beforeEnter({
+		const validResult = await beforeEnter({
 			params: { providerKind: "openai" },
 		});
 		expect(validResult).toBeUndefined();
 
 		// Invalid provider kind
-		const invalidResult = beforeEnter({
+		const invalidResult = await beforeEnter({
 			params: { providerKind: "invalid-provider-kind" },
 		});
 		expect(invalidResult).toEqual({ name: "Providers" });
 
 		// Non-string or missing provider kind
-		const missingResult = beforeEnter({
+		const missingResult = await beforeEnter({
 			params: {},
 		});
 		expect(missingResult).toEqual({ name: "Providers" });
@@ -254,12 +273,36 @@ describe("router route definitions", () => {
 		expect(providerDetails?.beforeEnter).toBeDefined();
 		const beforeEnter = providerDetails?.beforeEnter as (to: {
 			params: Record<string, unknown>;
-		}) => unknown;
+		}) => Promise<unknown>;
 
-		expect(beforeEnter({ params: { providerKind: "openai" } })).toBeUndefined();
-		expect(beforeEnter({ params: { providerKind: "invalid-kind" } })).toEqual({
+		expect(
+			await beforeEnter({ params: { providerKind: "openai" } }),
+		).toBeUndefined();
+		expect(
+			await beforeEnter({ params: { providerKind: "invalid-kind" } }),
+		).toEqual({
 			name: "Providers",
 		});
-		expect(beforeEnter({ params: {} })).toEqual({ name: "Providers" });
+		expect(await beforeEnter({ params: {} })).toEqual({ name: "Providers" });
+
+		// When catalog is empty and fetch fails with an error, it allows navigation without redirecting
+		mockDescriptorState.catalog.value = [];
+		mockDescriptorState.error.value = "Fetch failed";
+		expect(
+			await beforeEnter({ params: { providerKind: "unknown-on-error" } }),
+		).toBeUndefined();
+		mockDescriptorState.error.value = null;
+
+		// When catalog is already populated, it reuses it without calling fetch
+		mockDescriptorState.catalog.value = [
+			{
+				kind: "openai",
+				label: "OpenAI",
+				displayNameKey: "providers.kinds.openai",
+			},
+		];
+		mockDescriptorState.fetch.mockClear();
+		await beforeEnter({ params: { providerKind: "openai" } });
+		expect(mockDescriptorState.fetch).not.toHaveBeenCalled();
 	});
 });

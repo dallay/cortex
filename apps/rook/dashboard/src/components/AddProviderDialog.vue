@@ -1,5 +1,11 @@
-<script lang="ts" setup>
-import {AlertCircle, AlertTriangle, CheckCircle2, Loader2, Trash2,} from "@lucide/vue";
+<script setup lang="ts">
+import {
+  AlertCircle,
+  AlertTriangle,
+  CheckCircle2,
+  Loader2,
+  Trash2,
+} from "@lucide/vue";
 import {computed, onUnmounted, ref, watch} from "vue";
 import {useI18n} from "vue-i18n";
 import PasswordInput from "@/components/PasswordInput.vue";
@@ -27,6 +33,7 @@ import {Label} from "@/components/ui/label";
 import {NativeSelect, NativeSelectOption} from "@/components/ui/native-select";
 import {Switch} from "@/components/ui/switch";
 import {ToggleGroup, ToggleGroupItem} from "@/components/ui/toggle-group";
+import {useProviderDescriptors} from "@/composables/useProviderDescriptors";
 import {useProviders} from "@/composables/useProviders";
 import {
   type AuthType,
@@ -67,17 +74,9 @@ const emit = defineEmits<{
 }>();
 
 const {t} = useI18n();
-const {
-  create,
-  update,
-  remove,
-  testCredentials,
-  fetch,
-  providerById,
-  startOAuthFlow,
-  getOAuthStatus
-} =
+const {create, update, remove, testCredentials, fetch, providerById, startOAuthFlow, getOAuthStatus} =
   useProviders();
+const {catalog: descriptorCatalog, fetch: fetchDescriptors} = useProviderDescriptors();
 
 // ---------------------------------------------------------------------------
 // Form state
@@ -139,9 +138,22 @@ let oauthPollTimer: number | undefined;
 const isEditMode = computed(() => props.mode === "edit");
 const showKindSelector = computed(() => props.providerKind === undefined);
 const catalogEntry = computed(() => findCatalogEntry(kind.value));
+const authTypes = computed(() => descriptorCatalog.value.find((entry) => entry.kind === kind.value)?.authTypes ?? catalogEntry.value.authTypes);
+function getProviderLabel(entry: (typeof descriptorCatalog.value)[number]) {
+  return entry.displayNameKey ? t(entry.displayNameKey) : entry.label;
+}
+
+const providerLabel = computed(() => {
+  const entry = descriptorCatalog.value.find((item) => item.kind === kind.value);
+  return entry
+    ? getProviderLabel(entry)
+    : catalogEntry.value.displayNameKey
+      ? t(catalogEntry.value.displayNameKey)
+      : kind.value;
+});
 const isApikey = computed(() => authType.value === "apikey");
 const supportsOAuth = computed(() =>
-  catalogEntry.value.authTypes.includes("oauth"),
+  authTypes.value.includes("oauth"),
 );
 const isOAuth = computed(() => authType.value === "oauth");
 const canStartOAuth = computed(
@@ -301,9 +313,9 @@ function resetForm() {
   oauthMessage.value = null;
   oauthBusy.value = false;
   kind.value = props.providerKind ?? PROVIDER_KINDS[0].kind;
-  authType.value = findCatalogEntry(kind.value).authTypes.includes("apikey")
+  authType.value = authTypes.value.includes("apikey")
     ? "apikey"
-    : "oauth";
+    : (authTypes.value[0] ?? "oauth");
   form.value = blankForm();
   testResult.value = null;
   showDeleteConfirm.value = false;
@@ -311,25 +323,33 @@ function resetForm() {
 
 watch(
   () => props.open,
-  async (isOpen) => {
+  async (isOpen, _previous, onCleanup) => {
+    let active = true;
+    onCleanup(() => { active = false; });
     if (!isOpen) {
       resetForm();
       return;
+    }
+    await fetchDescriptors();
+    if (!active || !props.open) return;
+    if (!props.providerKind && descriptorCatalog.value.length && !descriptorCatalog.value.some((item) => item.kind === kind.value)) {
+      kind.value = descriptorCatalog.value[0].kind;
     }
     if (isEditMode.value && props.connectionId) {
       // Use cache if we already have the connection, otherwise fetch the list.
       let conn = providerById.value.get(props.connectionId);
       if (!conn) {
         await fetch();
+        if (!active || !props.open) return;
         conn = providerById.value.get(props.connectionId);
       }
       if (conn) loadFromConnection(conn);
     } else {
       // Create mode — seed from current kind.
       if (props.providerKind) kind.value = props.providerKind;
-      authType.value = findCatalogEntry(kind.value).authTypes.includes("apikey")
+      authType.value = authTypes.value.includes("apikey")
         ? "apikey"
-        : "oauth";
+        : (authTypes.value[0] ?? "oauth");
       form.value = blankForm();
       testResult.value = null;
     }
@@ -342,8 +362,10 @@ watch(
 watch(kind, (newKind) => {
   if (!isEditMode.value) {
     form.value.baseUrl = findCatalogEntry(newKind).defaultBaseUrl;
-    if (!findCatalogEntry(newKind).authTypes.includes(authType.value)) {
-      authType.value = findCatalogEntry(newKind).authTypes[0] ?? "oauth";
+    if (!authTypes.value.includes(authType.value)) {
+      authType.value = authTypes.value.includes("apikey")
+        ? "apikey"
+        : (authTypes.value[0] ?? "oauth");
     }
   }
 });
@@ -546,11 +568,11 @@ onUnmounted(stopOAuthPolling);
           {{
             isEditMode
               ? t('providers.form.editTitle', {
-                providerName: t(catalogEntry.displayNameKey),
-              })
+                  providerName: providerLabel || t(catalogEntry.displayNameKey),
+                })
               : t('providers.form.createTitle', {
-                providerName: t(catalogEntry.displayNameKey),
-              })
+                  providerName: providerLabel || t(catalogEntry.displayNameKey),
+                })
           }}
         </DialogTitle>
         <DialogDescription>
@@ -567,15 +589,15 @@ onUnmounted(stopOAuthPolling);
           <NativeSelect
             id="kind"
             v-model="kind"
-            :aria-label="t('providers.form.selectProvider')"
             data-testid="kind-select-trigger"
+            :aria-label="t('providers.form.selectProvider')"
           >
             <NativeSelectOption
-              v-for="entry in PROVIDER_KINDS"
+              v-for="entry in descriptorCatalog"
               :key="entry.kind"
               :value="entry.kind"
             >
-              {{ t(entry.displayNameKey) }}
+              {{ getProviderLabel(entry) }}
             </NativeSelectOption>
           </NativeSelect>
         </div>
@@ -587,23 +609,24 @@ onUnmounted(stopOAuthPolling);
           </span>
           <ToggleGroup
             v-model="authType"
+            type="single"
             aria-labelledby="provider-auth-type-label"
             class="justify-start"
             data-testid="auth-type-toggle"
-            type="single"
           >
             <ToggleGroupItem
+              value="apikey"
+              :disabled="!authTypes.includes('apikey')"
               :aria-label="t('providers.form.authTypeApikey')"
               data-testid="auth-type-apikey"
-              value="apikey"
             >
               {{ t('providers.form.authTypeApikey') }}
             </ToggleGroupItem>
             <ToggleGroupItem
+              value="oauth"
               :aria-label="t('providers.form.authTypeOauth')"
               :disabled="!supportsOAuth"
               data-testid="auth-type-oauth"
-              value="oauth"
             >
               {{ t('providers.form.authTypeOauth') }}
             </ToggleGroupItem>
@@ -623,12 +646,12 @@ onUnmounted(stopOAuthPolling);
           <Input
             id="displayName"
             v-model="form.displayName"
-            :disabled="saving"
             :placeholder="
               t('providers.form.displayNamePlaceholder', {
-                providerName: t(catalogEntry.displayNameKey),
+                providerName: providerLabel || t(catalogEntry.displayNameKey),
               })
             "
+            :disabled="saving"
             data-testid="input-displayName"
           />
         </div>
@@ -639,8 +662,8 @@ onUnmounted(stopOAuthPolling);
           <PasswordInput
             id="apiKey"
             v-model="form.apiKey"
-            :disabled="saving"
             :placeholder="t('providers.form.apiKeyPlaceholder')"
+            :disabled="saving"
           />
         </div>
 
@@ -650,11 +673,11 @@ onUnmounted(stopOAuthPolling);
             <Input
               id="oauthClientId"
               v-model="form.oauthClientId"
-              :disabled="oauthBusy"
-              autocapitalize="off"
               autocomplete="off"
-              data-testid="oauth-client-id"
+              autocapitalize="off"
               spellcheck="false"
+              :disabled="oauthBusy"
+              data-testid="oauth-client-id"
             />
           </div>
           <div class="space-y-2">
@@ -671,11 +694,11 @@ onUnmounted(stopOAuthPolling);
             <Input
               id="oauthTenantId"
               v-model="form.oauthTenantId"
-              :disabled="oauthBusy"
-              autocapitalize="off"
               autocomplete="off"
-              data-testid="oauth-tenant-id"
+              autocapitalize="off"
               spellcheck="false"
+              :disabled="oauthBusy"
+              data-testid="oauth-tenant-id"
             />
             <Label for="oauthFlowType">
               {{ t('providers.oauth.flowType') }}
@@ -683,8 +706,8 @@ onUnmounted(stopOAuthPolling);
             <NativeSelect
               id="oauthFlowType"
               v-model="form.oauthFlowType"
-              :aria-label="t('providers.oauth.flowType')"
               :disabled="oauthBusy"
+              :aria-label="t('providers.oauth.flowType')"
             >
               <NativeSelectOption :value="OAUTH_FLOW_TYPES.AUTHORIZATION_CODE">
                 {{ t('providers.oauth.authorizationCode') }}
@@ -699,15 +722,15 @@ onUnmounted(stopOAuthPolling);
             <Input
               id="oauthProjectId"
               v-model="form.oauthProjectId"
-              :disabled="oauthBusy"
-              autocapitalize="off"
               autocomplete="off"
-              data-testid="oauth-project-id"
-              required
+              autocapitalize="off"
               spellcheck="false"
+              :disabled="oauthBusy"
+              required
+              data-testid="oauth-project-id"
             />
           </div>
-          <output v-if="oauthMessage" aria-live="polite" class="space-y-2">
+          <output v-if="oauthMessage" class="space-y-2" aria-live="polite">
             <p class="text-sm">{{ oauthMessage }}</p>
             <p v-if="oauthUserCode" class="font-mono text-lg font-semibold">
               {{ oauthUserCode }}
@@ -715,18 +738,18 @@ onUnmounted(stopOAuthPolling);
             <a
               v-if="oauthVerificationUri"
               :href="oauthVerificationUri"
-              class="text-sm underline underline-offset-4"
-              rel="noopener noreferrer"
               target="_blank"
+              rel="noopener noreferrer"
+              class="text-sm underline underline-offset-4"
             >
               {{ t('providers.oauth.openVerificationPage') }}
             </a>
             <a
               v-if="oauthAuthorizationUrl && !oauthUserCode"
               :href="oauthAuthorizationUrl"
-              class="text-sm underline underline-offset-4"
-              rel="noopener noreferrer"
               target="_blank"
+              rel="noopener noreferrer"
+              class="text-sm underline underline-offset-4"
             >
               {{ t('providers.oauth.openAuthorizationPage') }}
             </a>
@@ -754,11 +777,11 @@ onUnmounted(stopOAuthPolling);
           <Input
             id="priority"
             v-model.number="form.priority"
+            type="number"
+            min="0"
+            max="100"
             :disabled="saving"
             data-testid="input-priority"
-            max="100"
-            min="0"
-            type="number"
           />
           <p class="text-xs text-muted-foreground">
             {{ t('providers.form.priorityHelp') }}
@@ -771,12 +794,12 @@ onUnmounted(stopOAuthPolling);
           <Input
             id="models"
             v-model="form.models"
-            :disabled="saving"
             :placeholder="
               kind === 'azure-openai'
                 ? t('providers.oauth.azureDeploymentPlaceholder')
                 : t('providers.form.modelsPlaceholder')
             "
+            :disabled="saving"
             data-testid="input-models"
           />
           <p class="text-xs text-muted-foreground">
@@ -827,6 +850,7 @@ onUnmounted(stopOAuthPolling);
           />
           <div class="flex-1">
             <p
+              class="text-sm font-medium"
               :class="
                 testResult.status === 'ok'
                   ? 'text-green-600'
@@ -836,7 +860,6 @@ onUnmounted(stopOAuthPolling);
                       ? 'text-muted-foreground'
                       : 'text-destructive'
               "
-              class="text-sm font-medium"
               data-testid="test-result-status"
             >
               {{
@@ -860,12 +883,12 @@ onUnmounted(stopOAuthPolling);
         <div class="flex gap-2">
           <Button
             v-if="!isOAuth"
+            variant="outline"
             :disabled="!canTest"
             data-testid="test-button"
-            variant="outline"
             @click="handleTest"
           >
-            <Loader2 v-if="testing" class="h-4 w-4 mr-2 animate-spin"/>
+            <Loader2 v-if="testing" class="h-4 w-4 mr-2 animate-spin" />
             {{
               testing
                 ? t('providers.form.testing')
@@ -878,7 +901,7 @@ onUnmounted(stopOAuthPolling);
             data-testid="save-button"
             @click="handleSave"
           >
-            <Loader2 v-if="saving" class="h-4 w-4 mr-2 animate-spin"/>
+            <Loader2 v-if="saving" class="h-4 w-4 mr-2 animate-spin" />
             {{ t('providers.form.save') }}
           </Button>
           <Button
@@ -887,18 +910,18 @@ onUnmounted(stopOAuthPolling);
             data-testid="oauth-connect-button"
             @click="handleOAuthConnect"
           >
-            <Loader2 v-if="oauthBusy" class="h-4 w-4 mr-2 animate-spin"/>
+            <Loader2 v-if="oauthBusy" class="h-4 w-4 mr-2 animate-spin" />
             {{ oauthBusy ? t('providers.oauth.waiting') : t('providers.oauth.connect') }}
           </Button>
         </div>
         <Button
           v-if="isEditMode"
+          variant="destructive"
           class="sm:ml-auto"
           data-testid="delete-button"
-          variant="destructive"
           @click="showDeleteConfirm = true"
         >
-          <Trash2 class="h-4 w-4 mr-2"/>
+          <Trash2 class="h-4 w-4 mr-2" />
           {{ t('providers.form.delete') }}
         </Button>
       </DialogFooter>
@@ -912,7 +935,7 @@ onUnmounted(stopOAuthPolling);
             {{ t('providers.details.deleteConfirm') }}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            {{ form.displayName || t(catalogEntry.displayNameKey) }}
+          {{ form.displayName || providerLabel || t(catalogEntry.displayNameKey) }}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -923,7 +946,7 @@ onUnmounted(stopOAuthPolling);
             data-testid="delete-confirm-button"
             @click="handleDelete"
           >
-            <Loader2 v-if="deleting" class="h-4 w-4 mr-2 animate-spin"/>
+            <Loader2 v-if="deleting" class="h-4 w-4 mr-2 animate-spin" />
             {{ t('providers.form.delete') }}
           </AlertDialogAction>
         </AlertDialogFooter>

@@ -1,16 +1,7 @@
 import type { RouteLocationNormalized, RouteRecordRaw } from "vue-router";
 import { createRouter, createWebHistory } from "vue-router";
-import { PROVIDER_KINDS } from "@/config/providerCatalog";
+import { useProviderDescriptors } from "@/composables/useProviderDescriptors";
 import { useAuthStore } from "@/stores/auth";
-
-/**
- * Valid provider kinds — derived from the catalog so this list and
- * `providerCatalog.ts` can never drift apart. Adding a new kind to
- * the catalog automatically makes its route valid here.
- */
-const VALID_PROVIDER_KINDS = new Set<string>(
-	PROVIDER_KINDS.map((provider) => provider.kind),
-);
 
 const routes: RouteRecordRaw[] = [
 	{
@@ -67,9 +58,15 @@ const routes: RouteRecordRaw[] = [
 							// resolves the last crumb from the `providerKind` param.
 							breadcrumb: true,
 						},
-						beforeEnter: (to) => {
+						beforeEnter: async (to) => {
+							const { catalog, fetch, error } = useProviderDescriptors();
+							if (catalog.value.length === 0) await fetch();
+							if (error.value) return;
 							const kind = to.params.providerKind;
-							if (typeof kind !== "string" || !VALID_PROVIDER_KINDS.has(kind)) {
+							if (
+								typeof kind !== "string" ||
+								!catalog.value.some((entry) => entry.kind === kind)
+							) {
 								// Invalid kind — bounce back to the catalog so the user
 								// sees a real page rather than a flash of an empty view.
 								return { name: "Providers" };
