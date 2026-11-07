@@ -467,9 +467,11 @@ fn skills_templates_denial_and_cancellation_release_the_tui_and_resume_cleanly()
     pty.wait_for("action denied");
     // The denied modal is gone, so the next wait cannot match its stale text.
     pty.wait_until_screen_not_contains("›Reject");
-    // Ctrl+C cancels the turn while the shell approval is pending. The preview
-    // carries the command, which identifies this request unambiguously.
+    // Ctrl+C cancels the turn while the shell approval is pending. The modal
+    // starts collapsed, so expand it before waiting for the command preview.
     pty.send("\x1b[200~huginn-mock: load_skill shellout\x1b[201~\r");
+    pty.wait_for("›Reject");
+    pty.send("\x06");
     pty.wait_for("touch pwned-shell");
     pty.wait_for("›Reject");
     pty.send("\x03");
