@@ -1097,6 +1097,67 @@ async fn stream_returns_error_for_malformed_upstream_json_event() {
 }
 
 #[tokio::test]
+async fn stream_reports_invalid_complete_event_before_a_later_finish_event() {
+    let results = stream_results_from_body(
+        concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"before\"},\"finish_reason\":null}]}\n\n",
+            "data: {not-json}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        )
+        .to_string(),
+    )
+    .await;
+
+    let error_index = results.iter().position(Result::is_err);
+    assert!(
+        error_index.is_some(),
+        "invalid complete SSE event must emit an error"
+    );
+}
+
+#[tokio::test]
+async fn unknown_provider_id_uses_openai_chat_and_models_paths() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "model":"gpt-4", "choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],
+                "usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
+            })),
+        )
+        .mount(&server)
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/models"))
+        .respond_with(wiremock::ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("unknown-provider"),
+        provider_id: "custom-openai-id",
+        api_key: "key".into(),
+        base_url: server.uri(),
+        models: vec![],
+        timeout_secs: 10,
+    })
+    .unwrap();
+    provider.complete(&stream_request()).await.unwrap();
+    assert!(matches!(
+        provider.health_check().await,
+        HealthStatus::Healthy { .. }
+    ));
+    let requests = server.received_requests().await.unwrap();
+    assert!(requests
+        .iter()
+        .any(|request| request.method == "POST" && request.url.path() == "/chat/completions"));
+    assert!(requests
+        .iter()
+        .any(|request| request.method == "GET" && request.url.path() == "/models"));
+}
+
+#[tokio::test]
 async fn stream_returns_error_when_tool_arguments_are_incomplete_at_finish() {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("POST"))

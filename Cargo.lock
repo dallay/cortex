@@ -3768,28 +3768,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "providers-groq"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "async-stream",
- "async-trait",
- "chrono",
- "futures",
- "providers-core",
- "reqwest",
- "rook-core",
- "serde",
- "serde_json",
- "shared-kernel",
- "sse-stream",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "wiremock",
-]
-
-[[package]]
 name = "providers-ollama"
 version = "0.0.1"
 dependencies = [
@@ -4338,7 +4316,6 @@ dependencies = [
  "provider-sqlite",
  "providers-anthropic",
  "providers-gemini",
- "providers-groq",
  "providers-ollama",
  "providers-openai",
  "rand 0.10.3",

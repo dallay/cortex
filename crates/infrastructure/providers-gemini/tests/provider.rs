@@ -1,6 +1,7 @@
 use providers_gemini::{GeminiProvider, GeminiProviderConfig};
 use rook_core::{CompletionRequest, FinishReason, HealthStatus, ModelId, ProviderPort, Role};
 use shared_kernel::{ProviderId, RequestId};
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // health_check tests
@@ -36,6 +37,84 @@ async fn health_check_returns_healthy_on_2xx() {
 
     let status = provider.health_check().await;
     assert!(matches!(status, HealthStatus::Healthy { .. }));
+}
+
+#[tokio::test]
+async fn path_builders_accept_shared_arc_and_keep_health_override_independent() {
+    let server = wiremock::MockServer::start().await;
+    for endpoint in ["/v1beta/models", "/custom/health"] {
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path(endpoint))
+            .respond_with(wiremock::ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/custom/generate"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let original = GeminiProvider::new(GeminiProviderConfig {
+        id: ProviderId::new("gemini-paths"),
+        api_key: "key".into(),
+        base_url: Some(server.uri()),
+        models: vec![],
+        timeout_secs: 10,
+    })
+    .unwrap();
+    let configured = Arc::clone(&original)
+        .with_generate_content_path("/custom/generate")
+        .with_health_path("/custom/health");
+    configured
+        .complete(&CompletionRequest {
+            id: RequestId::new(),
+            model: ModelId::new("gemini-2.0-flash"),
+            messages: vec![rook_core::Message {
+                role: Role::User,
+                content: rook_core::MessageContent::Text("hello".into()),
+                tool_calls: vec![],
+            }],
+            stream: false,
+            max_tokens: Some(8),
+            temperature: None,
+            tools: None,
+            tool_choice: None,
+            metadata: rook_core::RequestMetadata {
+                origin: "test".into(),
+                cacheable: false,
+                priority: 0,
+                api_key_id: None,
+                requested_tier: None,
+                combo_id: None,
+            },
+            restrictions: rook_core::ApiKeyRestrictions::default(),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        configured.health_check().await,
+        HealthStatus::Healthy { .. }
+    ));
+    assert!(matches!(
+        original.health_check().await,
+        HealthStatus::Healthy { .. }
+    ));
+    let mut paths: Vec<_> = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .map(|request| request.url.path().to_owned())
+        .collect();
+    paths.sort();
+    assert_eq!(
+        paths,
+        vec!["/custom/generate", "/custom/health", "/v1beta/models"]
+    );
 }
 
 #[tokio::test]

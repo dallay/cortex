@@ -72,58 +72,13 @@ The dashboard covers authentication, health, providers (CRUD, connection test an
 keys, the model catalog, provider quota, combos, combo aliases, model aliases, cache, rate limits,
 usage and costs, telemetry and circuit-breaker resilience.
 
-The full parity contract and the prioritized tasks live in
-[`dashboard-parity.md`](../../../.agents/rpi/plan/tasks/dashboard-parity.md).
-
 ---
 
 ## 🚀 Quick Start
 
-### Prerequisites
-
-| Requirement | Version |
-|-------------|---------|
-| Node.js | 24+ |
-| pnpm | latest |
-| Running Rook backend | port 3773 |
-
-### Setup
-
-```bash
-# Install dependencies (from repo root)
-pnpm install
-
-# Or from this directory
-cd apps/rook/dashboard
-pnpm install
-```
-
-### Development
-
-```bash
-# Option 1: Using just (recommended)
-just run-dashboard
-
-# Option 2: Manual
-cd apps/rook/dashboard
-pnpm dev
-```
-
-Then open [http://localhost:4747/dashboard/](http://localhost:4747/dashboard/)
-
-The dev server automatically proxies:
-- `/api/*` → `http://127.0.0.1:3773`
-- `/health` → `http://127.0.0.1:3773`
-
-### Custom Configuration
-
-```bash
-# Different backend URL
-API_TARGET=http://127.0.0.1:8081 pnpm dev
-
-# Custom base path
-BASE_PATH=/custom-path pnpm dev
-```
+For repository setup, the two-process local workflow, Vite proxy configuration, and manual checks,
+see the [Dashboard Development Guide](../../../docs/development/dashboard.md). The shared
+prerequisites and setup commands are in the [repository Development Guide](../../../docs/development.md).
 
 ---
 
@@ -183,64 +138,16 @@ apps/rook/dashboard/
 
 ## 🧪 Testing
 
-### Unit Tests
-
-```bash
-cd apps/rook/dashboard
-
-# Run all tests
-pnpm exec vitest run
-
-# Watch mode
-pnpm exec vitest
-
-# With coverage
-pnpm exec vitest run --coverage
-```
-
-### Type Checking
-
-```bash
-pnpm typecheck
-```
-
-### Build
-
-```bash
-pnpm build
-```
-
-### End-to-End Tests
-
-E2E tests require Docker and a running Rook backend:
-
-```bash
-# Full E2E suite
-just test-e2e
-
-# Manual run
-just test-e2e-build  # Build Docker image
-just test-e2e        # Run tests
-```
-
-📖 [E2E Testing Guide](../../../dev/README.md#path-2--playwright-e2e-against-docker)
-
-### Quality Gate
-
-```bash
-# Run all checks (CI simulation)
-just ci-local
-```
+The [Dashboard Development Guide](../../../docs/development/dashboard.md) lists the Vitest,
+typecheck, lint, and build commands. Docker-based Playwright setup and manual testing are in the
+[E2E Testing Guide](../../../dev/README.md#path-2--playwright-e2e-against-docker).
 
 ---
 
 ## 🎨 Development
 
-### Type Check
-
-```bash
-pnpm typecheck
-```
+For typecheck, lint, build, and test commands, use the
+[Dashboard Development Guide](../../../docs/development/dashboard.md).
 
 ### Adding a New View
 
@@ -291,16 +198,17 @@ defineProps<Props>()
 
 | Resource | Description |
 |----------|-------------|
-| [Rook Docs](docs/rook/README.md) | Rook proxy documentation |
-| [API Reference](docs/rook/api.md) | Backend API endpoints |
-| [Configuration](docs/rook/configuration.md) | Rook config options |
-| [Dev Guide](dev/README.md) | Local testing with Docker |
+| [Rook Docs](../../../docs/rook/README.md) | Rook proxy documentation |
+| [API Reference](../../../docs/rook/api.md) | Backend API endpoints |
+| [Configuration](../../../docs/rook/configuration.md) | Rook config options |
+| [Dashboard Development Guide](../../../docs/development/dashboard.md) | Local dashboard development and checks |
+| [Docker E2E Guide](../../../dev/README.md) | Docker-based integration testing |
 
 ---
 
 ## 🤝 Contributing
 
-See [Contributing Guide](CONTRIBUTING.md) in the repository root.
+See the [Contributing Guide](../../../CONTRIBUTING.md) in the repository root.
 
 ---
 

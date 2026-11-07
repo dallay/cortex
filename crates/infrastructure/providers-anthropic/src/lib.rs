@@ -382,6 +382,7 @@ pub struct AnthropicProvider {
     config: AnthropicProviderConfig,
     client: Client,
     quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
+    chat_path: String,
 }
 
 /// Map an Anthropic HTTP error response to a typed `CortexError`.
@@ -433,11 +434,26 @@ impl AnthropicProvider {
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
             .redirect(reqwest::redirect::Policy::none())
             .build()?;
+        let chat_path = rook_core::descriptor_by_id(config.provider_id).map_or_else(
+            || "/v1/messages".to_string(),
+            |descriptor| descriptor.paths.chat.to_string(),
+        );
         Ok(Arc::new(Self {
             config,
             client,
             quota_recorder,
+            chat_path,
         }))
+    }
+
+    /// Configure the message endpoint from the provider descriptor.
+    pub fn with_chat_path(self: Arc<Self>, path: &str) -> Arc<Self> {
+        Arc::new(Self {
+            config: self.config.clone(),
+            client: self.client.clone(),
+            quota_recorder: self.quota_recorder.clone(),
+            chat_path: path.to_string(),
+        })
     }
 
     async fn record_quota_headers(&self, headers: &reqwest::header::HeaderMap) {
@@ -556,7 +572,7 @@ impl AnthropicProvider {
         body: &AnthropicStreamRequest,
     ) -> CortexResult<reqwest::Response> {
         self.client
-            .post(format!("{}/v1/messages", self.config.base_url))
+            .post(format!("{}{}", self.config.base_url, self.chat_path))
             .header("x-api-key", &self.config.api_key)
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
@@ -575,10 +591,15 @@ impl AnthropicProvider {
     ) -> Vec<Result<StreamChunk, CortexError>> {
         let events = match sse_buffer.push_with_max_event_bytes(bytes, 2 * 1024 * 1024) {
             Ok(events) => events,
-            Err(_) => {
+            Err(sse_stream::SseBufferError::EventTooLarge { .. }) => {
                 return vec![Err(CortexError::provider(
                     "Anthropic SSE event limit exceeded",
                 ))]
+            }
+            Err(error) => {
+                return vec![Err(CortexError::provider(format!(
+                    "Anthropic SSE event rejected: {error}"
+                )))]
             }
         };
         events
@@ -1020,7 +1041,7 @@ impl ProviderPort for AnthropicProvider {
         let start = std::time::Instant::now();
         let resp = self
             .client
-            .post(format!("{}/v1/messages", self.config.base_url))
+            .post(format!("{}{}", self.config.base_url, self.chat_path))
             .header("x-api-key", &self.config.api_key)
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")

@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use providers_anthropic::{AnthropicProvider, AnthropicProviderConfig};
-use providers_groq::{GroqProvider, GroqProviderConfig};
 use providers_openai::provider::{OpenAIProvider, OpenAIProviderConfig};
 use rook::di::{build_provider_from_connection_with_recorder, is_canonical_base_url};
 use rook_core::{
@@ -173,18 +172,21 @@ async fn anthropic_captures_success_before_body_consumption() {
 async fn groq_captures_success_before_body_consumption() {
     let server = mock_response(200, serde_json::json!({"id":"g","model":"llama","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}})).await;
     let recorder = Arc::new(Recorder::default());
-    let provider = GroqProvider::new_with_quota_recorder(
-        GroqProviderConfig {
+    let descriptor = rook_core::descriptor_by_id("groq").unwrap();
+    let provider = OpenAIProvider::new_with_quota_recorder(
+        OpenAIProviderConfig {
             provider_id: "groq",
             id: ProviderId::new("groq-runtime"),
             api_key: "key".into(),
-            base_url: Some(server.uri()),
+            base_url: server.uri(),
             models: vec![],
             timeout_secs: 10,
         },
         Some(recorder.clone()),
     )
-    .unwrap();
+    .unwrap()
+    .with_chat_path(descriptor.paths.chat)
+    .with_descriptor_policy(descriptor.display_name, descriptor.quota_header_policy);
     assert!(provider.complete(&request()).await.is_ok());
     assert!(*recorder.calls.lock().unwrap() > 0);
     let observations = recorder.observations.lock().unwrap();

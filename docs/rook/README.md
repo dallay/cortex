@@ -44,6 +44,7 @@ rook/
 4. [Dashboard](../../apps/rook/dashboard/README.md) — Visual management interface
 
 ### Development
+- [Local development](../development/rook.md) — Run, smoke-test, and validate the Rook backend
 - [Architecture](architecture.md) — Internal design and layers
 - [Deployment](deployment.md) — Production and containers
 
@@ -68,4 +69,5 @@ The Vue SPA dashboard is embedded in the Rook binary under `/dashboard/` and all
 
 - [Main README](../../README.md) — Cortex project overview
 - [Dashboard docs](../../apps/rook/dashboard/README.md) — Dashboard development
-- [Local development](../development.md) — Setup and testing
+- [Repository-wide development](../development.md) — Shared setup, test selection, and CI
+- [Rook backend development](../development/rook.md) — Local Rook workflow
