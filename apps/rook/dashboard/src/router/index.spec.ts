@@ -2,6 +2,23 @@ import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 
+vi.mock("@/composables/useProviderDescriptors", () => ({
+	useProviderDescriptors: () => ({
+		catalog: {
+			value: [
+				{
+					kind: "openai",
+					label: "OpenAI",
+					displayNameKey: "providers.kinds.openai",
+				},
+			],
+		},
+		fetch: vi.fn().mockResolvedValue(undefined),
+		loading: { value: false },
+		error: { value: null },
+	}),
+}));
+
 type GuardResult = boolean | string | { name: string };
 
 describe("auth router guard", () => {
@@ -119,22 +136,22 @@ describe("auth router guard", () => {
 
 		const beforeEnter = providerDetailsRoute?.beforeEnter as (
 			to: Partial<RouteLocationNormalizedLoaded>,
-		) => unknown;
+		) => Promise<unknown>;
 
 		// Valid provider kind
-		const validResult = beforeEnter({
+		const validResult = await beforeEnter({
 			params: { providerKind: "openai" },
 		});
 		expect(validResult).toBeUndefined();
 
 		// Invalid provider kind
-		const invalidResult = beforeEnter({
+		const invalidResult = await beforeEnter({
 			params: { providerKind: "invalid-provider-kind" },
 		});
 		expect(invalidResult).toEqual({ name: "Providers" });
 
 		// Non-string or missing provider kind
-		const missingResult = beforeEnter({
+		const missingResult = await beforeEnter({
 			params: {},
 		});
 		expect(missingResult).toEqual({ name: "Providers" });
@@ -254,12 +271,16 @@ describe("router route definitions", () => {
 		expect(providerDetails?.beforeEnter).toBeDefined();
 		const beforeEnter = providerDetails?.beforeEnter as (to: {
 			params: Record<string, unknown>;
-		}) => unknown;
+		}) => Promise<unknown>;
 
-		expect(beforeEnter({ params: { providerKind: "openai" } })).toBeUndefined();
-		expect(beforeEnter({ params: { providerKind: "invalid-kind" } })).toEqual({
+		expect(
+			await beforeEnter({ params: { providerKind: "openai" } }),
+		).toBeUndefined();
+		expect(
+			await beforeEnter({ params: { providerKind: "invalid-kind" } }),
+		).toEqual({
 			name: "Providers",
 		});
-		expect(beforeEnter({ params: {} })).toEqual({ name: "Providers" });
+		expect(await beforeEnter({ params: {} })).toEqual({ name: "Providers" });
 	});
 });
