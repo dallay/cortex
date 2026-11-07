@@ -3,6 +3,19 @@ import { describe, expect, it } from "vitest";
 import ProviderIcon from "./ProviderIcon.vue";
 
 describe("ProviderIcon", () => {
+	it("uses the descriptor icon key to select a bundled icon", () => {
+		const wrapper = mount(ProviderIcon, {
+			props: { kind: "future-provider", iconKey: "openai" },
+		});
+		expect(wrapper.find("svg").classes()).not.toContain(
+			"text-muted-foreground",
+		);
+	});
+	it("renders the fallback for a provider ID added by the backend", () => {
+		const wrapper = mount(ProviderIcon, { props: { kind: "future-provider" } });
+		expect(wrapper.find("svg").exists()).toBe(true);
+		expect(wrapper.find("img").exists()).toBe(false);
+	});
 	// -------------------------------------------------------------------------
 	// Strategy 1: Iconify bundle (openai, anthropic, ollama, gemini)
 	// These render as inline <svg> via @iconify/vue — no <img>, no HTTP request.

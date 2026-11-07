@@ -33,6 +33,7 @@ import {Label} from "@/components/ui/label";
 import {NativeSelect, NativeSelectOption} from "@/components/ui/native-select";
 import {Switch} from "@/components/ui/switch";
 import {ToggleGroup, ToggleGroupItem} from "@/components/ui/toggle-group";
+import {useProviderDescriptors} from "@/composables/useProviderDescriptors";
 import {useProviders} from "@/composables/useProviders";
 import {
   type AuthType,
@@ -75,6 +76,7 @@ const emit = defineEmits<{
 const {t} = useI18n();
 const {create, update, remove, testCredentials, fetch, providerById, startOAuthFlow, getOAuthStatus} =
   useProviders();
+const {catalog: descriptorCatalog, fetch: fetchDescriptors} = useProviderDescriptors();
 
 // ---------------------------------------------------------------------------
 // Form state
@@ -136,6 +138,18 @@ let oauthPollTimer: number | undefined;
 const isEditMode = computed(() => props.mode === "edit");
 const showKindSelector = computed(() => props.providerKind === undefined);
 const catalogEntry = computed(() => findCatalogEntry(kind.value));
+function getProviderLabel(entry: (typeof descriptorCatalog.value)[number]) {
+  return entry.displayNameKey ? t(entry.displayNameKey) : entry.label;
+}
+
+const providerLabel = computed(() => {
+  const entry = descriptorCatalog.value.find((item) => item.kind === kind.value);
+  return entry
+    ? getProviderLabel(entry)
+    : catalogEntry.value.displayNameKey
+      ? t(catalogEntry.value.displayNameKey)
+      : kind.value;
+});
 const isApikey = computed(() => authType.value === "apikey");
 const supportsOAuth = computed(() =>
   catalogEntry.value.authTypes.includes("oauth"),
@@ -312,6 +326,10 @@ watch(
     if (!isOpen) {
       resetForm();
       return;
+    }
+    await fetchDescriptors();
+    if (!props.providerKind && descriptorCatalog.value.length && !descriptorCatalog.value.some((item) => item.kind === kind.value)) {
+      kind.value = descriptorCatalog.value[0].kind;
     }
     if (isEditMode.value && props.connectionId) {
       // Use cache if we already have the connection, otherwise fetch the list.
@@ -543,10 +561,10 @@ onUnmounted(stopOAuthPolling);
           {{
             isEditMode
               ? t('providers.form.editTitle', {
-                  providerName: t(catalogEntry.displayNameKey),
+                  providerName: providerLabel || t(catalogEntry.displayNameKey),
                 })
               : t('providers.form.createTitle', {
-                  providerName: t(catalogEntry.displayNameKey),
+                  providerName: providerLabel || t(catalogEntry.displayNameKey),
                 })
           }}
         </DialogTitle>
@@ -568,11 +586,11 @@ onUnmounted(stopOAuthPolling);
             :aria-label="t('providers.form.selectProvider')"
           >
             <NativeSelectOption
-              v-for="entry in PROVIDER_KINDS"
+              v-for="entry in descriptorCatalog"
               :key="entry.kind"
               :value="entry.kind"
             >
-              {{ t(entry.displayNameKey) }}
+              {{ getProviderLabel(entry) }}
             </NativeSelectOption>
           </NativeSelect>
         </div>
@@ -622,7 +640,7 @@ onUnmounted(stopOAuthPolling);
             v-model="form.displayName"
             :placeholder="
               t('providers.form.displayNamePlaceholder', {
-                providerName: t(catalogEntry.displayNameKey),
+                providerName: providerLabel || t(catalogEntry.displayNameKey),
               })
             "
             :disabled="saving"
@@ -909,7 +927,7 @@ onUnmounted(stopOAuthPolling);
             {{ t('providers.details.deleteConfirm') }}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            {{ form.displayName || t(catalogEntry.displayNameKey) }}
+          {{ form.displayName || providerLabel || t(catalogEntry.displayNameKey) }}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

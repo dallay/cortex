@@ -4,6 +4,7 @@ import { defineComponent, h, nextTick } from "vue";
 import { createI18n } from "vue-i18n";
 import type { ProviderConnectionResponse } from "@/lib/api";
 import en from "@/locales/en.json";
+import es from "@/locales/es.json";
 import AddProviderDialog from "./AddProviderDialog.vue";
 
 // ---------------------------------------------------------------------------
@@ -567,7 +568,7 @@ vi.mock("@lucide/vue", () => {
 // Fixtures
 // ---------------------------------------------------------------------------
 
-const i18n = createI18n({ legacy: false, locale: "en", messages: { en } });
+const i18n = createI18n({ legacy: false, locale: "en", messages: { en, es } });
 
 function makeConnection(
 	overrides: Partial<ProviderConnectionResponse> = {},
@@ -655,6 +656,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	i18n.global.locale.value = "en";
 	vi.restoreAllMocks();
 });
 
@@ -663,6 +665,19 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("AddProviderDialog — create mode", () => {
+	it("uses Spanish translations for known provider labels", async () => {
+		i18n.global.locale.value = "es";
+		const wrapper = mountDialog({ providerKind: "anthropic" });
+		await flushPromises();
+
+		expect(
+			wrapper
+				.find('[data-testid="input-displayName"]')
+				.attributes("placeholder"),
+		).toBe("Mi conexión de Anthropic");
+		wrapper.unmount();
+	});
+
 	it("renders without a kind selector when providerKind is pre-scoped (ollama)", async () => {
 		const wrapper = mountDialog({ providerKind: "ollama" });
 		await flushPromises();

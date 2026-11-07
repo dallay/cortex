@@ -35,7 +35,7 @@ const {t} = useI18n();
 
 const {fetch, loading, error} = useProviders();
 const {fetch: fetchModels} = useAvailableModels();
-const {items, byCategory} = useProviderCatalog();
+const {items, byCategory, fetch: fetchDescriptors} = useProviderCatalog();
 
 const searchQuery = ref("");
 const activeCategory = ref<CategoryFilter>("all");
@@ -43,6 +43,7 @@ const activeCategory = ref<CategoryFilter>("all");
 onMounted(() => {
   fetch();
   fetchModels();
+  fetchDescriptors();
 });
 
 const filteredByCategory = computed(() => {

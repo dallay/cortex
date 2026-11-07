@@ -18,16 +18,18 @@
  */
 import { type ComputedRef, computed } from "vue";
 import { useAvailableModels } from "@/composables/useAvailableModels";
+import { useProviderDescriptors } from "@/composables/useProviderDescriptors";
 import { useProviders } from "@/composables/useProviders";
-import {
-	type CatalogEntry,
-	type CategoryKind,
-	PROVIDER_KINDS,
-	type ProviderKind,
+import type {
+	CatalogEntry,
+	CategoryKind,
+	ProviderKind,
 } from "@/config/providerCatalog";
 
 /** A catalog entry enriched with live, per-kind derived data. */
 export interface ProviderCatalogItem extends CatalogEntry {
+	readonly label: string;
+	readonly iconKey: string;
 	/** Number of connections of this kind (all states). */
 	readonly connectionCount: number;
 	/** Whether at least one connection of this kind is currently active. */
@@ -40,6 +42,8 @@ export interface ProviderCatalogItem extends CatalogEntry {
 }
 
 export interface UseProviderCatalog {
+	/** Fetches the authoritative descriptor list from the management API. */
+	fetch: () => Promise<void>;
 	/**
 	 * All catalog items, one per `ProviderKind`, in the order defined
 	 * by `PROVIDER_KINDS`. Reactively updates when the underlying
@@ -57,6 +61,7 @@ export interface UseProviderCatalog {
 export function useProviderCatalog(): UseProviderCatalog {
 	const { providers } = useProviders();
 	const { modelsByProvider } = useAvailableModels();
+	const { catalog: descriptorCatalog, fetch } = useProviderDescriptors();
 
 	/**
 	 * Pre-index the available-models output by `providerKind` so the
@@ -97,15 +102,17 @@ export function useProviderCatalog(): UseProviderCatalog {
 				activeByKind.set(kind, true);
 			}
 		}
-		return PROVIDER_KINDS.map((entry) => ({
+		return descriptorCatalog.value.map((entry) => ({
 			...entry,
 			connectionCount: providersByKind.get(entry.kind) ?? 0,
 			hasActiveConnections: activeByKind.get(entry.kind) ?? false,
 			configuredModels: modelsByKind.value.get(entry.kind) ?? [],
+			label: entry.label,
 		}));
 	});
 
 	return {
+		fetch,
 		items,
 		byCategory: (category) =>
 			computed(() => items.value.filter((i) => i.category === category)),
