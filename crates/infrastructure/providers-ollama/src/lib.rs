@@ -69,9 +69,12 @@ pub struct OllamaProviderConfig {
     pub api_key: Option<String>,
 }
 
+#[derive(Clone)]
 pub struct OllamaProvider {
     config: OllamaProviderConfig,
     client: Client,
+    chat_path: &'static str,
+    health_path: &'static str,
 }
 
 impl OllamaProvider {
@@ -80,7 +83,29 @@ impl OllamaProvider {
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
             .redirect(reqwest::redirect::Policy::none())
             .build()?;
-        Ok(Arc::new(Self { config, client }))
+        let paths = rook_core::descriptor_by_id("ollama")
+            .expect("Ollama descriptor")
+            .paths;
+        Ok(Arc::new(Self {
+            config,
+            client,
+            chat_path: paths.chat,
+            health_path: paths.health,
+        }))
+    }
+
+    pub fn with_chat_path(self: Arc<Self>, path: &'static str) -> Arc<Self> {
+        Arc::new(Self {
+            chat_path: path,
+            ..(*self).clone()
+        })
+    }
+
+    pub fn with_health_path(self: Arc<Self>, path: &'static str) -> Arc<Self> {
+        Arc::new(Self {
+            health_path: path,
+            ..(*self).clone()
+        })
     }
 
     /// Build a request builder for the Ollama chat endpoint, attaching
@@ -88,7 +113,7 @@ impl OllamaProvider {
     /// configured. Local Ollama ignores the header; Ollama Cloud requires
     /// it.
     fn chat_request(&self, body: &serde_json::Value) -> reqwest::RequestBuilder {
-        let url = format!("{}/api/chat", self.config.base_url);
+        let url = format!("{}{}", self.config.base_url, self.chat_path);
         let mut req = self.client.post(url).json(body);
         if let Some(api_key) = self.config.api_key.as_deref() {
             if !api_key.is_empty() {
@@ -105,7 +130,7 @@ impl OllamaProvider {
     /// a "is the host reachable?" check, and follow up with a mini
     /// chat request to verify the Bearer token.
     fn tags_request(&self) -> reqwest::RequestBuilder {
-        let url = format!("{}/api/tags", self.config.base_url);
+        let url = format!("{}{}", self.config.base_url, self.health_path);
         let mut req = self.client.get(url);
         if let Some(api_key) = self.config.api_key.as_deref() {
             if !api_key.is_empty() {

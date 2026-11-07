@@ -163,8 +163,128 @@ async fn declarations_preserve_azure_and_compatible_membership_and_adapter_limit
         groq.model_capabilities(&ModelId::new("groq-tools"))
             .tools
             .state,
-        CapabilityState::Unsupported
+        CapabilityState::Supported
     );
+}
+
+#[tokio::test]
+async fn openai_descriptor_requiring_base_url_is_rejected_without_override() {
+    let mut descriptor = *rook_core::descriptor_by_id("openai-compatible").unwrap();
+    descriptor.id = "custom-openai-with-required-url";
+    descriptor.requires_base_url = true;
+    descriptor.default_base_url = "";
+    descriptor.endpoint_validation = rook_core::EndpointValidation::None;
+    let descriptor = Box::leak(Box::new(descriptor));
+
+    let result = super::build_provider_from_connection_with_policy(
+        &ConnectionId::new(),
+        descriptor,
+        &DecryptedCredentials::ApiKey {
+            api_key: "key".into(),
+        },
+        None,
+        vec![],
+        super::ProviderConnectionBuildOptions {
+            quota_recorder: None,
+            oauth_token_port: None,
+            endpoint_policy: rook_core::EndpointPolicy::default(),
+        },
+    );
+    assert!(
+        result.is_err(),
+        "required base URL must be enforced independently of endpoint-validation mode"
+    );
+}
+
+#[tokio::test]
+async fn custom_gemini_descriptor_default_host_is_used_for_completion_and_health() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/v1beta/models/gemini-2.0-flash:generateContent"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}]
+        })))
+        .mount(&server).await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/v1beta/models"))
+        .respond_with(wiremock::ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let mut descriptor = *rook_core::descriptor_by_id("gemini").unwrap();
+    descriptor.default_base_url = Box::leak(server.uri().into_boxed_str());
+    let descriptor = Box::leak(Box::new(descriptor));
+    let provider = super::build_provider_from_connection_with_policy(
+        &ConnectionId::new(),
+        descriptor,
+        &DecryptedCredentials::ApiKey {
+            api_key: "key".into(),
+        },
+        None,
+        vec![ModelId::new("gemini-2.0-flash")],
+        super::ProviderConnectionBuildOptions {
+            quota_recorder: None,
+            oauth_token_port: None,
+            endpoint_policy: rook_core::EndpointPolicy::default(),
+        },
+    )
+    .unwrap();
+    let request = rook_core::CompletionRequest {
+        id: shared_kernel::RequestId::new(),
+        model: ModelId::new("gemini-2.0-flash"),
+        messages: vec![rook_core::Message {
+            role: rook_core::Role::User,
+            content: rook_core::MessageContent::Text("hello".into()),
+            tool_calls: vec![],
+        }],
+        stream: false,
+        max_tokens: Some(8),
+        temperature: None,
+        tools: None,
+        tool_choice: None,
+        metadata: rook_core::RequestMetadata {
+            origin: "test".into(),
+            cacheable: false,
+            priority: 0,
+            api_key_id: None,
+            requested_tier: None,
+            combo_id: None,
+        },
+        restrictions: rook_core::ApiKeyRestrictions::default(),
+    };
+    provider.complete(&request).await.unwrap();
+    assert!(matches!(
+        provider.health_check().await,
+        rook_core::HealthStatus::Healthy { .. }
+    ));
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
+
+    let override_server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/v1beta/models"))
+        .respond_with(wiremock::ResponseTemplate::new(200))
+        .mount(&override_server)
+        .await;
+    let overridden = super::build_provider_from_connection_with_policy(
+        &ConnectionId::new(),
+        descriptor,
+        &DecryptedCredentials::ApiKey {
+            api_key: "key".into(),
+        },
+        Some(override_server.uri()),
+        vec![],
+        super::ProviderConnectionBuildOptions {
+            quota_recorder: None,
+            oauth_token_port: None,
+            endpoint_policy: rook_core::EndpointPolicy::default(),
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        overridden.health_check().await,
+        rook_core::HealthStatus::Healthy { .. }
+    ));
+    assert_eq!(override_server.received_requests().await.unwrap().len(), 1);
 }
 
 #[tokio::test]
