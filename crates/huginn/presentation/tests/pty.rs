@@ -537,6 +537,30 @@ fn inline_approval_defaults_to_reject_navigates_and_ignores_paste() {
     pty.send("\x03");
     pty.finish(true);
 }
+
+#[test]
+fn enter_queued_with_approval_trigger_cannot_confirm_the_new_overlay() {
+    let mut pty = start("normal", true);
+    pty.wait_for("Huginn");
+    pty.send("approve\r\r");
+    pty.wait_for("›Reject");
+    std::thread::sleep(std::time::Duration::from_millis(150));
+
+    assert!(
+        pty.screen_text().contains("›Reject"),
+        "the Enter queued under composer focus must not resolve the approval: {}",
+        pty.screen_text()
+    );
+    assert!(
+        !pty.output().contains("APPROVED"),
+        "stale Enter authorized an effect"
+    );
+
+    pty.send("\x1b");
+    pty.wait_for("DENIED");
+    pty.send("\x03");
+    pty.finish(true);
+}
 #[test]
 fn panic_restores_raw_mode_and_cursor() {
     let mut pty = start("panic", true);

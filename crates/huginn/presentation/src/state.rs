@@ -32,6 +32,49 @@ pub fn safe(text: &str) -> String {
         .collect()
 }
 
+#[cfg(test)]
+mod approval_resolution_tests {
+    use super::{Modal, Ui, UiConfig};
+    use crate::overlay::{OpenRequest, Origin, OverlayKind, Payload};
+    use crate::Contributions;
+    use huginn_core::{ApprovalDecision, CancellationToken, Session};
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn public_resolver_rejects_positive_decision_for_unarmed_modal() {
+        let ui = Ui::new(
+            &Session::new(".".into()),
+            Arc::new(Contributions::default()),
+            CancellationToken::new(),
+            Arc::new(UiConfig::defaults()),
+            Arc::new(|_| Ok(())),
+        )
+        .0;
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        {
+            let mut state = ui.lock();
+            let mut modal = Modal::test_stub();
+            modal.reply = Some(sender);
+            let ticket = state.overlays.ticket();
+            state.overlays.open(OpenRequest {
+                kind: OverlayKind::Approval,
+                origin: Origin::Host,
+                operation: crate::event::OperationId::default(),
+                payload: Payload::Approval(modal),
+                ticket,
+            });
+        }
+
+        ui.resolve_modal(true);
+
+        assert_eq!(receiver.await.unwrap(), ApprovalDecision::Reject);
+    }
+}
+
+pub fn safe_single_line(text: &str) -> String {
+    safe(text).split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 #[derive(Default, Clone, Debug)]
 pub struct Editor {
     pub text: String,
@@ -140,6 +183,8 @@ pub struct Modal {
     pub armed: bool,
     pub scroll: usize,
     pub last_scroll: usize,
+    /// Scroll offset visible in the most recently completed approval frame.
+    pub rendered_scroll: usize,
     pub allowed_decisions: Vec<huginn_core::ApprovalDecision>,
     pub selected: usize,
     pub expanded: bool,
@@ -162,6 +207,7 @@ impl Modal {
             armed: false,
             scroll: 0,
             last_scroll: 0,
+            rendered_scroll: 0,
             allowed_decisions: vec![
                 huginn_core::ApprovalDecision::Reject,
                 huginn_core::ApprovalDecision::ApproveOnce,
@@ -1473,10 +1519,20 @@ impl Ui {
             state.overlays.close(id)
         };
         if let Some(Payload::Approval(mut modal)) = retired.map(ActiveOverlay::into_payload) {
+            let positive = decision != huginn_core::ApprovalDecision::Reject;
+            let shell_review_incomplete = modal.request.action == "native.shell"
+                && (!modal.expanded
+                    || !modal.details_rendered
+                    || modal.scroll < modal.last_scroll
+                    || modal.rendered_scroll < modal.last_scroll);
             let decision = if modal.allowed_decisions.contains(&decision)
-                && !(decision != huginn_core::ApprovalDecision::Reject
-                    && modal.expanded
-                    && (!modal.details_rendered || modal.scroll < modal.last_scroll))
+                && (!positive
+                    || (modal.armed
+                        && !shell_review_incomplete
+                        && !(modal.expanded
+                            && (!modal.details_rendered
+                                || modal.scroll < modal.last_scroll
+                                || modal.rendered_scroll < modal.last_scroll))))
                 && !self.stop.is_cancelled()
             {
                 decision
@@ -1498,7 +1554,7 @@ impl Ui {
             self.lock().conversation.push(format!(
                 "{outcome} · {} · request {}{resource}",
                 safe(&modal.request.action),
-                safe(&modal.request.id)
+                safe_single_line(&modal.request.id)
             ));
             if let Some(reply) = modal.reply.take() {
                 let _ = reply.send(decision);
@@ -1729,6 +1785,7 @@ impl ApprovalPrompt for Ui {
                 armed: false,
                 scroll: 0,
                 last_scroll: 0,
+                rendered_scroll: 0,
                 allowed_decisions: allowed_decisions.to_vec(),
                 selected: allowed_decisions
                     .iter()

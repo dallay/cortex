@@ -509,7 +509,8 @@ fn skills_templates_denial_and_cancellation_release_the_tui_and_resume_cleanly()
     assert_eq!(requested[1]["request"]["action"], "native.shell");
     assert!(
         requested[1]["request"]["preview"].is_null(),
-        "unclassified shell previews must not be persisted"
+        "unclassified shell previews must not be persisted: {:?}",
+        requested[1]
     );
     let shell_id = requested[1]["request"]["id"].as_str().unwrap();
     let shell_index = events

@@ -158,13 +158,15 @@ async fn host_policy_rejects_session_grants_until_resource_provenance_is_verifie
 #[tokio::test]
 async fn session_grants_match_exact_action_and_canonical_resource_only() {
     let prompt = Arc::new(SessionGrantRecorder::default());
-    let policy = HostPolicy::new(prompt.clone(), Default::default());
-    let request = |id: &str, action: &str, path: &str| ApprovalRequest {
+    let policy = HostPolicy::new(prompt.clone(), Default::default()).for_session("session-one");
+    let path_a = std::env::temp_dir().join("huginn-contract").join("a.txt");
+    let path_b = std::env::temp_dir().join("huginn-contract").join("b.txt");
+    let request = |id: &str, action: &str, path: &std::path::Path| ApprovalRequest {
         id: id.into(),
         action: action.into(),
-        preview: format!("preview for {path}"),
+        preview: format!("preview for {}", path.display()),
         resource: Some(huginn_core::ApprovalResource {
-            canonical_path: path.into(),
+            canonical_path: path.to_path_buf(),
             sensitive: false,
         }),
         provenance: Some(huginn_core::ApprovalProvenance::NativeFileBuiltin),
@@ -172,7 +174,7 @@ async fn session_grants_match_exact_action_and_canonical_resource_only() {
     assert_eq!(
         policy
             .approve(
-                &request("a", "native.write_file", "/workspace/a.txt"),
+                &request("a", "native.write_file", &path_a),
                 CancellationToken::new()
             )
             .await
@@ -182,7 +184,7 @@ async fn session_grants_match_exact_action_and_canonical_resource_only() {
     assert_eq!(
         policy
             .approve(
-                &request("repeat", "native.write_file", "/workspace/a.txt"),
+                &request("repeat", "native.write_file", &path_a),
                 CancellationToken::new()
             )
             .await
@@ -195,8 +197,8 @@ async fn session_grants_match_exact_action_and_canonical_resource_only() {
         "the exact grant should be reused"
     );
     for (action, path) in [
-        ("native.write_file", "/workspace/b.txt"),
-        ("native.edit_file", "/workspace/a.txt"),
+        ("native.write_file", path_b.as_path()),
+        ("native.edit_file", path_a.as_path()),
     ] {
         assert_eq!(
             policy
@@ -211,6 +213,73 @@ async fn session_grants_match_exact_action_and_canonical_resource_only() {
         3,
         "grants must match exact action and canonical path"
     );
+}
+
+#[tokio::test]
+async fn session_grants_do_not_cross_session_identities() {
+    let prompt = Arc::new(SessionGrantRecorder::default());
+    let host_policy = HostPolicy::new(prompt.clone(), Default::default());
+    let policy = host_policy.for_session("session-one");
+    let path = std::env::temp_dir()
+        .join("huginn-contract")
+        .join("shared.txt");
+    let request = ApprovalRequest {
+        id: "request".into(),
+        action: "native.write_file".into(),
+        preview: "write file".into(),
+        resource: Some(huginn_core::ApprovalResource {
+            canonical_path: path,
+            sensitive: false,
+        }),
+        provenance: Some(huginn_core::ApprovalProvenance::NativeFileBuiltin),
+    };
+
+    assert_eq!(
+        policy
+            .approve(&request, CancellationToken::new())
+            .await
+            .unwrap(),
+        ApprovalDecision::ApproveForSession
+    );
+    assert_eq!(
+        host_policy
+            .for_session("session-two")
+            .approve(&request, CancellationToken::new())
+            .await
+            .unwrap(),
+        ApprovalDecision::ApproveForSession
+    );
+    assert_eq!(prompt.requests.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn exact_generic_allowlist_grant_does_not_cover_sibling_action() {
+    let prompt = Arc::new(Prompt {
+        decision: ApprovalDecision::ApproveOnce,
+        requests: AtomicUsize::new(0),
+        grants: AtomicUsize::new(0),
+    });
+    let policy = HostPolicy::new(prompt.clone(), ["native.custom.read".to_owned()].into());
+    for action in ["native.custom.read", "native.custom.read_all"] {
+        assert_eq!(
+            policy
+                .approve(
+                    &ApprovalRequest {
+                        id: action.into(),
+                        action: action.into(),
+                        preview: "effect".into(),
+                        resource: None,
+                        provenance: None,
+                    },
+                    CancellationToken::new(),
+                )
+                .await
+                .unwrap(),
+            ApprovalDecision::ApproveOnce
+        );
+    }
+    assert_eq!(prompt.grants.load(Ordering::SeqCst), 1);
+    assert_eq!(prompt.requests.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -621,7 +690,7 @@ impl ToolRegistry for SessionGrantRegistry {
 async fn session_grant_executes_first_and_matching_next_action_without_another_prompt() {
     let executions = Arc::new(AtomicUsize::new(0));
     let prompt = Arc::new(SessionGrantRecorder::default());
-    let policy = HostPolicy::new(prompt.clone(), Default::default());
+    let host_policy = HostPolicy::new(prompt.clone(), Default::default());
     let store = Arc::new(Memory::default());
     let mut supervisor = composition::build(
         Arc::new(SessionGrantModel(AtomicUsize::new(0))),
@@ -638,6 +707,7 @@ async fn session_grant_executes_first_and_matching_next_action_without_another_p
         .resolve::<LoopService>(&composition::loop_id())
         .unwrap();
     let mut session = Session::new("/workspace".into());
+    let policy = host_policy.for_session(session.id.clone());
     let events = Events;
 
     for prompt_text in ["first", "matching next"] {

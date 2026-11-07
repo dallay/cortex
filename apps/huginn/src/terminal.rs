@@ -119,7 +119,7 @@ pub struct Output {
 impl EventSink for Output {
     fn emit(&self, event: Event) {
         if self.json {
-            if let Ok(encoded) = serde_json::to_string(&event) {
+            if let Ok(encoded) = live_event_json(&event) {
                 println!("{encoded}");
             }
             return;
@@ -159,6 +159,21 @@ impl EventSink for Output {
         }
     }
 }
+
+fn live_event_json(event: &Event) -> serde_json::Result<String> {
+    let mut value = serde_json::to_value(event)?;
+    if let Event::ApprovalRequested { request, .. } = event {
+        if request
+            .resource
+            .as_ref()
+            .is_some_and(|resource| !resource.sensitive)
+        {
+            value["request"]["preview"] = serde_json::Value::String(request.preview.clone());
+        }
+    }
+    serde_json::to_string(&value)
+}
+
 fn safe(text: &str) -> String {
     text.chars()
         .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))
@@ -167,9 +182,69 @@ fn safe(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{approval_header, effect_line, safe};
+    use super::{approval_header, effect_line, live_event_json, safe};
     use crate::terminal::LinePrompt;
-    use huginn_core::{ApprovalPrompt, ApprovalRequest, CancellationToken};
+    use huginn_core::{ApprovalPrompt, ApprovalRequest, CancellationToken, Event};
+
+    #[test]
+    fn live_json_event_redacts_unclassified_approval_preview() {
+        let event = Event::ApprovalRequested {
+            step: huginn_core::StepId::UNKNOWN,
+            request: ApprovalRequest {
+                id: "approval".into(),
+                action: "native.read".into(),
+                preview: "preview shown to the user".into(),
+                resource: None,
+                provenance: None,
+            },
+        };
+
+        let encoded = live_event_json(&event).expect("serialize live event");
+        let value: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        assert!(value["request"].get("preview").is_none());
+    }
+
+    #[test]
+    fn live_json_event_keeps_explicitly_non_sensitive_approval_preview() {
+        let event = Event::ApprovalRequested {
+            step: huginn_core::StepId::UNKNOWN,
+            request: ApprovalRequest {
+                id: "approval".into(),
+                action: "native.read".into(),
+                preview: "preview shown to the user".into(),
+                resource: Some(huginn_core::ApprovalResource {
+                    canonical_path: "/workspace/file.txt".into(),
+                    sensitive: false,
+                }),
+                provenance: None,
+            },
+        };
+
+        let encoded = live_event_json(&event).expect("serialize live event");
+        let value: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(value["request"]["preview"], "preview shown to the user");
+    }
+
+    #[test]
+    fn live_json_event_redacts_sensitive_approval_preview() {
+        let event = Event::ApprovalRequested {
+            step: huginn_core::StepId::UNKNOWN,
+            request: ApprovalRequest {
+                id: "approval".into(),
+                action: "native.read".into(),
+                preview: "secret preview".into(),
+                resource: Some(huginn_core::ApprovalResource {
+                    canonical_path: "/workspace/secret.txt".into(),
+                    sensitive: true,
+                }),
+                provenance: None,
+            },
+        };
+
+        let encoded = live_event_json(&event).expect("serialize live event");
+        let value: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        assert!(value["request"].get("preview").is_none());
+    }
 
     #[test]
     fn approval_header_numbers_repeated_identical_requests_without_claiming_difference() {

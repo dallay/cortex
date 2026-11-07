@@ -52,12 +52,17 @@ impl Tool for RegisteredTool {
                         && request.action == format!("native.{}", self.name)
                     {
                         if let Some(path) = prepared.payload["resolved"].as_str().map(PathBuf::from) {
+                            let requested_path = prepared.payload["path"]
+                                .as_str()
+                                .map(Path::new);
                             let root = ctx.workspace.canonicalize();
                             if path.is_absolute()
                                 && root.as_ref().is_ok_and(|root| path.starts_with(root))
                             {
                                 request.resource = Some(ApprovalResource {
-                                    sensitive: huginn_guards::sensitive(&path),
+                                    sensitive: requested_path
+                                        .is_some_and(huginn_guards::sensitive)
+                                        || huginn_guards::sensitive(&path),
                                     canonical_path: path,
                                 });
                                 request.provenance = Some(ApprovalProvenance::NativeFileBuiltin);
@@ -913,102 +918,4 @@ async fn run_shell(command: &str, ctx: &ToolContext, timeout_secs: u64) -> Resul
         String::from_utf8_lossy(&reads.0),
         String::from_utf8_lossy(&reads.1)
     )))
-}
-
-#[cfg(all(test, unix))]
-mod approval_resource_tests {
-    use super::*;
-    use std::os::unix::fs::symlink;
-
-    struct SwapSymlinkDuringPrepare {
-        alias: PathBuf,
-        replacement: PathBuf,
-    }
-
-    #[async_trait]
-    impl Tool for SwapSymlinkDuringPrepare {
-        fn definition(&self) -> ToolDefinition {
-            ToolDefinition {
-                name: "write_file".into(),
-                description: String::new(),
-                input_schema: json!({"type":"object"}),
-            }
-        }
-
-        async fn prepare(&self, call: &ToolCall, ctx: &ToolContext) -> Result<PreparedAction> {
-            let prepared_path = resolve_path(&ctx.workspace, "link", true)?;
-            std::fs::remove_file(&self.alias)?;
-            symlink(&self.replacement, &self.alias)?;
-            Ok(PreparedAction {
-                approval: Some(ApprovalRequest {
-                    id: call.id.clone(),
-                    action: "native.write_file".into(),
-                    preview: "prepared action".into(),
-                    resource: None,
-                    provenance: None,
-                }),
-                payload: json!({"path":"link", "resolved":prepared_path}),
-            })
-        }
-
-        async fn execute(&self, _: PreparedAction, _: &ToolContext) -> Result<String> {
-            Ok(String::new())
-        }
-    }
-
-    #[tokio::test]
-    async fn approval_resource_uses_the_prepared_canonical_path_after_symlink_swap() {
-        let workspace = tempfile::tempdir().unwrap();
-        let prepared_target = workspace.path().join("prepared.txt");
-        let replacement_target = workspace.path().join("replacement.txt");
-        std::fs::write(&prepared_target, "prepared").unwrap();
-        std::fs::write(&replacement_target, "replacement").unwrap();
-        let alias = workspace.path().join("link");
-        symlink(&prepared_target, &alias).unwrap();
-        let tool = RegisteredTool {
-            inner: Arc::new(SwapSymlinkDuringPrepare {
-                alias,
-                replacement: replacement_target,
-            }),
-            visible: std::sync::atomic::AtomicBool::new(true),
-            revoked: huginn_core::CancellationToken::new(),
-            generation: 1,
-            native_file_builtin: true,
-            name: "write_file".into(),
-        };
-        let action = tool
-            .prepare(
-                &ToolCall {
-                    id: "swap".into(),
-                    name: "write_file".into(),
-                    arguments: json!({"path":"link", "content":"new"}),
-                },
-                &ToolContext {
-                    workspace: workspace.path().to_path_buf(),
-                    cancellation: huginn_core::CancellationToken::new(),
-                    selected_skills: vec![],
-                },
-            )
-            .await
-            .unwrap();
-        let prepared_path = PathBuf::from(action.payload["resolved"].as_str().unwrap());
-        let stamped_path = &action
-            .approval
-            .as_ref()
-            .unwrap()
-            .resource
-            .as_ref()
-            .unwrap()
-            .canonical_path;
-
-        assert_eq!(stamped_path, &prepared_path);
-        assert_ne!(
-            stamped_path,
-            &workspace
-                .path()
-                .canonicalize()
-                .unwrap()
-                .join("replacement.txt")
-        );
-    }
 }

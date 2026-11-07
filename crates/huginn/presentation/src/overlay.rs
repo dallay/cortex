@@ -252,11 +252,23 @@ impl Payload {
             }
             KeyCode::PageUp | KeyCode::Up if modal.expanded => modal.scroll_up(),
             KeyCode::Home if modal.expanded => modal.scroll = 0,
-            KeyCode::End if modal.expanded => modal.scroll = modal.last_scroll,
+            KeyCode::End if modal.expanded && modal.request.action != "native.shell" => {
+                modal.scroll = modal.last_scroll
+            }
+            KeyCode::End if modal.expanded => {}
             KeyCode::Enter
                 if modal.armed
-                    && modal.expanded
-                    && (!modal.details_rendered || modal.scroll < modal.last_scroll) => {}
+                    && modal
+                        .allowed_decisions
+                        .get(modal.selected)
+                        .is_some_and(|decision| {
+                            *decision != huginn_core::ApprovalDecision::Reject
+                        })
+                    && (modal.expanded || modal.request.action == "native.shell")
+                    && (!modal.details_rendered
+                        || !modal.expanded
+                        || modal.scroll < modal.last_scroll
+                        || modal.rendered_scroll < modal.last_scroll) => {}
             KeyCode::Enter if modal.armed => {
                 return Effect::Resolve(
                     modal
@@ -583,6 +595,120 @@ impl<T> OverlayMachine<T> {
             _ => self.sealed = true,
         }
         retired
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{InputEffect, Payload};
+    use crate::state::Modal;
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use huginn_core::ApprovalDecision;
+
+    #[test]
+    fn reject_can_be_confirmed_before_expanded_preview_is_read() {
+        let mut modal = Modal::test_stub();
+        modal.armed = true;
+        modal.expanded = true;
+        modal.details_rendered = true;
+        modal.last_scroll = 3;
+        modal.scroll = 0;
+        let mut payload = Payload::Approval(modal);
+
+        let effect = payload.input(
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            false,
+        );
+
+        assert!(matches!(
+            effect,
+            InputEffect::Resolve(ApprovalDecision::Reject)
+        ));
+    }
+
+    #[test]
+    fn approval_waits_for_the_final_preview_page_to_be_painted() {
+        let mut modal = Modal::test_stub();
+        modal.armed = true;
+        modal.expanded = true;
+        modal.details_rendered = true;
+        modal.last_scroll = 3;
+        modal.scroll = 3;
+        modal.selected = 1;
+        modal.rendered_scroll = 2;
+        let mut payload = Payload::Approval(modal);
+
+        let effect = payload.input(
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            false,
+        );
+
+        assert!(matches!(effect, InputEffect::None));
+    }
+
+    #[test]
+    fn shell_approval_requires_expanding_and_rendering_the_complete_command() {
+        let mut modal = Modal::test_stub();
+        modal.request.action = "native.shell".into();
+        modal.request.preview = "Directory: /workspace\nCommand: echo first\necho second".into();
+        modal.armed = true;
+        modal.selected = 1;
+        let mut payload = Payload::Approval(modal);
+
+        let enter = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(
+            payload.input(enter.clone(), false),
+            InputEffect::None
+        ));
+
+        let reject = Event::Key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        payload.input(reject, false);
+        assert!(matches!(
+            payload.input(enter, false),
+            InputEffect::Resolve(ApprovalDecision::Reject)
+        ));
+    }
+
+    #[test]
+    fn shell_approval_waits_for_sequential_rendering_through_the_last_scroll_position() {
+        let mut modal = Modal::test_stub();
+        modal.request.action = "native.shell".into();
+        modal.armed = true;
+        modal.expanded = true;
+        modal.details_rendered = true;
+        modal.selected = 1;
+        modal.last_scroll = 2;
+        modal.rendered_scroll = 0;
+        let mut payload = Payload::Approval(modal);
+        let enter = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let end = Event::Key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
+
+        assert!(matches!(
+            payload.input(enter.clone(), false),
+            InputEffect::None
+        ));
+        assert!(matches!(payload.input(end, false), InputEffect::None));
+        assert!(matches!(
+            payload.input(enter.clone(), false),
+            InputEffect::None
+        ));
+
+        if let Payload::Approval(modal) = &mut payload {
+            modal.scroll = 1;
+            modal.rendered_scroll = 1;
+        }
+        assert!(matches!(
+            payload.input(enter.clone(), false),
+            InputEffect::None
+        ));
+        if let Payload::Approval(modal) = &mut payload {
+            modal.scroll = 2;
+            modal.rendered_scroll = 2;
+        }
+        assert!(matches!(
+            payload.input(enter, false),
+            InputEffect::Resolve(ApprovalDecision::ApproveOnce)
+        ));
     }
 }
 
