@@ -10,11 +10,11 @@ use huginn_plugin_api::{
     kernel::{Manifest, Plugin, PluginContext},
     v1::agent::{
         agent_loop_id, complete_turn_ends, inference_hooks_id, model_id, sessions_id,
-        tool_hooks_id, AgentLoop, ApprovalPolicy, ApprovalRequest, CancellationToken, Event,
-        EventSink, InferenceHooksService, InstructionSource, LoopService, Message, ModelDelta,
-        ModelProvider, ModelRequest, ModelService, PreparedAction, Role, ServiceSlotHandle,
-        Session, SessionOperation, SessionStore, SessionsService, SteeringQueue, StepId, Tool,
-        ToolCall, ToolContext, ToolDefinition, ToolHooksService, ToolRegistry,
+        tool_hooks_id, AgentLoop, ApprovalDecision, ApprovalPolicy, ApprovalRequest,
+        CancellationToken, Event, EventSink, InferenceHooksService, InstructionSource, LoopService,
+        Message, ModelDelta, ModelProvider, ModelRequest, ModelService, PreparedAction, Role,
+        ServiceSlotHandle, Session, SessionOperation, SessionStore, SessionsService, SteeringQueue,
+        StepId, Tool, ToolCall, ToolContext, ToolDefinition, ToolHooksService, ToolRegistry,
     },
     v1::hooks::{InferenceHooks, ToolHooks},
     AgentError, Result,
@@ -313,9 +313,9 @@ impl StepLoop {
                     sink.emit(Event::ApprovalResolved {
                         step,
                         id: request.id.clone(),
-                        approved,
+                        approved: approved != ApprovalDecision::Reject,
                     });
-                    if !approved {
+                    if approved == ApprovalDecision::Reject {
                         return Err(AgentError::Tool(format!(
                             "action denied by the user: {}",
                             request.action

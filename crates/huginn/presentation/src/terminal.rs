@@ -1,7 +1,7 @@
 use crate::{
     completion::{Acceptance, Completion as Suggestions},
     contributions::Contributions,
-    state::{approval_preview, safe, Editor, Ui},
+    state::{approval_preview, safe, safe_single_line, Editor, Ui},
     Connection, Interaction, Presentation,
 };
 use async_trait::async_trait;
@@ -49,7 +49,7 @@ static MODIFY_OTHER_KEYS_ACTIVE: AtomicBool = AtomicBool::new(false);
 static KITTY_KEYBOARD_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Lines the transcript moves per page when scrolling the history.
 const HISTORY_PAGE: usize = 10;
-const HELP: &str = "Enter sends; Shift+Enter (on compatible terminals), Alt+Enter or Ctrl+J inserts a newline. PgUp/PgDn scroll the transcript. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals require typing the fresh code; PgUp/PgDn scroll the complete preview. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
+const HELP: &str = "Enter sends; Shift+Enter (on compatible terminals), Alt+Enter or Ctrl+J inserts a newline. PgUp/PgDn scroll the transcript. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals are inline: Left/Right selects, Enter confirms, Esc rejects. To approve, expand with Ctrl+F and review the full preview through its last page; Up/Down or PgUp/PgDn scrolls. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
 
 #[cfg(unix)]
 fn begin_keyboard_protocol() -> std::io::Result<()> {
@@ -124,6 +124,17 @@ fn is_ctrl_c(event: &Event) -> bool {
                 && key.code == KeyCode::Char('c')
                 && key.modifiers.contains(KeyModifiers::CONTROL)
     )
+}
+
+fn is_safe_approval_handoff_input(event: &Event) -> bool {
+    is_ctrl_c(event)
+        || matches!(
+            event,
+            Event::Key(key)
+                if key.kind == KeyEventKind::Press
+                    && key.code == KeyCode::Esc
+                    && key.modifiers.is_empty()
+        )
 }
 
 fn arm_approval_after_draw(ui: &Ui, identity: Option<crate::overlay::OverlaySnapshot>) {
@@ -301,12 +312,49 @@ struct Driver {
     ui: Arc<Ui>,
     _done: Completion,
 }
+
+#[derive(Clone, Copy, Default)]
+struct FrameProgress {
+    last_scroll: usize,
+    preview_visible: bool,
+}
+
 struct Completion(CancellationToken);
 impl Drop for Completion {
     fn drop(&mut self) {
         self.0.cancel();
     }
 }
+
+#[derive(Default)]
+struct FocusDrain {
+    shown: u64,
+    draining: Option<u64>,
+}
+
+impl FocusDrain {
+    const fn modal_drawn(&mut self, focus: u64) {
+        // The modal is visible, but input stays on the previous lease until a
+        // quiet poll confirms that no bytes from the render transition remain.
+        if focus != self.shown {
+            self.draining = Some(focus);
+        }
+    }
+
+    fn observe(&mut self, focus: u64, drained: bool) -> bool {
+        if focus == self.shown {
+            return false;
+        }
+        if self.draining != Some(focus) || drained {
+            self.draining = Some(focus);
+            return false;
+        }
+        self.draining = None;
+        self.shown = focus;
+        true
+    }
+}
+
 impl Drop for Driver {
     fn drop(&mut self) {
         self.ui.shutdown();
@@ -561,7 +609,16 @@ type SettingsView = (
 );
 
 enum OverlayView {
-    Approval(String, u64, String, String, usize),
+    Approval(
+        String,
+        String,
+        String,
+        String,
+        Vec<huginn_core::ApprovalDecision>,
+        usize,
+        bool,
+        usize,
+    ),
     Dialog(String, String, Vec<String>, usize, usize),
     Workflow(
         String,
@@ -656,10 +713,45 @@ impl View {
                         ))
                     }
                     crate::overlay::Payload::Approval(m) => OverlayView::Approval(
+                        safe(&m.request.action),
+                        safe_single_line(&m.request.id),
+                        if m.request
+                            .resource
+                            .as_ref()
+                            .is_some_and(|resource| resource.sensitive)
+                        {
+                            "sensitive resource".into()
+                        } else if m.request.action == "native.shell" && !m.expanded {
+                            "Shell command · Ctrl+F to review".into()
+                        } else {
+                            let shell_command = (m.request.action == "native.shell")
+                                .then_some(())
+                                .and_then(|()| {
+                                    m.request
+                                        .preview
+                                        .lines()
+                                        .find_map(|line| line.trim().strip_prefix("Command:"))
+                                        .map(|command| safe(command.trim()))
+                                });
+                            shell_command
+                                .or_else(|| {
+                                    crate::approval::effect_line(&m.request.preview)
+                                        .map(|line| safe(&line))
+                                })
+                                .or_else(|| {
+                                    m.request.resource.as_ref().map(|resource| {
+                                        format!(
+                                            "resource {}",
+                                            safe(&resource.canonical_path.display().to_string())
+                                        )
+                                    })
+                                })
+                                .unwrap_or_else(|| format!("{} request", safe(&m.request.action)))
+                        },
                         approval_preview(&m.request.action, m.number, &m.request.preview),
-                        m.number,
-                        m.code.clone(),
-                        m.typed.clone(),
+                        m.allowed_decisions.clone(),
+                        m.selected,
+                        m.expanded,
                         m.scroll,
                     ),
                     crate::overlay::Payload::Help => OverlayView::Help(active.help_scroll),
@@ -736,6 +828,11 @@ impl Driver {
         if !viewport_is_viable(size) {
             if let Some(modal) = self.ui.lock().modal_mut() {
                 modal.armed = false;
+                modal.selected = modal
+                    .allowed_decisions
+                    .iter()
+                    .position(|decision| *decision == huginn_core::ApprovalDecision::Reject)
+                    .unwrap_or(0);
             }
             return Ok(());
         }
@@ -748,10 +845,10 @@ impl Driver {
             let state = self.ui.lock();
             View::snapshot(&state)
         };
-        let last_scroll = self.draw_frame(&view)?;
-        self.update_modal_scroll(&view, last_scroll);
+        let progress = self.draw_frame(&view)?;
+        Self::update_modal_scroll(&self.ui, &view, progress);
         // Only a completed paint in a viable viewport may arm an approval.
-        if matches!(view.overlay, Some(OverlayView::Approval(_, _, _, _, _))) {
+        if matches!(view.overlay, Some(OverlayView::Approval(..))) {
             arm_approval_after_draw(&self.ui, view.overlay_identity);
         }
         Ok(())
@@ -774,29 +871,41 @@ impl Driver {
         }
     }
 
-    fn update_modal_scroll(&self, view: &View, last_scroll: usize) {
-        if let Some(OverlayView::Approval(_, _, code, _, _)) = &view.overlay {
-            let mut state = self.ui.lock();
+    fn update_modal_scroll(ui: &Ui, view: &View, progress: FrameProgress) {
+        if let Some(OverlayView::Approval(.., expanded, preview_scroll)) = &view.overlay {
+            let mut state = ui.lock();
             if state.overlays.snapshot() == view.overlay_identity {
-                if let Some(modal) = state.modal_mut().filter(|modal| &modal.code == code) {
-                    modal.last_scroll = last_scroll;
+                if let Some(modal) = state.modal_mut() {
+                    modal.last_scroll = progress.last_scroll;
+                    modal.details_rendered = *expanded && progress.preview_visible;
+                    if *expanded {
+                        if modal.request.action == "native.shell" {
+                            if *preview_scroll <= modal.rendered_scroll.saturating_add(1) {
+                                modal.rendered_scroll = modal.rendered_scroll.max(*preview_scroll);
+                            }
+                        } else {
+                            modal.rendered_scroll = *preview_scroll;
+                        }
+                    } else {
+                        modal.rendered_scroll = 0;
+                    }
                 }
             }
         }
     }
 
-    fn draw_frame(&mut self, view: &View) -> Result<usize> {
-        let mut last_scroll = 0;
+    fn draw_frame(&mut self, view: &View) -> Result<FrameProgress> {
+        let mut progress = FrameProgress::default();
         let mut size = Size::default();
         self.screen.draw(|frame| {
             size = frame.area().as_size();
-            last_scroll = Self::render_frame(frame, view);
+            progress = Self::render_frame(frame, view);
         })?;
         Self::update_help_scroll(&self.ui, view, size);
-        Ok(last_scroll)
+        Ok(progress)
     }
 
-    fn render_frame(frame: &mut Frame, view: &View) -> usize {
+    fn render_frame(frame: &mut Frame, view: &View) -> FrameProgress {
         // Reserve the bar before any overlay's early return.
         let [area, status] =
             Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
@@ -809,21 +918,26 @@ impl Driver {
             status,
         );
         if let Some(overlay @ OverlayView::Help(..)) = &view.overlay {
-            return Self::render_help(frame, area, overlay);
+            Self::render_help(frame, area, overlay);
+            return FrameProgress::default();
         }
         if let Some(overlay @ OverlayView::Approval(..)) = &view.overlay {
-            return Self::render_approval(frame, area, overlay);
+            return Self::render_main_with_approval(frame, area, view, overlay);
         }
         if let Some(overlay @ OverlayView::Workflow(..)) = &view.overlay {
-            return Self::render_workflow(frame, area, overlay);
+            Self::render_workflow(frame, area, overlay);
+            return FrameProgress::default();
         }
         if let Some(overlay @ OverlayView::Settings(..)) = &view.overlay {
-            return Self::render_settings(frame, area, overlay);
+            Self::render_settings(frame, area, overlay);
+            return FrameProgress::default();
         }
         if let Some(overlay @ OverlayView::Dialog(..)) = &view.overlay {
-            return Self::render_dialog(frame, area, overlay);
+            Self::render_dialog(frame, area, overlay);
+            return FrameProgress::default();
         }
-        Self::render_main(frame, area, view)
+        Self::render_main(frame, area, view);
+        FrameProgress::default()
     }
 
     /// Renders the help overlay and returns the scroll position it owns.
@@ -847,38 +961,169 @@ impl Driver {
         0
     }
 
-    /// Renders the approval overlay and returns the scroll position it owns.
-    fn render_approval(frame: &mut Frame, area: Rect, overlay: &OverlayView) -> usize {
-        let OverlayView::Approval(preview, number, code, typed, scroll) = overlay else {
-            return 0;
+    /// Renders the conversation and its contextual approval panel together.
+    fn render_main_with_approval(
+        frame: &mut Frame,
+        area: Rect,
+        view: &View,
+        overlay: &OverlayView,
+    ) -> FrameProgress {
+        let OverlayView::Approval(
+            action,
+            id,
+            summary,
+            preview,
+            decisions,
+            selected,
+            expanded,
+            preview_scroll,
+        ) = overlay
+        else {
+            return FrameProgress::default();
         };
-
-        let [body, footer] =
-            Layout::vertical([Constraint::Min(1), Constraint::Length(2)]).areas(area);
-        let lines = wrapped(preview, body.width.saturating_sub(2));
-        let last = lines
-            .len()
-            .saturating_sub(usize::from(body.height.saturating_sub(2)));
-        let scroll_state = last;
-        let visible: Vec<_> = lines
-            .into_iter()
-            .skip((*scroll).min(last))
-            .take(usize::from(body.height.saturating_sub(2)))
-            .collect();
-        frame.render_widget(
-            Paragraph::new(visible.join("\n")).block(
-                Block::bordered()
-                    .title(format!("Permission #{} — full preview (PgUp/PgDn)", number)),
-            ),
-            body,
-        );
-        let instructions = if footer.width < 42 {
-            format!("Approve: {code}\nCode: {typed}")
+        let desired_panel_height = if *expanded { 8 } else { 5 };
+        let composer_height = if area.height >= desired_panel_height + 5 {
+            4
         } else {
-            format!("Type {code} then Enter to approve; Esc denies\nConfirmation: {typed}")
+            1
         };
-        frame.render_widget(Paragraph::new(instructions), footer);
-        scroll_state
+        let panel_height =
+            desired_panel_height.min(area.height.saturating_sub(composer_height + 1));
+        let compact = panel_height < 8;
+        let [history, panel, composer] = Layout::vertical([
+            Constraint::Min(1),
+            Constraint::Length(panel_height),
+            Constraint::Length(composer_height),
+        ])
+        .areas(area);
+        let mut transcript = view
+            .history
+            .iter()
+            .flat_map(|block| wrapped(block, history.width))
+            .collect::<Vec<_>>();
+        if !view.tail.is_empty() {
+            transcript.extend(wrapped(&view.tail, history.width));
+        }
+        let height = usize::from(history.height);
+        let scroll = view
+            .history_scroll
+            .min(transcript.len().saturating_sub(height));
+        let start = transcript.len().saturating_sub(height + scroll);
+        let visible = transcript
+            .into_iter()
+            .skip(start)
+            .take(height)
+            .collect::<Vec<_>>();
+        frame.render_widget(Paragraph::new(markdown(visible)), history);
+
+        let action_names = decisions
+            .iter()
+            .map(|decision| match decision {
+                huginn_core::ApprovalDecision::Reject => "Reject",
+                huginn_core::ApprovalDecision::ApproveOnce => "Approve once",
+                huginn_core::ApprovalDecision::ApproveForSession => "Allow (session)",
+            })
+            .collect::<Vec<_>>();
+        let selector = action_names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                if index == *selected {
+                    format!("›{name}")
+                } else {
+                    name.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("   ");
+        let narrow = panel.width < 40;
+        let selected_choice = action_names
+            .get(*selected)
+            .map(|name| format!("›{name}"))
+            .unwrap_or_else(|| "›Reject".into());
+        let selector = if narrow { selected_choice } else { selector };
+        let narrow_summary = if action == "native.shell" && !*expanded {
+            "Ctrl+F: review full command"
+        } else {
+            summary
+        };
+        let mut content = if narrow {
+            format!("#{}\n{}\n{}", id, narrow_summary, selector)
+        } else if compact {
+            format!("{} · {} · #{}\n{}", action, summary, id, selector)
+        } else {
+            format!(
+                "{} · {} · request #{}\n{}\n{}",
+                action,
+                summary,
+                id,
+                if *expanded {
+                    "To approve: review to last page · ↑↓/PgUp/PgDn"
+                } else {
+                    "Ctrl+F: review to last page to approve"
+                },
+                selector
+            )
+        };
+        let mut preview_visible = false;
+        let last_scroll = if *expanded {
+            let lines = wrapped(preview, panel.width.saturating_sub(2));
+            // In narrow expanded mode keep the selected decision visible and
+            // give the remaining rows to the actual preview. At 20×8 this
+            // guarantees at least one preview row instead of clipping it below
+            // the collapsed request summary.
+            let viewport = if narrow {
+                usize::from(panel.height.saturating_sub(4))
+            } else {
+                usize::from(panel.height.saturating_sub(if compact { 4 } else { 5 }))
+            };
+            let last = lines.len().saturating_sub(viewport);
+            if narrow {
+                content = format!("#{}\n{}", id, selector);
+            } else if compact {
+                content = format!("{} · {} · #{}\n{}", action, summary, id, selector);
+            }
+            let visible_lines = lines
+                .iter()
+                .skip(usize::min(*preview_scroll, last))
+                .take(viewport)
+                .cloned()
+                .collect::<Vec<_>>();
+            preview_visible = visible_lines.iter().any(|line| !line.trim().is_empty());
+            if !visible_lines.is_empty() {
+                content.push('\n');
+                content.push_str(&visible_lines.join("\n"));
+            }
+            last
+        } else {
+            0
+        };
+        frame.render_widget(
+            Paragraph::new(content).block(Block::bordered().title(if compact {
+                "Approval"
+            } else {
+                "Approval — ←/→ select · Enter confirm · Esc reject · Ctrl+F details"
+            })),
+            panel,
+        );
+        if compact {
+            frame.render_widget(Paragraph::new("Approval pending"), composer);
+        } else {
+            frame.render_widget(
+                Paragraph::new("History remains visible; paste does not confirm").block(
+                    Block::bordered().title(if view.busy {
+                        "Compose next prompt — Esc cancels turn"
+                    } else {
+                        "Huginn"
+                    }),
+                ),
+                composer,
+            );
+        }
+        FrameProgress {
+            last_scroll,
+            preview_visible,
+        }
     }
 
     /// Renders the workflow overlay and returns the scroll position it owns.
@@ -1263,22 +1508,12 @@ Enter save Esc close"
         last_scroll
     }
 
-    fn arm_modal(&mut self, epoch: u64, shown_focus: u64) -> Result<u64> {
+    fn arm_modal(&mut self) -> Result<u64> {
         let focus = self.ui.lock().focus();
-        // Discard queued keys/pastes before showing a new challenge. The
-        // unpredictable challenge additionally defeats late buffered input.
-        while let Some(event) = self.next_input(shown_focus)? {
-            discard_input(event);
-        }
+        // `draw` arms only the exact overlay snapshot after its frame is painted.
+        // Keep the previous input lease active throughout this draw. The event
+        // loop then drains bytes for that lease until it observes a quiet poll.
         self.draw()?;
-        let size = self.screen.size()?;
-        if size.width >= 20 && size.height >= 8 {
-            if let Some(modal) = self.ui.lock().modal_mut() {
-                if modal.epoch == epoch {
-                    modal.armed = true;
-                }
-            }
-        }
         Ok(focus)
     }
 
@@ -1291,8 +1526,7 @@ Enter save Esc close"
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut dirty = true;
         let mut shown_epoch = 0;
-        let mut shown_focus = 0;
-        let mut draining_focus = None;
+        let mut focus_drain = FocusDrain::default();
         let mut terminal_size = crossterm::terminal::size()?;
         loop {
             if self.standalone && self.ui.lock().overlays.active().is_none() {
@@ -1300,8 +1534,8 @@ Enter save Esc close"
             }
             let epoch = self.ui.lock().modal().map_or(0, |m| m.epoch);
             if epoch != 0 && shown_epoch != epoch {
-                shown_focus = self.arm_modal(epoch, shown_focus)?;
-                draining_focus = None;
+                let focus = self.arm_modal()?;
+                focus_drain.modal_drawn(focus);
                 shown_epoch = epoch;
                 dirty = false;
             }
@@ -1339,7 +1573,7 @@ Enter save Esc close"
                             }
                         }
                         let focus = self.ui.lock().focus();
-                        if draining_focus.is_none() && focus == shown_focus {
+                        if focus_drain.draining.is_none() && focus == focus_drain.shown {
                             self.draw()?;
                             dirty = false;
                         }
@@ -1348,31 +1582,46 @@ Enter save Esc close"
                     for _ in 0..256 {
                         dirty |= self.ui.refresh_contributions();
                         let focus = self.ui.lock().focus();
-                        if focus != shown_focus {
+                        if focus != focus_drain.shown {
                             // Read available bytes under the old lease; framing
                             // retains that ownership even if the paste finishes
                             // only after the next focus has been drawn.
                             let mut drained = false;
-                            while let Some(event) = self.next_input(shown_focus)? {
+                            let mut rejected = false;
+                            while let Some(event) = self.next_input(focus_drain.shown)? {
+                                if self.ui.lock().modal().is_some()
+                                    && is_safe_approval_handoff_input(&event)
+                                {
+                                    // Rejection and turn cancellation remain
+                                    // available during handoff. No navigation
+                                    // or positive decision crosses the old lease.
+                                    self.input(event, &prompts, focus);
+                                    rejected = true;
+                                    break;
+                                }
                                 discard_input(event);
                                 drained = true;
+                            }
+                            if rejected {
+                                if self.ui.lock().focus() == focus_drain.shown {
+                                    focus_drain.draining = None;
+                                }
+                                dirty = true;
+                                break;
                             }
                             // A single PTY write can arrive in multiple readable
                             // chunks. Keep the old lease until a later tick is
                             // quiet, before exposing the new focus to the user.
-                            if draining_focus != Some(focus) || drained {
-                                draining_focus = Some(focus);
+                            if !focus_drain.observe(focus, drained) {
                                 dirty = true;
                                 break;
                             }
-                            draining_focus = None;
-                            shown_focus = focus;
                             self.draw()?;
                             dirty = false;
                             continue;
                         }
-                        let Some(event) = self.next_input(shown_focus)? else { break; };
-                        self.input(event, &prompts, shown_focus);
+                        let Some(event) = self.next_input(focus_drain.shown)? else { break; };
+                        self.input(event, &prompts, focus_drain.shown);
                         dirty = true;
                     }
                     #[cfg(unix)]
@@ -1381,7 +1630,10 @@ Enter save Esc close"
                         dirty = true;
                     }
                     dirty |= self.ui.refresh_completion(self.model_configured());
-                    if dirty && draining_focus.is_none() && self.ui.lock().focus() == shown_focus {
+                    if dirty
+                        && focus_drain.draining.is_none()
+                        && self.ui.lock().focus() == focus_drain.shown
+                    {
                         self.draw()?;
                         dirty = false;
                     }
@@ -1653,7 +1905,7 @@ impl Ui {
             Effect::Close => self.close_overlay(ticket, focus),
             Effect::CancelForm => self.cancel_workflow_at(ticket),
             Effect::BackForm => self.back_workflow_at(ticket),
-            Effect::Resolve(approved) => self.resolve_modal_at(approved, ticket),
+            Effect::Resolve(decision) => self.resolve_modal_at(decision, ticket),
             Effect::Submit => {
                 self.submit_workflow_at(ticket);
             }
@@ -1686,6 +1938,16 @@ mod tests {
 
     fn frame_text(view: &View, width: u16, height: u16) -> String {
         frame_text_and_cursor(view, width, height).0
+    }
+
+    fn frame_progress(view: &View, width: u16, height: u16) -> FrameProgress {
+        let mut terminal =
+            Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        let mut progress = FrameProgress::default();
+        terminal
+            .draw(|frame| progress = Driver::render_frame(frame, view))
+            .unwrap();
+        progress
     }
 
     fn frame_text_and_cursor(view: &View, width: u16, height: u16) -> (String, Position) {
@@ -2051,6 +2313,227 @@ mod tests {
         }
     }
 
+    #[test]
+    fn approval_is_inline_with_history_and_policy_actions() {
+        let view = test_view(OverlayView::Approval(
+            "native.write_file".into(),
+            "req-42".into(),
+            "create note.txt".into(),
+            "Effect: create file note.txt\n+++ note.txt\n+body".into(),
+            vec![
+                huginn_core::ApprovalDecision::Reject,
+                huginn_core::ApprovalDecision::ApproveOnce,
+                huginn_core::ApprovalDecision::ApproveForSession,
+            ],
+            0,
+            false,
+            0,
+        ));
+        let mut view = view;
+        view.history = vec!["User: keep this context".into()];
+        let text = frame_text(&view, 80, 24);
+
+        for expected in [
+            "User: keep this context",
+            "native.write_file",
+            "create note.txt",
+            "#req-42",
+            "›Reject",
+            "Approve once",
+            "Allow (session)",
+        ] {
+            assert!(text.contains(expected), "missing {expected:?}: {text}");
+        }
+        assert!(
+            !text.contains("+body"),
+            "diff is hidden until expanded: {text}"
+        );
+    }
+
+    #[test]
+    fn expanded_approval_shows_preview_at_minimum_viable_size() {
+        let view = test_view(OverlayView::Approval(
+            "native.write_file".into(),
+            "req-42".into(),
+            "create note.txt".into(),
+            "PREVIEW_VISIBLE: +body".into(),
+            vec![
+                huginn_core::ApprovalDecision::Reject,
+                huginn_core::ApprovalDecision::ApproveOnce,
+            ],
+            0,
+            true,
+            0,
+        ));
+
+        let rendered = frame_text(&view, 20, 8);
+        let progress = frame_progress(&view, 20, 8);
+        assert!(
+            rendered.contains("PREVIEW_VISIBLE"),
+            "expanded approval must display preview before it can be approved: {rendered}"
+        );
+        assert!(
+            rendered.contains("›Reject"),
+            "Reject remains visible: {rendered}"
+        );
+        assert!(
+            progress.preview_visible,
+            "render result must record the visible preview"
+        );
+    }
+
+    #[test]
+    fn expanded_approval_with_empty_preview_is_not_marked_reviewed() {
+        let view = test_view(OverlayView::Approval(
+            "native.write_file".into(),
+            "req-42".into(),
+            "create note.txt".into(),
+            String::new(),
+            vec![
+                huginn_core::ApprovalDecision::Reject,
+                huginn_core::ApprovalDecision::ApproveOnce,
+            ],
+            0,
+            true,
+            0,
+        ));
+
+        assert!(!frame_progress(&view, 20, 8).preview_visible);
+    }
+
+    #[test]
+    fn compact_approval_shows_shell_command_single_line_id_and_selected_scope() {
+        let view = test_view(OverlayView::Approval(
+            "native.shell".into(),
+            "request id".into(),
+            "touch pwned-shell".into(),
+            "Directory: /workspace\nCommand: touch pwned-shell".into(),
+            vec![
+                huginn_core::ApprovalDecision::Reject,
+                huginn_core::ApprovalDecision::ApproveOnce,
+                huginn_core::ApprovalDecision::ApproveForSession,
+            ],
+            2,
+            true,
+            0,
+        ));
+
+        let text = frame_text(&view, 20, 8);
+
+        assert!(
+            text.contains("Directory: /worksp"),
+            "first preview row hidden: {text}"
+        );
+        assert!(
+            text.contains("#request id"),
+            "single-line ID missing: {text}"
+        );
+        assert!(
+            !text.contains("#request\nid"),
+            "ID split across lines: {text}"
+        );
+        assert!(
+            text.contains("›Allow (session)"),
+            "selected scope clipped: {text}"
+        );
+    }
+
+    #[test]
+    fn collapsed_shell_approval_explains_that_the_full_command_needs_review() {
+        let view = test_view(OverlayView::Approval(
+            "native.shell".into(),
+            "shell-long".into(),
+            "Shell command · Ctrl+F to review".into(),
+            "Directory: /workspace\nCommand: echo first line\necho second line".into(),
+            vec![
+                huginn_core::ApprovalDecision::Reject,
+                huginn_core::ApprovalDecision::ApproveOnce,
+            ],
+            0,
+            false,
+            0,
+        ));
+
+        let text = frame_text(&view, 20, 8);
+
+        assert!(text.contains("Ctrl+F"), "expansion hint missing: {text}");
+        assert!(text.contains("Reject"), "Reject is unavailable: {text}");
+    }
+
+    #[test]
+    fn expanded_shell_command_wraps_and_scrolls_from_first_to_last_line() {
+        let command = format!("echo {}", "x".repeat(180));
+        let preview = format!("Directory: /workspace\nCommand: {command}\necho final-line");
+        let first = test_view(OverlayView::Approval(
+            "native.shell".into(),
+            "shell-long".into(),
+            "Shell command · Ctrl+F to review".into(),
+            preview.clone(),
+            vec![
+                huginn_core::ApprovalDecision::Reject,
+                huginn_core::ApprovalDecision::ApproveOnce,
+            ],
+            0,
+            true,
+            0,
+        ));
+        let first_text = frame_text(&first, 48, 12);
+        assert!(
+            first_text.contains("echo "),
+            "command start missing: {first_text}"
+        );
+        assert!(
+            first_text.contains("xxxxxxxx"),
+            "wrapped command missing: {first_text}"
+        );
+
+        let last_scroll = wrapped(&preview, 46).len().saturating_sub(3);
+        let last = test_view(OverlayView::Approval(
+            "native.shell".into(),
+            "shell-long".into(),
+            "Shell command · Ctrl+F to review".into(),
+            preview,
+            vec![
+                huginn_core::ApprovalDecision::Reject,
+                huginn_core::ApprovalDecision::ApproveOnce,
+            ],
+            0,
+            true,
+            last_scroll,
+        ));
+        let last_text = frame_text(&last, 48, 12);
+        assert!(
+            last_text.contains("echo final-line"),
+            "command end missing: {last_text}"
+        );
+    }
+
+    #[test]
+    fn expanded_approval_keeps_diff_and_policy_actions_visible() {
+        let view = test_view(OverlayView::Approval(
+            "native.edit_file".into(),
+            "req-expanded".into(),
+            "edit note.txt".into(),
+            "Approval preview\nDIFF_VISIBLE_LINE\n+new content".into(),
+            vec![
+                huginn_core::ApprovalDecision::Reject,
+                huginn_core::ApprovalDecision::ApproveOnce,
+            ],
+            0,
+            true,
+            0,
+        ));
+
+        let text = frame_text(&view, 80, 14);
+
+        assert!(text.contains("DIFF_VISIBLE_LINE"), "diff missing: {text}");
+        assert!(text.contains("›Reject"), "Reject choice missing: {text}");
+        assert!(
+            text.contains("Approve once"),
+            "approval choice missing: {text}"
+        );
+    }
+
     #[tokio::test]
     async fn help_scroll_reaches_last_line_at_twenty_by_eight_and_preserves_focus() {
         use crate::overlay::{OpenRequest, Origin, OverlayKind, Payload};
@@ -2249,6 +2732,71 @@ mod tests {
         ui.lock().modal_mut().unwrap().armed = false;
         arm_approval_after_draw(&ui, None);
         assert!(!ui.lock().modal().unwrap().armed);
+    }
+
+    #[test]
+    fn approval_scroll_projection_uses_overlay_identity_not_sanitized_request_id() {
+        use crate::overlay::{OpenRequest, Origin, OverlayKind, Payload};
+        let ui = Ui::new(
+            &Session::new(".".into()),
+            Arc::new(Contributions::default()),
+            CancellationToken::new(),
+            Arc::new(crate::settings::UiConfig::defaults()),
+            Arc::new(|_| Ok(())),
+        )
+        .0;
+        let identity = {
+            let mut state = ui.lock();
+            let mut modal = crate::state::Modal::test_stub();
+            modal.request.id = "request\nid\u{1b}".into();
+            modal.request.action = "native.shell".into();
+            modal.request.preview = "Directory: /workspace\nCommand: touch pwned-shell".into();
+            modal.expanded = true;
+            modal.scroll = 7;
+            modal.rendered_scroll = 6;
+            let ticket = state.overlays.ticket();
+            state.overlays.open(OpenRequest {
+                kind: OverlayKind::Approval,
+                origin: Origin::Host,
+                operation: crate::event::OperationId::default(),
+                payload: Payload::Approval(modal),
+                ticket,
+            });
+            state.overlays.snapshot()
+        };
+        let view = View::snapshot(&ui.lock());
+        match view.overlay.as_ref() {
+            Some(OverlayView::Approval(_, id, summary, ..)) => {
+                assert_eq!(id, "request id");
+                assert_eq!(summary, "touch pwned-shell");
+            }
+            _ => panic!("approval view is projected"),
+        }
+        let rendered = frame_text(&view, 20, 8);
+        assert!(
+            rendered.contains("#request id"),
+            "request ID missing: {rendered}"
+        );
+        assert!(
+            !rendered.contains("#request\nid"),
+            "request ID spans lines: {rendered}"
+        );
+
+        Driver::update_modal_scroll(
+            &ui,
+            &view,
+            FrameProgress {
+                last_scroll: 7,
+                preview_visible: true,
+            },
+        );
+
+        let state = ui.lock();
+        let modal = state.modal().unwrap();
+        assert_eq!(state.overlays.snapshot(), identity);
+        assert_eq!(modal.last_scroll, 7);
+        assert!(modal.details_rendered);
+        assert_eq!(modal.rendered_scroll, 7);
     }
 
     #[tokio::test]

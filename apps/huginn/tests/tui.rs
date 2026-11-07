@@ -459,21 +459,22 @@ fn skills_templates_denial_and_cancellation_release_the_tui_and_resume_cleanly()
     pty.wait_for("Workspace result");
     pty.send("\x1b[200~/skill:review direct\x1b[201~\r");
     pty.wait_for(r#""task":"direct""#);
-    // Esc denies the write requested by lazily loaded skill Markdown.
+    // The inline selector defaults to Reject; Esc denies the write requested
+    // by lazily loaded skill Markdown.
     pty.send("\x1b[200~huginn-mock: load_skill evil\x1b[201~\r");
-    pty.wait_for("Esc denies");
+    pty.wait_for("›Reject");
     pty.send("\x1b");
     pty.wait_for("action denied");
     // The denied modal is gone, so the next wait cannot match its stale text.
-    pty.wait_until_screen_not_contains("Esc denies");
+    pty.wait_until_screen_not_contains("›Reject");
     // Ctrl+C cancels the turn while the shell approval is pending. The preview
     // carries the command, which identifies this request unambiguously.
     pty.send("\x1b[200~huginn-mock: load_skill shellout\x1b[201~\r");
     pty.wait_for("touch pwned-shell");
-    pty.wait_for("Esc denies");
+    pty.wait_for("›Reject");
     pty.send("\x03");
     // The modal closes; the transcript keeps the tool line, so wait on the hint.
-    pty.wait_until_screen_not_contains("Esc denies");
+    pty.wait_until_screen_not_contains("›Reject");
     pty.send("\x1b[200~after cancel\x1b[201~\r");
     pty.wait_for("Offline mock: after cancel");
     pty.send("/quit\r");
@@ -506,10 +507,11 @@ fn skills_templates_denial_and_cancellation_release_the_tui_and_resume_cleanly()
     assert_eq!(requested.len(), 2, "{requested:?}");
     assert_eq!(requested[0]["request"]["action"], "native.write_file");
     assert_eq!(requested[1]["request"]["action"], "native.shell");
-    assert!(requested[1]["request"]["preview"]
-        .as_str()
-        .unwrap()
-        .contains("touch pwned-shell"));
+    assert!(
+        requested[1]["request"]["preview"].is_null(),
+        "unclassified shell previews must not be persisted: {:?}",
+        requested[1]
+    );
     let shell_id = requested[1]["request"]["id"].as_str().unwrap();
     let shell_index = events
         .iter()

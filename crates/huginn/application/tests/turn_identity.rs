@@ -90,6 +90,8 @@ impl Tool for Shell {
                 id: call.id.clone(),
                 action: "native.shell".into(),
                 preview: "echo".into(),
+                resource: None,
+                provenance: None,
             }),
             payload: serde_json::json!({}),
         })
@@ -111,8 +113,12 @@ impl ToolRegistry for Tools {
 struct Approve;
 #[async_trait]
 impl ApprovalPolicy for Approve {
-    async fn approve(&self, _: &ApprovalRequest, _: CancellationToken) -> Result<bool> {
-        Ok(true)
+    async fn approve(
+        &self,
+        _: &ApprovalRequest,
+        _: CancellationToken,
+    ) -> Result<huginn_core::ApprovalDecision> {
+        Ok(huginn_core::ApprovalDecision::ApproveOnce)
     }
 }
 

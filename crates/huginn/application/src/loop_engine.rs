@@ -435,12 +435,12 @@ impl<'a> LoopExecution<'a> {
                     Event::ApprovalResolved {
                         step: scope.step,
                         id: request.id.clone(),
-                        approved,
+                        approved: approved != huginn_core::ApprovalDecision::Reject,
                     },
                     scope.sink,
                 )
                 .await?;
-                if !approved {
+                if approved == huginn_core::ApprovalDecision::Reject {
                     return Err(AgentError::Tool(
                         "action denied by user; do not retry without a new user request".into(),
                     ));

@@ -3,6 +3,16 @@ id = "generic_api_key"
 description = "Generic API Key"
 regex = '''(?i)(api[_-]?key|apikey|api[_-]?token|apitoken)['"]?\s*[=:]\s*['"]?[a-zA-Z0-9_-]{20,}'''
 
+[[rules.allowlists]]
+description = "Synthetic persistence-test markers from the published Huginn permission commit"
+condition = "AND"
+regexTarget = "match"
+paths = ['''^crates/huginn/runtime/tests/sessions_persistence\.rs$''']
+regexes = [
+  '''(?i)^API_KEY=history-secret-marker$''',
+  '''(?i)^API_KEY=legacy-history-secret$''',
+]
+
 [[rules]]
 id = "aws_access_key"
 description = "AWS Access Key"

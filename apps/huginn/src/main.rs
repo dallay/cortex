@@ -388,7 +388,9 @@ async fn main() -> anyhow::Result<()> {
     let (_, tui, input) = prepare_interaction(&cli, prompt.is_some(), is_doctor)?;
     let allowed = cli.allow.into_iter().collect::<BTreeSet<_>>();
     let prompt_adapter = Arc::new(LinePrompt::new(input.clone()));
-    let policy = Arc::new(HostPolicy::new(prompt_adapter.clone(), allowed.clone()));
+    let policy = Arc::new(
+        HostPolicy::new(prompt_adapter.clone(), allowed.clone()).for_session(session.id.clone()),
+    );
     let output = Output { json: cli.json };
     let model = if is_doctor && config.model_readiness() == ModelReadiness::Unconfigured {
         Arc::new(huginn_runtime::model::UnconfiguredModelProvider)
@@ -718,7 +720,7 @@ async fn tui_chat(
     {
         ui.notification(message);
     }
-    let policy = Arc::new(HostPolicy::new(ui.clone(), allowed));
+    let policy = Arc::new(HostPolicy::new(ui.clone(), allowed).for_session(session.id.clone()));
     let result: anyhow::Result<()> = async {
         let startup = CancellationToken::new();
         let startup_operation = ui.begin(startup.clone());
@@ -749,16 +751,18 @@ async fn tui_chat(
                     id: uuid::Uuid::new_v4().to_string(),
                     action: "session.compact".into(),
                     preview: "Older history will be summarized by the model. Original messages stay in the database. No effects are replayed.".into(),
+                    resource: None,
+                    provenance: None,
                 };
                 match policy.approve(&request, cancel.clone()).await {
-                    Ok(true) => {
+                    Ok(huginn_core::ApprovalDecision::ApproveOnce) => {
                         interruptible(
                             cancel.clone(),
                             implementation.0.compact(session, &scoped_events, cancel),
                         )
                         .await
                     }
-                    Ok(false) => {
+                    Ok(_) => {
                         ui.notification("Compaction skipped.".into());
                         Ok(())
                     }

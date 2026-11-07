@@ -1,8 +1,8 @@
 use crate::tools::{bounded_text, Registry, ToolLease};
 use async_trait::async_trait;
 use huginn_core::{
-    AgentError, ApprovalPolicy, ApprovalRequest, CancellationToken, PreparedAction, Result, Tool,
-    ToolCall, ToolContext, ToolDefinition,
+    AgentError, ApprovalDecision, ApprovalPolicy, ApprovalRequest, CancellationToken,
+    PreparedAction, Result, Tool, ToolCall, ToolContext, ToolDefinition,
 };
 use process_wrap::tokio::{CommandWrap, KillOnDrop, ProcessGroup};
 use rmcp::{
@@ -96,8 +96,8 @@ impl McpClients {
             }
             let request=ApprovalRequest {id:uuid::Uuid::new_v4().to_string(),action:format!("mcp.{}.start",config.name),
                 preview:format!("Server: {} (trusted local process; startup may have external side effects)\nCommand: {} {:?}\nWorking directory: {}\nSandboxing: none; process inherits host privileges.\nEnvironment variable names provided: {:?}",
-                    config.name,config.command,config.args,workspace.display(),config.env.keys().chain(config.env_from.keys()).collect::<Vec<_>>())};
-            if !policy.approve(&request, cancel.clone()).await? {
+                    config.name,config.command,config.args,workspace.display(),config.env.keys().chain(config.env_from.keys()).collect::<Vec<_>>()),resource:None,provenance:None};
+            if policy.approve(&request, cancel.clone()).await? != ApprovalDecision::ApproveOnce {
                 continue;
             }
             let mut command = tokio::process::Command::new(&config.command);
@@ -241,6 +241,8 @@ impl Tool for McpTool {
                     self.remote_name,
                     serde_json::to_string_pretty(&call.arguments)?
                 ),
+                resource: None,
+                provenance: None,
             }),
             payload: call.arguments.clone(),
         })

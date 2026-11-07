@@ -124,7 +124,11 @@ struct NoApproval;
 
 #[async_trait]
 impl ApprovalPolicy for NoApproval {
-    async fn approve(&self, _: &ApprovalRequest, _: CancellationToken) -> Result<bool> {
+    async fn approve(
+        &self,
+        _: &ApprovalRequest,
+        _: CancellationToken,
+    ) -> Result<huginn_core::ApprovalDecision> {
         Err(AgentError::Tool("unexpected approval request".into()))
     }
 }

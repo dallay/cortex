@@ -282,7 +282,11 @@ impl Fixture {
 struct Policy;
 #[async_trait]
 impl ApprovalPolicy for Policy {
-    async fn approve(&self, _: &ApprovalRequest, _: CancellationToken) -> Result<bool> {
+    async fn approve(
+        &self,
+        _: &ApprovalRequest,
+        _: CancellationToken,
+    ) -> Result<huginn_core::ApprovalDecision> {
         panic!("switch is effect-free")
     }
 }

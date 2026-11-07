@@ -27,7 +27,8 @@ pub fn sensitive(path: &Path) -> bool {
             || name.starts_with(".env.")
             || matches!(
                 name.as_str(),
-                ".ssh"
+                ".npmrc"
+                    | ".ssh"
                     | ".gnupg"
                     | "id_rsa"
                     | "id_dsa"

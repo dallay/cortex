@@ -844,7 +844,7 @@ impl Supervisor {
                             undrained,
                             error,
                         })
-                        .await)
+                        .await);
                 }
             };
         let mut old_gates: Vec<Arc<LeaseGate>> = Vec::new();
@@ -922,7 +922,7 @@ impl Supervisor {
                         Err(_) => {
                             return Err(AgentError::Composition(format!(
                                 "timed out draining dependent {id}"
-                            )))
+                            )));
                         }
                     }
                 }
