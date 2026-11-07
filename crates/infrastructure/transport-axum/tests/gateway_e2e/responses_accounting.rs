@@ -1848,9 +1848,9 @@ async fn missing_stream_finish_records_failure_with_usage_before_eof() {
 #[tokio::test]
 async fn concurrent_responses_streams_have_independent_validation_state() {
     let sse = concat!(
-        "data: {\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hola\"},\"finish_reason\":null}]}\n\n",
-        "data: {\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
-        "data: [DONE]\n\n"
+    "data: {\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hola\"},\"finish_reason\":null}]}\n\n",
+    "data: {\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+    "data: [DONE]\n\n"
     );
     let g =
         build_gateway_planned(vec![], UpstreamMock::Sse(sse.into()), UpstreamMock::Fail500).await;

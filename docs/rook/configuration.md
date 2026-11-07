@@ -80,9 +80,9 @@ requests_per_minute = 30
 
 ### `[routing]`
 
-| Field           | Type   | Default      | Description                                    |
-|-----------------|--------|--------------|------------------------------------------------|
-| `strategy`      | enum   | `"priority"` | Routing strategy. See Routing Strategies       |
+| Field           | Type   | Default      | Description                                                                 |
+|-----------------|--------|--------------|-----------------------------------------------------------------------------|
+| `strategy`      | enum   | `"priority"` | Routing strategy. See Routing Strategies                                    |
 | `default_combo` | string | `null`       | Default combo UUID; only applied without `X-Rook-Combo` or a `rook/*` alias |
 
 Supported values for `strategy`: `priority`, `round-robin`.
@@ -121,20 +121,20 @@ strategy = "priority"  # Currently only "priority" is supported
 
 **Combo Fields:**
 
-| Field      | Type   | Required | Description                                               |
-|------------|--------|----------|-----------------------------------------------------------|
-| `id`       | string | Yes      | Unique combo UUID (used for `X-Rook-Combo` header)       |
-| `name`     | string | Yes      | Human-readable name (1-100 chars, unique)                 |
-| `strategy` | string | No       | Execution strategy (default: `"priority"`)                |
-| `steps`    | array  | Yes      | Ordered steps to try (1-10 steps)                         |
+| Field      | Type   | Required | Description                                        |
+|------------|--------|----------|----------------------------------------------------|
+| `id`       | string | Yes      | Unique combo UUID (used for `X-Rook-Combo` header) |
+| `name`     | string | Yes      | Human-readable name (1-100 chars, unique)          |
+| `strategy` | string | No       | Execution strategy (default: `"priority"`)         |
+| `steps`    | array  | Yes      | Ordered steps to try (1-10 steps)                  |
 
 **Step Fields:**
 
-| Field         | Type   | Required | Description                                        |
-|---------------|--------|----------|----------------------------------------------------|
-| `provider_id` | string | Yes      | Provider ID to use for this step                   |
-| `model`       | string | Yes      | Model to request from the provider                 |
-| `priority`    | u8     | Yes      | Priority order (1-255, lower = attempted first)    |
+| Field         | Type   | Required | Description                                     |
+|---------------|--------|----------|-------------------------------------------------|
+| `provider_id` | string | Yes      | Provider ID to use for this step                |
+| `model`       | string | Yes      | Model to request from the provider              |
+| `priority`    | u8     | Yes      | Priority order (1-255, lower = attempted first) |
 
 **Validation Rules:**
 
@@ -142,10 +142,10 @@ strategy = "priority"  # Currently only "priority" is supported
 - Must have 1-10 steps
 - Priorities must be unique within a combo, range 1-255
 - Warnings are logged at startup for:
-  - Duplicate combo names or IDs
-  - Invalid strategy
-  - Duplicate priorities
-  - Provider IDs not found in registry
+    - Duplicate combo names or IDs
+    - Invalid strategy
+    - Duplicate priorities
+    - Provider IDs not found in registry
 
 **Execution Behavior:**
 
@@ -220,8 +220,8 @@ provider applies on its own.
 
 ### `[database]`
 
-| Field     | Type   | Default                              | Description                                         |
-|-----------|--------|--------------------------------------|-----------------------------------------------------|
+| Field     | Type   | Default                  | Description                                         |
+|-----------|--------|--------------------------|-----------------------------------------------------|
 | `db_path` | string | `~/.cortex/rook/rook.db` | Single SQLite database path. `~` expands to `$HOME` |
 
 Rook stores all local configuration/state in one SQLite database. Hexagonal boundaries stay at the port level, so replacing SQLite with a different adapter later requires a new adapter rather than changes to use cases or domain types.
@@ -240,10 +240,10 @@ enabled = true
 allow_env_fallback = true
 ```
 
-| Field                | Type | Default | Description                                                 |
-|----------------------|------|---------|-------------------------------------------------------------|
-| `enabled`            | bool | `false` | Use SQLite-backed client API key auth                      |
-| `allow_env_fallback` | bool | `true`  | Permit legacy `CLIENT_API_KEYS` fallback                     |
+| Field                | Type | Default | Description                              |
+|----------------------|------|---------|------------------------------------------|
+| `enabled`            | bool | `false` | Use SQLite-backed client API key auth    |
+| `allow_env_fallback` | bool | `true`  | Permit legacy `CLIENT_API_KEYS` fallback |
 
 When `enabled = true`, Rook resolves the hash secret in the following priority order:
 
@@ -298,27 +298,27 @@ requests_per_day = 10000000
 requests_per_minute = 30
 ```
 
-| Field          | Type         | Default  | Description                                        |
-|----------------|--------------|----------|----------------------------------------------------|
-| `enabled`      | bool         | `false`  | Enable rate limiting middleware                    |
-| `default_tier` | enum         | `"free"` | Fallback tier when API key has no explicit tier    |
+| Field          | Type | Default  | Description                                     |
+|----------------|------|----------|-------------------------------------------------|
+| `enabled`      | bool | `false`  | Enable rate limiting middleware                 |
+| `default_tier` | enum | `"free"` | Fallback tier when API key has no explicit tier |
 
 **Tier configuration:**
 
 Each tier (`free`, `pro`, `enterprise`) supports:
 
-| Field                  | Type      | Description                               |
-|------------------------|-----------|-------------------------------------------|
-| `requests_per_minute`  | u32       | Maximum requests per minute (required)    |
-| `requests_per_day`     | u32       | Maximum requests per day (optional)       |
+| Field                 | Type | Description                            |
+|-----------------------|------|----------------------------------------|
+| `requests_per_minute` | u32  | Maximum requests per minute (required) |
+| `requests_per_day`    | u32  | Maximum requests per day (optional)    |
 
 **IP rate limits:**
 
 Unauthenticated requests are rate limited by source IP address:
 
-| Field                 | Type | Default | Description                            |
-|-----------------------|------|---------|----------------------------------------|
-| `requests_per_minute` | u32  | `30`    | Maximum requests per minute per IP     |
+| Field                 | Type | Default | Description                        |
+|-----------------------|------|---------|------------------------------------|
+| `requests_per_minute` | u32  | `30`    | Maximum requests per minute per IP |
 
 Authenticated requests bypass IP rate limiting and use API key tier limits instead.
 
@@ -409,11 +409,11 @@ connection_id = "c56a4180-65aa-42ec-a945-5fd21dec0538"
 allowed_origins = ["https://llm.internal.example:443"]
 ```
 
-| Field             | Type              | Default | Description                                                       |
-|-------------------|-------------------|---------|-------------------------------------------------------------------|
-| `grants`          | array             | `[]`    | Operator grants keyed by immutable connection UUID.               |
-| `connection_id`   | string            | —       | UUID returned by provider CRUD; must match the stored connection. |
-| `allowed_origins` | array of strings  | `[]`    | Exact `scheme://host:port` origins allowed for this connection.   |
+| Field             | Type             | Default | Description                                                       |
+|-------------------|------------------|---------|-------------------------------------------------------------------|
+| `grants`          | array            | `[]`    | Operator grants keyed by immutable connection UUID.               |
+| `connection_id`   | string           | —       | UUID returned by provider CRUD; must match the stored connection. |
+| `allowed_origins` | array of strings | `[]`    | Exact `scheme://host:port` origins allowed for this connection.   |
 
 Behavior:
 
@@ -437,6 +437,7 @@ If the initial refresh fails (e.g., encrypted connections with an incorrect key)
 The Rook dashboard provides a web UI for managing provider connections at `http://localhost:3773/providers` (or your configured host/port).
 
 **Features:**
+
 - View all configured providers with status, latency, and priority
 - Add new providers via dialog form (supports Ollama Cloud initially)
 - Test provider connections before saving
@@ -448,20 +449,21 @@ The Rook dashboard provides a web UI for managing provider connections at `http:
 1. Navigate to `/providers` in the dashboard
 2. Click "Add Provider"
 3. Fill in the required fields:
-   - **Name**: Descriptive name (e.g., "Ollama Production")
-   - **API Key**: Your provider API key (from provider's dashboard)
-   - **Base URL**: Provider endpoint (default provided)
-   - **Priority**: Lower numbers = higher priority (0-255)
-   - **Active**: Toggle to enable/disable without deletion
+    - **Name**: Descriptive name (e.g., "Ollama Production")
+    - **API Key**: Your provider API key (from provider's dashboard)
+    - **Base URL**: Provider endpoint (default provided)
+    - **Priority**: Lower numbers = higher priority (0-255)
+    - **Active**: Toggle to enable/disable without deletion
 4. Optionally expand "Advanced Configuration" to set:
-   - Max concurrent requests
-   - Default model ID
+    - Max concurrent requests
+    - Default model ID
 5. Click "Test Connection" to verify credentials (optional)
 6. Click "Save"
 
 The provider will appear in the list immediately and be available for routing.
 
 **Supported providers:**
+
 - Ollama Cloud (API Key) — ✅ Implemented
 - OpenAI (API Key / OAuth) — ✅ Implemented (streaming)
 - Anthropic (API Key / OAuth) — planned
@@ -474,15 +476,15 @@ You can add multiple connections for the same provider kind (e.g., "OpenAI Produ
 
 ### Supported Provider Kinds
 
-| Kind            | Auth required          | base_url default              |
-|-----------------|------------------------|-------------------------------|
-| `openai`        | API key or OAuth token | `https://api.openai.com`      |
-| `anthropic`     | API key or OAuth token | `https://api.anthropic.com`   |
-| `ollama`        | None (local)           | `http://localhost:11434`      |
-| `ollama-cloud`  | API key (Bearer)       | `https://ollama.com`          |
-| `gemini`        | API key or OAuth token | (uses Google's API)           |
-| `groq`          | API key or OAuth token | (uses Groq's API)             |
-| `openai-compatible` | API key (Bearer)    | none — `base_url` is required |
+| Kind                | Auth required          | base_url default              |
+|---------------------|------------------------|-------------------------------|
+| `openai`            | API key or OAuth token | `https://api.openai.com`      |
+| `anthropic`         | API key or OAuth token | `https://api.anthropic.com`   |
+| `ollama`            | None (local)           | `http://localhost:11434`      |
+| `ollama-cloud`      | API key (Bearer)       | `https://ollama.com`          |
+| `gemini`            | API key or OAuth token | (uses Google's API)           |
+| `groq`              | API key or OAuth token | (uses Groq's API)             |
+| `openai-compatible` | API key (Bearer)       | none — `base_url` is required |
 
 ## Routing Strategies
 
@@ -541,6 +543,7 @@ enabled = true
 > ```
 
 <!-- /coderabbit-ai-generated:v1 -->
+
 ## Validation
 
 Rook validates config on startup:

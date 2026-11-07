@@ -361,7 +361,7 @@ impl ResponsesStream {
             ));
         }
         events.push(event(&mut self.sequence, if status == "completed" { "response.completed" } else { "response.incomplete" },
-            json!({"response":self.context.envelope(status, self.output.clone(), self.usage.as_ref(), Some(finish))})));
+                          json!({"response":self.context.envelope(status, self.output.clone(), self.usage.as_ref(), Some(finish))})));
         Ok(events)
     }
 

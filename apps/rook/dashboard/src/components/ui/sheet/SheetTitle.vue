@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {DialogTitleProps} from "reka-ui";
 import {DialogTitle} from "reka-ui";
@@ -14,10 +14,10 @@ const delegatedProps = reactiveOmit(props, "class");
 
 <template>
   <DialogTitle
-    data-slot="sheet-title"
     :class="cn('text-foreground font-semibold', props.class)"
+    data-slot="sheet-title"
     v-bind="delegatedProps"
   >
-    <slot />
+    <slot/>
   </DialogTitle>
 </template>

@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 /**
  * ProviderCatalogCard — single-card representation of a `ProviderKind` in
  * the catalog view.
@@ -55,24 +55,24 @@ const detailLink = computed(() => `/providers/${props.item.kind}`);
 
 <template>
   <Card
-    class="transition-colors hover:bg-muted/30"
     :data-testid="`provider-card-${item.kind}`"
+    class="transition-colors hover:bg-muted/30"
   >
     <RouterLink
+      :data-testid="`provider-card-link-${item.kind}`"
       :to="detailLink"
       class="block"
-      :data-testid="`provider-card-link-${item.kind}`"
     >
       <CardHeader class="flex flex-row items-start justify-between gap-3 space-y-0 pb-2">
         <div class="flex items-start gap-3 min-w-0">
           <div class="rounded-lg bg-primary/10 p-2 shrink-0">
             <ProviderIcon
-              :kind="item.kind"
-              loading="lazy"
-              :width="20"
-              :height="20"
               :decorative="true"
+              :height="20"
+              :kind="item.kind"
+              :width="20"
               class="text-primary"
+              loading="lazy"
             />
           </div>
           <div class="min-w-0">
@@ -92,13 +92,13 @@ const detailLink = computed(() => `/providers/${props.item.kind}`);
     </RouterLink>
     <div class="px-6 pb-6 pt-0 flex items-center gap-2">
       <Button
-        variant="outline"
-        size="sm"
-        class="flex-1"
         :data-testid="`provider-card-add-${item.kind}`"
+        class="flex-1"
+        size="sm"
+        variant="outline"
         @click.stop.prevent="emit('add', item.kind)"
       >
-        <Plus class="h-4 w-4 mr-1" />
+        <Plus class="h-4 w-4 mr-1"/>
         {{ t('providers.catalog.addProvider') }}
       </Button>
     </div>

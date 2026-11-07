@@ -142,7 +142,10 @@ async fn endpoint(replies: Vec<Reply>) -> Endpoint {
                     let data = match reply {
                         Reply::Tool => sse(json!({"tool_calls":[{"index":0,"id":"switch-call","type":"function","function":{"name":"switch","arguments":"{}"}}]}), "tool_calls"),
                         Reply::Text(text) => sse(json!({"content":text}), "stop"),
-                        Reply::Summary(gate) => { gate.stop().await; sse(json!({"content":"short repository summary"}), "stop") },
+                        Reply::Summary(gate) => {
+                            gate.stop().await;
+                            sse(json!({"content":"short repository summary"}), "stop")
+                        }
                         Reply::Http(status) => return (status, Body::from(SECRETS.join(" "))),
                         Reply::StreamError => format!("data: {}\n\n", json!({"error":{"message":SECRETS.join(" ")}})),
                         Reply::GatedStream(gate) => {

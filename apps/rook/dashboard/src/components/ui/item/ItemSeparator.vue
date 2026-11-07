@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {SeparatorProps} from "reka-ui";
 import type {HTMLAttributes} from "vue";
 import {Separator} from "@/components/ui/separator";
@@ -11,8 +11,8 @@ const props = defineProps<
 
 <template>
   <Separator
+    :class="cn('my-0', props.class)"
     data-slot="item-separator"
     orientation="horizontal"
-    :class="cn('my-0', props.class)"
   />
 </template>

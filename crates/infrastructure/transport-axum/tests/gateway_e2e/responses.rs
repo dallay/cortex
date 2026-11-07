@@ -320,7 +320,7 @@ async fn responses_function_round_trip_preserves_calls_and_native_tool_declarati
                 "function":{"name":"lookup", "arguments":"{\"key\":\"value\"}"}}]});
         openai["choices"][0]["finish_reason"] = json!("tool_calls");
         let g = build_gateway_planned(vec![], UpstreamMock::Json(openai),
-            UpstreamMock::Json(json!({"id":"msg_real", "model":"claude-e2e", "type":"message",
+                                      UpstreamMock::Json(json!({"id":"msg_real", "model":"claude-e2e", "type":"message",
                 "role":"assistant", "content":[{"type":"text", "text":"Buscando"},
                     {"type":"tool_use", "id":"call_real", "name":"lookup", "input":{"key":"value"}}],
                 "stop_reason":"tool_use", "usage":{"input_tokens":3,"output_tokens":4}}))).await;
@@ -784,7 +784,7 @@ async fn responses_authentication_scopes_and_restrictions_fail_before_upstream()
                 *g.key_repo.allowed_providers.lock().unwrap() = vec![ProviderId::new("other")];
             }
             let (status, body) = post_json(g.app, "/v1/responses", json!({"model":if mode == "combo" {"rook/e2e"} else {"gpt-4o"},"input":"hola","stream":stream}),
-                &[("x-authz-auth-scopes","admin"),("x-authz-allowed-models","[]"),("x-authz-allowed-providers","[]")]).await;
+                                           &[("x-authz-auth-scopes", "admin"), ("x-authz-allowed-models", "[]"), ("x-authz-allowed-providers", "[]")]).await;
             assert_eq!(
                 status,
                 if mode == "revoked" {

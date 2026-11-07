@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {VariantProps} from "class-variance-authority";
 import type {ToggleGroupRootEmits, ToggleGroupRootProps} from "reka-ui";
@@ -39,16 +39,16 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
 <template>
   <ToggleGroupRoot
     v-slot="slotProps"
-    data-slot="toggle-group"
+    :class="cn('group/toggle-group flex w-fit items-center gap-[--spacing(var(--gap))] rounded-md data-[spacing=default]:data-[variant=outline]:shadow-xs', props.class)"
     :data-size="size"
-    :data-variant="variant"
     :data-spacing="spacing"
+    :data-variant="variant"
     :style="{
       '--gap': spacing,
     }"
+    data-slot="toggle-group"
     v-bind="forwarded"
-    :class="cn('group/toggle-group flex w-fit items-center gap-[--spacing(var(--gap))] rounded-md data-[spacing=default]:data-[variant=outline]:shadow-xs', props.class)"
   >
-    <slot v-bind="slotProps" />
+    <slot v-bind="slotProps"/>
   </ToggleGroupRoot>
 </template>

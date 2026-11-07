@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {SplitterGroupEmits, SplitterGroupProps} from "reka-ui";
 import {SplitterGroup, useForwardPropsEmits} from "reka-ui";
@@ -18,10 +18,10 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
 <template>
   <SplitterGroup
     v-slot="slotProps"
+    :class="cn('flex h-full w-full data-[orientation=vertical]:flex-col', props.class)"
     data-slot="resizable-panel-group"
     v-bind="forwarded"
-    :class="cn('flex h-full w-full data-[orientation=vertical]:flex-col', props.class)"
   >
-    <slot v-bind="slotProps" />
+    <slot v-bind="slotProps"/>
   </SplitterGroup>
 </template>

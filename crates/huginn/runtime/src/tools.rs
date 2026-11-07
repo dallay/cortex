@@ -491,13 +491,13 @@ struct NativeTool {
 #[async_trait]
 impl Tool for NativeTool {
     fn definition(&self) -> ToolDefinition {
-        let (name,description,properties,required)=match self.kind {
-            Kind::List=>("list_files","List up to 100 regular files recursively within a workspace path; narrow the path for larger trees (skips build/dependency directories).",json!({"path":{"type":"string"}}),vec![]),
-            Kind::Read=>("read_file","Read a UTF-8 file; use start_line/end_line for a bounded range.",json!({"path":{"type":"string"},"start_line":{"type":"integer","minimum":1},"end_line":{"type":"integer","minimum":1}}),vec!["path"]),
-            Kind::Search=>("search_files","Search literal text in UTF-8 files under a workspace path.",json!({"path":{"type":"string"},"query":{"type":"string","minLength":1}}),vec!["query"]),
-            Kind::Write=>("write_file","Create or replace a UTF-8 file. Shows a diff and requires approval. Parent directory must exist.",json!({"path":{"type":"string"},"content":{"type":"string"}}),vec!["path","content"]),
-            Kind::Edit=>("edit_file","Replace exactly one occurrence of old_text with new_text. Shows a diff and requires approval.",json!({"path":{"type":"string"},"old_text":{"type":"string","minLength":1},"new_text":{"type":"string"}}),vec!["path","old_text","new_text"]),
-            Kind::Shell=>("shell","Run a POSIX shell command in the workspace, with explicit approval and bounded time/output. This is not sandboxed.",json!({"command":{"type":"string","minLength":1}}),vec!["command"]),
+        let (name, description, properties, required) = match self.kind {
+            Kind::List => ("list_files", "List up to 100 regular files recursively within a workspace path; narrow the path for larger trees (skips build/dependency directories).", json!({"path":{"type":"string"}}), vec![]),
+            Kind::Read => ("read_file", "Read a UTF-8 file; use start_line/end_line for a bounded range.", json!({"path":{"type":"string"},"start_line":{"type":"integer","minimum":1},"end_line":{"type":"integer","minimum":1}}), vec!["path"]),
+            Kind::Search => ("search_files", "Search literal text in UTF-8 files under a workspace path.", json!({"path":{"type":"string"},"query":{"type":"string","minLength":1}}), vec!["query"]),
+            Kind::Write => ("write_file", "Create or replace a UTF-8 file. Shows a diff and requires approval. Parent directory must exist.", json!({"path":{"type":"string"},"content":{"type":"string"}}), vec!["path", "content"]),
+            Kind::Edit => ("edit_file", "Replace exactly one occurrence of old_text with new_text. Shows a diff and requires approval.", json!({"path":{"type":"string"},"old_text":{"type":"string","minLength":1},"new_text":{"type":"string"}}), vec!["path", "old_text", "new_text"]),
+            Kind::Shell => ("shell", "Run a POSIX shell command in the workspace, with explicit approval and bounded time/output. This is not sandboxed.", json!({"command":{"type":"string","minLength":1}}), vec!["command"]),
         };
         ToolDefinition {
             name: name.into(),

@@ -14,10 +14,10 @@ const delegatedProps = reactiveOmit(props, "class");
 
 <template>
   <DrawerDescription
+    :class="cn('text-muted-foreground text-sm', props.class)"
     data-slot="drawer-description"
     v-bind="delegatedProps"
-    :class="cn('text-muted-foreground text-sm', props.class)"
   >
-    <slot />
+    <slot/>
   </DrawerDescription>
 </template>

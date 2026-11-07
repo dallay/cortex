@@ -4,35 +4,35 @@ Rook serves its OpenAI-compatible API on the configured host and port (default: 
 
 ## Endpoint index
 
-| Method | Path | Authentication | Availability |
-|---|---|---|---|
-| `POST` | `/v1/chat/completions` | API key if configured; otherwise public | Always |
-| `POST` | `/v1/responses` | API key if configured; otherwise public | Stateless text/function subset |
-| `GET` | `/v1/models` | API key if configured; otherwise public | Always |
-| `POST` | `/v1/messages` | API key if configured; otherwise public | Always |
-| `GET` | `/health` | Public | Always |
-| `GET` | `/login` | Public | Always |
-| `POST` | `/login` | Public + CSRF | Always |
-| `POST` | `/logout` | Admin session + CSRF | Always |
-| `GET` | `/api/me` | Admin session | Always |
-| `GET` | `/api/models` | Admin session | Always |
-| `GET`, `POST` | `/api/models/aliases` | Admin session | Always |
-| `DELETE` | `/api/models/aliases/{alias}` | Admin session | Always |
-| `GET`, `POST` | `/api/api-keys` | Admin session | API-key management enabled |
-| `GET`, `PUT`, `DELETE` | `/api/api-keys/{id}` | Admin session | API-key management enabled |
-| `POST` | `/api/api-keys/{id}/rotate` | Admin session | API-key management enabled |
-| `GET`, `POST` | `/api/combos` | Admin session | Combo repository enabled |
-| `GET`, `PUT`, `DELETE` | `/api/combos/{id}` | Admin session | Combo repository enabled |
-| `GET`, `POST` | `/api/combos/{id}/aliases` | Admin session | Combo and combo-alias repositories enabled |
-| `DELETE` | `/api/combos/{id}/aliases/{alias}` | Admin session | Combo and combo-alias repositories enabled |
-| `GET`, `DELETE` | `/api/cache/stats`, `/api/cache`, `/api/cache/signatures`, `/api/cache/signature/{sig}`, `/api/cache/{signature}` | Admin session | Always mounted; cache operations depend on configured cache |
-| `GET` | `/api/usage`, `/api/usage/summary`, `/api/usage/cost` | Admin session | Always mounted; recorder may be unavailable |
-| `GET`, `POST`, `PUT`, `DELETE` | `/api/rate-limits...` | Admin session | Rate-limit store enabled |
-| `GET` | `/api/telemetry/summary`, `/api/telemetry/{provider}`, `/api/telemetry/{provider}/latency` | Public | Always; telemetry may be disabled |
-| `GET`, `POST` | `/api/resilience`, `/api/resilience/{provider}/reset` | Admin session | Always |
-| `POST` | `/api/oauth/{provider}/authorize`, `/api/oauth/{provider}/refresh` | Admin session + CSRF for POST | Connection management enabled |
-| `GET` | `/api/oauth/{provider}/status`, `/api/oauth/callback` | Admin session for status; provider redirect for callback | Connection management enabled |
-| `DELETE` | `/api/oauth/{provider}` | Admin session + CSRF | Connection management enabled |
+| Method                         | Path                                                                                                              | Authentication                                           | Availability                                                |
+|--------------------------------|-------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------|-------------------------------------------------------------|
+| `POST`                         | `/v1/chat/completions`                                                                                            | API key if configured; otherwise public                  | Always                                                      |
+| `POST`                         | `/v1/responses`                                                                                                   | API key if configured; otherwise public                  | Stateless text/function subset                              |
+| `GET`                          | `/v1/models`                                                                                                      | API key if configured; otherwise public                  | Always                                                      |
+| `POST`                         | `/v1/messages`                                                                                                    | API key if configured; otherwise public                  | Always                                                      |
+| `GET`                          | `/health`                                                                                                         | Public                                                   | Always                                                      |
+| `GET`                          | `/login`                                                                                                          | Public                                                   | Always                                                      |
+| `POST`                         | `/login`                                                                                                          | Public + CSRF                                            | Always                                                      |
+| `POST`                         | `/logout`                                                                                                         | Admin session + CSRF                                     | Always                                                      |
+| `GET`                          | `/api/me`                                                                                                         | Admin session                                            | Always                                                      |
+| `GET`                          | `/api/models`                                                                                                     | Admin session                                            | Always                                                      |
+| `GET`, `POST`                  | `/api/models/aliases`                                                                                             | Admin session                                            | Always                                                      |
+| `DELETE`                       | `/api/models/aliases/{alias}`                                                                                     | Admin session                                            | Always                                                      |
+| `GET`, `POST`                  | `/api/api-keys`                                                                                                   | Admin session                                            | API-key management enabled                                  |
+| `GET`, `PUT`, `DELETE`         | `/api/api-keys/{id}`                                                                                              | Admin session                                            | API-key management enabled                                  |
+| `POST`                         | `/api/api-keys/{id}/rotate`                                                                                       | Admin session                                            | API-key management enabled                                  |
+| `GET`, `POST`                  | `/api/combos`                                                                                                     | Admin session                                            | Combo repository enabled                                    |
+| `GET`, `PUT`, `DELETE`         | `/api/combos/{id}`                                                                                                | Admin session                                            | Combo repository enabled                                    |
+| `GET`, `POST`                  | `/api/combos/{id}/aliases`                                                                                        | Admin session                                            | Combo and combo-alias repositories enabled                  |
+| `DELETE`                       | `/api/combos/{id}/aliases/{alias}`                                                                                | Admin session                                            | Combo and combo-alias repositories enabled                  |
+| `GET`, `DELETE`                | `/api/cache/stats`, `/api/cache`, `/api/cache/signatures`, `/api/cache/signature/{sig}`, `/api/cache/{signature}` | Admin session                                            | Always mounted; cache operations depend on configured cache |
+| `GET`                          | `/api/usage`, `/api/usage/summary`, `/api/usage/cost`                                                             | Admin session                                            | Always mounted; recorder may be unavailable                 |
+| `GET`, `POST`, `PUT`, `DELETE` | `/api/rate-limits...`                                                                                             | Admin session                                            | Rate-limit store enabled                                    |
+| `GET`                          | `/api/telemetry/summary`, `/api/telemetry/{provider}`, `/api/telemetry/{provider}/latency`                        | Public                                                   | Always; telemetry may be disabled                           |
+| `GET`, `POST`                  | `/api/resilience`, `/api/resilience/{provider}/reset`                                                             | Admin session                                            | Always                                                      |
+| `POST`                         | `/api/oauth/{provider}/authorize`, `/api/oauth/{provider}/refresh`                                                | Admin session + CSRF for POST                            | Connection management enabled                               |
+| `GET`                          | `/api/oauth/{provider}/status`, `/api/oauth/callback`                                                             | Admin session for status; provider redirect for callback | Connection management enabled                               |
+| `DELETE`                       | `/api/oauth/{provider}`                                                                                           | Admin session + CSRF                                     | Connection management enabled                               |
 
 The `/api/models/aliases` prefix stores ordinary aliases from an alias to a canonical model. The `rook/` prefix is reserved for virtual combo aliases and cannot be created as a model alias.
 
@@ -52,8 +52,7 @@ count against the new budget. Lowering the budget below existing commitments
 blocks new reservations until sufficient capacity is available.
 
 Budgeted gateway requests require a verifiable, enforceable strict cost
-bound. The bound is derived from the model-catalog pricing for priced models
-(conservative prompt estimate plus the output cap) or from an adapter that
+bound. The bound is derived from the model-catalog pricing for priced models (conservative prompt estimate plus the output cap) or from an adapter that
 proves its own bound. Rook rejects requests before provider I/O with HTTP
 `400` and error code `COST_UNAVAILABLE` when the requested model has no
 declared pricing, so budgeted requests on unpriced models remain
@@ -175,13 +174,13 @@ Aliases must use the `rook/` namespace. Invalid aliases return `400 INVALID_ALIA
 
 Requires an admin session. All cache responses are JSON unless the status is `204`.
 
-| Method and path | Success | Errors |
-|---|---|---|
-| `GET /api/cache/stats` | `CacheStats` JSON, including signature and token-cache statistics | `500` on cache error |
-| `GET /api/cache/signatures` | Array of signature metadata entries | `500` on cache error |
-| `GET /api/cache/signature/{sig}` | Cached `CompletionResponse` | `400` invalid signature; `404` missing/expired signature; `500` cache error |
-| `DELETE /api/cache` | `204 No Content` | `500` on cache error |
-| `DELETE /api/cache/{signature}` | `204 No Content` (idempotent) | `400` unless signature is 64 hexadecimal characters; `500` on cache error |
+| Method and path                  | Success                                                           | Errors                                                                      |
+|----------------------------------|-------------------------------------------------------------------|-----------------------------------------------------------------------------|
+| `GET /api/cache/stats`           | `CacheStats` JSON, including signature and token-cache statistics | `500` on cache error                                                        |
+| `GET /api/cache/signatures`      | Array of signature metadata entries                               | `500` on cache error                                                        |
+| `GET /api/cache/signature/{sig}` | Cached `CompletionResponse`                                       | `400` invalid signature; `404` missing/expired signature; `500` cache error |
+| `DELETE /api/cache`              | `204 No Content`                                                  | `500` on cache error                                                        |
+| `DELETE /api/cache/{signature}`  | `204 No Content` (idempotent)                                     | `400` unless signature is 64 hexadecimal characters; `500` on cache error   |
 
 A signature-list entry contains the signature, request ID, model, provider, cache timestamps, and request metadata. The detail endpoint returns the cached completion, not the signature-list entry.
 
@@ -209,13 +208,13 @@ Invalid query values return `400` with codes including `INVALID_CONNECTION_ID`, 
 
 Requires an admin session and a configured rate-limit store. If the store is disabled, these routes are not mounted.
 
-| Method | Path | Request / response |
-|---|---|---|
-| `GET` | `/api/rate-limits` | Returns an array of rate-limit rules |
-| `POST` | `/api/rate-limits` | Creates a rule; returns `201` and the rule |
-| `PUT` | `/api/rate-limits/{id}` | Updates request limits; returns the rule |
-| `DELETE` | `/api/rate-limits/{id}` | Deletes a rule; returns `204` |
-| `GET` | `/api/rate-limits/{scope}/{target}/status` | Returns current counters, remaining quota, reset time, and active limits |
+| Method   | Path                                       | Request / response                                                       |
+|----------|--------------------------------------------|--------------------------------------------------------------------------|
+| `GET`    | `/api/rate-limits`                         | Returns an array of rate-limit rules                                     |
+| `POST`   | `/api/rate-limits`                         | Creates a rule; returns `201` and the rule                               |
+| `PUT`    | `/api/rate-limits/{id}`                    | Updates request limits; returns the rule                                 |
+| `DELETE` | `/api/rate-limits/{id}`                    | Deletes a rule; returns `204`                                            |
+| `GET`    | `/api/rate-limits/{scope}/{target}/status` | Returns current counters, remaining quota, reset time, and active limits |
 
 Create requests use `scope` (`api-key`, `ip-address`, or `global`), `target`, required positive `requests_per_minute`, and optional `requests_per_day`. Unknown fields are rejected. Updates accept optional request-per-minute/day limits. Validation errors return `400 VALIDATION_ERROR`; missing rules return `404`; duplicate identities return conflict. Global rules require target `global`; IP targets must parse as IP addresses.
 

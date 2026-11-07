@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {AlertCircle} from "@lucide/vue";
 import CopyButton from "@/components/CopyButton.vue";
 import {Alert, AlertDescription} from "@/components/ui/alert";
@@ -31,14 +31,16 @@ defineProps<{
     </CardHeader>
     <CardContent class="space-y-4">
       <Alert v-if="warning" variant="destructive">
-        <AlertCircle class="h-4 w-4" />
+        <AlertCircle class="h-4 w-4"/>
         <AlertDescription>
           {{ warning }}
         </AlertDescription>
       </Alert>
       <div class="flex items-center gap-2 p-3 bg-muted rounded-md font-mono text-sm">
-        <code data-testid="api-key-display" class="flex-1 break-words overflow-x-auto">{{ apiKey }}</code>
-        <CopyButton :value="apiKey" />
+        <code class="flex-1 break-words overflow-x-auto" data-testid="api-key-display">{{
+            apiKey
+          }}</code>
+        <CopyButton :value="apiKey"/>
       </div>
     </CardContent>
     <CardFooter v-if="onDone" class="justify-end">

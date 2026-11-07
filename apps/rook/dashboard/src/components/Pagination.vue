@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {ChevronLeft, ChevronRight} from "@lucide/vue";
 import {computed} from "vue";
 import {Button} from "@/components/ui/button";
@@ -41,22 +41,22 @@ const goToNext = () => {
     </div>
     <div class="flex items-center gap-2">
       <Button
-        variant="outline"
-        size="sm"
         :disabled="!hasPrev"
+        size="sm"
+        variant="outline"
         @click="goToPrev"
       >
-        <ChevronLeft class="h-4 w-4" />
+        <ChevronLeft class="h-4 w-4"/>
         Previous
       </Button>
       <Button
-        variant="outline"
-        size="sm"
         :disabled="!hasNext"
+        size="sm"
+        variant="outline"
         @click="goToNext"
       >
         Next
-        <ChevronRight class="h-4 w-4" />
+        <ChevronRight class="h-4 w-4"/>
       </Button>
     </div>
   </div>

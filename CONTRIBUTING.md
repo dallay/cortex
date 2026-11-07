@@ -22,15 +22,16 @@ For detailed development setup, see [docs/development.md](docs/development.md).
 
 ## Policies and Guidelines
 
-| Topic | Location |
-|-------|----------|
-| Issue labeling | [docs/contributing/labeling-policy.md](docs/contributing/labeling-policy.md) |
-| GitHub → Linear sync | [docs/contributing/linear-sync-policy.md](docs/contributing/linear-sync-policy.md) |
-| Architecture decisions | [docs/adr/README.md](docs/adr/README.md) |
+| Topic                  | Location                                                                           |
+|------------------------|------------------------------------------------------------------------------------|
+| Issue labeling         | [docs/contributing/labeling-policy.md](docs/contributing/labeling-policy.md)       |
+| GitHub → Linear sync   | [docs/contributing/linear-sync-policy.md](docs/contributing/linear-sync-policy.md) |
+| Architecture decisions | [docs/adr/README.md](docs/adr/README.md)                                           |
 
 ### Issue Classification
 
 All issues should be classified using the labeling policy. The system uses:
+
 - `product/*` — Owning product: `rook`, `huginn`, or `shared`
 - `area/*` — Technical areas: `auth`, `ci`, `core`, `dashboard`, etc.
 - `type/*` — Work type: `bug`, `feature`, `enhancement`, `chore`, etc.

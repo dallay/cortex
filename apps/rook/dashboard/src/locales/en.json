@@ -534,7 +534,11 @@
 		"capacity": "Entries",
 		"unlimited": "Unlimited",
 		"noData": "Not available",
-		"state": { "disabled": "Disabled", "empty": "Empty", "active": "Active" },
+		"state": {
+			"disabled": "Disabled",
+			"empty": "Empty",
+			"active": "Active"
+		},
 		"clear": "Clear cache",
 		"clearConfirm": "Clear the entire cache?",
 		"deleteConfirm": "Delete this cached response?",

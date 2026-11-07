@@ -19,11 +19,11 @@ Local testing without host pollution
 
 ## 🎯 Which Path Do I Use?
 
-| Goal | Path | Speed |
-|------|------|-------|
-| Verify backend starts and `/health` responds | [Path 1 — Smoke Test](#path-1--smoke-test-container) | ⚡ Fast (~2 min) |
-| Full E2E (dashboard + API key CRUD) | [Path 2 — Playwright E2E](#path-2--playwright-e2e-against-docker) | 🐢 Slow (~10 min) |
-| Binary validation (Ubuntu + Alpine) | [Path 3 — Multi-distro](#path-3--multi-distro-e2e) | 🐢 Slow (~15 min) |
+| Goal                                         | Path                                                              | Speed             |
+|----------------------------------------------|-------------------------------------------------------------------|-------------------|
+| Verify backend starts and `/health` responds | [Path 1 — Smoke Test](#path-1--smoke-test-container)              | ⚡ Fast (~2 min)  |
+| Full E2E (dashboard + API key CRUD)          | [Path 2 — Playwright E2E](#path-2--playwright-e2e-against-docker) | 🐢 Slow (~10 min) |
+| Binary validation (Ubuntu + Alpine)          | [Path 3 — Multi-distro](#path-3--multi-distro-e2e)                | 🐢 Slow (~15 min) |
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -63,13 +63,13 @@ Local testing without host pollution
 
 ### What You Get
 
-| Feature | Available |
-|---------|-----------|
-| Backend API | ✅ On port 8090 |
+| Feature      | Available                       |
+|--------------|---------------------------------|
+| Backend API  | ✅ On port 8090                 |
 | Health check | ✅ `curl localhost:8090/health` |
-| Database | ✅ In-memory (`:memory:`) |
-| Dashboard | ❌ Not built in debug mode |
-| Logs | ✅ `just dev-logs` |
+| Database     | ✅ In-memory (`:memory:`)       |
+| Dashboard    | ❌ Not built in debug mode      |
+| Logs         | ✅ `just dev-logs`              |
 
 ### Commands
 
@@ -119,14 +119,14 @@ port = 3773
 
 ### What You Get
 
-| Feature | Available |
-|---------|-----------|
-| Backend API | ✅ Running in `rook:e2e-api-keys` container |
-| Admin account | ✅ `admin@rook.local` / `rook-admin-123` |
-| Dashboard | ✅ Built and served |
-| Audit data | ✅ In-memory (ephemeral) |
-| Database | ✅ SQLite at `/tmp/rook-e2e.db` (container tmpfs) |
-| E2E tests | ✅ Playwright |
+| Feature       | Available                                         |
+|---------------|---------------------------------------------------|
+| Backend API   | ✅ Running in `rook:e2e-api-keys` container       |
+| Admin account | ✅ `admin@rook.local` / `rook-admin-123`          |
+| Dashboard     | ✅ Built and served                               |
+| Audit data    | ✅ In-memory (ephemeral)                          |
+| Database      | ✅ SQLite at `/tmp/rook-e2e.db` (container tmpfs) |
+| E2E tests     | ✅ Playwright                                     |
 
 ### Architecture
 
@@ -209,12 +209,12 @@ docker compose -f docker-compose.test.yml down -v
 
 ### Test Coverage
 
-| Test File | Coverage |
-|-----------|----------|
-| `e2e/login.spec.ts` | Login flow, logout, session persistence |
-| `e2e/providers.spec.ts` | Provider CRUD, connection testing |
-| `e2e/api-keys.spec.ts` | API key creation, revocation, listing |
-| `e2e/vue.spec.ts` | Navigation, settings, audit logs |
+| Test File               | Coverage                                |
+|-------------------------|-----------------------------------------|
+| `e2e/login.spec.ts`     | Login flow, logout, session persistence |
+| `e2e/providers.spec.ts` | Provider CRUD, connection testing       |
+| `e2e/api-keys.spec.ts`  | API key creation, revocation, listing   |
+| `e2e/vue.spec.ts`       | Navigation, settings, audit logs        |
 
 ---
 
@@ -224,12 +224,12 @@ docker compose -f docker-compose.test.yml down -v
 
 ### What You Get
 
-| Feature | Available |
-|---------|-----------|
-| Ubuntu 22.04 | ✅ amd64 |
-| Alpine 3.19 | ✅ amd64 (musl) |
-| rook binary | ✅ Release build |
-| Health check | ✅ Cross-distro |
+| Feature      | Available        |
+|--------------|------------------|
+| Ubuntu 22.04 | ✅ amd64         |
+| Alpine 3.19  | ✅ amd64 (musl)  |
+| rook binary  | ✅ Release build |
+| Health check | ✅ Cross-distro  |
 
 ### Commands
 
@@ -251,20 +251,20 @@ dev/e2e-test.sh test alpine
 
 ## 🛠️ Just Recipes Reference
 
-| Recipe | Description |
-|--------|-------------|
-| `just dev-build` | Build dev Docker image |
-| `just dev-up` | Start smoke test container |
-| `just dev-down` | Stop container |
-| `just dev-logs` | Tail container logs |
-| `just dev-shell` | Shell into container |
-| `just dev-clean` | Remove image + container |
-| `just test-e2e-build` | Build E2E Docker image |
-| `just test-e2e` | Run full E2E suite |
-| `just test-e2e-dev` | Development mode with manual testing |
-| `just test-e2e-cleanup` | Stop/remove E2E containers |
-| `just build` | Build release binary |
-| `just build-app` | Build rook binary only |
+| Recipe                  | Description                          |
+|-------------------------|--------------------------------------|
+| `just dev-build`        | Build dev Docker image               |
+| `just dev-up`           | Start smoke test container           |
+| `just dev-down`         | Stop container                       |
+| `just dev-logs`         | Tail container logs                  |
+| `just dev-shell`        | Shell into container                 |
+| `just dev-clean`        | Remove image + container             |
+| `just test-e2e-build`   | Build E2E Docker image               |
+| `just test-e2e`         | Run full E2E suite                   |
+| `just test-e2e-dev`     | Development mode with manual testing |
+| `just test-e2e-cleanup` | Stop/remove E2E containers           |
+| `just build`            | Build release binary                 |
+| `just build-app`        | Build rook binary only               |
 
 Full list: `just --list`
 
@@ -317,13 +317,13 @@ ldd target/release/rook  # Should show musl, not glibc
 
 ## 📚 Resources
 
-| Resource | Description |
-|----------|-------------|
-| [Docker Docs](https://docs.docker.com) | Docker documentation |
-| [Playwright](https://playwright.dev) | E2E testing framework |
-| [Compose File](docker-compose.yml) | Docker Compose configuration |
-| [Rook Architecture](../docs/rook/architecture.md) | Backend internals |
-| [Development Guide](../docs/development.md) | General dev setup and troubleshooting |
+| Resource                                          | Description                           |
+|---------------------------------------------------|---------------------------------------|
+| [Docker Docs](https://docs.docker.com)            | Docker documentation                  |
+| [Playwright](https://playwright.dev)              | E2E testing framework                 |
+| [Compose File](docker-compose.yml)                | Docker Compose configuration          |
+| [Rook Architecture](../docs/rook/architecture.md) | Backend internals                     |
+| [Development Guide](../docs/development.md)       | General dev setup and troubleshooting |
 
 ---
 

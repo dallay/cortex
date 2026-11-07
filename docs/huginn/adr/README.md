@@ -16,24 +16,24 @@ living documentation treat Huginn as the canonical name.
 
 `Accepted` indicates that a direction was chosen; it does not by itself confirm that it is implemented or verified. The relationships below summarize refinements and partial supersessions. See each delivery's documents for implementation evidence.
 
-| ADR | Decision | Current status and relationship |
-| --- | --- | --- |
-| [ADR-0001](0001-agent-product-and-documentation-boundaries.md) | Agent product and documentation boundaries | Accepted; ADR-0011 resolved the provisional name, and `docs/agent` was replaced by the current location `docs/huginn` |
-| [ADR-0002](0002-own-rust-core-with-selective-reuse.md) | Own Rust core with selective reuse | Accepted |
-| [ADR-0003](0003-minimal-service-composition-kernel.md) | Minimal service composition kernel | Accepted; ADR-0010 refined the timing for investing in plugins/UI and ADR-0012 refined the architecture |
-| [ADR-0004](0004-personal-coding-agent-with-cli.md) | Personal coding agent with CLI | Accepted for the original MVP; ADR-0010 partially replaced the TUI deferral and the choice of a long-term, line-oriented interactive interface |
-| [ADR-0005](0005-openai-compatible-model-boundary.md) | OpenAI-compatible model boundary | Accepted; ADR-0014 extended the decision with a provider catalog and turn-scoped routing |
-| [ADR-0006](0006-native-tools-and-trusted-mcp-stdio.md) | Native tools and trusted MCP stdio | Accepted |
-| [ADR-0007](0007-read-freely-approve-effects.md) | Read freely, approve effects | Accepted |
-| [ADR-0008](0008-repository-instructions-and-durable-context.md) | Repository instructions and durable context | Accepted; ADR-0009 made the storage and runtime contracts concrete |
-| [ADR-0009](0009-sqlite-config-and-mvp-runtime-contracts.md) | SQLite, configuration, and MVP runtime contracts | Accepted |
-| [ADR-0010](0010-ratatui-plugin-first-interactive-terminal.md) | Ratatui-first, plugin-first interactive terminal | Accepted; ADR-0012 refined the interactive architecture |
-| [ADR-0011](0011-huginn-product-naming.md) | Huginn product name and identity | Accepted; resolves the provisional name from ADR-0001–0010 |
-| [ADR-0012](0012-hexagonal-application-and-plugin-lifecycle.md) | Hexagonal application and capabilities with their own lifecycle | Accepted; implementation and its validation evidence are recorded separately |
-| [ADR-0013](0013-authorable-plugin-contract-and-loading.md) | Extensible plugin contract and future loading strategy | Accepted for the in-process contract; runtime loading, hot reload, and sandboxing remain deferred |
-| [ADR-0014](0014-builtin-providers-and-turn-scoped-model-routing.md) | Built-in providers and turn-scoped model routing | Direction Accepted; delivery status and its acceptance are recorded separately |
-| [ADR-0015](0015-separate-product-releases-from-cargo-publishing.md) | Separate product releases from Cargo publishing | Accepted; Huginn's publication remains conditioned on product acceptance |
-| [ADR-0016](0016-restrict-only-tool-hooks.md) | Restrict-only tool hooks | Proposed; complements ADR-0007 and ADR-0013 without ceding approval authority |
+| ADR                                                                 | Decision                                                        | Current status and relationship                                                                                                                |
+|---------------------------------------------------------------------|-----------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------|
+| [ADR-0001](0001-agent-product-and-documentation-boundaries.md)      | Agent product and documentation boundaries                      | Accepted; ADR-0011 resolved the provisional name, and `docs/agent` was replaced by the current location `docs/huginn`                          |
+| [ADR-0002](0002-own-rust-core-with-selective-reuse.md)              | Own Rust core with selective reuse                              | Accepted                                                                                                                                       |
+| [ADR-0003](0003-minimal-service-composition-kernel.md)              | Minimal service composition kernel                              | Accepted; ADR-0010 refined the timing for investing in plugins/UI and ADR-0012 refined the architecture                                        |
+| [ADR-0004](0004-personal-coding-agent-with-cli.md)                  | Personal coding agent with CLI                                  | Accepted for the original MVP; ADR-0010 partially replaced the TUI deferral and the choice of a long-term, line-oriented interactive interface |
+| [ADR-0005](0005-openai-compatible-model-boundary.md)                | OpenAI-compatible model boundary                                | Accepted; ADR-0014 extended the decision with a provider catalog and turn-scoped routing                                                       |
+| [ADR-0006](0006-native-tools-and-trusted-mcp-stdio.md)              | Native tools and trusted MCP stdio                              | Accepted                                                                                                                                       |
+| [ADR-0007](0007-read-freely-approve-effects.md)                     | Read freely, approve effects                                    | Accepted                                                                                                                                       |
+| [ADR-0008](0008-repository-instructions-and-durable-context.md)     | Repository instructions and durable context                     | Accepted; ADR-0009 made the storage and runtime contracts concrete                                                                             |
+| [ADR-0009](0009-sqlite-config-and-mvp-runtime-contracts.md)         | SQLite, configuration, and MVP runtime contracts                | Accepted                                                                                                                                       |
+| [ADR-0010](0010-ratatui-plugin-first-interactive-terminal.md)       | Ratatui-first, plugin-first interactive terminal                | Accepted; ADR-0012 refined the interactive architecture                                                                                        |
+| [ADR-0011](0011-huginn-product-naming.md)                           | Huginn product name and identity                                | Accepted; resolves the provisional name from ADR-0001–0010                                                                                     |
+| [ADR-0012](0012-hexagonal-application-and-plugin-lifecycle.md)      | Hexagonal application and capabilities with their own lifecycle | Accepted; implementation and its validation evidence are recorded separately                                                                   |
+| [ADR-0013](0013-authorable-plugin-contract-and-loading.md)          | Extensible plugin contract and future loading strategy          | Accepted for the in-process contract; runtime loading, hot reload, and sandboxing remain deferred                                              |
+| [ADR-0014](0014-builtin-providers-and-turn-scoped-model-routing.md) | Built-in providers and turn-scoped model routing                | Direction Accepted; delivery status and its acceptance are recorded separately                                                                 |
+| [ADR-0015](0015-separate-product-releases-from-cargo-publishing.md) | Separate product releases from Cargo publishing                 | Accepted; Huginn's publication remains conditioned on product acceptance                                                                       |
+| [ADR-0016](0016-restrict-only-tool-hooks.md)                        | Restrict-only tool hooks                                        | Proposed; complements ADR-0007 and ADR-0013 without ceding approval authority                                                                  |
 
 ## Record format
 
@@ -68,8 +68,7 @@ alternatives are preserved as research history.
 
 ## Remaining decisions
 
-- Public product name and final crate/configuration namespaces —
-  **decided** by [ADR-0011](0011-huginn-product-naming.md) (Huginn).
+- Public product name and final crate/configuration namespaces — **decided** by [ADR-0011](0011-huginn-product-naming.md) (Huginn).
   Historical ADRs still mention the legacy identifiers; those records
   are preserved unchanged.
 - Supported real endpoint combinations and Rook compatibility.

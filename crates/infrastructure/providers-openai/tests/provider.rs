@@ -987,13 +987,13 @@ async fn stream_preserves_fragmented_tool_call_deltas_and_interleaved_text() {
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/chat/completions"))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(concat!(
-            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"content":"checking ","tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"read_file","arguments":"{\"pa"}},{"index":1,"id":"call-2","type":"function","function":{"name":"count","arguments":"{\"n\":"}}]},"finish_reason":null}]}"#,
-            "\n\n",
-            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"th\":\"x\"}"}},{"index":1,"function":{"arguments":"1}"}}]},"finish_reason":null}]}"#,
-            "\n\n",
-            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
-            "\n\n",
-            "data: [DONE]\n\n"
+        r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"content":"checking ","tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"read_file","arguments":"{\"pa"}},{"index":1,"id":"call-2","type":"function","function":{"name":"count","arguments":"{\"n\":"}}]},"finish_reason":null}]}"#,
+        "\n\n",
+        r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"th\":\"x\"}"}},{"index":1,"function":{"arguments":"1}"}}]},"finish_reason":null}]}"#,
+        "\n\n",
+        r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+        "\n\n",
+        "data: [DONE]\n\n"
         )))
         .mount(&server)
         .await;
@@ -1163,11 +1163,11 @@ async fn stream_returns_error_when_tool_arguments_are_incomplete_at_finish() {
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/chat/completions"))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(concat!(
-            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"read_file","arguments":"{\"path\":"}}]},"finish_reason":null}]}"#,
-            "\n\n",
-            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
-            "\n\n",
-            "data: [DONE]\n\n"
+        r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"read_file","arguments":"{\"path\":"}}]},"finish_reason":null}]}"#,
+        "\n\n",
+        r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+        "\n\n",
+        "data: [DONE]\n\n"
         )))
         .mount(&server)
         .await;
@@ -1200,8 +1200,8 @@ async fn stream_returns_error_when_connection_ends_before_tool_finish_reason() {
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/chat/completions"))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(concat!(
-            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"read_file","arguments":"{}"}}]},"finish_reason":null}]}"#,
-            "\n\n"
+        r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"read_file","arguments":"{}"}}]},"finish_reason":null}]}"#,
+        "\n\n"
         )))
         .mount(&server)
         .await;
@@ -1759,10 +1759,10 @@ async fn stream_returns_error_when_tool_call_identity_changes() {
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/chat/completions"))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(concat!(
-            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"read_file"}}]}}]}"#,
-            "\n\n",
-            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-2","function":{"name":"read_file"}}]}}]}"#,
-            "\n\n"
+        r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"read_file"}}]}}]}"#,
+        "\n\n",
+        r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-2","function":{"name":"read_file"}}]}}]}"#,
+        "\n\n"
         )))
         .mount(&server)
         .await;
@@ -1796,11 +1796,11 @@ async fn stream_parses_length_and_content_filter_finish_reasons() {
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/chat/completions"))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(concat!(
-            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"content":"a"},"finish_reason":"length"}]}"#,
-            "\n\n",
-            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"content":"b"},"finish_reason":"content_filter"}]}"#,
-            "\n\n",
-            "data: [DONE]\n\n"
+        r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"content":"a"},"finish_reason":"length"}]}"#,
+        "\n\n",
+        r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"content":"b"},"finish_reason":"content_filter"}]}"#,
+        "\n\n",
+        "data: [DONE]\n\n"
         )))
         .mount(&server)
         .await;
@@ -1835,9 +1835,9 @@ async fn stream_returns_error_when_tool_calls_empty_at_finish() {
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/chat/completions"))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(concat!(
-            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
-            "\n\n",
-            "data: [DONE]\n\n"
+        r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+        "\n\n",
+        "data: [DONE]\n\n"
         )))
         .mount(&server)
         .await;

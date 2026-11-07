@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {HTMLAttributes} from "vue";
 import {Separator} from "@/components/ui/separator";
 import {cn} from "@/lib/utils";
@@ -10,10 +10,10 @@ const props = defineProps<{
 
 <template>
   <Separator
-    data-slot="sidebar-separator"
-    data-sidebar="separator"
     :class="cn('bg-sidebar-border mx-2 w-auto', props.class)"
+    data-sidebar="separator"
+    data-slot="sidebar-separator"
   >
-    <slot />
+    <slot/>
   </Separator>
 </template>

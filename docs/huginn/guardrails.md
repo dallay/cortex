@@ -35,8 +35,7 @@ The library does not search for, open, or load a project configuration file.
 It blocks `.env`, `.env.*`, `.ssh`, `.gnupg`, private keys `id_rsa`, `id_dsa`,
 `id_ecdsa`, `id_ed25519`, `credentials`, `credentials.json`, `guardrails.toml`, and
 suffixes `.pem`, `.key`, `.p12`, and `.pfx`. Public keys such as `id_rsa.pub`
-are not blocked by that name. Names and prefixes are compared case-insensitively
-(ASCII); no Unicode normalization or substring matching is promised.
+are not blocked by that name. Names and prefixes are compared case-insensitively (ASCII); no Unicode normalization or substring matching is promised.
 Project prefixes respect boundaries between path components.
 
 `check_path` checks both the requested path and the resolved one. It normalizes components and

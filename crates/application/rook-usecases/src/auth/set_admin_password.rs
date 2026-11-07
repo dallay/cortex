@@ -72,7 +72,8 @@ fn is_strong_password(password: &str) -> bool {
 pub enum SetAdminPasswordError {
     #[error("admin user not found")]
     AdminNotFound,
-    #[error("password must be at least 12 characters and include uppercase, lowercase, number, and symbol")]
+    #[error("password must be at least 12 characters and include uppercase, lowercase, number, and symbol"
+    )]
     WeakPassword,
     #[error("hashing error: {0}")]
     HashingError(#[from] PasswordHashError),

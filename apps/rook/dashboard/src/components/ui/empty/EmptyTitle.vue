@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {HTMLAttributes} from "vue";
 import {cn} from "@/lib/utils";
 
@@ -9,9 +9,9 @@ const props = defineProps<{
 
 <template>
   <div
-    data-slot="empty-title"
     :class="cn('text-lg font-medium tracking-tight', props.class)"
+    data-slot="empty-title"
   >
-    <slot />
+    <slot/>
   </div>
 </template>

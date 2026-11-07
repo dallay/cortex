@@ -8,6 +8,7 @@ export function useHomeMetrics() {
 	const usage = ref<UsageSummaryResponse | null>(null);
 	const cost = ref<UsageCostResponse | null>(null);
 	const loading = ref(false);
+
 	async function fetch() {
 		loading.value = true;
 		try {
@@ -28,5 +29,6 @@ export function useHomeMetrics() {
 			loading.value = false;
 		}
 	}
+
 	return { apiKeyCount, usage, cost, loading, fetch };
 }

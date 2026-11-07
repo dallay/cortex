@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {ArrowLeft} from "@lucide/vue";
 import type {ButtonVariants} from "@/components/ui/button";
 import {Button} from "@/components/ui/button";
@@ -24,8 +24,6 @@ const {orientation, canScrollPrev, scrollPrev} = useCarousel();
 
 <template>
   <Button
-    data-slot="carousel-previous"
-    :disabled="!canScrollPrev"
     :class="cn(
       'absolute size-8 rounded-full',
       orientation === 'horizontal'
@@ -33,12 +31,14 @@ const {orientation, canScrollPrev, scrollPrev} = useCarousel();
         : '-top-12 left-1/2 -translate-x-1/2 rotate-90',
       props.class,
     )"
-    :variant="variant"
+    :disabled="!canScrollPrev"
     :size="size"
+    :variant="variant"
+    data-slot="carousel-previous"
     @click="scrollPrev"
   >
     <slot>
-      <ArrowLeft />
+      <ArrowLeft/>
       <span class="sr-only">Previous Slide</span>
     </slot>
   </Button>

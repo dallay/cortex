@@ -163,7 +163,7 @@ async fn active_response_stream_can_exceed_the_header_timeout() {
                 };
                 Some((Ok::<_, Infallible>(chunk), index + 1))
             });
-            ([ ("content-type", "text/event-stream") ], Body::from_stream(chunks))
+            ([("content-type", "text/event-stream")], Body::from_stream(chunks))
         }),
     )).await;
     let provider = OpenAiProvider::with_transport(&url, "m".into(), None, 1, true).unwrap();

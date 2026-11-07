@@ -281,7 +281,7 @@ impl SpendingBudgetLedgerPort for SqliteApiKeyRepository {
              WHERE api_key_id = ?4 AND request_id = ?5",
             params![next_state, next_cost, Utc::now().to_rfc3339(), api_key_id.to_string(), request_id.to_string()],
         )
-        .map_err(spending_reservation_db_error)?;
+            .map_err(spending_reservation_db_error)?;
         tx.commit().map_err(spending_reservation_db_error)?;
         Ok(())
     }
@@ -343,8 +343,8 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
             params![hash, now],
             row_to_subject,
         )
-        .optional()
-        .map_err(db_error)
+            .optional()
+            .map_err(db_error)
     }
 
     async fn record_last_used(
@@ -514,7 +514,7 @@ impl ApiKeyRepositoryPort for SqliteApiKeyRepository {
             "UPDATE api_keys SET is_active = 0, revoked_at = COALESCE(revoked_at, ?1) WHERE id = ?2",
             params![revoked_at.to_rfc3339(), id.to_string()],
         )
-        .map_err(db_error)?;
+            .map_err(db_error)?;
 
         Ok(())
     }
@@ -1822,7 +1822,7 @@ mod tests {
                      VALUES ('expired-session-id', 'expired_token_hash', ?1, ?2, ?3, 0)",
                     params![user.id.to_string(), past.clone(), past],
                 )
-                .expect("insert expired session");
+                    .expect("insert expired session");
             }
 
             let count = session_repo.delete_expired().await.expect("delete expired");

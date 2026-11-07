@@ -3,6 +3,7 @@
 > The legacy serde spellings (`ollamacloud`, `azureopenai`) are still accepted
 > on read through the descriptor alias map, but new entries must use the
 > canonical id, and unknown ids are rejected at load time.
+
 # Model catalog and eligibility
 
 Rook separates three facts: the presence of an identifier, the model's

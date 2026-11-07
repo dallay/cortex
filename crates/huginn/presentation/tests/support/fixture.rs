@@ -297,16 +297,16 @@ impl Plugin for ProviderSelectPlugin {
                                                                 })
                                                             }),
                                                         )?
-                                                        .with_overlay_kind(OverlayKind::Login)?,
+                                                            .with_overlay_kind(OverlayKind::Login)?,
                                                     ))
                                                 })
                                             }),
                                         )?
-                                        .with_overlay_kind(OverlayKind::Login)?,
+                                            .with_overlay_kind(OverlayKind::Login)?,
                                     ))
                                 })
                             }))?
-                            .with_overlay_kind(OverlayKind::Login)?,
+                                .with_overlay_kind(OverlayKind::Login)?,
                         ))
                     }),
                 },

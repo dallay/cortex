@@ -3,10 +3,10 @@
 ## Completed in this batch
 
 - [x] 5.12 Wire persisted upstream observations into `GET /api/providers/quota`.
-  - Added optional `QuotaObservationRecorderPort` reader to `RookUsecases` and wired the existing recorder in `apps/rook/src/di.rs`.
-  - Added DTO fields for availability and captured observation provenance, scope/window, limit/remaining, observed time, age, effective reset, and freshness.
-  - The handler reports observations separately from routed usage, local recorded 429 counts, and local thresholds. Missing reader/read failures are represented as `unavailable`; successful empty reads are `not_reported`.
-  - Added route tests for a captured observation, no captured observations, and observation-read failure.
+    - Added optional `QuotaObservationRecorderPort` reader to `RookUsecases` and wired the existing recorder in `apps/rook/src/di.rs`.
+    - Added DTO fields for availability and captured observation provenance, scope/window, limit/remaining, observed time, age, effective reset, and freshness.
+    - The handler reports observations separately from routed usage, local recorded 429 counts, and local thresholds. Missing reader/read failures are represented as `unavailable`; successful empty reads are `not_reported`.
+    - Added route tests for a captured observation, no captured observations, and observation-read failure.
 
 ## Verification
 

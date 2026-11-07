@@ -1,11 +1,5 @@
-<script setup lang="ts">
-import {
-  AlertCircle,
-  AlertTriangle,
-  CheckCircle2,
-  Loader2,
-  Trash2,
-} from "@lucide/vue";
+<script lang="ts" setup>
+import {AlertCircle, AlertTriangle, CheckCircle2, Loader2, Trash2,} from "@lucide/vue";
 import {computed, onUnmounted, ref, watch} from "vue";
 import {useI18n} from "vue-i18n";
 import PasswordInput from "@/components/PasswordInput.vue";
@@ -73,7 +67,16 @@ const emit = defineEmits<{
 }>();
 
 const {t} = useI18n();
-const {create, update, remove, testCredentials, fetch, providerById, startOAuthFlow, getOAuthStatus} =
+const {
+  create,
+  update,
+  remove,
+  testCredentials,
+  fetch,
+  providerById,
+  startOAuthFlow,
+  getOAuthStatus
+} =
   useProviders();
 
 // ---------------------------------------------------------------------------
@@ -543,11 +546,11 @@ onUnmounted(stopOAuthPolling);
           {{
             isEditMode
               ? t('providers.form.editTitle', {
-                  providerName: t(catalogEntry.displayNameKey),
-                })
+                providerName: t(catalogEntry.displayNameKey),
+              })
               : t('providers.form.createTitle', {
-                  providerName: t(catalogEntry.displayNameKey),
-                })
+                providerName: t(catalogEntry.displayNameKey),
+              })
           }}
         </DialogTitle>
         <DialogDescription>
@@ -564,8 +567,8 @@ onUnmounted(stopOAuthPolling);
           <NativeSelect
             id="kind"
             v-model="kind"
-            data-testid="kind-select-trigger"
             :aria-label="t('providers.form.selectProvider')"
+            data-testid="kind-select-trigger"
           >
             <NativeSelectOption
               v-for="entry in PROVIDER_KINDS"
@@ -584,23 +587,23 @@ onUnmounted(stopOAuthPolling);
           </span>
           <ToggleGroup
             v-model="authType"
-            type="single"
             aria-labelledby="provider-auth-type-label"
             class="justify-start"
             data-testid="auth-type-toggle"
+            type="single"
           >
             <ToggleGroupItem
-              value="apikey"
               :aria-label="t('providers.form.authTypeApikey')"
               data-testid="auth-type-apikey"
+              value="apikey"
             >
               {{ t('providers.form.authTypeApikey') }}
             </ToggleGroupItem>
             <ToggleGroupItem
-              value="oauth"
               :aria-label="t('providers.form.authTypeOauth')"
               :disabled="!supportsOAuth"
               data-testid="auth-type-oauth"
+              value="oauth"
             >
               {{ t('providers.form.authTypeOauth') }}
             </ToggleGroupItem>
@@ -620,12 +623,12 @@ onUnmounted(stopOAuthPolling);
           <Input
             id="displayName"
             v-model="form.displayName"
+            :disabled="saving"
             :placeholder="
               t('providers.form.displayNamePlaceholder', {
                 providerName: t(catalogEntry.displayNameKey),
               })
             "
-            :disabled="saving"
             data-testid="input-displayName"
           />
         </div>
@@ -636,8 +639,8 @@ onUnmounted(stopOAuthPolling);
           <PasswordInput
             id="apiKey"
             v-model="form.apiKey"
-            :placeholder="t('providers.form.apiKeyPlaceholder')"
             :disabled="saving"
+            :placeholder="t('providers.form.apiKeyPlaceholder')"
           />
         </div>
 
@@ -647,11 +650,11 @@ onUnmounted(stopOAuthPolling);
             <Input
               id="oauthClientId"
               v-model="form.oauthClientId"
-              autocomplete="off"
-              autocapitalize="off"
-              spellcheck="false"
               :disabled="oauthBusy"
+              autocapitalize="off"
+              autocomplete="off"
               data-testid="oauth-client-id"
+              spellcheck="false"
             />
           </div>
           <div class="space-y-2">
@@ -668,11 +671,11 @@ onUnmounted(stopOAuthPolling);
             <Input
               id="oauthTenantId"
               v-model="form.oauthTenantId"
-              autocomplete="off"
-              autocapitalize="off"
-              spellcheck="false"
               :disabled="oauthBusy"
+              autocapitalize="off"
+              autocomplete="off"
               data-testid="oauth-tenant-id"
+              spellcheck="false"
             />
             <Label for="oauthFlowType">
               {{ t('providers.oauth.flowType') }}
@@ -680,8 +683,8 @@ onUnmounted(stopOAuthPolling);
             <NativeSelect
               id="oauthFlowType"
               v-model="form.oauthFlowType"
-              :disabled="oauthBusy"
               :aria-label="t('providers.oauth.flowType')"
+              :disabled="oauthBusy"
             >
               <NativeSelectOption :value="OAUTH_FLOW_TYPES.AUTHORIZATION_CODE">
                 {{ t('providers.oauth.authorizationCode') }}
@@ -696,15 +699,15 @@ onUnmounted(stopOAuthPolling);
             <Input
               id="oauthProjectId"
               v-model="form.oauthProjectId"
-              autocomplete="off"
-              autocapitalize="off"
-              spellcheck="false"
               :disabled="oauthBusy"
-              required
+              autocapitalize="off"
+              autocomplete="off"
               data-testid="oauth-project-id"
+              required
+              spellcheck="false"
             />
           </div>
-          <output v-if="oauthMessage" class="space-y-2" aria-live="polite">
+          <output v-if="oauthMessage" aria-live="polite" class="space-y-2">
             <p class="text-sm">{{ oauthMessage }}</p>
             <p v-if="oauthUserCode" class="font-mono text-lg font-semibold">
               {{ oauthUserCode }}
@@ -712,18 +715,18 @@ onUnmounted(stopOAuthPolling);
             <a
               v-if="oauthVerificationUri"
               :href="oauthVerificationUri"
-              target="_blank"
-              rel="noopener noreferrer"
               class="text-sm underline underline-offset-4"
+              rel="noopener noreferrer"
+              target="_blank"
             >
               {{ t('providers.oauth.openVerificationPage') }}
             </a>
             <a
               v-if="oauthAuthorizationUrl && !oauthUserCode"
               :href="oauthAuthorizationUrl"
-              target="_blank"
-              rel="noopener noreferrer"
               class="text-sm underline underline-offset-4"
+              rel="noopener noreferrer"
+              target="_blank"
             >
               {{ t('providers.oauth.openAuthorizationPage') }}
             </a>
@@ -751,11 +754,11 @@ onUnmounted(stopOAuthPolling);
           <Input
             id="priority"
             v-model.number="form.priority"
-            type="number"
-            min="0"
-            max="100"
             :disabled="saving"
             data-testid="input-priority"
+            max="100"
+            min="0"
+            type="number"
           />
           <p class="text-xs text-muted-foreground">
             {{ t('providers.form.priorityHelp') }}
@@ -768,12 +771,12 @@ onUnmounted(stopOAuthPolling);
           <Input
             id="models"
             v-model="form.models"
+            :disabled="saving"
             :placeholder="
               kind === 'azure-openai'
                 ? t('providers.oauth.azureDeploymentPlaceholder')
                 : t('providers.form.modelsPlaceholder')
             "
-            :disabled="saving"
             data-testid="input-models"
           />
           <p class="text-xs text-muted-foreground">
@@ -824,7 +827,6 @@ onUnmounted(stopOAuthPolling);
           />
           <div class="flex-1">
             <p
-              class="text-sm font-medium"
               :class="
                 testResult.status === 'ok'
                   ? 'text-green-600'
@@ -834,6 +836,7 @@ onUnmounted(stopOAuthPolling);
                       ? 'text-muted-foreground'
                       : 'text-destructive'
               "
+              class="text-sm font-medium"
               data-testid="test-result-status"
             >
               {{
@@ -857,12 +860,12 @@ onUnmounted(stopOAuthPolling);
         <div class="flex gap-2">
           <Button
             v-if="!isOAuth"
-            variant="outline"
             :disabled="!canTest"
             data-testid="test-button"
+            variant="outline"
             @click="handleTest"
           >
-            <Loader2 v-if="testing" class="h-4 w-4 mr-2 animate-spin" />
+            <Loader2 v-if="testing" class="h-4 w-4 mr-2 animate-spin"/>
             {{
               testing
                 ? t('providers.form.testing')
@@ -875,7 +878,7 @@ onUnmounted(stopOAuthPolling);
             data-testid="save-button"
             @click="handleSave"
           >
-            <Loader2 v-if="saving" class="h-4 w-4 mr-2 animate-spin" />
+            <Loader2 v-if="saving" class="h-4 w-4 mr-2 animate-spin"/>
             {{ t('providers.form.save') }}
           </Button>
           <Button
@@ -884,18 +887,18 @@ onUnmounted(stopOAuthPolling);
             data-testid="oauth-connect-button"
             @click="handleOAuthConnect"
           >
-            <Loader2 v-if="oauthBusy" class="h-4 w-4 mr-2 animate-spin" />
+            <Loader2 v-if="oauthBusy" class="h-4 w-4 mr-2 animate-spin"/>
             {{ oauthBusy ? t('providers.oauth.waiting') : t('providers.oauth.connect') }}
           </Button>
         </div>
         <Button
           v-if="isEditMode"
-          variant="destructive"
           class="sm:ml-auto"
           data-testid="delete-button"
+          variant="destructive"
           @click="showDeleteConfirm = true"
         >
-          <Trash2 class="h-4 w-4 mr-2" />
+          <Trash2 class="h-4 w-4 mr-2"/>
           {{ t('providers.form.delete') }}
         </Button>
       </DialogFooter>
@@ -920,7 +923,7 @@ onUnmounted(stopOAuthPolling);
             data-testid="delete-confirm-button"
             @click="handleDelete"
           >
-            <Loader2 v-if="deleting" class="h-4 w-4 mr-2 animate-spin" />
+            <Loader2 v-if="deleting" class="h-4 w-4 mr-2 animate-spin"/>
             {{ t('providers.form.delete') }}
           </AlertDialogAction>
         </AlertDialogFooter>

@@ -94,9 +94,14 @@ impl McpClients {
             {
                 return Err(AgentError::Configuration("MCP names must be unique ASCII letters/digits/underscores, up to 32 characters".into()));
             }
-            let request=ApprovalRequest {id:uuid::Uuid::new_v4().to_string(),action:format!("mcp.{}.start",config.name),
-                preview:format!("Server: {} (trusted local process; startup may have external side effects)\nCommand: {} {:?}\nWorking directory: {}\nSandboxing: none; process inherits host privileges.\nEnvironment variable names provided: {:?}",
-                    config.name,config.command,config.args,workspace.display(),config.env.keys().chain(config.env_from.keys()).collect::<Vec<_>>()),resource:None,provenance:None};
+            let request = ApprovalRequest {
+                id: uuid::Uuid::new_v4().to_string(),
+                action: format!("mcp.{}.start", config.name),
+                preview: format!("Server: {} (trusted local process; startup may have external side effects)\nCommand: {} {:?}\nWorking directory: {}\nSandboxing: none; process inherits host privileges.\nEnvironment variable names provided: {:?}",
+                                 config.name, config.command, config.args, workspace.display(), config.env.keys().chain(config.env_from.keys()).collect::<Vec<_>>()),
+                resource: None,
+                provenance: None,
+            };
             if policy.approve(&request, cancel.clone()).await? != ApprovalDecision::ApproveOnce {
                 continue;
             }

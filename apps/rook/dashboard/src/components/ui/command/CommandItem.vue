@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit, useCurrentElement} from "@vueuse/core";
 import type {ListboxItemEmits, ListboxItemProps} from "reka-ui";
 import {ListboxItem, useForwardPropsEmits, useId} from "reka-ui";
@@ -64,15 +64,15 @@ onUnmounted(() => {
 <template>
   <ListboxItem
     v-if="isRender"
-    v-bind="forwarded"
     :id="id"
     ref="itemRef"
-    data-slot="command-item"
     :class="cn('data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground [&_svg:not([class*=\'text-\'])]:text-muted-foreground relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*=\'size-\'])]:size-4', props.class)"
+    data-slot="command-item"
+    v-bind="forwarded"
     @select="() => {
       filterState.search = ''
     }"
   >
-    <slot />
+    <slot/>
   </ListboxItem>
 </template>

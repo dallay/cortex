@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 /**
  * ProviderIcon — renders the branded icon for a given `ProviderKind`.
  *
@@ -126,7 +126,10 @@ const ariaAttrs = computed(() =>
 
 /** ariaAttrs for the img branch — alt is sufficient, omit role/aria-label */
 const ariaAttrsForImg = computed(() =>
-  props.decorative ? ({"aria-hidden": "true"} as const) : ({role: "img", "aria-label": displayName.value} as const),
+  props.decorative ? ({"aria-hidden": "true"} as const) : ({
+    role: "img",
+    "aria-label": displayName.value
+  } as const),
 );
 
 function onLocalError() {
@@ -144,24 +147,24 @@ function onLocalError() {
   <!-- Strategy 1: Iconify bundle (openai, anthropic, ollama, gemini) -->
   <Icon
     v-if="iconifyIcon"
+    :height="height"
     :icon="iconifyIcon"
     :width="width"
-    :height="height"
-    v-bind="ariaAttrs"
     class="shrink-0"
+    v-bind="ariaAttrs"
   />
 
   <!-- Strategy 2: local SVG/PNG (groq, ollama-cloud) — and fallback sentinel -->
   <template v-else-if="localSrc && !localFailed">
     <img
-      :src="localSrc"
-      :width="width"
+      :alt="decorative ? '' : displayName"
       :height="height"
       :loading="loading"
-      decoding="async"
-      :alt="decorative ? '' : displayName"
-      v-bind="ariaAttrsForImg"
+      :src="localSrc"
+      :width="width"
       class="object-contain shrink-0"
+      decoding="async"
+      v-bind="ariaAttrsForImg"
       @error="onLocalError"
     />
   </template>
@@ -170,7 +173,7 @@ function onLocalError() {
   <Server
     v-else
     :size="iconSize"
-    v-bind="ariaAttrs"
     class="text-muted-foreground shrink-0"
+    v-bind="ariaAttrs"
   />
 </template>

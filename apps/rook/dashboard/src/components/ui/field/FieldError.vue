@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {HTMLAttributes} from "vue";
 import {computed} from "vue";
 import {cn} from "@/lib/utils";
@@ -35,11 +35,11 @@ const content = computed(() => {
 <template>
   <div
     v-if="$slots.default || content"
-    role="alert"
-    data-slot="field-error"
     :class="cn('text-destructive text-sm font-normal', props.class)"
+    data-slot="field-error"
+    role="alert"
   >
-    <slot v-if="$slots.default" />
+    <slot v-if="$slots.default"/>
 
     <template v-else-if="typeof content === 'string'">
       {{ content }}

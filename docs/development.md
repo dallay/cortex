@@ -41,26 +41,26 @@ make help
 
 ## Start a product locally
 
-| Product | Start command | Guide |
-|---|---|---|
-| Rook backend | `just run` | [Rook backend development](development/rook.md) |
-| Rook dashboard | `just run-dashboard` | [Dashboard development](development/dashboard.md) |
-| Huginn | `just huginn-run --provider mock --workspace . run "list files"` | [Huginn development](development/huginn.md) |
+| Product        | Start command                                                    | Guide                                             |
+|----------------|------------------------------------------------------------------|---------------------------------------------------|
+| Rook backend   | `just run`                                                       | [Rook backend development](development/rook.md)   |
+| Rook dashboard | `just run-dashboard`                                             | [Dashboard development](development/dashboard.md) |
+| Huginn         | `just huginn-run --provider mock --workspace . run "list files"` | [Huginn development](development/huginn.md)       |
 
 The dashboard requires a running Rook backend for API-backed flows. The Rook and dashboard commands run as separate processes. The product runbooks describe local configuration, manual checks, and focused commands.
 
 ## Choose the right test
 
-| Scope | Command | Notes |
-|---|---|---|
-| Rust workspace | `cargo test --workspace --all-features` or `just test` | Runs workspace tests with all features. |
-| Focused Rust package | `cargo test -p <package>` | Use the affected Cargo package name. |
-| Huginn | `just huginn-test` | Runs the Huginn architecture guard and product test suite. |
-| Dashboard | `pnpm --filter @dallay/rook-dashboard exec vitest run` | Runs the dashboard unit tests. |
-| Dashboard types and lint | `pnpm --filter @dallay/rook-dashboard run typecheck` and `pnpm --filter @dallay/rook-dashboard exec biome ci .` | Matches the frontend CI checks. |
-| Rook Docker smoke test | `just dev-up` | Starts the isolated backend container. See the [Docker testing guide](../dev/README.md#path-1--smoke-test-container). |
-| Dashboard/API Playwright E2E | `just test-e2e` | Requires Docker and the E2E image. See the [Docker testing guide](../dev/README.md#path-2--playwright-e2e-against-docker). |
-| Multi-distribution E2E | `dev/e2e-test.sh test` | See the [multi-distribution guide](../dev/README.md#path-3--multi-distro-e2e). |
+| Scope                        | Command                                                                                                         | Notes                                                                                                                      |
+|------------------------------|-----------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------|
+| Rust workspace               | `cargo test --workspace --all-features` or `just test`                                                          | Runs workspace tests with all features.                                                                                    |
+| Focused Rust package         | `cargo test -p <package>`                                                                                       | Use the affected Cargo package name.                                                                                       |
+| Huginn                       | `just huginn-test`                                                                                              | Runs the Huginn architecture guard and product test suite.                                                                 |
+| Dashboard                    | `pnpm --filter @dallay/rook-dashboard exec vitest run`                                                          | Runs the dashboard unit tests.                                                                                             |
+| Dashboard types and lint     | `pnpm --filter @dallay/rook-dashboard run typecheck` and `pnpm --filter @dallay/rook-dashboard exec biome ci .` | Matches the frontend CI checks.                                                                                            |
+| Rook Docker smoke test       | `just dev-up`                                                                                                   | Starts the isolated backend container. See the [Docker testing guide](../dev/README.md#path-1--smoke-test-container).      |
+| Dashboard/API Playwright E2E | `just test-e2e`                                                                                                 | Requires Docker and the E2E image. See the [Docker testing guide](../dev/README.md#path-2--playwright-e2e-against-docker). |
+| Multi-distribution E2E       | `dev/e2e-test.sh test`                                                                                          | See the [multi-distribution guide](../dev/README.md#path-3--multi-distro-e2e).                                             |
 
 For test selection and manual smoke checks by product, see the [Rook](development/rook.md), [dashboard](development/dashboard.md), and [Huginn](development/huginn.md) runbooks. The [Docker testing guide](../dev/README.md) owns container setup, E2E details, ports, and Docker troubleshooting.
 
@@ -82,15 +82,15 @@ just ci-test-only
 
 The full sequence requires repository dependencies and these tools: `cargo-audit`, `cargo-llvm-cov`, Docker, Gitleaks, `jq`, `uv`, and Trivy. The recipe does not install system tools. `uv` temporarily prepares the Semgrep version used by CI. Docker must be running for E2E. Temporary coverage and Semgrep artifacts are stored under `~/.cache/cortex-ci` by default; set `CORTEX_CI_TMPDIR` to use another directory.
 
-| CI check | Local behavior or limitation |
-|---|---|
-| CI contracts, doctor, issue labeler, dashboard, Rust, docs, and dependency audit | Run from the local checkout with the same workflow configuration. |
-| Rust coverage and frontend checks | Generate local reports and enforce configured thresholds; local validation does not upload reports to Codecov. |
-| Trivy and Semgrep | Use the configured scanners and severities. GitHub Actions publishes SARIF; local scan reports are removed when the scan ends. |
-| Gitleaks | Scans from the merge base of `CI_BASE_REF` to `HEAD`. Set `CI_BASE_REF` if the default local ref `origin/main` differs from the PR target. A shallow local clone may not have the same commit range as GitHub Actions. |
-| E2E | Requires Docker and the `dev/e2e` image and workflow. Local container behavior may differ from `ubuntu-latest`. |
-| SonarCloud | Not run locally; requires `SONAR_TOKEN` and remote service access. |
-| Windows cross-compile and push builds | Not included in the PR suite; these are push-only GitHub Actions checks. |
+| CI check                                                                         | Local behavior or limitation                                                                                                                                                                                           |
+|----------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| CI contracts, doctor, issue labeler, dashboard, Rust, docs, and dependency audit | Run from the local checkout with the same workflow configuration.                                                                                                                                                      |
+| Rust coverage and frontend checks                                                | Generate local reports and enforce configured thresholds; local validation does not upload reports to Codecov.                                                                                                         |
+| Trivy and Semgrep                                                                | Use the configured scanners and severities. GitHub Actions publishes SARIF; local scan reports are removed when the scan ends.                                                                                         |
+| Gitleaks                                                                         | Scans from the merge base of `CI_BASE_REF` to `HEAD`. Set `CI_BASE_REF` if the default local ref `origin/main` differs from the PR target. A shallow local clone may not have the same commit range as GitHub Actions. |
+| E2E                                                                              | Requires Docker and the `dev/e2e` image and workflow. Local container behavior may differ from `ubuntu-latest`.                                                                                                        |
+| SonarCloud                                                                       | Not run locally; requires `SONAR_TOKEN` and remote service access.                                                                                                                                                     |
+| Windows cross-compile and push builds                                            | Not included in the PR suite; these are push-only GitHub Actions checks.                                                                                                                                               |
 
 Consult `.github/workflows/ci.yml` and `justfile` for the source-of-truth sequence. For maintainer-only GitHub quality-ruleset preparation and activation, see [GitHub Quality Ruleset: Preparation and Activation](development/ci-quality-ruleset.md).
 

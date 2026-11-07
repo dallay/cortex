@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {RadioGroupRootEmits, RadioGroupRootProps} from "reka-ui";
 import {RadioGroupRoot, useForwardPropsEmits} from "reka-ui";
@@ -18,10 +18,10 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
 <template>
   <RadioGroupRoot
     v-slot="slotProps"
-    data-slot="radio-group"
     :class="cn('grid gap-3', props.class)"
+    data-slot="radio-group"
     v-bind="forwarded"
   >
-    <slot v-bind="slotProps" />
+    <slot v-bind="slotProps"/>
   </RadioGroupRoot>
 </template>

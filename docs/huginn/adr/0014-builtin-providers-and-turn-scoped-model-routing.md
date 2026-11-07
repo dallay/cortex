@@ -88,14 +88,14 @@ partial failures, deletion, and reconciliation need rollback tests.
 
 Precedence will be: explicit CLI > explicit configuration or chosen environment
 > persisted selection > `unconfigured`. Within the second level, explicit
-configuration retains priority over environment defaults;
-the environment used must be determined and associated with the chosen connection.
-Resolution validates a coherent connection: it does not combine one connection's endpoint/model
-with another connection's credentials, nor does it complete an invalid explicit choice by falling back
-to the persisted selection. Without a selection, diagnostics without inference are allowed;
-an inference attempt fails with an actionable state and without secrets.
-Migration of the current configuration will preserve this isolation and explain
-its provenance without presenting a new schema as already implemented.
+> configuration retains priority over environment defaults;
+> the environment used must be determined and associated with the chosen connection.
+> Resolution validates a coherent connection: it does not combine one connection's endpoint/model
+> with another connection's credentials, nor does it complete an invalid explicit choice by falling back
+> to the persisted selection. Without a selection, diagnostics without inference are allowed;
+> an inference attempt fails with an actionable state and without secrets.
+> Migration of the current configuration will preserve this isolation and explain
+> its provenance without presenting a new schema as already implemented.
 
 ### Transport and authentication
 
@@ -174,7 +174,7 @@ Planned deliveries, not implemented by this record:
 5. P0.5: automated integration of P0.1–P0.4, from selection through turns
    and recovery, with rollback, revocation, restart, and secret leakage checks.
 6. P1: official per-provider OAuth over the integrated P0 flow; renewal,
-    expiration, revocation, and absence of consumer-product credentials.
+   expiration, revocation, and absence of consumer-product credentials.
 
 Engineering tracking created on GitHub:
 [P0.1 / #350](https://github.com/dallay/cortex/issues/350),

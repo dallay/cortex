@@ -760,7 +760,7 @@ async fn tui_chat(
                             cancel.clone(),
                             implementation.0.compact(session, &scoped_events, cancel),
                         )
-                        .await
+                            .await
                     }
                     Ok(_) => {
                         ui.notification("Compaction skipped.".into());
@@ -775,7 +775,7 @@ async fn tui_chat(
                         .0
                         .run(session, prompt, policy.as_ref(), &scoped_events, cancel),
                 )
-                .await
+                    .await
             };
             ui.synchronize(session);
             if let Err(error) = &result {
@@ -788,7 +788,7 @@ async fn tui_chat(
         }
         Ok(())
     }
-    .await;
+        .await;
     // Restore the TTY before any shutdown error can be printed by the host.
     let restored = connection.finish().await;
     result?;

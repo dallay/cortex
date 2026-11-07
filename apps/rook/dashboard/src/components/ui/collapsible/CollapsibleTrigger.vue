@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {CollapsibleTriggerProps} from "reka-ui";
 import {CollapsibleTrigger} from "reka-ui";
 
@@ -10,6 +10,6 @@ const props = defineProps<CollapsibleTriggerProps>();
     data-slot="collapsible-trigger"
     v-bind="props"
   >
-    <slot />
+    <slot/>
   </CollapsibleTrigger>
 </template>

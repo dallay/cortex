@@ -6,8 +6,7 @@ with warnings.**
 The [archive record](../../.agents/sdd/changes/archive/2026-10-20-huginn-overlay-system/archive-report.md)
 closes all 21 Apply tasks: shared overlay authority, UI event separation,
 settings persistence, observable local selection, and the persistent status bar
-with resize/viewport coverage are implemented. Verify and QA both concluded
-**PASS WITH WARNINGS**; the record reports the corrected final Apply CI gate
+with resize/viewport coverage are implemented. Verify and QA both concluded **PASS WITH WARNINGS**; the record reports the corrected final Apply CI gate
 passed 9/9. These are historical results, not validation of subsequent changes.
 No SDD phase remains pending. The remaining milestones below are accepted plans;
 neither those plans nor the implemented features establish runtime isolation or

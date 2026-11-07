@@ -55,28 +55,28 @@ Huginn is a **local coding agent** built in Rust that works with your codebase. 
 
 ### Key Principles
 
-| Principle | Description |
-|-----------|-------------|
-| 🔒 **Privacy-first** | Code stays local, only model requests go to cloud |
-| 💻 **Native tools** | File ops, terminal, git — all built-in |
-| 🔌 **Extensible** | MCP stdio client for custom tools |
-| 📝 **Scoped context** | `AGENTS.md` controls what Huginn sees |
-| 💾 **Session memory** | SQLite-backed conversation history |
+| Principle             | Description                                       |
+|-----------------------|---------------------------------------------------|
+| 🔒 **Privacy-first**  | Code stays local, only model requests go to cloud |
+| 💻 **Native tools**   | File ops, terminal, git — all built-in            |
+| 🔌 **Extensible**     | MCP stdio client for custom tools                 |
+| 📝 **Scoped context** | `AGENTS.md` controls what Huginn sees             |
+| 💾 **Session memory** | SQLite-backed conversation history                |
 
 ---
 
 ## ✨ Features
 
-| Feature | Description |
-|---------|-------------|
-| 🖥️ **Ratatui TUI** | Beautiful terminal interface with colors and layout |
-| 🔧 **Native tools** | File read/write, terminal execution, git operations |
-| 🔌 **MCP integration** | Connect to any MCP stdio server |
-| 💾 **SQLite sessions** | Persistent conversation history |
-| 📋 **Scoped context** | Per-repo `AGENTS.md` for agent instructions |
-| 🎯 **Tool calling** | Automatic tool selection based on task |
-| 📤 **JSON mode** | Machine-readable output for automation |
-| 🌐 **Provider agnostic** | OpenAI-compatible API support |
+| Feature                  | Description                                         |
+|--------------------------|-----------------------------------------------------|
+| 🖥️ **Ratatui TUI**       | Beautiful terminal interface with colors and layout |
+| 🔧 **Native tools**      | File read/write, terminal execution, git operations |
+| 🔌 **MCP integration**   | Connect to any MCP stdio server                     |
+| 💾 **SQLite sessions**   | Persistent conversation history                     |
+| 📋 **Scoped context**    | Per-repo `AGENTS.md` for agent instructions         |
+| 🎯 **Tool calling**      | Automatic tool selection based on task              |
+| 📤 **JSON mode**         | Machine-readable output for automation              |
+| 🌐 **Provider agnostic** | OpenAI-compatible API support                       |
 
 ---
 
@@ -114,11 +114,11 @@ cargo build --release -p huginn
 
 ### Requirements
 
-| Requirement | Version | Notes |
-|-------------|---------|-------|
-| Rust | 1.89+ | MSRV may be higher |
-| Cargo | latest | Included with Rust |
-| SQLite | system | Usually pre-installed |
+| Requirement | Version | Notes                 |
+|-------------|---------|-----------------------|
+| Rust        | 1.89+   | MSRV may be higher    |
+| Cargo       | latest  | Included with Rust    |
+| SQLite      | system  | Usually pre-installed |
 
 ### Verify Installation
 
@@ -167,13 +167,14 @@ connection management screen; the new connection is stored separately and does
 not overwrite the existing one.
 
 A successful save prints **Connection configured locally** and exits with status
+
 0. This confirms local storage, not remote authorization or model availability.
-Select a model with `/model` on the next TUI startup; the command does not change
-an already running session. Escape returns to the previous form and cancels at
-the catalog. Ctrl+C cancels. Cancellation and failure both return nonzero, with
-different messages; neither reports success. If a write was pending when the
-command was cancelled, inspect connections on the next startup to reconcile its
-status. Cancellation does not revoke remote credentials.
+   Select a model with `/model` on the next TUI startup; the command does not change
+   an already running session. Escape returns to the previous form and cancels at
+   the catalog. Ctrl+C cancels. Cancellation and failure both return nonzero, with
+   different messages; neither reports success. If a write was pending when the
+   command was cancelled, inspect connections on the next startup to reconcile its
+   status. Cancellation does not revoke remote credentials.
 
 Piped input, redirected output, `--json`, and `--line-mode` are rejected. There
 is no API-key argument or stdin secret-entry mode. OAuth and device-code login
@@ -192,21 +193,21 @@ untrusted provenance and does not grant additional permissions.
 
 ### Command Reference
 
-| Command | Description |
-|---------|-------------|
-| `huginn chat` | Interactive TUI chat (default) |
-| `huginn run "<prompt>"` | Single command, exit |
-| `huginn sessions` | List saved sessions |
-| `huginn resume <uuid>` | Continue a session |
-| `huginn --json run "<prompt>"` | JSON output (for scripting) |
+| Command                        | Description                    |
+|--------------------------------|--------------------------------|
+| `huginn chat`                  | Interactive TUI chat (default) |
+| `huginn run "<prompt>"`        | Single command, exit           |
+| `huginn sessions`              | List saved sessions            |
+| `huginn resume <uuid>`         | Continue a session             |
+| `huginn --json run "<prompt>"` | JSON output (for scripting)    |
 
 ### Environment Variables
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `HUGINN_BASE_URL` | For non-mock providers | API endpoint (include `/v1`) |
-| `HUGINN_MODEL` | For non-mock providers | Model name |
-| `HUGINN_API_KEY` | For auth-required providers | API key (optional for mock/Ollama) |
+| Variable          | Required                    | Description                        |
+|-------------------|-----------------------------|------------------------------------|
+| `HUGINN_BASE_URL` | For non-mock providers      | API endpoint (include `/v1`)       |
+| `HUGINN_MODEL`    | For non-mock providers      | Model name                         |
+| `HUGINN_API_KEY`  | For auth-required providers | API key (optional for mock/Ollama) |
 
 ---
 
@@ -246,15 +247,15 @@ When you run `huginn chat`, you get a Ratatui-based terminal interface.
 
 ### Commands (type `/` to open)
 
-| Command | Description |
-|---------|-------------|
-| `/login` | Configure provider credentials |
-| `/providers` | Switch between providers |
-| `/model` | Change the active model |
-| `/logout` | Clear stored credentials |
-| `/exinfo` | System information |
-| `/clear` | Clear current conversation |
-| `/quit` | Exit Huginn |
+| Command      | Description                    |
+|--------------|--------------------------------|
+| `/login`     | Configure provider credentials |
+| `/providers` | Switch between providers       |
+| `/model`     | Change the active model        |
+| `/logout`    | Clear stored credentials       |
+| `/exinfo`    | System information             |
+| `/clear`     | Clear current conversation     |
+| `/quit`      | Exit Huginn                    |
 
 ### `/settings` modal
 
@@ -283,13 +284,13 @@ The `/help` view supports scrolling with `↑/↓` and `PgUp`/`PgDn`.
 
 ### Keyboard Shortcuts
 
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl+C` | Cancel current request |
-| `Ctrl+L` | Clear screen |
-| `Enter` / `Ctrl+Enter` | Send message |
-| `Shift+Enter` (compatible terminals) / `Alt+Enter` / `Ctrl+J` | Insert a newline |
-| `↑/↓` | History navigation |
+| Shortcut                                                      | Action                 |
+|---------------------------------------------------------------|------------------------|
+| `Ctrl+C`                                                      | Cancel current request |
+| `Ctrl+L`                                                      | Clear screen           |
+| `Enter` / `Ctrl+Enter`                                        | Send message           |
+| `Shift+Enter` (compatible terminals) / `Alt+Enter` / `Ctrl+J` | Insert a newline       |
+| `↑/↓`                                                         | History navigation     |
 
 The composer grows with the draft up to a limit based on the terminal's
 height. If the text takes more rows, the composer shifts the earlier rows
@@ -412,12 +413,12 @@ huginn --workspace . --config huginn.toml chat
 
 ### Available MCP Servers
 
-| Server | Version | Purpose |
-|--------|---------|---------|
-| `@modelcontextprotocol/server-filesystem` | 0.6.3 | File operations |
-| `@modelcontextprotocol/server-git` | 0.5.0 | Git operations |
-| `@modelcontextprotocol/server-brave` | latest | Web search |
-| `@modelcontextprotocol/server-slack` | latest | Slack integration |
+| Server                                    | Version | Purpose           |
+|-------------------------------------------|---------|-------------------|
+| `@modelcontextprotocol/server-filesystem` | 0.6.3   | File operations   |
+| `@modelcontextprotocol/server-git`        | 0.5.0   | Git operations    |
+| `@modelcontextprotocol/server-brave`      | latest  | Web search        |
+| `@modelcontextprotocol/server-slack`      | latest  | Slack integration |
 
 ---
 
@@ -470,13 +471,13 @@ see the [Huginn development guide](../development/huginn.md).
 
 ## 🔒 Security
 
-| Concern | Mitigation |
-|---------|------------|
-| API keys | Use environment variables, not config files |
-| File access | Workspace-scoped — Huginn only accesses specified directory |
-| Shell execution | Terminal commands require explicit approval |
-| MCP tools | MCP calls require explicit approval |
-| Session data | SQLite DB stored locally (no built-in encryption) |
+| Concern         | Mitigation                                                  |
+|-----------------|-------------------------------------------------------------|
+| API keys        | Use environment variables, not config files                 |
+| File access     | Workspace-scoped — Huginn only accesses specified directory |
+| Shell execution | Terminal commands require explicit approval                 |
+| MCP tools       | MCP calls require explicit approval                         |
+| Session data    | SQLite DB stored locally (no built-in encryption)           |
 
 ### Best Practices
 
@@ -489,12 +490,12 @@ see the [Huginn development guide](../development/huginn.md).
 
 ## 📚 Resources
 
-| Resource | Description |
-|---------|-------------|
-| [Architecture](adr/README.md) | Design decisions and ADRs |
+| Resource                        | Description                   |
+|---------------------------------|-------------------------------|
+| [Architecture](adr/README.md)   | Design decisions and ADRs     |
 | [Providers UI](providers-ui.md) | Provider configuration in TUI |
-| [Rook](../rook/README.md) | Companion AI proxy |
-| [Cortex](../README.md) | Full project documentation |
+| [Rook](../rook/README.md)       | Companion AI proxy            |
+| [Cortex](../README.md)          | Full project documentation    |
 
 ---
 
@@ -530,8 +531,7 @@ shows a single entry per provider:
 - **Ollama Cloud** (`ollama-cloud`): requires an API key and uses the fixed
   official endpoint `https://ollama.com`. It does not require a local daemon. The form does not
   allow sending the Cloud key to another host.
-- **Custom — OpenAI-compatible** (`openai`): enter the service's base URL
-  (include `/v1` if the service requires it). Choose authentication within the flow;
+- **Custom — OpenAI-compatible** (`openai`): enter the service's base URL (include `/v1` if the service requires it). Choose authentication within the flow;
   the API key is optional. It does not implement the Anthropic protocol. It keeps the
   `openai` ID to reuse saved connections.
 
@@ -540,8 +540,7 @@ persisting the connection. If you enter an ID, it is checked against the catalog
 available. If creation fails, the form remains open with the specific reason
 and retains the public values; the submitted secret is discarded, and it must be
 re-entered. An empty catalog or a connection/authentication error does not save an
-incomplete connection. If Custom does not implement the catalog
-(`/models` returns 404 or 405), enter the ID manually: the service will check
+incomplete connection. If Custom does not implement the catalog (`/models` returns 404 or 405), enter the ID manually: the service will check
 that model when it receives the inference request. Other failures do not trigger this
 fallback. After saving, use `/model` to select the connection for chat.
 No models are downloaded, and Ollama is not started automatically.

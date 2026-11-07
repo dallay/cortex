@@ -136,7 +136,7 @@ async fn legacy_approval_without_resource_retains_preview_in_memory_but_does_not
         r#"{{"type":"approval_requested","step":0,"request":{{"id":"legacy","action":"native.read","preview":{}}}}}"#,
         serde_json::to_string(secret_preview).unwrap()
     ))
-    .expect("deserialize legacy approval event");
+        .expect("deserialize legacy approval event");
 
     assert!(matches!(
         &legacy_event,

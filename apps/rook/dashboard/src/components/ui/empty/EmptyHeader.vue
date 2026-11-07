@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {HTMLAttributes} from "vue";
 import {cn} from "@/lib/utils";
 
@@ -9,12 +9,12 @@ const props = defineProps<{
 
 <template>
   <div
-    data-slot="empty-header"
     :class="cn(
       'flex max-w-sm flex-col items-center gap-2 text-center',
       props.class,
     )"
+    data-slot="empty-header"
   >
-    <slot />
+    <slot/>
   </div>
 </template>

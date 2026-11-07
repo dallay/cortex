@@ -27,13 +27,13 @@ The **19** issues in `Triage` had one valid product label, one valid type label,
 
 Verified end-state at migration time:
 
-| Status | Count |
-| --- | ---: |
-| Backlog | 20 |
-| Done | 27 |
-| In Review | 1 |
-| Canceled | 1 |
-| Triage | 0 |
+| Status    | Count |
+|-----------|------:|
+| Backlog   |    20 |
+| Done      |    27 |
+| In Review |     1 |
+| Canceled  |     1 |
+| Triage    |     0 |
 
 This is a historical snapshot, not a live dashboard.
 

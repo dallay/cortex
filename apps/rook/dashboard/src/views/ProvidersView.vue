@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 /**
  * ProvidersView — catalog of all supported providers.
  *
@@ -21,9 +21,7 @@ import EmptyState from "@/components/EmptyState.vue";
 import ErrorBanner from "@/components/ErrorBanner.vue";
 import LoadingState from "@/components/LoadingState.vue";
 import PageHeader from "@/components/PageHeader.vue";
-import ProviderCatalogFilter, {
-  type CategoryFilter,
-} from "@/components/ProviderCatalogFilter.vue";
+import ProviderCatalogFilter, {type CategoryFilter,} from "@/components/ProviderCatalogFilter.vue";
 import ProviderCategorySection from "@/components/ProviderCategorySection.vue";
 import {Button} from "@/components/ui/button";
 import {useAvailableModels} from "@/composables/useAvailableModels";
@@ -97,18 +95,18 @@ function onDeleted() {
 <template>
   <div class="space-y-6">
     <PageHeader
-      :title="t('providers.catalog.title')"
       :description="t('providers.catalog.subtitle')"
+      :title="t('providers.catalog.title')"
     />
 
-    <ErrorBanner v-if="error" :message="error" @retry="fetch" />
+    <ErrorBanner v-if="error" :message="error" @retry="fetch"/>
 
     <ProviderCatalogFilter
-      v-model:search-query="searchQuery"
       v-model:active-category="activeCategory"
+      v-model:search-query="searchQuery"
     />
 
-    <LoadingState v-if="loading && items.length === 0" />
+    <LoadingState v-if="loading && items.length === 0"/>
 
     <template v-else>
       <ProviderCategorySection
@@ -121,15 +119,15 @@ function onDeleted() {
 
       <EmptyState
         v-if="totalMatches === 0"
-        :title="t('common.noResults')"
         :description="t('providers.catalog.noResults')"
         :icon="SearchX"
+        :title="t('common.noResults')"
       >
         <template #actions>
           <Button
             v-if="isFiltering"
-            variant="outline"
             size="sm"
+            variant="outline"
             @click="searchQuery = ''; activeCategory = 'all'"
           >
             {{ t('providers.catalog.filterAll') }}
@@ -142,8 +140,8 @@ function onDeleted() {
       v-model:open="addDialogOpen"
       :provider-kind="addDialogKind"
       mode="create"
-      @saved="onSaved"
       @deleted="onDeleted"
+      @saved="onSaved"
     />
   </div>
 </template>

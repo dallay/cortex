@@ -2,9 +2,9 @@ name: GitGuardian scan
 
 on:
   push:
-    branches: [main, develop]
+    branches: [ main, develop ]
   pull_request:
-    branches: [main, develop]
+    branches: [ main, develop ]
 
 permissions:
   contents: read

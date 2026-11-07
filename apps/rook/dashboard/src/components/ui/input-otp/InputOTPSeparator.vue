@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {MinusIcon} from "@lucide/vue";
 import {useForwardProps} from "reka-ui";
 import type {HTMLAttributes} from "vue";
@@ -15,7 +15,7 @@ const forwarded = useForwardProps(props);
     v-bind="forwarded"
   >
     <slot>
-      <MinusIcon />
+      <MinusIcon/>
     </slot>
   </div>
 </template>

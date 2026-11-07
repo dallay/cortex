@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {HTMLAttributes} from "vue";
 import {cn} from "@/lib/utils";
 
@@ -9,9 +9,9 @@ const props = defineProps<{
 
 <template>
   <h3
-    data-slot="card-title"
     :class="cn('leading-none font-semibold', props.class)"
+    data-slot="card-title"
   >
-    <slot />
+    <slot/>
   </h3>
 </template>

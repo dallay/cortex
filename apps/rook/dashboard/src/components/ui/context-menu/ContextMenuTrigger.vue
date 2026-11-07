@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {ContextMenuTriggerProps} from "reka-ui";
 import {ContextMenuTrigger, useForwardProps} from "reka-ui";
 
@@ -12,6 +12,6 @@ const forwardedProps = useForwardProps(props);
     data-slot="context-menu-trigger"
     v-bind="forwardedProps"
   >
-    <slot />
+    <slot/>
   </ContextMenuTrigger>
 </template>

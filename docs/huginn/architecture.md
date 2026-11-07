@@ -100,19 +100,19 @@ This is a shortened excerpt of the contract. Consult
 
 The `Supervisor` manages plugin lifecycle:
 
-| Method | Purpose |
-|--------|---------|
-| `register(plugin)` | Add a plugin to the system |
-| `start()` | Activate plugins in dependency order |
-| `resolve::<T>(id)` | Get a registered service |
-| `remove(id)` | Unload a plugin and dependents |
-| `shutdown()` | Shut down all plugins |
-| `diagnostics()` | Inspect plugin state and activation errors |
-| `provider_of(service)` | Read the owning plugin and generation |
-| `dependents_of(service)` | Read active plugins that require the service |
-| `service_handle::<T>(service)` | Create a generation-bound handle that can issue cooperative leases |
-| `service_slot_handle::<T>(service)` | Create a dynamic handle that resolves the current provider on each `acquire()` |
-| `resolve_lease::<T>(service)` | Resolve and acquire one cooperative lease |
+| Method                                              | Purpose                                                                                                            |
+|-----------------------------------------------------|--------------------------------------------------------------------------------------------------------------------|
+| `register(plugin)`                                  | Add a plugin to the system                                                                                         |
+| `start()`                                           | Activate plugins in dependency order                                                                               |
+| `resolve::<T>(id)`                                  | Get a registered service                                                                                           |
+| `remove(id)`                                        | Unload a plugin and dependents                                                                                     |
+| `shutdown()`                                        | Shut down all plugins                                                                                              |
+| `diagnostics()`                                     | Inspect plugin state and activation errors                                                                         |
+| `provider_of(service)`                              | Read the owning plugin and generation                                                                              |
+| `dependents_of(service)`                            | Read active plugins that require the service                                                                       |
+| `service_handle::<T>(service)`                      | Create a generation-bound handle that can issue cooperative leases                                                 |
+| `service_slot_handle::<T>(service)`                 | Create a dynamic handle that resolves the current provider on each `acquire()`                                     |
+| `resolve_lease::<T>(service)`                       | Resolve and acquire one cooperative lease                                                                          |
 | `substitute(service, alternative, policy, timeout)` | Replace a provider with bounded drain and rollback; a post-commit finalization error leaves the alternative active |
 
 The methods are asynchronous where lifecycle work requires it. See
@@ -283,8 +283,7 @@ the protected builder for run/chat/resume, before branching to line mode or TUI.
 `huginn-core::hooks::ToolHooks` is a generation-owned registry published as
 `agent:tool-hooks@1`. The loop asks it about every tool call before
 `prepare`. A `Block` verdict, or a failing hook, ends the call with an error and
-no approval prompt. Hooks have no verdict that grants authorization
-([ADR-0016](adr/0016-restrict-only-tool-hooks.md)).
+no approval prompt. Hooks have no verdict that grants authorization ([ADR-0016](adr/0016-restrict-only-tool-hooks.md)).
 
 ### SessionStore
 
@@ -342,14 +341,14 @@ the case that proves each one, and the contract gaps that remain are in
 
 Built-in tools registered by the Huginn runtime:
 
-| Tool | Description | Module |
-|------|-------------|--------|
-| `list_files` | List workspace files | `runtime/src/tools.rs` |
-| `read_file` | Read a UTF-8 file | `runtime/src/tools.rs` |
-| `search_files` | Search literal text in workspace files | `runtime/src/tools.rs` |
-| `write_file` | Create or replace a file; requires approval | `runtime/src/tools.rs` |
-| `edit_file` | Apply a reviewed text replacement; requires approval | `runtime/src/tools.rs` |
-| `shell` | Run a POSIX shell command; requires approval and is not sandboxed | `runtime/src/tools.rs` |
+| Tool           | Description                                                       | Module                 |
+|----------------|-------------------------------------------------------------------|------------------------|
+| `list_files`   | List workspace files                                              | `runtime/src/tools.rs` |
+| `read_file`    | Read a UTF-8 file                                                 | `runtime/src/tools.rs` |
+| `search_files` | Search literal text in workspace files                            | `runtime/src/tools.rs` |
+| `write_file`   | Create or replace a file; requires approval                       | `runtime/src/tools.rs` |
+| `edit_file`    | Apply a reviewed text replacement; requires approval              | `runtime/src/tools.rs` |
+| `shell`        | Run a POSIX shell command; requires approval and is not sandboxed | `runtime/src/tools.rs` |
 
 ## MCP Integration
 
@@ -477,10 +476,10 @@ for the current signatures and plugin assembly.
 
 The current runtime implements two inference adapter kinds:
 
-| Adapter kind | Description |
-|--------------|-------------|
-| `openai` | OpenAI-compatible endpoint |
-| `ollama` | Local Ollama endpoint with local-model checks |
+| Adapter kind | Description                                   |
+|--------------|-----------------------------------------------|
+| `openai`     | OpenAI-compatible endpoint                    |
+| `ollama`     | Local Ollama endpoint with local-model checks |
 
 Anthropic, Google Gemini and Groq are not implemented as built-in Huginn
 inference adapters in the current runtime. Provider connection workflows and

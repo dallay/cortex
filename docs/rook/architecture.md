@@ -132,6 +132,7 @@ Request with X-Rook-Combo header or default_combo
   runtime ID plus the combo ID and step index.
 
 **Timeouts:**
+
 - Per-step timeout: 10 seconds
 - Overall combo timeout: 60 seconds
 
@@ -178,6 +179,7 @@ values as `QuotaObservation` records, scoped to the connection that produced the
 response. The records stay separate from locally measured usage (`UsageEntry`).
 
 **Read model:**
+
 - `QuotaObservationRecorderPort::latest_observations` (`QuotaObservationQuery`) returns
   the newest observation per connection, metric, scope, window, and source.
 - `audit-sqlite` answers that query with a bounded SQL read, filtered by connection,
@@ -185,15 +187,16 @@ response. The records stay separate from locally measured usage (`UsageEntry`).
 
 **Evaluation** (`rook-core::quota::evaluate_connection_quota`):
 
-| State | Meaning | Routing effect |
-| -- | -- | -- |
-| `Exhausted` | Fresh, applicable evidence reports no remaining capacity | The connection is skipped before upstream I/O |
-| `Available` | Fresh, applicable evidence reports remaining capacity | The connection stays eligible |
-| `Stale` | The evidence is older than the freshness window, or its reset instant passed | The connection stays eligible |
-| `NotApplicable` | The evidence describes a metric that does not apply to requests | The connection stays eligible |
-| `Unknown` | No evidence exists | The connection stays eligible |
+| State           | Meaning                                                                      | Routing effect                                |
+|-----------------|------------------------------------------------------------------------------|-----------------------------------------------|
+| `Exhausted`     | Fresh, applicable evidence reports no remaining capacity                     | The connection is skipped before upstream I/O |
+| `Available`     | Fresh, applicable evidence reports remaining capacity                        | The connection stays eligible                 |
+| `Stale`         | The evidence is older than the freshness window, or its reset instant passed | The connection stays eligible                 |
+| `NotApplicable` | The evidence describes a metric that does not apply to requests              | The connection stays eligible                 |
+| `Unknown`       | No evidence exists                                                           | The connection stays eligible                 |
 
 **Policy defaults** (`QuotaEligibilityPolicy`):
+
 - Freshness window: 300 seconds.
 - Exhaustion threshold: remaining of 0.
 - Applicable metrics: `requests`, `tokens`, `input_tokens`, `output_tokens`.
@@ -202,6 +205,7 @@ The defaults are a starting point, not a provider contract. Deployments can narr
 applicable metrics or the freshness window.
 
 **Rules:**
+
 - Only `Exhausted` skips a connection. Every other state fails open, so a missing or
   stale header never removes a working account.
 - Only observations captured for that connection count. A provider-scoped observation

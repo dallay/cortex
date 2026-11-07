@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {HTMLAttributes} from "vue";
 import {cn} from "@/lib/utils";
 
@@ -9,9 +9,9 @@ const props = defineProps<{
 
 <template>
   <div
-    data-slot="item-actions"
     :class="cn('flex items-center gap-2', props.class)"
+    data-slot="item-actions"
   >
-    <slot />
+    <slot/>
   </div>
 </template>
