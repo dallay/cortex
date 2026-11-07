@@ -67,7 +67,7 @@ version_status=$?
 set -e
 assert_eq "1" "$version_status" "a failed version probe returns failure"
 assert_eq "1" "$DOCTOR_FAILURES" "a failed version probe increments failures"
-assert_eq "[FALTA] Required tool: falló 'required-tool --broken-version': version probe failed." \
+assert_eq "[MISSING] Required tool: 'required-tool --broken-version' failed: version probe failed." \
     "$(cat "$test_root/version.out")" "a failed version probe reports the tool, command and error without success"
 
 fixture_package="$fixture_root/package.json"
@@ -140,7 +140,7 @@ pnpm_unavailable_output="$(cat "$restricted_path/pnpm-unavailable.out")"
 assert_eq "1" "$pnpm_unavailable_status" "an unavailable pinned pnpm version fails the check"
 assert_eq "1" "$DOCTOR_FAILURES" "an unavailable pinned pnpm version increments failures"
 case "$pnpm_unavailable_output" in
-    *"No se pudo verificar pnpm $(read_pnpm_version "$fixture_package")"*"Network access disabled"*)
+    *"Could not verify pnpm $(read_pnpm_version "$fixture_package")"*"Network access disabled"*)
         printf 'PASS: unavailable pnpm reports the blocked Corepack download\n'
         ;;
     *)
@@ -197,7 +197,7 @@ if [[ "$missing_status" -eq 0 ]]; then
     exit 1
 fi
 case "$missing_output" in
-    *"Node.js"*"pnpm"*"Faltan requisitos obligatorios"*)
+    *"Node.js"*"pnpm"*"Missing required tools"*)
         printf 'PASS: doctor reports missing tools and exits non-zero\n'
         ;;
     *)
