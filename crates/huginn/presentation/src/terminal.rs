@@ -126,6 +126,17 @@ fn is_ctrl_c(event: &Event) -> bool {
     )
 }
 
+fn is_safe_approval_handoff_input(event: &Event) -> bool {
+    is_ctrl_c(event)
+        || matches!(
+            event,
+            Event::Key(key)
+                if key.kind == KeyEventKind::Press
+                    && key.code == KeyCode::Esc
+                    && key.modifiers.is_empty()
+        )
+}
+
 fn arm_approval_after_draw(ui: &Ui, identity: Option<crate::overlay::OverlaySnapshot>) {
     let mut state = ui.lock();
     if state.overlays.snapshot() == identity {
@@ -356,7 +367,8 @@ impl Drop for Driver {
 
 #[cfg(test)]
 mod focus_drain_tests {
-    use super::FocusDrain;
+    use super::{is_safe_approval_handoff_input, FocusDrain};
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
     #[test]
     fn modal_lease_promotes_only_after_a_quiet_poll() {
@@ -377,6 +389,23 @@ mod focus_drain_tests {
             "a quiet poll promotes the new lease"
         );
         assert_eq!(drain.shown, 7);
+    }
+
+    #[test]
+    fn only_reject_or_cancel_can_cross_the_handoff() {
+        assert!(is_safe_approval_handoff_input(&Event::Key(KeyEvent::new(
+            KeyCode::Esc,
+            KeyModifiers::NONE,
+        ))));
+        for key in [KeyCode::Enter, KeyCode::Right] {
+            assert!(!is_safe_approval_handoff_input(&Event::Key(KeyEvent::new(
+                key,
+                KeyModifiers::NONE,
+            ))));
+        }
+        let mut cancel = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        cancel.kind = KeyEventKind::Press;
+        assert!(is_safe_approval_handoff_input(&Event::Key(cancel)));
     }
 }
 
@@ -1579,9 +1608,27 @@ Enter save Esc close"
                             // retains that ownership even if the paste finishes
                             // only after the next focus has been drawn.
                             let mut drained = false;
+                            let mut rejected = false;
                             while let Some(event) = self.next_input(focus_drain.shown)? {
+                                if self.ui.lock().modal().is_some()
+                                    && is_safe_approval_handoff_input(&event)
+                                {
+                                    // Rejection and turn cancellation remain
+                                    // available during handoff. No navigation
+                                    // or positive decision crosses the old lease.
+                                    self.input(event, &prompts, focus);
+                                    rejected = true;
+                                    break;
+                                }
                                 discard_input(event);
                                 drained = true;
+                            }
+                            if rejected {
+                                if self.ui.lock().focus() == focus_drain.shown {
+                                    focus_drain.draining = None;
+                                }
+                                dirty = true;
+                                break;
                             }
                             // A single PTY write can arrive in multiple readable
                             // chunks. Keep the old lease until a later tick is
