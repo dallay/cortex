@@ -86,21 +86,21 @@ async fn list_provider_descriptors() -> Json<Vec<ProviderDescriptorResponse>> {
                     rook_core::Protocol::GeminiGenerateContent => "geminiGenerateContent",
                     rook_core::Protocol::OllamaNative => "ollamaNative",
                 },
-                auth_kinds: {
-                    let mut kinds = vec![match descriptor.auth {
-                        rook_core::AuthKind::ApiKey => "apiKey",
-                        rook_core::AuthKind::OAuth => "oauth",
-                        rook_core::AuthKind::ImportedToken => "importedToken",
-                    }];
-                    // Gemini supports API-key connections alongside its OAuth flow.
-                    if descriptor.id == "gemini" {
-                        kinds.insert(0, "apiKey");
-                    }
-                    if descriptor.accepts_oauth_credentials && !kinds.contains(&"oauth") {
-                        kinds.push("oauth");
-                    }
-                    kinds
-                },
+                auth_kinds: descriptor
+                    .accepted_auth_kinds
+                    .iter()
+                    .filter_map(|kind| match kind {
+                        rook_core::AuthKind::ApiKey => Some("apiKey"),
+                        rook_core::AuthKind::OAuth => {
+                            if descriptor.oauth.is_some() {
+                                Some("oauth")
+                            } else {
+                                None
+                            }
+                        }
+                        rook_core::AuthKind::ImportedToken => Some("importedToken"),
+                    })
+                    .collect(),
                 capability_ceiling: descriptor.capability_ceiling.into(),
                 supports_oauth: descriptor.oauth.is_some(),
                 icon_key: descriptor.id,

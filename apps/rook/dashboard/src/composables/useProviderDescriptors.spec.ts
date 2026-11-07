@@ -57,14 +57,14 @@ describe("useProviderDescriptors", () => {
 			kind: "openai-compatible",
 			label: "OpenAI Compatible",
 			iconKey: "openai",
-			authTypes: ["apikey", "oauth"],
+			supportsOAuth: false,
+			authTypes: ["apikey"],
 		});
 	});
 
 	it.each([["oauth"], ["apiKey", "oauth"]])(
-		"maps accepted authentication types without adding API keys: %s",
+		"maps accepted authentication types including apiKey and oauth: %s",
 		async (...authKinds) => {
-			const state = useProviderDescriptors();
 			vi.spyOn(useApi(), "getProviderDescriptors").mockResolvedValue([
 				{
 					id: "future-provider",
@@ -82,6 +82,7 @@ describe("useProviderDescriptors", () => {
 					},
 				},
 			]);
+			const state = useProviderDescriptors();
 			await state.fetch();
 			expect(state.catalog.value[0].authTypes).toEqual(
 				authKinds.map((kind) => (kind === "apiKey" ? "apikey" : kind)),

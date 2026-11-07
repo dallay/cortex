@@ -34,9 +34,12 @@ export function useProviderDescriptors() {
 				kind: descriptor.id as ProviderKind,
 				displayNameKey: presentation.displayNameKey || "",
 				label: descriptor.label,
+				supportsOAuth: descriptor.supportsOAuth,
 				authTypes: descriptor.authKinds.flatMap<AuthType>((kind) =>
 					kind === "oauth"
-						? ["oauth"]
+						? descriptor.supportsOAuth
+							? ["oauth"]
+							: []
 						: kind === "apiKey" || kind === "importedToken"
 							? ["apikey"]
 							: [],

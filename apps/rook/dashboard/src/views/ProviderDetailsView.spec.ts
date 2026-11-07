@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent } from "vue";
 import { createI18n } from "vue-i18n";
 import { createMemoryHistory, createRouter } from "vue-router";
-import { useApi } from "@/lib/api";
+import { useProviderDescriptors } from "@/composables/useProviderDescriptors";
+import { type ProviderDescriptorResponse, useApi } from "@/lib/api";
 import en from "@/locales/en.json";
 import ProviderDetailsView from "./ProviderDetailsView.vue";
 
@@ -117,23 +118,32 @@ const i18n = createI18n({
 	messages: { en },
 });
 
-async function mountView(path: string) {
+async function mountView(
+	path: string,
+	descriptorsList: ProviderDescriptorResponse[] = [
+		"openai",
+		"ollama-cloud",
+		"xai",
+	].map((id) => ({
+		id: id as ProviderDescriptorResponse["id"],
+		label: id === "openai" ? "OpenAI" : id === "xai" ? "xAI" : "Ollama Cloud",
+		protocol: "openAiChat",
+		authKinds: ["apiKey"],
+		supportsOAuth: false,
+		iconKey: id,
+		capabilityCeiling: {
+			tools: "unknown",
+			vision: "unknown",
+			reasoning: "unknown",
+			streaming: "unknown",
+			contextTokens: null,
+		},
+	})),
+) {
+	const { descriptors } = useProviderDescriptors();
+	descriptors.value = [];
 	vi.spyOn(useApi(), "getProviderDescriptors").mockResolvedValue(
-		["openai", "ollama-cloud", "xai"].map((id) => ({
-			id,
-			label: id === "openai" ? "OpenAI" : id === "xai" ? "xAI" : "Ollama Cloud",
-			protocol: "openAiChat",
-			authKinds: ["apiKey"],
-			supportsOAuth: false,
-			iconKey: id,
-			capabilityCeiling: {
-				tools: "unknown",
-				vision: "unknown",
-				reasoning: "unknown",
-				streaming: "unknown",
-				contextTokens: null,
-			},
-		})),
+		descriptorsList,
 	);
 	setActivePinia(createPinia());
 	const router = buildRouter(path);
@@ -260,5 +270,30 @@ describe("ProviderDetailsView", () => {
 			expectedUpdatedAt: "2026-01-01T00:00:00Z",
 			isActive: false,
 		});
+	});
+
+	it("renders translated provider name when displayNameKey is present, and falls back to descriptor label", async () => {
+		const customDescriptors: ProviderDescriptorResponse[] = [
+			{
+				id: "custom-provider" as unknown as ProviderDescriptorResponse["id"],
+				label: "Fallback Label",
+				protocol: "openAiChat",
+				authKinds: ["apiKey"],
+				supportsOAuth: false,
+				iconKey: "custom",
+				capabilityCeiling: {
+					tools: "unknown",
+					vision: "unknown",
+					reasoning: "unknown",
+					streaming: "unknown",
+					contextTokens: null,
+				},
+			},
+		];
+		const { wrapper } = await mountView(
+			"/providers/custom-provider",
+			customDescriptors,
+		);
+		expect(wrapper.text()).toContain("Fallback Label");
 	});
 });

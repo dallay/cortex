@@ -1179,6 +1179,74 @@ describe("AddProviderDialog — auth type gating", () => {
 			true,
 		);
 	});
+
+	it("disables the OAuth toggle when the descriptor does not support OAuth", async () => {
+		const descriptorSpy = vi.spyOn(useApi(), "getProviderDescriptors");
+		descriptorSpy.mockResolvedValueOnce([
+			{
+				id: "ollama",
+				label: "Ollama",
+				protocol: "ollamaNative",
+				authKinds: ["apiKey"],
+				supportsOAuth: false,
+				iconKey: "ollama",
+				capabilityCeiling: {
+					tools: "unknown",
+					vision: "unknown",
+					reasoning: "unknown",
+					streaming: "unknown",
+					contextTokens: null,
+				},
+			},
+		]);
+		const wrapper = mountDialog({ providerKind: "ollama" });
+		await flushPromises();
+		const oauthToggle = wrapper.find<HTMLButtonElement>(
+			'[data-testid="auth-type-oauth"]',
+		);
+		expect(oauthToggle.element.disabled).toBe(true);
+		expect(wrapper.find('[data-testid="oauth-coming-soon"]').exists()).toBe(
+			true,
+		);
+		wrapper.unmount();
+		descriptorSpy.mockRestore();
+	});
+
+	it("enables the OAuth toggle and selects OAuth when the provider only supports OAuth", async () => {
+		const descriptorSpy = vi.spyOn(useApi(), "getProviderDescriptors");
+		descriptorSpy.mockResolvedValueOnce([
+			{
+				id: "azure-openai",
+				label: "Azure OpenAI",
+				protocol: "openAiChat",
+				authKinds: ["oauth"],
+				supportsOAuth: true,
+				iconKey: "azure-openai",
+				capabilityCeiling: {
+					tools: "unknown",
+					vision: "unknown",
+					reasoning: "unknown",
+					streaming: "unknown",
+					contextTokens: null,
+				},
+			},
+		]);
+		const wrapper = mountDialog({ providerKind: "azure-openai" });
+		await flushPromises();
+		const oauthToggle = wrapper.find<HTMLButtonElement>(
+			'[data-testid="auth-type-oauth"]',
+		);
+		expect(oauthToggle.element.disabled).toBe(false);
+		expect(wrapper.find('[data-testid="oauth-coming-soon"]').exists()).toBe(
+			false,
+		);
+		const apiKeyToggle = wrapper.find<HTMLButtonElement>(
+			'[data-testid="auth-type-apikey"]',
+		);
+		expect(apiKeyToggle.element.disabled).toBe(true);
+		wrapper.unmount();
+		descriptorSpy.mockRestore();
+	});
 });
 
 describe("AddProviderDialog — open/close", () => {
@@ -1189,34 +1257,47 @@ describe("AddProviderDialog — open/close", () => {
 			const pending = new Promise<void>((resolve) => {
 				finish = resolve;
 			});
+			let finishPendingOpen!: () => void;
+			const pendingOpen = new Promise<void>((resolve) => {
+				finishPendingOpen = resolve;
+			});
 			const conn = makeConnection({ name: "Stale connection" });
 			const descriptorSpy = vi.spyOn(useApi(), "getProviderDescriptors");
-			if (request === "descriptors") {
+			let wrapper: ReturnType<typeof mountDialog> | undefined;
+			try {
+				if (request === "descriptors") {
+					descriptorSpy.mockImplementationOnce(async () => {
+						await pending;
+						return [];
+					});
+					mockState.providerById.value = new Map([[conn.id, conn]]);
+				} else {
+					descriptorSpy.mockResolvedValueOnce([]);
+					mockState.fetch.mockImplementationOnce(async () => {
+						await pending;
+						mockState.providerById.value = new Map([[conn.id, conn]]);
+					});
+				}
+				wrapper = mountDialog({ mode: "edit", connectionId: conn.id });
+				await flushPromises();
+				await wrapper.setProps({ open: false });
+				finish();
+				await flushPromises();
 				descriptorSpy.mockImplementationOnce(async () => {
-					await pending;
+					await pendingOpen;
 					return [];
 				});
-				mockState.providerById.value = new Map([[conn.id, conn]]);
-			} else {
-				descriptorSpy.mockResolvedValueOnce([]);
-				mockState.fetch.mockImplementationOnce(async () => {
-					await pending;
-					mockState.providerById.value = new Map([[conn.id, conn]]);
-				});
+				await wrapper.setProps({ open: true });
+				expect(
+					wrapper.find<HTMLInputElement>('[data-testid="input-displayName"]')
+						.element.value,
+				).toBe("");
+			} finally {
+				finish();
+				finishPendingOpen?.();
+				wrapper?.unmount();
+				descriptorSpy.mockRestore();
 			}
-			const wrapper = mountDialog({ mode: "edit", connectionId: conn.id });
-			await flushPromises();
-			await wrapper.setProps({ open: false });
-			finish();
-			await flushPromises();
-			descriptorSpy.mockReturnValueOnce(new Promise(() => {}));
-			await wrapper.setProps({ open: true });
-			expect(
-				wrapper.find<HTMLInputElement>('[data-testid="input-displayName"]')
-					.element.value,
-			).toBe("");
-			wrapper.unmount();
-			descriptorSpy.mockRestore();
 		},
 	);
 

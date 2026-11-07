@@ -62,7 +62,9 @@ const entry = computed(() => {
 });
 
 const providerName = computed(() =>
-  entry.value?.label ?? "",
+  entry.value?.displayNameKey
+    ? t(entry.value.displayNameKey)
+    : (entry.value?.label ?? ""),
 );
 
 const {providers, loading, error, fetch, test, update, remove, refreshOAuth} =

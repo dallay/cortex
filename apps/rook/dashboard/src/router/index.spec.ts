@@ -2,21 +2,23 @@ import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 
+const mockDescriptorState = vi.hoisted(() => ({
+	catalog: {
+		value: [
+			{
+				kind: "openai",
+				label: "OpenAI",
+				displayNameKey: "providers.kinds.openai",
+			},
+		],
+	},
+	fetch: vi.fn().mockResolvedValue(undefined),
+	loading: { value: false },
+	error: { value: null as string | null },
+}));
+
 vi.mock("@/composables/useProviderDescriptors", () => ({
-	useProviderDescriptors: () => ({
-		catalog: {
-			value: [
-				{
-					kind: "openai",
-					label: "OpenAI",
-					displayNameKey: "providers.kinds.openai",
-				},
-			],
-		},
-		fetch: vi.fn().mockResolvedValue(undefined),
-		loading: { value: false },
-		error: { value: null },
-	}),
+	useProviderDescriptors: () => mockDescriptorState,
 }));
 
 type GuardResult = boolean | string | { name: string };
@@ -282,5 +284,25 @@ describe("router route definitions", () => {
 			name: "Providers",
 		});
 		expect(await beforeEnter({ params: {} })).toEqual({ name: "Providers" });
+
+		// When catalog is empty and fetch fails with an error, it allows navigation without redirecting
+		mockDescriptorState.catalog.value = [];
+		mockDescriptorState.error.value = "Fetch failed";
+		expect(
+			await beforeEnter({ params: { providerKind: "unknown-on-error" } }),
+		).toBeUndefined();
+		mockDescriptorState.error.value = null;
+
+		// When catalog is already populated, it reuses it without calling fetch
+		mockDescriptorState.catalog.value = [
+			{
+				kind: "openai",
+				label: "OpenAI",
+				displayNameKey: "providers.kinds.openai",
+			},
+		];
+		mockDescriptorState.fetch.mockClear();
+		await beforeEnter({ params: { providerKind: "openai" } });
+		expect(mockDescriptorState.fetch).not.toHaveBeenCalled();
 	});
 });

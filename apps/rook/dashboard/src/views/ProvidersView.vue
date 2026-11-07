@@ -109,10 +109,10 @@ function onDeleted() {
       v-model:active-category="activeCategory"
     />
 
-    <LoadingState v-if="descriptorsLoading || (loading && items.length === 0)" />
-    <ErrorBanner v-else-if="descriptorsError" :message="descriptorsError" @retry="fetchDescriptors" />
-
+    <LoadingState v-if="(descriptorsLoading || loading) && items.length === 0" />
     <template v-else>
+      <ErrorBanner v-if="descriptorsError" :message="descriptorsError" @retry="fetchDescriptors" />
+
       <ProviderCategorySection
         v-for="entry in visibleSections"
         :key="entry.category.kind"
@@ -122,7 +122,7 @@ function onDeleted() {
       />
 
       <EmptyState
-        v-if="totalMatches === 0"
+        v-if="totalMatches === 0 && !descriptorsError"
         :title="t('common.noResults')"
         :description="t('providers.catalog.noResults')"
         :icon="SearchX"

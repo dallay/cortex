@@ -8,15 +8,16 @@ import ProvidersView from "./ProvidersView.vue";
 
 const state = vi.hoisted(() => ({
 	fetch: vi.fn(),
-	loading: { value: false },
-	error: { value: null as string | null },
 	providersFetch: vi.fn(),
-	providersLoading: { value: false },
-	providersError: { value: null as string | null },
 	modelsFetch: vi.fn(),
 }));
 
-const mockItems = [
+const mockLoading = ref(false);
+const mockError = ref<string | null>(null);
+const mockProvidersLoading = ref(false);
+const mockProvidersError = ref<string | null>(null);
+
+const mockItems = ref([
 	{
 		kind: "openai",
 		category: "api-key",
@@ -41,13 +42,13 @@ const mockItems = [
 		descriptionKey: "providers.kinds.ollamaDesc",
 		capabilities: ["chat"],
 	},
-];
+]);
 
 vi.mock("@/composables/useProviders", () => ({
 	useProviders: () => ({
 		fetch: state.providersFetch,
-		loading: ref(state.providersLoading.value),
-		error: ref(state.providersError.value),
+		loading: mockProvidersLoading,
+		error: mockProvidersError,
 	}),
 }));
 vi.mock("@/composables/useAvailableModels", () => ({
@@ -55,12 +56,12 @@ vi.mock("@/composables/useAvailableModels", () => ({
 }));
 vi.mock("@/composables/useProviderCatalog", () => ({
 	useProviderCatalog: () => ({
-		items: ref(mockItems),
+		items: mockItems,
 		byCategory: (cat: string) =>
-			ref(mockItems.filter((i) => i.category === cat)),
+			ref(mockItems.value.filter((i) => i.category === cat)),
 		fetch: state.fetch,
-		loading: ref(state.loading.value),
-		error: ref(state.error.value),
+		loading: mockLoading,
+		error: mockError,
 	}),
 }));
 
@@ -83,10 +84,36 @@ function mountView(options = {}) {
 }
 describe("ProvidersView descriptor requests", () => {
 	beforeEach(() => {
-		state.loading.value = false;
-		state.error.value = null;
-		state.providersLoading.value = false;
-		state.providersError.value = null;
+		mockLoading.value = false;
+		mockError.value = null;
+		mockProvidersLoading.value = false;
+		mockProvidersError.value = null;
+		mockItems.value = [
+			{
+				kind: "openai",
+				category: "api-key",
+				displayNameKey: "providers.kinds.openai",
+				label: "OpenAI",
+				descriptionKey: "providers.kinds.openaiDesc",
+				capabilities: ["chat"],
+			},
+			{
+				kind: "google",
+				category: "oauth",
+				displayNameKey: "providers.kinds.google",
+				label: "Google",
+				descriptionKey: "providers.kinds.googleDesc",
+				capabilities: ["chat"],
+			},
+			{
+				kind: "ollama",
+				category: "local",
+				displayNameKey: "providers.kinds.ollama",
+				label: "Ollama",
+				descriptionKey: "providers.kinds.ollamaDesc",
+				capabilities: ["chat"],
+			},
+		];
 		state.fetch.mockReset();
 		state.providersFetch.mockReset();
 		state.modelsFetch.mockReset();
@@ -99,27 +126,40 @@ describe("ProvidersView descriptor requests", () => {
 		expect(state.fetch).toHaveBeenCalledOnce();
 	});
 
-	it("shows loading while the descriptor request is pending", () => {
-		state.loading.value = true;
+	it("shows loading while the descriptor request is pending and items are empty", () => {
+		mockLoading.value = true;
+		mockItems.value = [];
 		const wrapper = mountView();
 		expect(wrapper.findComponent({ name: "LoadingState" }).exists()).toBe(true);
 		expect(wrapper.findComponent({ name: "EmptyState" }).exists()).toBe(false);
 	});
 
 	it("shows the descriptor error and retries the descriptor request", async () => {
-		state.error.value = "Descriptor request failed";
+		mockError.value = "Descriptor request failed";
 		const wrapper = mountView();
 		const banner = wrapper.findComponent({ name: "ErrorBanner" });
-		expect(banner.props("message")).toBe(state.error.value);
-		expect(wrapper.findComponent({ name: "EmptyState" }).exists()).toBe(false);
+		expect(banner.props("message")).toBe(mockError.value);
 		state.fetch.mockClear();
 		banner.vm.$emit("retry");
 		await flushPromises();
 		expect(state.fetch).toHaveBeenCalledOnce();
 	});
 
+	it("keeps sections visible when descriptors error occurs but items already exist", () => {
+		mockError.value = "Refetch failed";
+		const wrapper = mountView();
+		expect(wrapper.findComponent({ name: "LoadingState" }).exists()).toBe(
+			false,
+		);
+		expect(wrapper.findComponent({ name: "ErrorBanner" }).exists()).toBe(true);
+		const sections = wrapper.findAllComponents({
+			name: "ProviderCategorySection",
+		});
+		expect(sections.length).toBe(3);
+	});
+
 	it("shows provider error banner and retries provider fetch", async () => {
-		state.providersError.value = "Failed to load providers";
+		mockProvidersError.value = "Failed to load providers";
 		const wrapper = mountView();
 		const banners = wrapper.findAllComponents({ name: "ErrorBanner" });
 		expect(banners.length).toBeGreaterThan(0);

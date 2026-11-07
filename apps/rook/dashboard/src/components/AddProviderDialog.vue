@@ -315,7 +315,7 @@ function resetForm() {
   kind.value = props.providerKind ?? PROVIDER_KINDS[0].kind;
   authType.value = authTypes.value.includes("apikey")
     ? "apikey"
-    : "oauth";
+    : (authTypes.value[0] ?? "oauth");
   form.value = blankForm();
   testResult.value = null;
   showDeleteConfirm.value = false;
@@ -349,7 +349,7 @@ watch(
       if (props.providerKind) kind.value = props.providerKind;
       authType.value = authTypes.value.includes("apikey")
         ? "apikey"
-        : "oauth";
+        : (authTypes.value[0] ?? "oauth");
       form.value = blankForm();
       testResult.value = null;
     }
@@ -363,7 +363,9 @@ watch(kind, (newKind) => {
   if (!isEditMode.value) {
     form.value.baseUrl = findCatalogEntry(newKind).defaultBaseUrl;
     if (!authTypes.value.includes(authType.value)) {
-      authType.value = authTypes.value[0] ?? "oauth";
+      authType.value = authTypes.value.includes("apikey")
+        ? "apikey"
+        : (authTypes.value[0] ?? "oauth");
     }
   }
 });

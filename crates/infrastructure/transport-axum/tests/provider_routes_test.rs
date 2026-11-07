@@ -87,10 +87,20 @@ async fn provider_descriptors_expose_catalog_fields() {
         .unwrap();
     assert_eq!(openai["label"], "OpenAI");
     assert_eq!(openai["protocol"], "openAiChat");
-    assert_eq!(openai["authKinds"], json!(["apiKey", "oauth"]));
+    assert_eq!(openai["authKinds"], json!(["apiKey"]));
     assert!(openai.get("capabilityCeiling").is_some());
     assert_eq!(openai["supportsOAuth"], false);
     assert_eq!(openai["iconKey"], "openai");
+
+    let gemini = descriptors
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|descriptor| descriptor["id"] == "gemini")
+        .unwrap();
+    assert_eq!(gemini["label"], "Gemini");
+    assert_eq!(gemini["authKinds"], json!(["apiKey", "oauth"]));
+    assert_eq!(gemini["supportsOAuth"], true);
 }
 
 fn create_request() -> Value {

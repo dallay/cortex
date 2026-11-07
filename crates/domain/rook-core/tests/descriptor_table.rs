@@ -110,3 +110,20 @@ fn every_oauth_endpoint_uses_https() {
         }
     }
 }
+
+#[test]
+fn every_descriptor_declares_accepted_auth_kinds() {
+    for descriptor in PROVIDER_DESCRIPTORS {
+        assert!(
+            !descriptor.accepted_auth_kinds.is_empty(),
+            "{} must declare at least one accepted auth kind",
+            descriptor.id
+        );
+        assert!(
+            descriptor.accepted_auth_kinds.contains(&descriptor.auth),
+            "{} accepted_auth_kinds must contain primary auth kind {:?}",
+            descriptor.id,
+            descriptor.auth
+        );
+    }
+}

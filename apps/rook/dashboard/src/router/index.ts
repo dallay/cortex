@@ -59,8 +59,9 @@ const routes: RouteRecordRaw[] = [
 							breadcrumb: true,
 						},
 						beforeEnter: async (to) => {
-							const { catalog, fetch } = useProviderDescriptors();
-							await fetch();
+							const { catalog, fetch, error } = useProviderDescriptors();
+							if (catalog.value.length === 0) await fetch();
+							if (error.value) return;
 							const kind = to.params.providerKind;
 							if (
 								typeof kind !== "string" ||
