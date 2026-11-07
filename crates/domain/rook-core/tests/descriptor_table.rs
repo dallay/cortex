@@ -87,6 +87,14 @@ fn oauth_credential_capability_preserves_existing_provider_combinations() {
 }
 
 #[test]
+fn groq_capability_ceiling_preserves_openai_tool_support() {
+    assert_eq!(
+        descriptor_by_id("groq").unwrap().capability_ceiling.tools,
+        rook_core::CapabilityState::Supported
+    );
+}
+
+#[test]
 fn every_oauth_endpoint_uses_https() {
     for descriptor in PROVIDER_DESCRIPTORS {
         let Some(oauth) = descriptor.oauth else {

@@ -21,7 +21,10 @@ use rook_usecases::manage_connections::{
     CreateConnectionRequest, CredentialsInput, ManageConnections, ManageConnectionsError,
     ProviderBuildInput, ProviderBuilderPort, UpdateConnectionRequest,
 };
+use rook_usecases::{FallbackRouter, PricingConfig, RouteRequest, RoutingStrategy};
 use shared_kernel::{ConnectionId, ProviderId};
+
+mod common;
 
 const RUNTIME_A: &str = "compatible-runtime-a";
 const RUNTIME_B: &str = "compatible-runtime-b";
@@ -196,8 +199,28 @@ impl ProviderPort for StubProvider {
         }
     }
 
-    async fn complete(&self, _req: &CompletionRequest) -> CortexResult<CompletionResponse> {
-        Err(CortexError::provider("stub provider"))
+    async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
+        Ok(CompletionResponse {
+            id: req.id.clone(),
+            provider: self.id.clone(),
+            model: req.model.clone(),
+            content: "routed by refreshed provider".into(),
+            content_blocks: vec![],
+            thinking: None,
+            tool_calls: vec![],
+            finish_reason: None,
+            usage: rook_core::TokenUsage {
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
+                estimated_cost_usd: None,
+            },
+            latency_ms: 0,
+            cache_hit: None,
+        })
     }
 
     async fn stream(
@@ -457,7 +480,7 @@ async fn disabling_and_updating_a_compatible_connection_changes_routing_without_
         .await
         .expect("second connection stored disabled");
     let mc = ManageConnections::new(
-        repo,
+        repo.clone(),
         registry.clone(),
         Arc::new(PlainKeyManager),
         builder.clone(),
@@ -617,6 +640,118 @@ async fn disabling_and_updating_a_compatible_connection_changes_routing_without_
     assert_eq!(registry_ids.len(), 1);
     assert!(registry_ids.contains(&ProviderId::new(first.id.to_string())));
     assert!(!registry_ids.contains(&ProviderId::new(second.id.to_string())));
+}
+
+#[tokio::test]
+async fn updating_active_connection_refreshes_provider_seen_by_persistent_router() {
+    let repo = Arc::new(InMemoryRepo::default());
+    let builder = Arc::new(RecordingBuilder::default());
+    let router = Arc::new(FallbackRouter::new_empty(RoutingStrategy::Priority));
+    let initial = ManageConnections::new(
+        repo.clone(),
+        router.clone(),
+        Arc::new(PlainKeyManager),
+        builder.clone(),
+    );
+    let mut create = create_request(
+        RUNTIME_A,
+        "compat-refresh",
+        "https://upstream-a.example/v1",
+        "key-a",
+        &["model-before"],
+    );
+    create.is_active = false;
+    let connection = initial
+        .create(create)
+        .await
+        .expect("inactive connection is created");
+    let mc = ManageConnections::new(repo, router.clone(), Arc::new(PlainKeyManager), builder)
+        .with_endpoint_policy(EndpointPolicyConfig {
+            grants: vec![EndpointGrant {
+                connection_id: connection.id.to_string(),
+                allowed_origins: vec!["https://upstream-a.example".into()],
+            }],
+        });
+    let connection = mc
+        .update(
+            &connection.id,
+            UpdateConnectionRequest {
+                expected_updated_at: connection.updated_at,
+                provider: None,
+                provider_runtime_id: None,
+                auth_type: None,
+                name: None,
+                priority: None,
+                is_active: Some(true),
+                credentials: None,
+                config: None,
+            },
+        )
+        .await
+        .expect("connection is active before the configuration change");
+    let route = RouteRequest::new(
+        router.clone(),
+        Arc::new(common::NoOpCache),
+        Arc::new(common::NoOpAudit),
+        None,
+        None,
+        None,
+        Arc::new(PricingConfig::default()),
+        Arc::new(common::NoOpAliasRepository),
+        rook_usecases::route_request::ModelAliasesConfig {
+            enabled: false,
+            auto_seed: false,
+        },
+        None,
+    );
+
+    let updated = mc
+        .update(
+            &connection.id,
+            UpdateConnectionRequest {
+                expected_updated_at: connection.updated_at,
+                provider: None,
+                provider_runtime_id: None,
+                auth_type: None,
+                name: None,
+                priority: None,
+                is_active: None,
+                credentials: None,
+                config: Some(compatible_config(
+                    "https://upstream-a.example/v1",
+                    &["model-after"],
+                )),
+            },
+        )
+        .await
+        .expect("active connection update succeeds");
+
+    let response = route
+        .execute(CompletionRequest {
+            id: rook_core::RequestId::new(),
+            model: ModelId::new("model-after"),
+            messages: vec![],
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            tools: None,
+            tool_choice: None,
+            metadata: rook_core::RequestMetadata {
+                origin: "test".into(),
+                cacheable: false,
+                priority: 0,
+                api_key_id: None,
+                requested_tier: None,
+                combo_id: None,
+            },
+            restrictions: Default::default(),
+        })
+        .await
+        .expect("persistent router routes through refreshed provider");
+
+    assert_eq!(response.provider, ProviderId::new(updated.id.to_string()));
+    assert_eq!(response.model, ModelId::new("model-after"));
+    assert_eq!(response.content, "routed by refreshed provider");
 }
 
 #[tokio::test]

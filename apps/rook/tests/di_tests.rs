@@ -99,6 +99,95 @@ async fn migrated_openai_providers_route_with_bearer_auth() {
 }
 
 #[tokio::test]
+async fn custom_openai_protocol_descriptor_routes_without_a_dedicated_adapter() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/v7/custom-chat"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "chatcmpl-custom",
+            "model": "test-model",
+            "choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+        })))
+        .mount(&server)
+        .await;
+
+    let mut descriptor = *rook_core::descriptor_by_id("xai").expect("source descriptor");
+    descriptor.id = "custom-provider";
+    // The protocol, not an identity-specific adapter registration, selects the implementation.
+    descriptor.adapter = rook_core::ProviderAdapter::Anthropic;
+    descriptor.default_base_url = Box::leak(server.uri().into_boxed_str());
+    descriptor.paths = rook_core::WirePaths {
+        chat: "/v7/custom-chat",
+        models: "/v7/models",
+        health: "/health",
+    };
+    let descriptor = Box::leak(Box::new(descriptor));
+    let provider = build_provider_from_connection(
+        &ConnectionId::new(),
+        descriptor,
+        &DecryptedCredentials::ApiKey {
+            api_key: "custom-key".into(),
+        },
+        None,
+        vec![ModelId::new("test-model")],
+    )
+    .expect("custom descriptor should build");
+
+    provider
+        .complete(&completion_request("test-model"))
+        .await
+        .expect("custom descriptor should route through its declared protocol");
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn ollama_protocol_uses_descriptor_paths_independent_of_adapter_metadata() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/custom/chat"))
+        .and(wiremock::matchers::header(
+            "authorization",
+            "Bearer ollama-key",
+        ))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "model": "test-model",
+                "message": {"role": "assistant", "content": "ok"},
+                "done": true
+            })),
+        )
+        .mount(&server)
+        .await;
+
+    let mut descriptor = *rook_core::descriptor_by_id("ollama").expect("ollama descriptor");
+    descriptor.adapter = rook_core::ProviderAdapter::OllamaCloud;
+    descriptor.default_base_url = Box::leak(server.uri().into_boxed_str());
+    descriptor.paths = rook_core::WirePaths {
+        chat: "/custom/chat",
+        models: "/custom/models",
+        health: "/custom/health",
+    };
+    let descriptor = Box::leak(Box::new(descriptor));
+
+    let provider = build_provider_from_connection(
+        &ConnectionId::new(),
+        descriptor,
+        &DecryptedCredentials::ApiKey {
+            api_key: "ollama-key".into(),
+        },
+        Some(server.uri()),
+        vec![ModelId::new("test-model")],
+    )
+    .expect("Ollama protocol should build regardless of adapter metadata");
+    provider
+        .complete(&completion_request("test-model"))
+        .await
+        .expect("Ollama should use the descriptor chat path and bearer key");
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn groq_uses_descriptor_default_url_and_wire_paths() {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("POST"))
@@ -1284,6 +1373,51 @@ fn build_provider_for_openai_compatible_rejects_unsafe_endpoints() {
         !error.to_string().contains("compatible-key"),
         "the error must not leak the credential: {error}"
     );
+}
+
+#[test]
+fn openai_protocol_compatible_endpoint_policy_does_not_depend_on_adapter_metadata() {
+    let mut descriptor = *rook_core::descriptor_by_id("openai-compatible").unwrap();
+    descriptor.adapter = rook_core::ProviderAdapter::Anthropic;
+    let descriptor = Box::leak(Box::new(descriptor));
+    let result = build_provider_from_connection_with_policy(
+        &conn_id(),
+        descriptor,
+        &DecryptedCredentials::ApiKey {
+            api_key: "key".into(),
+        },
+        Some("http://169.254.169.254/v1".into()),
+        vec![],
+        ProviderConnectionBuildOptions {
+            quota_recorder: None,
+            oauth_token_port: None,
+            endpoint_policy: rook_core::EndpointPolicy::default(),
+        },
+    );
+    assert!(
+        result.is_err(),
+        "compatible endpoint policy must be enforced from descriptor configuration"
+    );
+}
+
+#[test]
+fn azure_openai_protocol_keeps_azure_validation_without_adapter_metadata() {
+    let mut descriptor = *rook_core::descriptor_by_id("azure-openai").unwrap();
+    descriptor.adapter = rook_core::ProviderAdapter::Anthropic;
+    let descriptor = Box::leak(Box::new(descriptor));
+    let result = build_provider_from_connection_with_recorder(
+        &conn_id(),
+        descriptor,
+        &oauth_creds(),
+        Some("https://example.com".into()),
+        vec![],
+        None,
+        Some(Arc::new(StubTokenPort)),
+    );
+    assert!(matches!(
+        result,
+        Err(ProviderBuildError::AzureOpenAIRequiresValidEndpoint)
+    ));
 }
 #[test]
 fn test_generate_setup_token() {

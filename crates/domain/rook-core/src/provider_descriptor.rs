@@ -43,7 +43,6 @@ pub enum ProviderAdapter {
     Ollama,
     OllamaCloud,
     Gemini,
-    Groq,
 }
 
 /// How a connection's model list is established.
@@ -69,6 +68,11 @@ pub enum EndpointValidation {
     /// `*.services.ai.azure.com`, no query, no fragment).
     AzureHost,
 }
+
+/// Azure resource host suffixes accepted by the Azure endpoint policy.
+pub const AZURE_OPENAI_HOST_SUFFIXES: &[&str] = &[".openai.azure.com", ".services.ai.azure.com"];
+/// Path appended to a validated Azure resource endpoint before OpenAI wire paths.
+pub const AZURE_OPENAI_API_PREFIX: &str = "/openai/v1";
 
 /// OAuth 2.0 wire configuration, declared as data. `{tenant}` in an endpoint
 /// template is substituted with the connection's tenant segment.
@@ -99,6 +103,14 @@ pub enum AuthKind {
     OAuth,
     /// A bearer token imported from elsewhere (no refresh flow).
     ImportedToken,
+}
+
+/// Provider-specific quota schema used by a protocol adapter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum QuotaHeaderPolicy {
+    #[default]
+    OpenAi,
+    Groq,
 }
 
 /// Provider-relative request paths, carried as data.
@@ -136,6 +148,10 @@ pub struct ProviderDescriptor {
     pub auth: AuthKind,
     /// Explicit authentication kinds accepted by connections to this provider.
     pub accepted_auth_kinds: &'static [AuthKind],
+    /// Human-readable name used in provider-facing errors.
+    pub display_name: &'static str,
+    /// Response quota schema for the protocol adapter.
+    pub quota_header_policy: QuotaHeaderPolicy,
     /// Whether managed connections accept imported OAuth credentials.
     pub accepts_oauth_credentials: bool,
     /// Base URL used when the user does not override it.
@@ -194,12 +210,32 @@ pub const PROVIDER_DESCRIPTORS: &[ProviderDescriptor] = &[
     nan(),
 ];
 
-const fn no_ceiling() -> Capabilities {
+const fn openai_ceiling() -> Capabilities {
     Capabilities {
-        tools: CapabilityState::Unknown,
-        vision: CapabilityState::Unknown,
-        reasoning: CapabilityState::Unknown,
-        streaming: CapabilityState::Unknown,
+        tools: CapabilityState::Supported,
+        vision: CapabilityState::Unsupported,
+        reasoning: CapabilityState::Unsupported,
+        streaming: CapabilityState::Supported,
+        context_tokens: None,
+    }
+}
+
+const fn limited_ceiling() -> Capabilities {
+    Capabilities {
+        tools: CapabilityState::Unsupported,
+        vision: CapabilityState::Unsupported,
+        reasoning: CapabilityState::Unsupported,
+        streaming: CapabilityState::Supported,
+        context_tokens: None,
+    }
+}
+
+const fn non_streaming_ceiling() -> Capabilities {
+    Capabilities {
+        tools: CapabilityState::Unsupported,
+        vision: CapabilityState::Unsupported,
+        reasoning: CapabilityState::Unsupported,
+        streaming: CapabilityState::Unsupported,
         context_tokens: None,
     }
 }
@@ -230,6 +266,8 @@ const fn openai() -> ProviderDescriptor {
         adapter: ProviderAdapter::OpenAi,
         auth: AuthKind::ApiKey,
         accepted_auth_kinds: &[AuthKind::ApiKey],
+        display_name: "OpenAI",
+        quota_header_policy: QuotaHeaderPolicy::OpenAi,
         default_base_url: "https://api.openai.com/v1",
         requires_base_url: false,
         endpoint_validation: EndpointValidation::None,
@@ -237,7 +275,7 @@ const fn openai() -> ProviderDescriptor {
         oauth: None,
         paths: openai_paths(),
         canonical_base_urls: &["https://api.openai.com/v1", "https://api.openai.com"],
-        capability_ceiling: no_ceiling(),
+        capability_ceiling: openai_ceiling(),
         models: ModelSource::Catalog,
     }
 }
@@ -250,6 +288,8 @@ const fn openai_compatible() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::OpenAiChat,
         adapter: ProviderAdapter::OpenAiCompatible,
+        display_name: "OpenAI-compatible",
+        quota_header_policy: QuotaHeaderPolicy::OpenAi,
         auth: AuthKind::ApiKey,
         accepted_auth_kinds: &[AuthKind::ApiKey],
         default_base_url: "",
@@ -259,7 +299,7 @@ const fn openai_compatible() -> ProviderDescriptor {
         oauth: None,
         paths: openai_paths(),
         canonical_base_urls: &[],
-        capability_ceiling: no_ceiling(),
+        capability_ceiling: openai_ceiling(),
         models: ModelSource::Dynamic,
     }
 }
@@ -272,6 +312,8 @@ const fn anthropic() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::AnthropicMessages,
         adapter: ProviderAdapter::Anthropic,
+        display_name: "Anthropic",
+        quota_header_policy: QuotaHeaderPolicy::OpenAi,
         auth: AuthKind::ApiKey,
         accepted_auth_kinds: &[AuthKind::ApiKey],
         default_base_url: "https://api.anthropic.com",
@@ -285,7 +327,7 @@ const fn anthropic() -> ProviderDescriptor {
             health: "/v1/models",
         },
         canonical_base_urls: &["https://api.anthropic.com"],
-        capability_ceiling: no_ceiling(),
+        capability_ceiling: openai_ceiling(),
         models: ModelSource::Catalog,
     }
 }
@@ -298,6 +340,8 @@ const fn ollama() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::OllamaNative,
         adapter: ProviderAdapter::Ollama,
+        display_name: "Ollama",
+        quota_header_policy: QuotaHeaderPolicy::OpenAi,
         auth: AuthKind::ApiKey,
         accepted_auth_kinds: &[AuthKind::ApiKey],
         default_base_url: "http://localhost:11434",
@@ -308,7 +352,7 @@ const fn ollama() -> ProviderDescriptor {
         paths: ollama_paths(),
         // Ollama carries no quota capture; no URL is canonical.
         canonical_base_urls: &[],
-        capability_ceiling: no_ceiling(),
+        capability_ceiling: limited_ceiling(),
         models: ModelSource::Catalog,
     }
 }
@@ -322,6 +366,8 @@ const fn ollama_cloud() -> ProviderDescriptor {
         aliases: &["ollamacloud"],
         protocol: Protocol::OllamaNative,
         adapter: ProviderAdapter::OllamaCloud,
+        display_name: "Ollama Cloud",
+        quota_header_policy: QuotaHeaderPolicy::OpenAi,
         auth: AuthKind::ImportedToken,
         accepted_auth_kinds: &[AuthKind::ImportedToken],
         default_base_url: "https://ollama.com",
@@ -331,7 +377,7 @@ const fn ollama_cloud() -> ProviderDescriptor {
         oauth: None,
         paths: ollama_paths(),
         canonical_base_urls: &["https://ollama.com"],
-        capability_ceiling: no_ceiling(),
+        capability_ceiling: limited_ceiling(),
         models: ModelSource::Catalog,
     }
 }
@@ -344,6 +390,8 @@ const fn gemini() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::GeminiGenerateContent,
         adapter: ProviderAdapter::Gemini,
+        display_name: "Google Gemini",
+        quota_header_policy: QuotaHeaderPolicy::OpenAi,
         auth: AuthKind::OAuth,
         accepted_auth_kinds: &[AuthKind::ApiKey, AuthKind::OAuth],
         default_base_url: "https://generativelanguage.googleapis.com",
@@ -365,7 +413,7 @@ const fn gemini() -> ProviderDescriptor {
         },
         // Gemini carries no quota capture; no URL is canonical.
         canonical_base_urls: &[],
-        capability_ceiling: no_ceiling(),
+        capability_ceiling: non_streaming_ceiling(),
         models: ModelSource::Catalog,
     }
 }
@@ -379,6 +427,8 @@ const fn azure_openai() -> ProviderDescriptor {
         aliases: &["azureopenai"],
         protocol: Protocol::OpenAiChat,
         adapter: ProviderAdapter::AzureOpenAi,
+        display_name: "Azure OpenAI",
+        quota_header_policy: QuotaHeaderPolicy::OpenAi,
         auth: AuthKind::OAuth,
         accepted_auth_kinds: &[AuthKind::OAuth],
         default_base_url: "",
@@ -399,7 +449,7 @@ const fn azure_openai() -> ProviderDescriptor {
         }),
         paths: openai_paths(),
         canonical_base_urls: &[],
-        capability_ceiling: no_ceiling(),
+        capability_ceiling: openai_ceiling(),
         models: ModelSource::Dynamic,
     }
 }
@@ -411,7 +461,9 @@ const fn groq() -> ProviderDescriptor {
         label: "Groq",
         aliases: &[],
         protocol: Protocol::OpenAiChat,
-        adapter: ProviderAdapter::Groq,
+        adapter: ProviderAdapter::OpenAi,
+        display_name: "Groq",
+        quota_header_policy: QuotaHeaderPolicy::Groq,
         auth: AuthKind::ApiKey,
         accepted_auth_kinds: &[AuthKind::ApiKey],
         default_base_url: "https://api.groq.com/openai/v1",
@@ -421,7 +473,7 @@ const fn groq() -> ProviderDescriptor {
         oauth: None,
         paths: openai_paths(),
         canonical_base_urls: &["https://api.groq.com/openai/v1"],
-        capability_ceiling: no_ceiling(),
+        capability_ceiling: openai_ceiling(),
         models: ModelSource::Catalog,
     }
 }
@@ -434,6 +486,8 @@ const fn xai() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::OpenAiChat,
         adapter: ProviderAdapter::OpenAi,
+        display_name: "xAI",
+        quota_header_policy: QuotaHeaderPolicy::OpenAi,
         auth: AuthKind::ApiKey,
         accepted_auth_kinds: &[AuthKind::ApiKey],
         default_base_url: "https://api.x.ai/v1",
@@ -443,7 +497,7 @@ const fn xai() -> ProviderDescriptor {
         oauth: None,
         paths: openai_paths(),
         canonical_base_urls: &["https://api.x.ai/v1"],
-        capability_ceiling: no_ceiling(),
+        capability_ceiling: openai_ceiling(),
         models: ModelSource::Static(&["grok-2", "grok-2-mini"]),
     }
 }
@@ -456,6 +510,8 @@ const fn mistral() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::OpenAiChat,
         adapter: ProviderAdapter::OpenAi,
+        display_name: "Mistral",
+        quota_header_policy: QuotaHeaderPolicy::OpenAi,
         auth: AuthKind::ApiKey,
         accepted_auth_kinds: &[AuthKind::ApiKey],
         default_base_url: "https://api.mistral.ai/v1",
@@ -465,7 +521,7 @@ const fn mistral() -> ProviderDescriptor {
         oauth: None,
         paths: openai_paths(),
         canonical_base_urls: &["https://api.mistral.ai/v1"],
-        capability_ceiling: no_ceiling(),
+        capability_ceiling: openai_ceiling(),
         models: ModelSource::Static(&[
             "mistral-large-latest",
             "mistral-small-latest",
@@ -482,6 +538,8 @@ const fn deepseek() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::OpenAiChat,
         adapter: ProviderAdapter::OpenAi,
+        display_name: "DeepSeek",
+        quota_header_policy: QuotaHeaderPolicy::OpenAi,
         auth: AuthKind::ApiKey,
         accepted_auth_kinds: &[AuthKind::ApiKey],
         default_base_url: "https://api.deepseek.com/v1",
@@ -491,7 +549,7 @@ const fn deepseek() -> ProviderDescriptor {
         oauth: None,
         paths: openai_paths(),
         canonical_base_urls: &["https://api.deepseek.com/v1"],
-        capability_ceiling: no_ceiling(),
+        capability_ceiling: openai_ceiling(),
         models: ModelSource::Static(&["deepseek-chat", "deepseek-reasoner"]),
     }
 }
@@ -504,6 +562,8 @@ const fn together() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::OpenAiChat,
         adapter: ProviderAdapter::OpenAi,
+        display_name: "Together AI",
+        quota_header_policy: QuotaHeaderPolicy::OpenAi,
         auth: AuthKind::ApiKey,
         accepted_auth_kinds: &[AuthKind::ApiKey],
         default_base_url: "https://api.together.xyz/v1",
@@ -513,7 +573,7 @@ const fn together() -> ProviderDescriptor {
         oauth: None,
         paths: openai_paths(),
         canonical_base_urls: &["https://api.together.xyz/v1"],
-        capability_ceiling: no_ceiling(),
+        capability_ceiling: openai_ceiling(),
         models: ModelSource::Static(&["meta-llama/Llama-3.3-70B-Instruct-Turbo"]),
     }
 }
@@ -526,6 +586,8 @@ const fn fireworks() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::OpenAiChat,
         adapter: ProviderAdapter::OpenAi,
+        display_name: "Fireworks",
+        quota_header_policy: QuotaHeaderPolicy::OpenAi,
         auth: AuthKind::ApiKey,
         accepted_auth_kinds: &[AuthKind::ApiKey],
         default_base_url: "https://api.fireworks.ai/inference/v1",
@@ -535,7 +597,7 @@ const fn fireworks() -> ProviderDescriptor {
         oauth: None,
         paths: openai_paths(),
         canonical_base_urls: &["https://api.fireworks.ai/inference/v1"],
-        capability_ceiling: no_ceiling(),
+        capability_ceiling: openai_ceiling(),
         models: ModelSource::Static(&["accounts/fireworks/models/llama-v3p3-70b-instruct"]),
     }
 }
@@ -548,6 +610,8 @@ const fn cerebras() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::OpenAiChat,
         adapter: ProviderAdapter::OpenAi,
+        display_name: "Cerebras",
+        quota_header_policy: QuotaHeaderPolicy::OpenAi,
         auth: AuthKind::ApiKey,
         accepted_auth_kinds: &[AuthKind::ApiKey],
         default_base_url: "https://api.cerebras.ai/v1",
@@ -557,7 +621,7 @@ const fn cerebras() -> ProviderDescriptor {
         oauth: None,
         paths: openai_paths(),
         canonical_base_urls: &["https://api.cerebras.ai/v1"],
-        capability_ceiling: no_ceiling(),
+        capability_ceiling: openai_ceiling(),
         models: ModelSource::Static(&["llama3.1-8b", "llama-3.3-70b"]),
     }
 }
@@ -570,6 +634,8 @@ const fn openrouter() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::OpenAiChat,
         adapter: ProviderAdapter::OpenAi,
+        display_name: "OpenRouter",
+        quota_header_policy: QuotaHeaderPolicy::OpenAi,
         auth: AuthKind::ApiKey,
         accepted_auth_kinds: &[AuthKind::ApiKey],
         default_base_url: "https://openrouter.ai/api/v1",
@@ -579,7 +645,7 @@ const fn openrouter() -> ProviderDescriptor {
         oauth: None,
         paths: openai_paths(),
         canonical_base_urls: &["https://openrouter.ai/api/v1"],
-        capability_ceiling: no_ceiling(),
+        capability_ceiling: openai_ceiling(),
         models: ModelSource::Static(&["openai/gpt-4o", "anthropic/claude-sonnet-4"]),
     }
 }
@@ -592,6 +658,8 @@ const fn nan() -> ProviderDescriptor {
         aliases: &[],
         protocol: Protocol::OpenAiChat,
         adapter: ProviderAdapter::OpenAi,
+        display_name: "Nan",
+        quota_header_policy: QuotaHeaderPolicy::OpenAi,
         auth: AuthKind::ApiKey,
         accepted_auth_kinds: &[AuthKind::ApiKey],
         default_base_url: "https://api.nan.builders/v1",
@@ -601,7 +669,7 @@ const fn nan() -> ProviderDescriptor {
         oauth: None,
         paths: openai_paths(),
         canonical_base_urls: &["https://api.nan.builders/v1"],
-        capability_ceiling: no_ceiling(),
+        capability_ceiling: openai_ceiling(),
         models: ModelSource::Static(&[
             "deepseek-v4-flash",
             "glm5.3-flash",
