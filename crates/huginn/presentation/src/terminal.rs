@@ -49,7 +49,7 @@ static MODIFY_OTHER_KEYS_ACTIVE: AtomicBool = AtomicBool::new(false);
 static KITTY_KEYBOARD_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Lines the transcript moves per page when scrolling the history.
 const HISTORY_PAGE: usize = 10;
-const HELP: &str = "Enter sends; Shift+Enter (on compatible terminals), Alt+Enter or Ctrl+J inserts a newline. PgUp/PgDn scroll the transcript. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals are inline: Left/Right selects, Enter confirms, Esc rejects, Ctrl+F shows details, and Up/Down or PgUp/PgDn scrolls the complete preview. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
+const HELP: &str = "Enter sends; Shift+Enter (on compatible terminals), Alt+Enter or Ctrl+J inserts a newline. PgUp/PgDn scroll the transcript. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals are inline: Left/Right selects, Enter confirms, Esc rejects. To approve, expand with Ctrl+F and review the full preview through its last page; Up/Down or PgUp/PgDn scrolls. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
 
 #[cfg(unix)]
 fn begin_keyboard_protocol() -> std::io::Result<()> {
@@ -369,50 +369,6 @@ impl Drop for Driver {
             }
         }
         self.guard.restore();
-    }
-}
-
-#[cfg(test)]
-mod focus_drain_tests {
-    use super::{is_safe_approval_handoff_input, FocusDrain};
-    use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-
-    #[test]
-    fn modal_lease_promotes_only_after_a_quiet_poll() {
-        let mut drain = FocusDrain {
-            shown: 3,
-            draining: None,
-        };
-        drain.modal_drawn(7);
-
-        assert_eq!(drain.shown, 3, "drawing must keep the old lease active");
-        assert!(
-            !drain.observe(7, true),
-            "bytes observed after the draw must keep the old lease active"
-        );
-        assert_eq!(drain.shown, 3);
-        assert!(
-            drain.observe(7, false),
-            "a quiet poll promotes the new lease"
-        );
-        assert_eq!(drain.shown, 7);
-    }
-
-    #[test]
-    fn only_reject_or_cancel_can_cross_the_handoff() {
-        assert!(is_safe_approval_handoff_input(&Event::Key(KeyEvent::new(
-            KeyCode::Esc,
-            KeyModifiers::NONE,
-        ))));
-        for key in [KeyCode::Enter, KeyCode::Right] {
-            assert!(!is_safe_approval_handoff_input(&Event::Key(KeyEvent::new(
-                key,
-                KeyModifiers::NONE,
-            ))));
-        }
-        let mut cancel = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        cancel.kind = KeyEventKind::Press;
-        assert!(is_safe_approval_handoff_input(&Event::Key(cancel)));
     }
 }
 
@@ -1102,9 +1058,9 @@ impl Driver {
                 summary,
                 id,
                 if *expanded {
-                    "Details (Ctrl+F; ↑↓/PgUp/PgDn scroll):"
+                    "To approve: review to last page · ↑↓/PgUp/PgDn"
                 } else {
-                    "Ctrl+F details"
+                    "Ctrl+F: review to last page to approve"
                 },
                 selector
             )

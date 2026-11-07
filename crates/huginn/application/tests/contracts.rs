@@ -136,7 +136,8 @@ impl ApprovalPrompt for SessionGrantPrompt {
 }
 #[tokio::test]
 async fn host_policy_rejects_session_grants_until_resource_provenance_is_verified() {
-    let policy = HostPolicy::new(Arc::new(SessionGrantPrompt), Default::default());
+    let policy =
+        HostPolicy::new(Arc::new(SessionGrantPrompt), Default::default()).for_session("session");
     assert_eq!(
         policy
             .approve(
@@ -144,7 +145,10 @@ async fn host_policy_rejects_session_grants_until_resource_provenance_is_verifie
                     id: "session-grant".into(),
                     action: "native.write_file".into(),
                     preview: "write file".into(),
-                    resource: None,
+                    resource: Some(huginn_core::ApprovalResource {
+                        canonical_path: std::env::temp_dir().join("huginn-contract.txt"),
+                        sensitive: false,
+                    }),
                     provenance: None,
                 },
                 CancellationToken::new(),
@@ -300,13 +304,14 @@ async fn sensitive_resources_never_offer_or_accept_session_grants() {
             Ok(ApprovalDecision::ApproveForSession)
         }
     }
-    let policy = HostPolicy::new(Arc::new(SensitivePrompt), Default::default());
+    let policy =
+        HostPolicy::new(Arc::new(SensitivePrompt), Default::default()).for_session("session");
     let mut request = ApprovalRequest {
         id: "sensitive".into(),
         action: "native.write_file".into(),
         preview: "redacted".into(),
         resource: Some(huginn_core::ApprovalResource {
-            canonical_path: "/workspace/.env".into(),
+            canonical_path: std::env::temp_dir().join(".env"),
             sensitive: true,
         }),
         provenance: Some(huginn_core::ApprovalProvenance::NativeFileBuiltin),
