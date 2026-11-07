@@ -312,6 +312,13 @@ struct Driver {
     ui: Arc<Ui>,
     _done: Completion,
 }
+
+#[derive(Clone, Copy, Default)]
+struct FrameProgress {
+    last_scroll: usize,
+    preview_visible: bool,
+}
+
 struct Completion(CancellationToken);
 impl Drop for Completion {
     fn drop(&mut self) {
@@ -882,8 +889,8 @@ impl Driver {
             let state = self.ui.lock();
             View::snapshot(&state)
         };
-        let last_scroll = self.draw_frame(&view)?;
-        Self::update_modal_scroll(&self.ui, &view, last_scroll);
+        let progress = self.draw_frame(&view)?;
+        Self::update_modal_scroll(&self.ui, &view, progress);
         // Only a completed paint in a viable viewport may arm an approval.
         if matches!(view.overlay, Some(OverlayView::Approval(..))) {
             arm_approval_after_draw(&self.ui, view.overlay_identity);
@@ -908,13 +915,13 @@ impl Driver {
         }
     }
 
-    fn update_modal_scroll(ui: &Ui, view: &View, last_scroll: usize) {
+    fn update_modal_scroll(ui: &Ui, view: &View, progress: FrameProgress) {
         if let Some(OverlayView::Approval(.., expanded, preview_scroll)) = &view.overlay {
             let mut state = ui.lock();
             if state.overlays.snapshot() == view.overlay_identity {
                 if let Some(modal) = state.modal_mut() {
-                    modal.last_scroll = last_scroll;
-                    modal.details_rendered = *expanded;
+                    modal.last_scroll = progress.last_scroll;
+                    modal.details_rendered = *expanded && progress.preview_visible;
                     if *expanded {
                         if modal.request.action == "native.shell" {
                             if *preview_scroll <= modal.rendered_scroll.saturating_add(1) {
@@ -931,18 +938,18 @@ impl Driver {
         }
     }
 
-    fn draw_frame(&mut self, view: &View) -> Result<usize> {
-        let mut last_scroll = 0;
+    fn draw_frame(&mut self, view: &View) -> Result<FrameProgress> {
+        let mut progress = FrameProgress::default();
         let mut size = Size::default();
         self.screen.draw(|frame| {
             size = frame.area().as_size();
-            last_scroll = Self::render_frame(frame, view);
+            progress = Self::render_frame(frame, view);
         })?;
         Self::update_help_scroll(&self.ui, view, size);
-        Ok(last_scroll)
+        Ok(progress)
     }
 
-    fn render_frame(frame: &mut Frame, view: &View) -> usize {
+    fn render_frame(frame: &mut Frame, view: &View) -> FrameProgress {
         // Reserve the bar before any overlay's early return.
         let [area, status] =
             Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
@@ -955,21 +962,26 @@ impl Driver {
             status,
         );
         if let Some(overlay @ OverlayView::Help(..)) = &view.overlay {
-            return Self::render_help(frame, area, overlay);
+            Self::render_help(frame, area, overlay);
+            return FrameProgress::default();
         }
         if let Some(overlay @ OverlayView::Approval(..)) = &view.overlay {
             return Self::render_main_with_approval(frame, area, view, overlay);
         }
         if let Some(overlay @ OverlayView::Workflow(..)) = &view.overlay {
-            return Self::render_workflow(frame, area, overlay);
+            Self::render_workflow(frame, area, overlay);
+            return FrameProgress::default();
         }
         if let Some(overlay @ OverlayView::Settings(..)) = &view.overlay {
-            return Self::render_settings(frame, area, overlay);
+            Self::render_settings(frame, area, overlay);
+            return FrameProgress::default();
         }
         if let Some(overlay @ OverlayView::Dialog(..)) = &view.overlay {
-            return Self::render_dialog(frame, area, overlay);
+            Self::render_dialog(frame, area, overlay);
+            return FrameProgress::default();
         }
-        Self::render_main(frame, area, view)
+        Self::render_main(frame, area, view);
+        FrameProgress::default()
     }
 
     /// Renders the help overlay and returns the scroll position it owns.
@@ -999,7 +1011,7 @@ impl Driver {
         area: Rect,
         view: &View,
         overlay: &OverlayView,
-    ) -> usize {
+    ) -> FrameProgress {
         let OverlayView::Approval(
             action,
             id,
@@ -1011,7 +1023,7 @@ impl Driver {
             preview_scroll,
         ) = overlay
         else {
-            return 0;
+            return FrameProgress::default();
         };
         let desired_panel_height = if *expanded { 8 } else { 5 };
         let composer_height = if area.height >= desired_panel_height + 5 {
@@ -1097,27 +1109,35 @@ impl Driver {
                 selector
             )
         };
-        let last = if *expanded {
+        let mut preview_visible = false;
+        let last_scroll = if *expanded {
             let lines = wrapped(preview, panel.width.saturating_sub(2));
-            // Compact view uses its third content row for one diff line. A
-            // regular panel reserves summary, hint, and selector rows.
-            let viewport = usize::from(panel.height.saturating_sub(if compact { 4 } else { 5 }));
+            // In narrow expanded mode keep the selected decision visible and
+            // give the remaining rows to the actual preview. At 20×8 this
+            // guarantees at least one preview row instead of clipping it below
+            // the collapsed request summary.
+            let viewport = if narrow {
+                usize::from(panel.height.saturating_sub(4))
+            } else {
+                usize::from(panel.height.saturating_sub(if compact { 4 } else { 5 }))
+            };
             let last = lines.len().saturating_sub(viewport);
             if narrow {
-                content = format!("#{}\n{}\n{}", id, summary, selector);
+                content = format!("#{}\n{}", id, selector);
             } else if compact {
                 content = format!("{} · {} · #{}\n{}", action, summary, id, selector);
             }
-            content.push('\n');
-            content.push_str(
-                &lines
-                    .iter()
-                    .skip(usize::min(*preview_scroll, last))
-                    .take(viewport)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            );
+            let visible_lines = lines
+                .iter()
+                .skip(usize::min(*preview_scroll, last))
+                .take(viewport)
+                .cloned()
+                .collect::<Vec<_>>();
+            preview_visible = visible_lines.iter().any(|line| !line.trim().is_empty());
+            if !visible_lines.is_empty() {
+                content.push('\n');
+                content.push_str(&visible_lines.join("\n"));
+            }
             last
         } else {
             0
@@ -1144,7 +1164,10 @@ impl Driver {
                 composer,
             );
         }
-        last
+        FrameProgress {
+            last_scroll,
+            preview_visible,
+        }
     }
 
     /// Renders the workflow overlay and returns the scroll position it owns.
@@ -1961,6 +1984,16 @@ mod tests {
         frame_text_and_cursor(view, width, height).0
     }
 
+    fn frame_progress(view: &View, width: u16, height: u16) -> FrameProgress {
+        let mut terminal =
+            Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        let mut progress = FrameProgress::default();
+        terminal
+            .draw(|frame| progress = Driver::render_frame(frame, view))
+            .unwrap();
+        progress
+    }
+
     fn frame_text_and_cursor(view: &View, width: u16, height: u16) -> (String, Position) {
         let mut terminal =
             Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
@@ -2362,6 +2395,57 @@ mod tests {
     }
 
     #[test]
+    fn expanded_approval_shows_preview_at_minimum_viable_size() {
+        let view = test_view(OverlayView::Approval(
+            "native.write_file".into(),
+            "req-42".into(),
+            "create note.txt".into(),
+            "PREVIEW_VISIBLE: +body".into(),
+            vec![
+                huginn_core::ApprovalDecision::Reject,
+                huginn_core::ApprovalDecision::ApproveOnce,
+            ],
+            0,
+            true,
+            0,
+        ));
+
+        let rendered = frame_text(&view, 20, 8);
+        let progress = frame_progress(&view, 20, 8);
+        assert!(
+            rendered.contains("PREVIEW_VISIBLE"),
+            "expanded approval must display preview before it can be approved: {rendered}"
+        );
+        assert!(
+            rendered.contains("›Reject"),
+            "Reject remains visible: {rendered}"
+        );
+        assert!(
+            progress.preview_visible,
+            "render result must record the visible preview"
+        );
+    }
+
+    #[test]
+    fn expanded_approval_with_empty_preview_is_not_marked_reviewed() {
+        let view = test_view(OverlayView::Approval(
+            "native.write_file".into(),
+            "req-42".into(),
+            "create note.txt".into(),
+            String::new(),
+            vec![
+                huginn_core::ApprovalDecision::Reject,
+                huginn_core::ApprovalDecision::ApproveOnce,
+            ],
+            0,
+            true,
+            0,
+        ));
+
+        assert!(!frame_progress(&view, 20, 8).preview_visible);
+    }
+
+    #[test]
     fn compact_approval_shows_shell_command_single_line_id_and_selected_scope() {
         let view = test_view(OverlayView::Approval(
             "native.shell".into(),
@@ -2380,7 +2464,10 @@ mod tests {
 
         let text = frame_text(&view, 20, 8);
 
-        assert!(text.contains("touch pwned-shell"), "command hidden: {text}");
+        assert!(
+            text.contains("Directory: /worksp"),
+            "first preview row hidden: {text}"
+        );
         assert!(
             text.contains("#request id"),
             "single-line ID missing: {text}"
@@ -2739,7 +2826,14 @@ mod tests {
             "request ID spans lines: {rendered}"
         );
 
-        Driver::update_modal_scroll(&ui, &view, 7);
+        Driver::update_modal_scroll(
+            &ui,
+            &view,
+            FrameProgress {
+                last_scroll: 7,
+                preview_visible: true,
+            },
+        );
 
         let state = ui.lock();
         let modal = state.modal().unwrap();

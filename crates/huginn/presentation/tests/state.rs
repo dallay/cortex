@@ -463,6 +463,42 @@ async fn approval_retains_diff_and_requires_armed_visible_choice() {
     );
     assert!(ui.lock().modal().is_none());
 }
+
+#[tokio::test]
+async fn approval_rejects_positive_decision_when_no_preview_row_was_rendered() {
+    let ui = ui();
+    let payload = request();
+    let task = {
+        let ui = ui.clone();
+        let payload = payload.clone();
+        tokio::spawn(async move {
+            ui.request_decision(&payload, &APPROVAL_DECISIONS, CancellationToken::new())
+                .await
+        })
+    };
+    pending(&ui).await;
+    {
+        let mut state = ui.lock();
+        let modal = state.modal_mut().unwrap();
+        modal.armed = true;
+        modal.expanded = true;
+        // A completed paint is insufficient when the viewport clipped every
+        // preview row. The renderer must explicitly report visible content.
+        modal.details_rendered = false;
+        modal.last_scroll = 0;
+        modal.scroll = 0;
+        modal.rendered_scroll = 0;
+        drop(state);
+    }
+
+    ui.resolve_modal(true);
+
+    assert_eq!(
+        task.await.unwrap().unwrap(),
+        huginn_core::ApprovalDecision::Reject
+    );
+}
+
 #[tokio::test]
 async fn approval_cancel_is_fail_closed_and_next_request_is_fresh() {
     let ui = ui();
