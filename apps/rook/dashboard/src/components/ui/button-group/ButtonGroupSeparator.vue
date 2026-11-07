@@ -16,12 +16,12 @@ const delegatedProps = reactiveOmit(props, "class");
 
 <template>
   <Separator
+    data-slot="button-group-separator"
+    v-bind="delegatedProps"
+    :orientation="props.orientation"
     :class="cn(
       'bg-input relative !m-0 self-stretch data-[orientation=vertical]:h-auto',
       props.class,
     )"
-    :orientation="props.orientation"
-    data-slot="button-group-separator"
-    v-bind="delegatedProps"
   />
 </template>

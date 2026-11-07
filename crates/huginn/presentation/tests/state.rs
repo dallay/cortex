@@ -2083,11 +2083,7 @@ async fn pending_approval() -> (
 #[tokio::test]
 async fn public_resolver_rejects_positive_decision_for_unarmed_modal() {
     let (ui, task) = pending_approval().await;
-    {
-        let mut state = ui.lock();
-        let modal = state.modal_mut().unwrap();
-        modal.armed = false;
-    }
+    ui.lock().modal_mut().unwrap().armed = false;
     ui.resolve_modal(true);
     assert_eq!(
         task.await.unwrap().unwrap(),
@@ -2098,11 +2094,7 @@ async fn public_resolver_rejects_positive_decision_for_unarmed_modal() {
 #[tokio::test]
 async fn public_resolver_rejects_collapsed_native_file_approval() {
     let (ui, task) = pending_approval().await;
-    {
-        let mut state = ui.lock();
-        let modal = state.modal_mut().unwrap();
-        modal.armed = true;
-    }
+    ui.lock().modal_mut().unwrap().armed = true;
     ui.resolve_modal(true);
     assert_eq!(
         task.await.unwrap().unwrap(),
@@ -2122,6 +2114,7 @@ async fn public_resolver_accepts_fully_reviewed_native_file_approval() {
         modal.last_scroll = 2;
         modal.scroll = 2;
         modal.rendered_scroll = 2;
+        drop(state);
     }
     ui.resolve_modal(true);
     assert_eq!(
@@ -2133,11 +2126,7 @@ async fn public_resolver_accepts_fully_reviewed_native_file_approval() {
 #[tokio::test]
 async fn public_resolver_allows_rejecting_collapsed_native_file_request() {
     let (ui, task) = pending_approval().await;
-    {
-        let mut state = ui.lock();
-        let modal = state.modal_mut().unwrap();
-        modal.armed = true;
-    }
+    ui.lock().modal_mut().unwrap().armed = true;
     ui.resolve_modal(false);
     assert_eq!(
         task.await.unwrap().unwrap(),
@@ -2156,6 +2145,7 @@ async fn reject_can_be_confirmed_before_expanded_preview_is_read() {
         modal.details_rendered = true;
         modal.last_scroll = 3;
         modal.scroll = 0;
+        drop(state);
     }
 
     overlay_key(&ui, KeyCode::Enter);
@@ -2174,6 +2164,7 @@ async fn collapsed_native_file_approval_is_blocked_without_disarming_modal() {
         let modal = state.modal_mut().unwrap();
         modal.armed = true;
         modal.selected = 1;
+        drop(state);
     }
 
     overlay_key(&ui, KeyCode::Enter);
@@ -2185,11 +2176,7 @@ async fn collapsed_native_file_approval_is_blocked_without_disarming_modal() {
 #[tokio::test]
 async fn collapsed_native_file_request_can_be_rejected_immediately() {
     let (ui, task) = pending_approval().await;
-    {
-        let mut state = ui.lock();
-        let modal = state.modal_mut().unwrap();
-        modal.armed = true;
-    }
+    ui.lock().modal_mut().unwrap().armed = true;
 
     overlay_key(&ui, KeyCode::Enter);
 
@@ -2212,6 +2199,7 @@ async fn approval_waits_for_the_final_preview_page_to_be_painted() {
         modal.scroll = 3;
         modal.selected = 1;
         modal.rendered_scroll = 2;
+        drop(state);
     }
 
     overlay_key(&ui, KeyCode::Enter);
@@ -2229,6 +2217,7 @@ async fn shell_approval_requires_expanding_and_rendering_the_complete_command() 
         modal.request.preview = "Directory: /workspace\nCommand: echo first\necho second".into();
         modal.armed = true;
         modal.selected = 1;
+        drop(state);
     }
 
     let enter = KeyCode::Enter;
@@ -2257,6 +2246,7 @@ async fn shell_approval_waits_for_sequential_rendering_through_the_last_scroll_p
         modal.selected = 1;
         modal.last_scroll = 2;
         modal.rendered_scroll = 0;
+        drop(state);
     }
     let enter = KeyCode::Enter;
     let end = KeyCode::End;
@@ -2273,6 +2263,7 @@ async fn shell_approval_waits_for_sequential_rendering_through_the_last_scroll_p
         let modal = state.modal_mut().unwrap();
         modal.scroll = 1;
         modal.rendered_scroll = 1;
+        drop(state);
     }
     overlay_key(&ui, enter);
     assert!(!task.is_finished());
@@ -2281,6 +2272,7 @@ async fn shell_approval_waits_for_sequential_rendering_through_the_last_scroll_p
         let modal = state.modal_mut().unwrap();
         modal.scroll = 2;
         modal.rendered_scroll = 2;
+        drop(state);
     }
     overlay_key(&ui, enter);
     assert_eq!(
@@ -2300,6 +2292,7 @@ async fn shell_scroll_waits_for_each_frame_while_other_approvals_can_advance() {
                 modal.request.action = action.into();
                 modal.expanded = true;
                 modal.last_scroll = 3;
+                drop(state);
             }
             overlay_key(&ui, key);
             overlay_key(&ui, key);

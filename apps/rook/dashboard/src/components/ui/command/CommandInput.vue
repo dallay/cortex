@@ -31,11 +31,11 @@ const {filterState} = useCommand();
   >
     <Search class="size-4 shrink-0 opacity-50"/>
     <ListboxFilter
+      v-bind="{ ...forwardedProps, ...$attrs }"
       v-model="filterState.search"
       :class="cn('placeholder:text-muted-foreground flex h-10 w-full rounded-md bg-transparent py-3 text-sm outline-hidden disabled:cursor-not-allowed disabled:opacity-50', props.class)"
       auto-focus
       data-slot="command-input"
-      v-bind="{ ...forwardedProps, ...$attrs }"
     />
   </div>
 </template>

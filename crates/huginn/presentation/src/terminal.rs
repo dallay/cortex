@@ -1102,9 +1102,9 @@ impl Driver {
                 summary,
                 id,
                 if *expanded {
-                    "Details (Ctrl+F; ↑↓/PgUp/PgDn scroll):"
+                    "Details (↑↓/PgUp/PgDn; approve after the last line):"
                 } else {
-                    "Ctrl+F details"
+                    "Ctrl+F: review details to approve"
                 },
                 selector
             )

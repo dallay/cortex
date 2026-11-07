@@ -132,6 +132,7 @@
         "minor",
         "patch"
       ],
+      "minimumReleaseAge": "7 days",
       "groupName": "vue",
       "semanticCommitScope": "deps-js",
       "labels": [
@@ -149,6 +150,7 @@
       "matchUpdateTypes": [
         "major"
       ],
+      "minimumReleaseAge": false,
       "enabled": false
     },
     {
@@ -159,7 +161,8 @@
       "matchPackageNames": [
         "lefthook"
       ],
-      "allowedVersions": "<2.2.2"
+      "allowedVersions": "<2.2.2",
+      "minimumReleaseAge": "7 days"
     }
   ]
 }
