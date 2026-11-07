@@ -8,6 +8,11 @@ Cortex is a Rust project that includes **Rook** (AI proxy and router) and **Hugi
 docs/
 ├── README.md              ← This file
 ├── development.md         ← Local development guide
+├── development/           ← Product development runbooks
+│   ├── rook.md            ← Rook backend
+│   ├── dashboard.md       ← Rook dashboard
+│   ├── huginn.md          ← Huginn
+│   └── ci-quality-ruleset.md ← GitHub quality-ruleset operations
 │
 ├── rook/                  ← Rook documentation
 │   ├── README.md          ← Rook main guide
@@ -69,15 +74,19 @@ docs/
 
 ### For developers
 
-1. [development.md](development.md) — Setup, tests, CI
-2. [rook/architecture.md](rook/architecture.md) — Rook internal design
-3. [Contributing](../CONTRIBUTING.md) — How to contribute
+1. [development.md](development.md) — Repository setup, test selection, and CI
+2. [development/rook.md](development/rook.md) — Run and test the Rook backend
+3. [development/dashboard.md](development/dashboard.md) — Run and test the dashboard
+4. [development/huginn.md](development/huginn.md) — Run and test Huginn
+5. [Docker testing guide](../dev/README.md) — Smoke, E2E, and multi-distribution testing
+6. [Contributing](../CONTRIBUTING.md) — How to contribute
 
 ### For advanced contributors
 
 - [Rook ADRs](rook/adr/README.md) — Rook architecture decisions
 - [Huginn ADRs](huginn/adr/README.md) — Huginn decisions
 - [General ADRs](adr/README.md) — Shared decisions
+- [GitHub quality-ruleset operations](development/ci-quality-ruleset.md) — Maintainer-only preparation and activation procedure
 - [Contribution policies](contributing/) — Labels, Linear sync
 
 ## External references
