@@ -35,7 +35,7 @@ const {t} = useI18n();
 
 const {fetch, loading, error} = useProviders();
 const {fetch: fetchModels} = useAvailableModels();
-const {items, byCategory, fetch: fetchDescriptors} = useProviderCatalog();
+const {items, byCategory, fetch: fetchDescriptors, loading: descriptorsLoading, error: descriptorsError} = useProviderCatalog();
 
 const searchQuery = ref("");
 const activeCategory = ref<CategoryFilter>("all");
@@ -109,7 +109,8 @@ function onDeleted() {
       v-model:active-category="activeCategory"
     />
 
-    <LoadingState v-if="loading && items.length === 0" />
+    <LoadingState v-if="descriptorsLoading || (loading && items.length === 0)" />
+    <ErrorBanner v-else-if="descriptorsError" :message="descriptorsError" @retry="fetchDescriptors" />
 
     <template v-else>
       <ProviderCategorySection

@@ -16,7 +16,7 @@
  * mount. Before either fetch resolves, `connectionCount` is 0 and
  * `configuredModels` is empty.
  */
-import { type ComputedRef, computed } from "vue";
+import { type ComputedRef, computed, type Ref } from "vue";
 import { useAvailableModels } from "@/composables/useAvailableModels";
 import { useProviderDescriptors } from "@/composables/useProviderDescriptors";
 import { useProviders } from "@/composables/useProviders";
@@ -44,6 +44,8 @@ export interface ProviderCatalogItem extends CatalogEntry {
 export interface UseProviderCatalog {
 	/** Fetches the authoritative descriptor list from the management API. */
 	fetch: () => Promise<void>;
+	readonly loading: Ref<boolean>;
+	readonly error: Ref<string | null>;
 	/**
 	 * All catalog items, one per `ProviderKind`, in the order defined
 	 * by `PROVIDER_KINDS`. Reactively updates when the underlying
@@ -61,7 +63,12 @@ export interface UseProviderCatalog {
 export function useProviderCatalog(): UseProviderCatalog {
 	const { providers } = useProviders();
 	const { modelsByProvider } = useAvailableModels();
-	const { catalog: descriptorCatalog, fetch } = useProviderDescriptors();
+	const {
+		catalog: descriptorCatalog,
+		fetch,
+		loading,
+		error,
+	} = useProviderDescriptors();
 
 	/**
 	 * Pre-index the available-models output by `providerKind` so the
@@ -113,6 +120,8 @@ export function useProviderCatalog(): UseProviderCatalog {
 
 	return {
 		fetch,
+		loading,
+		error,
 		items,
 		byCategory: (category) =>
 			computed(() => items.value.filter((i) => i.category === category)),

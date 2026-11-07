@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h, nextTick } from "vue";
 import { createI18n } from "vue-i18n";
 import type { ProviderConnectionResponse } from "@/lib/api";
+import { useApi } from "@/lib/api";
 import en from "@/locales/en.json";
 import es from "@/locales/es.json";
 import AddProviderDialog from "./AddProviderDialog.vue";
@@ -1181,6 +1182,44 @@ describe("AddProviderDialog — auth type gating", () => {
 });
 
 describe("AddProviderDialog — open/close", () => {
+	it.each(["descriptors", "connections"])(
+		"ignores initialization after closing during %s fetch",
+		async (request) => {
+			let finish!: () => void;
+			const pending = new Promise<void>((resolve) => {
+				finish = resolve;
+			});
+			const conn = makeConnection({ name: "Stale connection" });
+			const descriptorSpy = vi.spyOn(useApi(), "getProviderDescriptors");
+			if (request === "descriptors") {
+				descriptorSpy.mockImplementationOnce(async () => {
+					await pending;
+					return [];
+				});
+				mockState.providerById.value = new Map([[conn.id, conn]]);
+			} else {
+				descriptorSpy.mockResolvedValueOnce([]);
+				mockState.fetch.mockImplementationOnce(async () => {
+					await pending;
+					mockState.providerById.value = new Map([[conn.id, conn]]);
+				});
+			}
+			const wrapper = mountDialog({ mode: "edit", connectionId: conn.id });
+			await flushPromises();
+			await wrapper.setProps({ open: false });
+			finish();
+			await flushPromises();
+			descriptorSpy.mockReturnValueOnce(new Promise(() => {}));
+			await wrapper.setProps({ open: true });
+			expect(
+				wrapper.find<HTMLInputElement>('[data-testid="input-displayName"]')
+					.element.value,
+			).toBe("");
+			wrapper.unmount();
+			descriptorSpy.mockRestore();
+		},
+	);
+
 	it("hides the dialog when the open prop is set to false", async () => {
 		const wrapper = mountDialog({ providerKind: "ollama" });
 		await flushPromises();

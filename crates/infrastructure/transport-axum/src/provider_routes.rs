@@ -79,7 +79,7 @@ async fn list_provider_descriptors() -> Json<Vec<ProviderDescriptorResponse>> {
             .iter()
             .map(|descriptor| ProviderDescriptorResponse {
                 id: descriptor.id,
-                label: provider_label(descriptor.id),
+                label: descriptor.label,
                 protocol: match descriptor.protocol {
                     rook_core::Protocol::OpenAiChat => "openAiChat",
                     rook_core::Protocol::AnthropicMessages => "anthropicMessages",
@@ -92,6 +92,10 @@ async fn list_provider_descriptors() -> Json<Vec<ProviderDescriptorResponse>> {
                         rook_core::AuthKind::OAuth => "oauth",
                         rook_core::AuthKind::ImportedToken => "importedToken",
                     }];
+                    // Gemini supports API-key connections alongside its OAuth flow.
+                    if descriptor.id == "gemini" {
+                        kinds.insert(0, "apiKey");
+                    }
                     if descriptor.accepts_oauth_credentials && !kinds.contains(&"oauth") {
                         kinds.push("oauth");
                     }
@@ -103,28 +107,6 @@ async fn list_provider_descriptors() -> Json<Vec<ProviderDescriptorResponse>> {
             })
             .collect(),
     )
-}
-
-fn provider_label(id: &str) -> &'static str {
-    match id {
-        "openai" => "OpenAI",
-        "openai-compatible" => "OpenAI Compatible",
-        "anthropic" => "Anthropic",
-        "ollama" => "Ollama",
-        "ollama-cloud" => "Ollama Cloud",
-        "gemini" => "Gemini",
-        "azure-openai" => "Azure OpenAI",
-        "groq" => "Groq",
-        "xai" => "xAI",
-        "mistral" => "Mistral",
-        "deepseek" => "DeepSeek",
-        "together" => "Together AI",
-        "fireworks" => "Fireworks AI",
-        "cerebras" => "Cerebras",
-        "openrouter" => "OpenRouter",
-        "nan" => "NAN",
-        _ => "Provider",
-    }
 }
 
 async fn list_providers(

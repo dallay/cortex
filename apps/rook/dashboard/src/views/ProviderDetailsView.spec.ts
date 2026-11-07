@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent } from "vue";
 import { createI18n } from "vue-i18n";
 import { createMemoryHistory, createRouter } from "vue-router";
+import { useApi } from "@/lib/api";
 import en from "@/locales/en.json";
 import ProviderDetailsView from "./ProviderDetailsView.vue";
 
@@ -117,6 +118,23 @@ const i18n = createI18n({
 });
 
 async function mountView(path: string) {
+	vi.spyOn(useApi(), "getProviderDescriptors").mockResolvedValue(
+		["openai", "ollama-cloud", "xai"].map((id) => ({
+			id,
+			label: id === "openai" ? "OpenAI" : id === "xai" ? "xAI" : "Ollama Cloud",
+			protocol: "openAiChat",
+			authKinds: ["apiKey"],
+			supportsOAuth: false,
+			iconKey: id,
+			capabilityCeiling: {
+				tools: "unknown",
+				vision: "unknown",
+				reasoning: "unknown",
+				streaming: "unknown",
+				contextTokens: null,
+			},
+		})),
+	);
 	setActivePinia(createPinia());
 	const router = buildRouter(path);
 	await router.isReady();
@@ -138,6 +156,12 @@ describe("ProviderDetailsView", () => {
 		setActivePinia(createPinia());
 		vi.clearAllMocks();
 		mockProvidersState.value = [];
+	});
+
+	it("accepts descriptor-only xAI routes and uses the descriptor label", async () => {
+		const { wrapper, router } = await mountView("/providers/xai");
+		expect(wrapper.text()).toContain("xAI");
+		expect(router.currentRoute.value.name).toBe("Provider Details");
 	});
 
 	it("renders the provider display name in the header", async () => {

@@ -1,5 +1,9 @@
 import { computed, ref } from "vue";
-import { findCatalogEntry, type ProviderKind } from "@/config/providerCatalog";
+import {
+	type AuthType,
+	findCatalogEntry,
+	type ProviderKind,
+} from "@/config/providerCatalog";
 import { type ProviderDescriptorResponse, useApi } from "@/lib/api";
 
 const descriptors = ref<ProviderDescriptorResponse[]>([]);
@@ -30,9 +34,13 @@ export function useProviderDescriptors() {
 				kind: descriptor.id as ProviderKind,
 				displayNameKey: presentation.displayNameKey || "",
 				label: descriptor.label,
-				authTypes: descriptor.authKinds.includes("oauth")
-					? (["apikey", "oauth"] as const)
-					: presentation.authTypes,
+				authTypes: descriptor.authKinds.flatMap<AuthType>((kind) =>
+					kind === "oauth"
+						? ["oauth"]
+						: kind === "apiKey" || kind === "importedToken"
+							? ["apikey"]
+							: [],
+				),
 				iconFile: presentation.iconFile,
 				iconKey: descriptor.iconKey,
 			};

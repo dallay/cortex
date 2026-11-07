@@ -61,6 +61,34 @@ describe("useProviderDescriptors", () => {
 		});
 	});
 
+	it.each([["oauth"], ["apiKey", "oauth"]])(
+		"maps accepted authentication types without adding API keys: %s",
+		async (...authKinds) => {
+			const state = useProviderDescriptors();
+			vi.spyOn(useApi(), "getProviderDescriptors").mockResolvedValue([
+				{
+					id: "future-provider",
+					label: "Future Provider",
+					protocol: "openAiChat",
+					authKinds,
+					supportsOAuth: true,
+					iconKey: "future-provider",
+					capabilityCeiling: {
+						tools: "unknown",
+						vision: "unknown",
+						reasoning: "unknown",
+						streaming: "unknown",
+						contextTokens: null,
+					},
+				},
+			]);
+			await state.fetch();
+			expect(state.catalog.value[0].authTypes).toEqual(
+				authKinds.map((kind) => (kind === "apiKey" ? "apikey" : kind)),
+			);
+		},
+	);
+
 	it("exposes request errors and clears loading state", async () => {
 		vi.spyOn(useApi(), "getProviderDescriptors").mockRejectedValue(
 			new Error("not authorized"),

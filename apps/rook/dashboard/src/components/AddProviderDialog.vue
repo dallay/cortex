@@ -138,6 +138,7 @@ let oauthPollTimer: number | undefined;
 const isEditMode = computed(() => props.mode === "edit");
 const showKindSelector = computed(() => props.providerKind === undefined);
 const catalogEntry = computed(() => findCatalogEntry(kind.value));
+const authTypes = computed(() => descriptorCatalog.value.find((entry) => entry.kind === kind.value)?.authTypes ?? catalogEntry.value.authTypes);
 function getProviderLabel(entry: (typeof descriptorCatalog.value)[number]) {
   return entry.displayNameKey ? t(entry.displayNameKey) : entry.label;
 }
@@ -152,7 +153,7 @@ const providerLabel = computed(() => {
 });
 const isApikey = computed(() => authType.value === "apikey");
 const supportsOAuth = computed(() =>
-  catalogEntry.value.authTypes.includes("oauth"),
+  authTypes.value.includes("oauth"),
 );
 const isOAuth = computed(() => authType.value === "oauth");
 const canStartOAuth = computed(
@@ -312,7 +313,7 @@ function resetForm() {
   oauthMessage.value = null;
   oauthBusy.value = false;
   kind.value = props.providerKind ?? PROVIDER_KINDS[0].kind;
-  authType.value = findCatalogEntry(kind.value).authTypes.includes("apikey")
+  authType.value = authTypes.value.includes("apikey")
     ? "apikey"
     : "oauth";
   form.value = blankForm();
@@ -322,12 +323,15 @@ function resetForm() {
 
 watch(
   () => props.open,
-  async (isOpen) => {
+  async (isOpen, _previous, onCleanup) => {
+    let active = true;
+    onCleanup(() => { active = false; });
     if (!isOpen) {
       resetForm();
       return;
     }
     await fetchDescriptors();
+    if (!active || !props.open) return;
     if (!props.providerKind && descriptorCatalog.value.length && !descriptorCatalog.value.some((item) => item.kind === kind.value)) {
       kind.value = descriptorCatalog.value[0].kind;
     }
@@ -336,13 +340,14 @@ watch(
       let conn = providerById.value.get(props.connectionId);
       if (!conn) {
         await fetch();
+        if (!active || !props.open) return;
         conn = providerById.value.get(props.connectionId);
       }
       if (conn) loadFromConnection(conn);
     } else {
       // Create mode — seed from current kind.
       if (props.providerKind) kind.value = props.providerKind;
-      authType.value = findCatalogEntry(kind.value).authTypes.includes("apikey")
+      authType.value = authTypes.value.includes("apikey")
         ? "apikey"
         : "oauth";
       form.value = blankForm();
@@ -357,8 +362,8 @@ watch(
 watch(kind, (newKind) => {
   if (!isEditMode.value) {
     form.value.baseUrl = findCatalogEntry(newKind).defaultBaseUrl;
-    if (!findCatalogEntry(newKind).authTypes.includes(authType.value)) {
-      authType.value = findCatalogEntry(newKind).authTypes[0] ?? "oauth";
+    if (!authTypes.value.includes(authType.value)) {
+      authType.value = authTypes.value[0] ?? "oauth";
     }
   }
 });
@@ -609,6 +614,7 @@ onUnmounted(stopOAuthPolling);
           >
             <ToggleGroupItem
               value="apikey"
+              :disabled="!authTypes.includes('apikey')"
               :aria-label="t('providers.form.authTypeApikey')"
               data-testid="auth-type-apikey"
             >
