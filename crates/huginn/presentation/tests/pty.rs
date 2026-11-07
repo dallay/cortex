@@ -488,6 +488,10 @@ fn inline_approval_defaults_to_reject_navigates_and_ignores_paste() {
     pty.wait_for("Huginn");
     pty.send("approve\r");
     pty.wait_for("›Reject");
+    pty.wait_for("Approval pending");
+    // Let the TUI complete its quiet-poll handoff. The first interaction after
+    // that boundary must remain fresh and must not require another confirm.
+    std::thread::sleep(std::time::Duration::from_millis(100));
     let prompt = pty.screen_text();
     assert!(
         prompt.contains("›Reject"),
@@ -497,7 +501,7 @@ fn inline_approval_defaults_to_reject_navigates_and_ignores_paste() {
         prompt.contains("User: approve"),
         "conversation remains visible: {prompt}"
     );
-    pty.send("\x06");
+    pty.send("\x06\x1b[C");
     pty.wait_for("PREVIEW_FIRST");
     pty.send("\x1b[C\r");
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -1020,7 +1024,7 @@ fn settings_pty_escape_closes_modal_without_cancelling_stream() {
 fn approval_resize_below_minimum_disarms_until_a_fresh_draw() {
     let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
     command.arg("normal");
-    let mut pty = Pty::start_sized(command, true, 8, 20);
+    let mut pty = Pty::start_sized(command, true, 30, 100);
     pty.wait_for("Huginn");
     pty.send("approve\r");
     pty.wait_for("›Reject");
@@ -1037,10 +1041,28 @@ fn approval_resize_below_minimum_disarms_until_a_fresh_draw() {
         pty.output()
     );
 
-    // Restore the viewport and confirm a fresh draw re-arms the same request.
-    pty.resize(8, 20);
+    // Restore a viable viewport. A fresh draw re-arms the same request, but
+    // approval still requires reviewing the complete native-file preview.
+    let before_restore = pty.output().len();
+    pty.resize(30, 100);
+    pty.wait_for_output_change(before_restore);
     pty.wait_for("›Reject");
-    pty.send("\x1b[C\r");
+    pty.send("\x06");
+    pty.wait_for("PREVIEW_FIRST");
+    pty.send("\x1b[F");
+    pty.wait_for("PREVIEW_LAST");
+    let reviewed = pty.screen_text();
+    assert!(
+        reviewed.contains("PREVIEW_LAST"),
+        "the final preview page must be visible before approval: {reviewed}"
+    );
+    assert!(
+        !pty.output().contains("APPROVED"),
+        "approval must remain pending until review is complete"
+    );
+    pty.send("\x1b[C");
+    pty.wait_for("›Approve once");
+    pty.send("\r");
     pty.wait_output_for("APPROVED");
     pty.send("\x03");
     pty.finish(true);
@@ -1197,6 +1219,19 @@ fn composer_and_fresh_approval_work_after_100_streaming_resizes() {
     pty.send("approve\r");
     pty.wait_for("›Reject");
     std::thread::sleep(std::time::Duration::from_millis(100));
+    pty.send("\x06");
+    pty.wait_for("PREVIEW_FIRST");
+    pty.send("\x1b[F");
+    pty.wait_for("PREVIEW_LAST");
+    let reviewed = pty.screen_text();
+    assert!(
+        reviewed.contains("PREVIEW_LAST"),
+        "the final preview page must be visible before approval: {reviewed}"
+    );
+    assert!(
+        !pty.output().contains("APPROVED"),
+        "approval must remain pending until review is complete"
+    );
     pty.send("\x1b[C");
     pty.wait_for("›Approve once");
     pty.send("\r");

@@ -46,9 +46,9 @@ async fn approval_history_omits_sensitive_resources_and_previews_but_preserves_r
     use huginn_core::{ApprovalRequest, ApprovalResource, Event};
 
     let directory = tempfile::tempdir().expect("temporary session directory");
-    let sensitive_path = directory.path().join(".env");
+    let sensitive_path = directory.path().join(".npmrc");
     let public_path = directory.path().join("folder\\name/README.md");
-    let sensitive_preview = "--- a/.env\n+sensitive-content-marker";
+    let sensitive_preview = "--- a/.npmrc\n+sensitive-content-marker";
     let public_preview = "--- a/README.md\n+Public documentation";
     let mut session = Session::new(directory.path().to_path_buf());
     session.events = vec![
@@ -91,7 +91,7 @@ async fn approval_history_omits_sensitive_resources_and_previews_but_preserves_r
         !encoded_session.contains("sensitive-content-marker"),
         "sensitive preview contents must not appear in serialized session history"
     );
-    assert!(!encoded_session.contains("--- a/.env"));
+    assert!(!encoded_session.contains("--- a/.npmrc"));
     assert_eq!(
         persisted_session["events"][1]["request"]["resource"]["canonical_path"],
         serde_json::to_value(&public_path).expect("serialize public resource path")

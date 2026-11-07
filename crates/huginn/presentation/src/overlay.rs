@@ -240,6 +240,8 @@ impl Payload {
             modal.expanded = !modal.expanded;
             if modal.expanded {
                 modal.details_rendered = false;
+                modal.scroll = 0;
+                modal.rendered_scroll = 0;
             }
             return Effect::None;
         }
@@ -264,9 +266,8 @@ impl Payload {
                         .is_some_and(|decision| {
                             *decision != huginn_core::ApprovalDecision::Reject
                         })
-                    && (modal.expanded || modal.request.action == "native.shell")
-                    && (!modal.details_rendered
-                        || !modal.expanded
+                    && (!modal.expanded
+                        || !modal.details_rendered
                         || modal.scroll < modal.last_scroll
                         || modal.rendered_scroll < modal.last_scroll) => {}
             KeyCode::Enter if modal.armed => {
@@ -613,6 +614,39 @@ mod tests {
         modal.details_rendered = true;
         modal.last_scroll = 3;
         modal.scroll = 0;
+        let mut payload = Payload::Approval(modal);
+
+        let effect = payload.input(
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            false,
+        );
+
+        assert!(matches!(
+            effect,
+            InputEffect::Resolve(ApprovalDecision::Reject)
+        ));
+    }
+
+    #[test]
+    fn collapsed_native_file_approval_is_blocked_without_disarming_modal() {
+        let mut modal = Modal::test_stub();
+        modal.armed = true;
+        modal.selected = 1;
+        let mut payload = Payload::Approval(modal);
+
+        let effect = payload.input(
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            false,
+        );
+
+        assert!(matches!(effect, InputEffect::None));
+        assert!(payload.approval().unwrap().armed);
+    }
+
+    #[test]
+    fn collapsed_native_file_request_can_be_rejected_immediately() {
+        let mut modal = Modal::test_stub();
+        modal.armed = true;
         let mut payload = Payload::Approval(modal);
 
         let effect = payload.input(

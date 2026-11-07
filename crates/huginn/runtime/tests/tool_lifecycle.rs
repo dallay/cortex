@@ -531,7 +531,7 @@ impl Tool for PublicWriteFileSpoof {
 }
 
 #[tokio::test]
-async fn production_native_file_builtin_stamps_canonical_resource_and_sensitive_classification() {
+async fn production_native_file_builtin_classifies_npmrc_and_redacts_approval_metadata() {
     let workspace = tempfile::tempdir().unwrap();
     let registry = Registry::default();
     let sessions = Arc::new(
@@ -553,7 +553,7 @@ async fn production_native_file_builtin_stamps_canonical_resource_and_sensitive_
             &ToolCall {
                 id: "native".into(),
                 name: "write_file".into(),
-                arguments: serde_json::json!({"path":".env","content":"SECRET"}),
+                arguments: serde_json::json!({"path":".npmrc","content":"_authToken=SECRET"}),
             },
             &ToolContext {
                 workspace: workspace.path().into(),
@@ -567,7 +567,7 @@ async fn production_native_file_builtin_stamps_canonical_resource_and_sensitive_
     let resource = request.resource.as_ref().unwrap();
     assert_eq!(
         resource.canonical_path,
-        workspace.path().canonicalize().unwrap().join(".env")
+        workspace.path().canonicalize().unwrap().join(".npmrc")
     );
     assert!(resource.sensitive);
     assert_eq!(
@@ -575,7 +575,7 @@ async fn production_native_file_builtin_stamps_canonical_resource_and_sensitive_
         Some(huginn_core::ApprovalProvenance::NativeFileBuiltin)
     );
     let serialized_request = serde_json::to_string(&request).unwrap();
-    assert!(!serialized_request.contains(".env"));
+    assert!(!serialized_request.contains(".npmrc"));
     assert!(!serialized_request.contains("SECRET"));
     assert!(!serialized_request.contains("provenance"));
     let restored: ApprovalRequest = serde_json::from_str(&serialized_request).unwrap();

@@ -307,6 +307,36 @@ impl Drop for Completion {
         self.0.cancel();
     }
 }
+
+#[derive(Default)]
+struct FocusDrain {
+    shown: u64,
+    draining: Option<u64>,
+}
+
+impl FocusDrain {
+    const fn modal_drawn(&mut self, focus: u64) {
+        // The modal is visible, but input stays on the previous lease until a
+        // quiet poll confirms that no bytes from the render transition remain.
+        if focus != self.shown {
+            self.draining = Some(focus);
+        }
+    }
+
+    fn observe(&mut self, focus: u64, drained: bool) -> bool {
+        if focus == self.shown {
+            return false;
+        }
+        if self.draining != Some(focus) || drained {
+            self.draining = Some(focus);
+            return false;
+        }
+        self.draining = None;
+        self.shown = focus;
+        true
+    }
+}
+
 impl Drop for Driver {
     fn drop(&mut self) {
         self.ui.shutdown();
@@ -321,6 +351,32 @@ impl Drop for Driver {
             }
         }
         self.guard.restore();
+    }
+}
+
+#[cfg(test)]
+mod focus_drain_tests {
+    use super::FocusDrain;
+
+    #[test]
+    fn modal_lease_promotes_only_after_a_quiet_poll() {
+        let mut drain = FocusDrain {
+            shown: 3,
+            draining: None,
+        };
+        drain.modal_drawn(7);
+
+        assert_eq!(drain.shown, 3, "drawing must keep the old lease active");
+        assert!(
+            !drain.observe(7, true),
+            "bytes observed after the draw must keep the old lease active"
+        );
+        assert_eq!(drain.shown, 3);
+        assert!(
+            drain.observe(7, false),
+            "a quiet poll promotes the new lease"
+        );
+        assert_eq!(drain.shown, 7);
     }
 }
 
@@ -1444,13 +1500,11 @@ Enter save Esc close"
         last_scroll
     }
 
-    fn arm_modal(&mut self, shown_focus: u64) -> Result<u64> {
+    fn arm_modal(&mut self) -> Result<u64> {
         let focus = self.ui.lock().focus();
-        // Discard queued keys/pastes before showing a new permission choice.
-        while let Some(event) = self.next_input(shown_focus)? {
-            discard_input(event);
-        }
         // `draw` arms only the exact overlay snapshot after its frame is painted.
+        // Keep the previous input lease active throughout this draw. The event
+        // loop then drains bytes for that lease until it observes a quiet poll.
         self.draw()?;
         Ok(focus)
     }
@@ -1464,8 +1518,7 @@ Enter save Esc close"
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut dirty = true;
         let mut shown_epoch = 0;
-        let mut shown_focus = 0;
-        let mut draining_focus = None;
+        let mut focus_drain = FocusDrain::default();
         let mut terminal_size = crossterm::terminal::size()?;
         loop {
             if self.standalone && self.ui.lock().overlays.active().is_none() {
@@ -1473,8 +1526,8 @@ Enter save Esc close"
             }
             let epoch = self.ui.lock().modal().map_or(0, |m| m.epoch);
             if epoch != 0 && shown_epoch != epoch {
-                shown_focus = self.arm_modal(shown_focus)?;
-                draining_focus = None;
+                let focus = self.arm_modal()?;
+                focus_drain.modal_drawn(focus);
                 shown_epoch = epoch;
                 dirty = false;
             }
@@ -1512,7 +1565,7 @@ Enter save Esc close"
                             }
                         }
                         let focus = self.ui.lock().focus();
-                        if draining_focus.is_none() && focus == shown_focus {
+                        if focus_drain.draining.is_none() && focus == focus_drain.shown {
                             self.draw()?;
                             dirty = false;
                         }
@@ -1521,31 +1574,28 @@ Enter save Esc close"
                     for _ in 0..256 {
                         dirty |= self.ui.refresh_contributions();
                         let focus = self.ui.lock().focus();
-                        if focus != shown_focus {
+                        if focus != focus_drain.shown {
                             // Read available bytes under the old lease; framing
                             // retains that ownership even if the paste finishes
                             // only after the next focus has been drawn.
                             let mut drained = false;
-                            while let Some(event) = self.next_input(shown_focus)? {
+                            while let Some(event) = self.next_input(focus_drain.shown)? {
                                 discard_input(event);
                                 drained = true;
                             }
                             // A single PTY write can arrive in multiple readable
                             // chunks. Keep the old lease until a later tick is
                             // quiet, before exposing the new focus to the user.
-                            if draining_focus != Some(focus) || drained {
-                                draining_focus = Some(focus);
+                            if !focus_drain.observe(focus, drained) {
                                 dirty = true;
                                 break;
                             }
-                            draining_focus = None;
-                            shown_focus = focus;
                             self.draw()?;
                             dirty = false;
                             continue;
                         }
-                        let Some(event) = self.next_input(shown_focus)? else { break; };
-                        self.input(event, &prompts, shown_focus);
+                        let Some(event) = self.next_input(focus_drain.shown)? else { break; };
+                        self.input(event, &prompts, focus_drain.shown);
                         dirty = true;
                     }
                     #[cfg(unix)]
@@ -1554,7 +1604,10 @@ Enter save Esc close"
                         dirty = true;
                     }
                     dirty |= self.ui.refresh_completion(self.model_configured());
-                    if dirty && draining_focus.is_none() && self.ui.lock().focus() == shown_focus {
+                    if dirty
+                        && focus_drain.draining.is_none()
+                        && self.ui.lock().focus() == focus_drain.shown
+                    {
                         self.draw()?;
                         dirty = false;
                     }
@@ -2610,6 +2663,7 @@ mod tests {
             modal.request.preview = "Directory: /workspace\nCommand: touch pwned-shell".into();
             modal.expanded = true;
             modal.scroll = 7;
+            modal.rendered_scroll = 6;
             let ticket = state.overlays.ticket();
             state.overlays.open(OpenRequest {
                 kind: OverlayKind::Approval,

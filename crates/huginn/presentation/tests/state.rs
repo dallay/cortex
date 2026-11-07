@@ -450,6 +450,10 @@ async fn approval_retains_diff_and_requires_armed_visible_choice() {
         );
         assert_eq!(modal.request.preview, payload.preview);
         modal.armed = true;
+        modal.expanded = true;
+        modal.details_rendered = true;
+        modal.scroll = modal.last_scroll;
+        modal.rendered_scroll = modal.last_scroll;
         drop(state);
     }
     ui.resolve_modal(true);
@@ -591,6 +595,23 @@ async fn approval_paste_cannot_authorize_and_selected_policy_choice_is_traced() 
     };
     ui.overlay_input(Input::Paste("\r".into()), ticket, focus);
     assert!(!task.is_finished(), "paste must not authorize");
+    ui.overlay_input(
+        Input::Key(crossterm::event::KeyEvent::new(
+            KeyCode::Char('f'),
+            crossterm::event::KeyModifiers::CONTROL,
+        )),
+        ticket,
+        focus,
+    );
+    {
+        let mut state = ui.lock();
+        let modal = state.modal_mut().unwrap();
+        modal.details_rendered = true;
+        modal.last_scroll = 0;
+        modal.scroll = 0;
+        modal.rendered_scroll = 0;
+        drop(state);
+    }
     overlay_key(&ui, KeyCode::Right);
     overlay_key(&ui, KeyCode::Enter);
 
@@ -1388,6 +1409,10 @@ async fn approval_modal_numbers_requests_per_turn_and_resets() {
         let mut state = ui.lock();
         let modal = state.modal_mut().unwrap();
         modal.armed = true;
+        modal.expanded = true;
+        modal.details_rendered = true;
+        modal.scroll = modal.last_scroll;
+        modal.rendered_scroll = modal.last_scroll;
         drop(state);
     }
     ui.resolve_modal(true);

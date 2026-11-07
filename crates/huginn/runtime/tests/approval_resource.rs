@@ -1,6 +1,6 @@
 // Compile the runtime adapter in this integration-test crate so the test can
 // exercise private registration metadata without making that metadata public.
-#[allow(dead_code)]
+#[allow(dead_code, clippy::redundant_pub_crate)]
 mod tools {
     include!("../src/tools.rs");
 

@@ -69,6 +69,104 @@ mod approval_resolution_tests {
 
         assert_eq!(receiver.await.unwrap(), ApprovalDecision::Reject);
     }
+
+    #[tokio::test]
+    async fn public_resolver_rejects_collapsed_native_file_approval() {
+        let ui = Ui::new(
+            &Session::new(".".into()),
+            Arc::new(Contributions::default()),
+            CancellationToken::new(),
+            Arc::new(UiConfig::defaults()),
+            Arc::new(|_| Ok(())),
+        )
+        .0;
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        {
+            let mut state = ui.lock();
+            let mut modal = Modal::test_stub();
+            modal.armed = true;
+            modal.reply = Some(sender);
+            let ticket = state.overlays.ticket();
+            state.overlays.open(OpenRequest {
+                kind: OverlayKind::Approval,
+                origin: Origin::Host,
+                operation: crate::event::OperationId::default(),
+                payload: Payload::Approval(modal),
+                ticket,
+            });
+        }
+
+        ui.resolve_modal(true);
+
+        assert_eq!(receiver.await.unwrap(), ApprovalDecision::Reject);
+    }
+
+    #[tokio::test]
+    async fn public_resolver_accepts_fully_reviewed_native_file_approval() {
+        let ui = Ui::new(
+            &Session::new(".".into()),
+            Arc::new(Contributions::default()),
+            CancellationToken::new(),
+            Arc::new(UiConfig::defaults()),
+            Arc::new(|_| Ok(())),
+        )
+        .0;
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        {
+            let mut state = ui.lock();
+            let mut modal = Modal::test_stub();
+            modal.armed = true;
+            modal.expanded = true;
+            modal.details_rendered = true;
+            modal.last_scroll = 2;
+            modal.scroll = 2;
+            modal.rendered_scroll = 2;
+            modal.reply = Some(sender);
+            let ticket = state.overlays.ticket();
+            state.overlays.open(OpenRequest {
+                kind: OverlayKind::Approval,
+                origin: Origin::Host,
+                operation: crate::event::OperationId::default(),
+                payload: Payload::Approval(modal),
+                ticket,
+            });
+        }
+
+        ui.resolve_modal(true);
+
+        assert_eq!(receiver.await.unwrap(), ApprovalDecision::ApproveOnce);
+    }
+
+    #[tokio::test]
+    async fn public_resolver_allows_rejecting_collapsed_native_file_request() {
+        let ui = Ui::new(
+            &Session::new(".".into()),
+            Arc::new(Contributions::default()),
+            CancellationToken::new(),
+            Arc::new(UiConfig::defaults()),
+            Arc::new(|_| Ok(())),
+        )
+        .0;
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        {
+            let mut state = ui.lock();
+            let mut modal = Modal::test_stub();
+            modal.armed = true;
+            modal.reply = Some(sender);
+            let ticket = state.overlays.ticket();
+            state.overlays.open(OpenRequest {
+                kind: OverlayKind::Approval,
+                origin: Origin::Host,
+                operation: crate::event::OperationId::default(),
+                payload: Payload::Approval(modal),
+                ticket,
+            });
+        }
+
+        ui.resolve_modal(false);
+
+        assert_eq!(receiver.await.unwrap(), ApprovalDecision::Reject);
+    }
 }
 
 pub fn safe_single_line(text: &str) -> String {
@@ -1520,19 +1618,12 @@ impl Ui {
         };
         if let Some(Payload::Approval(mut modal)) = retired.map(ActiveOverlay::into_payload) {
             let positive = decision != huginn_core::ApprovalDecision::Reject;
-            let shell_review_incomplete = modal.request.action == "native.shell"
-                && (!modal.expanded
-                    || !modal.details_rendered
-                    || modal.scroll < modal.last_scroll
-                    || modal.rendered_scroll < modal.last_scroll);
+            let review_incomplete = !modal.expanded
+                || !modal.details_rendered
+                || modal.scroll < modal.last_scroll
+                || modal.rendered_scroll < modal.last_scroll;
             let decision = if modal.allowed_decisions.contains(&decision)
-                && (!positive
-                    || (modal.armed
-                        && !shell_review_incomplete
-                        && !(modal.expanded
-                            && (!modal.details_rendered
-                                || modal.scroll < modal.last_scroll
-                                || modal.rendered_scroll < modal.last_scroll))))
+                && (!positive || (modal.armed && !review_incomplete))
                 && !self.stop.is_cancelled()
             {
                 decision

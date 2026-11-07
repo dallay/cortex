@@ -40,6 +40,16 @@ fn sensitive_names_prefixes_and_suffixes_ignore_ascii_case() {
 }
 
 #[test]
+fn npmrc_is_classified_as_sensitive_at_the_path_classifier_boundary() {
+    use std::path::Path;
+
+    for path in [Path::new(".npmrc"), Path::new("nested/.npmrc")] {
+        assert!(huginn_guards::sensitive(path), "{path:?}");
+    }
+    assert!(!huginn_guards::sensitive(Path::new("package.json")));
+}
+
+#[test]
 fn project_path_prefixes_ignore_ascii_case_without_losing_component_boundaries() {
     let root = tempfile::tempdir().unwrap();
     let policy =
