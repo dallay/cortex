@@ -73,6 +73,26 @@ async fn test_manage_connections_missing_through_routes() {
     response.assert_json(&json!({"code": "NOT_FOUND", "error": "not found"}));
 }
 
+#[tokio::test]
+async fn provider_descriptors_expose_catalog_fields() {
+    let server = server(true, None);
+    let response = server.get("/api/provider-descriptors").await;
+    response.assert_status_ok();
+    let descriptors = response.json::<Value>();
+    let openai = descriptors
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|descriptor| descriptor["id"] == "openai")
+        .unwrap();
+    assert_eq!(openai["label"], "OpenAI");
+    assert_eq!(openai["protocol"], "openAiChat");
+    assert_eq!(openai["authKinds"], json!(["apiKey", "oauth"]));
+    assert!(openai.get("capabilityCeiling").is_some());
+    assert_eq!(openai["supportsOAuth"], false);
+    assert_eq!(openai["iconKey"], "openai");
+}
+
 fn create_request() -> Value {
     json!({
         "providerKind": "openai",

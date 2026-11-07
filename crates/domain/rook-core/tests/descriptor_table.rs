@@ -9,6 +9,7 @@ fn every_descriptor_is_fully_declared() {
     assert_eq!(PROVIDER_DESCRIPTORS.len(), 16);
     for descriptor in PROVIDER_DESCRIPTORS {
         assert!(!descriptor.id.is_empty());
+        assert!(!descriptor.label.is_empty());
         assert!(
             !descriptor.default_base_url.is_empty() || descriptor.requires_base_url,
             "{} must declare a base URL or require one",
