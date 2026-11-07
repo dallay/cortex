@@ -1,8 +1,23 @@
+import { Icon } from "@iconify/vue";
+import Server from "@lucide/vue/dist/esm/icons/server.mjs";
 import { mount } from "@vue/test-utils";
 import { describe, expect, it } from "vitest";
 import ProviderIcon from "./ProviderIcon.vue";
 
 describe("ProviderIcon", () => {
+	it("uses the descriptor icon key to select a bundled icon", () => {
+		const wrapper = mount(ProviderIcon, {
+			props: { kind: "future-provider", iconKey: "openai" },
+		});
+		expect(wrapper.findComponent(Icon).props("icon")).toBe(
+			"simple-icons:openai",
+		);
+	});
+	it("renders the fallback for a provider ID added by the backend", () => {
+		const wrapper = mount(ProviderIcon, { props: { kind: "future-provider" } });
+		expect(wrapper.findComponent(Server).exists()).toBe(true);
+		expect(wrapper.findComponent(Icon).exists()).toBe(false);
+	});
 	// -------------------------------------------------------------------------
 	// Strategy 1: Iconify bundle (openai, anthropic, ollama, gemini)
 	// These render as inline <svg> via @iconify/vue — no <img>, no HTTP request.

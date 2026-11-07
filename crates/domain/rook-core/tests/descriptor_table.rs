@@ -2,13 +2,16 @@
 //! identity. The table itself is compile-time data; these tests pin its
 //! completeness, alias resolution and the nan entry criteria.
 
-use rook_core::{descriptor_by_id, descriptor_for, ModelSource, Protocol, PROVIDER_DESCRIPTORS};
+use rook_core::{
+    descriptor_by_id, descriptor_for, AuthKind, ModelSource, Protocol, PROVIDER_DESCRIPTORS,
+};
 
 #[test]
 fn every_descriptor_is_fully_declared() {
     assert_eq!(PROVIDER_DESCRIPTORS.len(), 16);
     for descriptor in PROVIDER_DESCRIPTORS {
         assert!(!descriptor.id.is_empty());
+        assert!(!descriptor.label.is_empty());
         assert!(
             !descriptor.default_base_url.is_empty() || descriptor.requires_base_url,
             "{} must declare a base URL or require one",
@@ -115,5 +118,28 @@ fn every_oauth_endpoint_uses_https() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn every_descriptor_declares_accepted_auth_kinds() {
+    for descriptor in PROVIDER_DESCRIPTORS {
+        assert!(
+            !descriptor.accepted_auth_kinds.is_empty(),
+            "{} must declare at least one accepted auth kind",
+            descriptor.id
+        );
+        assert!(
+            descriptor.accepted_auth_kinds.contains(&descriptor.auth),
+            "{} accepted_auth_kinds must contain primary auth kind {:?}",
+            descriptor.id,
+            descriptor.auth
+        );
+        assert_eq!(
+            descriptor.accepted_auth_kinds.contains(&AuthKind::OAuth),
+            descriptor.oauth.is_some(),
+            "{} must declare AuthKind::OAuth if and only if it has an OAuthConfig",
+            descriptor.id
+        );
     }
 }

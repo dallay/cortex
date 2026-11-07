@@ -37,8 +37,8 @@ const emit = defineEmits<{
 
 const {t} = useI18n();
 
-const name = computed(() => t(props.item.displayNameKey));
-const description = computed(() => t(props.item.descriptionKey));
+const name = computed(() => props.item.displayNameKey ? t(props.item.displayNameKey) : props.item.label);
+const description = computed(() => props.item.descriptionKey ? t(props.item.descriptionKey) : props.item.label);
 
 const statusLabel = computed(() =>
   props.item.hasActiveConnections
@@ -68,6 +68,7 @@ const detailLink = computed(() => `/providers/${props.item.kind}`);
           <div class="rounded-lg bg-primary/10 p-2 shrink-0">
             <ProviderIcon
               :kind="item.kind"
+              :icon-key="item.iconKey"
               loading="lazy"
               :width="20"
               :height="20"

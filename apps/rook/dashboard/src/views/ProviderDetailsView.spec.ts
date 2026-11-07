@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent } from "vue";
 import { createI18n } from "vue-i18n";
 import { createMemoryHistory, createRouter } from "vue-router";
+import { useProviderDescriptors } from "@/composables/useProviderDescriptors";
+import { type ProviderDescriptorResponse, useApi } from "@/lib/api";
 import en from "@/locales/en.json";
 import ProviderDetailsView from "./ProviderDetailsView.vue";
 
@@ -73,9 +75,11 @@ vi.mock("@/components/LoadingState.vue", () => ({
 }));
 vi.mock("@/components/ErrorBanner.vue", () => ({
 	default: defineComponent({
+		name: "ErrorBanner",
 		props: ["message"],
 		emits: ["retry"],
-		template: '<div data-testid="error-banner" />',
+		template:
+			'<div data-testid="error-banner"><button data-testid="retry-button" @click="$emit(\'retry\')" /></div>',
 	}),
 }));
 vi.mock("@/components/EmptyState.vue", () => ({
@@ -116,7 +120,33 @@ const i18n = createI18n({
 	messages: { en },
 });
 
-async function mountView(path: string) {
+async function mountView(
+	path: string,
+	descriptorsList: ProviderDescriptorResponse[] = [
+		"openai",
+		"ollama-cloud",
+		"xai",
+	].map((id) => ({
+		id: id as ProviderDescriptorResponse["id"],
+		label: id === "openai" ? "OpenAI" : id === "xai" ? "xAI" : "Ollama Cloud",
+		protocol: "openAiChat",
+		authKinds: ["apiKey"],
+		supportsOAuth: false,
+		iconKey: id,
+		capabilityCeiling: {
+			tools: "unknown",
+			vision: "unknown",
+			reasoning: "unknown",
+			streaming: "unknown",
+			contextTokens: null,
+		},
+	})),
+) {
+	const { descriptors } = useProviderDescriptors();
+	descriptors.value = [];
+	vi.spyOn(useApi(), "getProviderDescriptors").mockResolvedValue(
+		descriptorsList,
+	);
 	setActivePinia(createPinia());
 	const router = buildRouter(path);
 	await router.isReady();
@@ -138,6 +168,12 @@ describe("ProviderDetailsView", () => {
 		setActivePinia(createPinia());
 		vi.clearAllMocks();
 		mockProvidersState.value = [];
+	});
+
+	it("accepts descriptor-only xAI routes and uses the descriptor label", async () => {
+		const { wrapper, router } = await mountView("/providers/xai");
+		expect(wrapper.text()).toContain("xAI");
+		expect(router.currentRoute.value.name).toBe("Provider Details");
 	});
 
 	it("renders the provider display name in the header", async () => {
@@ -236,5 +272,87 @@ describe("ProviderDetailsView", () => {
 			expectedUpdatedAt: "2026-01-01T00:00:00Z",
 			isActive: false,
 		});
+	});
+
+	it("renders translated provider name when displayNameKey is present, and falls back to descriptor label", async () => {
+		const customDescriptors: ProviderDescriptorResponse[] = [
+			{
+				id: "custom-provider" as unknown as ProviderDescriptorResponse["id"],
+				label: "Fallback Label",
+				protocol: "openAiChat",
+				authKinds: ["apiKey"],
+				supportsOAuth: false,
+				iconKey: "custom",
+				capabilityCeiling: {
+					tools: "unknown",
+					vision: "unknown",
+					reasoning: "unknown",
+					streaming: "unknown",
+					contextTokens: null,
+				},
+			},
+		];
+		const { wrapper } = await mountView(
+			"/providers/custom-provider",
+			customDescriptors,
+		);
+		expect(wrapper.text()).toContain("Fallback Label");
+	});
+
+	it("renders loading state while descriptors are loading and entry is not yet resolved", async () => {
+		const { descriptors, loading } = useProviderDescriptors();
+		descriptors.value = [];
+		loading.value = true;
+		const router = buildRouter("/providers/openai");
+		await router.isReady();
+		const wrapper = mount(ProviderDetailsView, {
+			global: {
+				plugins: [router, i18n],
+			},
+		});
+		expect(wrapper.find('[data-testid="loading"]').exists()).toBe(true);
+		loading.value = false;
+	});
+
+	it("renders error banner with retry when descriptor fetch rejects", async () => {
+		const { descriptors } = useProviderDescriptors();
+		descriptors.value = [];
+		const apiSpy = vi
+			.spyOn(useApi(), "getProviderDescriptors")
+			.mockRejectedValue(new Error("Network connection dropped"));
+
+		const router = buildRouter("/providers/openai");
+		await router.isReady();
+		const wrapper = mount(ProviderDetailsView, {
+			global: {
+				plugins: [router, i18n],
+			},
+		});
+		await flushPromises();
+
+		expect(wrapper.find('[data-testid="error-banner"]').exists()).toBe(true);
+
+		apiSpy.mockResolvedValueOnce([
+			{
+				id: "openai" as ProviderDescriptorResponse["id"],
+				label: "OpenAI",
+				protocol: "openAiChat",
+				authKinds: ["apiKey"],
+				supportsOAuth: false,
+				iconKey: "openai",
+				capabilityCeiling: {
+					tools: "supported",
+					vision: "unsupported",
+					reasoning: "unsupported",
+					streaming: "supported",
+					contextTokens: null,
+				},
+			},
+		]);
+
+		await wrapper.find('[data-testid="retry-button"]').trigger("click");
+		await flushPromises();
+
+		expect(apiSpy).toHaveBeenCalledTimes(2);
 	});
 });

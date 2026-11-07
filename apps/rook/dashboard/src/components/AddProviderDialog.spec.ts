@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h, nextTick } from "vue";
 import { createI18n } from "vue-i18n";
 import type { ProviderConnectionResponse } from "@/lib/api";
+import { useApi } from "@/lib/api";
 import en from "@/locales/en.json";
+import es from "@/locales/es.json";
 import AddProviderDialog from "./AddProviderDialog.vue";
 
 // ---------------------------------------------------------------------------
@@ -567,7 +569,7 @@ vi.mock("@lucide/vue", () => {
 // Fixtures
 // ---------------------------------------------------------------------------
 
-const i18n = createI18n({ legacy: false, locale: "en", messages: { en } });
+const i18n = createI18n({ legacy: false, locale: "en", messages: { en, es } });
 
 function makeConnection(
 	overrides: Partial<ProviderConnectionResponse> = {},
@@ -655,6 +657,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	i18n.global.locale.value = "en";
 	vi.restoreAllMocks();
 });
 
@@ -663,6 +666,19 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("AddProviderDialog — create mode", () => {
+	it("uses Spanish translations for known provider labels", async () => {
+		i18n.global.locale.value = "es";
+		const wrapper = mountDialog({ providerKind: "anthropic" });
+		await flushPromises();
+
+		expect(
+			wrapper
+				.find('[data-testid="input-displayName"]')
+				.attributes("placeholder"),
+		).toBe("Mi conexión de Anthropic");
+		wrapper.unmount();
+	});
+
 	it("renders without a kind selector when providerKind is pre-scoped (ollama)", async () => {
 		const wrapper = mountDialog({ providerKind: "ollama" });
 		await flushPromises();
@@ -1163,9 +1179,128 @@ describe("AddProviderDialog — auth type gating", () => {
 			true,
 		);
 	});
+
+	it("disables the OAuth toggle when the descriptor does not support OAuth", async () => {
+		const descriptorSpy = vi.spyOn(useApi(), "getProviderDescriptors");
+		descriptorSpy.mockResolvedValueOnce([
+			{
+				id: "ollama",
+				label: "Ollama",
+				protocol: "ollamaNative",
+				authKinds: ["apiKey"],
+				supportsOAuth: false,
+				iconKey: "ollama",
+				capabilityCeiling: {
+					tools: "unknown",
+					vision: "unknown",
+					reasoning: "unknown",
+					streaming: "unknown",
+					contextTokens: null,
+				},
+			},
+		]);
+		const wrapper = mountDialog({ providerKind: "ollama" });
+		await flushPromises();
+		const oauthToggle = wrapper.find<HTMLButtonElement>(
+			'[data-testid="auth-type-oauth"]',
+		);
+		expect(oauthToggle.element.disabled).toBe(true);
+		expect(wrapper.find('[data-testid="oauth-coming-soon"]').exists()).toBe(
+			true,
+		);
+		wrapper.unmount();
+		descriptorSpy.mockRestore();
+	});
+
+	it("enables the OAuth toggle and selects OAuth when the provider only supports OAuth", async () => {
+		const descriptorSpy = vi.spyOn(useApi(), "getProviderDescriptors");
+		descriptorSpy.mockResolvedValueOnce([
+			{
+				id: "azure-openai",
+				label: "Azure OpenAI",
+				protocol: "openAiChat",
+				authKinds: ["oauth"],
+				supportsOAuth: true,
+				iconKey: "azure-openai",
+				capabilityCeiling: {
+					tools: "unknown",
+					vision: "unknown",
+					reasoning: "unknown",
+					streaming: "unknown",
+					contextTokens: null,
+				},
+			},
+		]);
+		const wrapper = mountDialog({ providerKind: "azure-openai" });
+		await flushPromises();
+		const oauthToggle = wrapper.find<HTMLButtonElement>(
+			'[data-testid="auth-type-oauth"]',
+		);
+		expect(oauthToggle.element.disabled).toBe(false);
+		expect(wrapper.find('[data-testid="oauth-coming-soon"]').exists()).toBe(
+			false,
+		);
+		const apiKeyToggle = wrapper.find<HTMLButtonElement>(
+			'[data-testid="auth-type-apikey"]',
+		);
+		expect(apiKeyToggle.element.disabled).toBe(true);
+		wrapper.unmount();
+		descriptorSpy.mockRestore();
+	});
 });
 
 describe("AddProviderDialog — open/close", () => {
+	it.each(["descriptors", "connections"])(
+		"ignores initialization after closing during %s fetch",
+		async (request) => {
+			let finish!: () => void;
+			const pending = new Promise<void>((resolve) => {
+				finish = resolve;
+			});
+			let finishPendingOpen!: () => void;
+			const pendingOpen = new Promise<void>((resolve) => {
+				finishPendingOpen = resolve;
+			});
+			const conn = makeConnection({ name: "Stale connection" });
+			const descriptorSpy = vi.spyOn(useApi(), "getProviderDescriptors");
+			let wrapper: ReturnType<typeof mountDialog> | undefined;
+			try {
+				if (request === "descriptors") {
+					descriptorSpy.mockImplementationOnce(async () => {
+						await pending;
+						return [];
+					});
+					mockState.providerById.value = new Map([[conn.id, conn]]);
+				} else {
+					descriptorSpy.mockResolvedValueOnce([]);
+					mockState.fetch.mockImplementationOnce(async () => {
+						await pending;
+						mockState.providerById.value = new Map([[conn.id, conn]]);
+					});
+				}
+				wrapper = mountDialog({ mode: "edit", connectionId: conn.id });
+				await flushPromises();
+				await wrapper.setProps({ open: false });
+				finish();
+				await flushPromises();
+				descriptorSpy.mockImplementationOnce(async () => {
+					await pendingOpen;
+					return [];
+				});
+				await wrapper.setProps({ open: true });
+				expect(
+					wrapper.find<HTMLInputElement>('[data-testid="input-displayName"]')
+						.element.value,
+				).toBe("");
+			} finally {
+				finish();
+				finishPendingOpen?.();
+				wrapper?.unmount();
+				descriptorSpy.mockRestore();
+			}
+		},
+	);
+
 	it("hides the dialog when the open prop is set to false", async () => {
 		const wrapper = mountDialog({ providerKind: "ollama" });
 		await flushPromises();
