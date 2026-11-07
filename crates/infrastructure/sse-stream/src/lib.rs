@@ -12,6 +12,7 @@ pub struct SseBuffer {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SseBufferError {
     EventTooLarge { max_bytes: usize },
+    InvalidUtf8,
 }
 
 impl std::fmt::Display for SseBufferError {
@@ -20,6 +21,7 @@ impl std::fmt::Display for SseBufferError {
             Self::EventTooLarge { max_bytes } => {
                 write!(f, "SSE event exceeds the {max_bytes}-byte limit")
             }
+            Self::InvalidUtf8 => f.write_str("SSE event is not valid UTF-8"),
         }
     }
 }
@@ -37,8 +39,7 @@ impl SseBuffer {
     ///
     /// Supports both LF (`\n\n`) and CRLF (`\r\n\r\n`) blank-line delimiters.
     /// Incomplete trailing bytes remain buffered for the next call. Events that
-    /// are not valid UTF-8 are skipped, matching the providers' existing
-    /// best-effort parsing behavior.
+    /// are not valid UTF-8 are skipped by this best-effort helper.
     pub fn push(&mut self, incoming: &[u8]) -> Vec<String> {
         self.buffer.extend_from_slice(incoming);
         let mut events = Vec::new();
@@ -87,9 +88,14 @@ impl SseBuffer {
                     self.buffer.clear();
                     return Err(SseBufferError::EventTooLarge { max_bytes });
                 }
-                if let Ok(event) = String::from_utf8(self.buffer[..event_len].to_vec()) {
-                    events.push(strip_trailing_carriage_return(event));
-                }
+                let event = match String::from_utf8(self.buffer[..event_len].to_vec()) {
+                    Ok(event) => event,
+                    Err(_) => {
+                        self.buffer.clear();
+                        return Err(SseBufferError::InvalidUtf8);
+                    }
+                };
+                events.push(strip_trailing_carriage_return(event));
                 self.buffer.clear();
             } else if self.buffer.len() > max_bytes.saturating_add(3) {
                 self.buffer.clear();

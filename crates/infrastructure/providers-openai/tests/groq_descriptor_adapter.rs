@@ -1,3 +1,4 @@
+use futures::StreamExt;
 use providers_openai::{OpenAIProvider, OpenAIProviderConfig};
 use rook_core::{
     CompletionRequest, HealthStatus, ProviderPort, QuotaObservationRecorderPort, Role,
@@ -135,7 +136,12 @@ async fn groq_descriptor_maps_429_to_typed_rate_limit_error() {
     );
 
     let error = provider.complete(&request()).await.unwrap_err();
-    assert!(error.to_string().contains("rate limited") || error.to_string().contains("429"));
+    assert!(error.is_rate_limited());
+    let rate_limited = error
+        .downcast_ref::<shared_kernel::error::RateLimitedError>()
+        .expect("typed rate-limit error");
+    assert_eq!(rate_limited.provider, "groq-conn");
+    assert_eq!(rate_limited.retry_after_secs, 15);
 }
 
 #[tokio::test]
@@ -163,6 +169,105 @@ async fn groq_descriptor_uses_models_health_path_and_openai_api_format() {
     ));
     let requests = server.received_requests().await.unwrap();
     assert_eq!(requests[0].url.path(), descriptor.paths.health);
+}
+
+#[tokio::test]
+async fn groq_provider_defaults_to_groq_error_and_quota_policies() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(429)
+                .insert_header("retry-after", "9")
+                .insert_header("x-ratelimit-limit-requests", "100")
+                .insert_header("x-ratelimit-remaining-requests", "90")
+                .insert_header("x-ratelimit-reset-requests", "1m"),
+        )
+        .mount(&server)
+        .await;
+    let recorder = Arc::new(Recorder::default());
+    let provider = OpenAIProvider::new_with_quota_recorder(
+        OpenAIProviderConfig {
+            id: ProviderId::new("groq-default-policy"),
+            provider_id: "groq",
+            api_key: "key".into(),
+            base_url: server.uri(),
+            models: vec![],
+            timeout_secs: 10,
+        },
+        Some(recorder.clone()),
+    )
+    .unwrap();
+    let error = provider.complete(&request()).await.unwrap_err();
+    assert!(error.is_rate_limited());
+    assert!(error.to_string().to_lowercase().contains("groq"), "{error}");
+    assert_eq!(
+        recorder.0.lock().unwrap().len(),
+        1,
+        "Groq quota policy is selected without an explicit builder call"
+    );
+}
+
+#[tokio::test]
+async fn openai_stream_records_quota_headers() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(wiremock::ResponseTemplate::new(200)
+            .insert_header("x-ratelimit-limit-requests", "20")
+            .insert_header("x-ratelimit-remaining-requests", "18")
+            .insert_header("x-ratelimit-reset-requests", "30s")
+            .set_body_raw("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", "text/event-stream"))
+        .mount(&server).await;
+    let recorder = Arc::new(Recorder::default());
+    let provider = OpenAIProvider::new_with_quota_recorder(
+        OpenAIProviderConfig {
+            id: ProviderId::new("openai-stream-quota"),
+            provider_id: "openai",
+            api_key: "key".into(),
+            base_url: server.uri(),
+            models: vec![],
+            timeout_secs: 10,
+        },
+        Some(recorder.clone()),
+    )
+    .unwrap();
+    let mut req = request();
+    req.stream = true;
+    let mut chunks = provider.stream(&req).await.unwrap();
+    while chunks.next().await.is_some() {}
+    let observations = recorder.0.lock().unwrap();
+    assert_eq!(observations.len(), 1);
+    assert_eq!(observations[0].provider_id, "openai");
+    assert_eq!(observations[0].remaining, Some(18.0));
+}
+
+#[tokio::test]
+async fn groq_stream_reports_invalid_complete_event_before_later_finish() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_raw(
+            "data: {not-json}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+            "text/event-stream",
+        ))
+        .mount(&server).await;
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("groq-invalid-stream"),
+        provider_id: "groq",
+        api_key: "key".into(),
+        base_url: server.uri(),
+        models: vec![],
+        timeout_secs: 10,
+    })
+    .unwrap();
+    let mut req = request();
+    req.stream = true;
+    let results: Vec<_> = provider.stream(&req).await.unwrap().collect().await;
+    assert!(
+        results.iter().any(Result::is_err),
+        "invalid complete event must be an error"
+    );
 }
 
 #[test]

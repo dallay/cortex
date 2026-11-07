@@ -434,8 +434,10 @@ impl AnthropicProvider {
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
             .redirect(reqwest::redirect::Policy::none())
             .build()?;
-        let chat_path = rook_core::descriptor_by_id(config.provider_id)
-            .map_or_else(String::new, |descriptor| descriptor.paths.chat.to_string());
+        let chat_path = rook_core::descriptor_by_id(config.provider_id).map_or_else(
+            || "/v1/messages".to_string(),
+            |descriptor| descriptor.paths.chat.to_string(),
+        );
         Ok(Arc::new(Self {
             config,
             client,
@@ -445,11 +447,13 @@ impl AnthropicProvider {
     }
 
     /// Configure the message endpoint from the provider descriptor.
-    pub fn with_chat_path(mut self: Arc<Self>, path: &str) -> Arc<Self> {
-        Arc::get_mut(&mut self)
-            .expect("newly constructed provider has a unique Arc")
-            .chat_path = path.to_string();
-        self
+    pub fn with_chat_path(self: Arc<Self>, path: &str) -> Arc<Self> {
+        Arc::new(Self {
+            config: self.config.clone(),
+            client: self.client.clone(),
+            quota_recorder: self.quota_recorder.clone(),
+            chat_path: path.to_string(),
+        })
     }
 
     async fn record_quota_headers(&self, headers: &reqwest::header::HeaderMap) {
@@ -587,10 +591,15 @@ impl AnthropicProvider {
     ) -> Vec<Result<StreamChunk, CortexError>> {
         let events = match sse_buffer.push_with_max_event_bytes(bytes, 2 * 1024 * 1024) {
             Ok(events) => events,
-            Err(_) => {
+            Err(sse_stream::SseBufferError::EventTooLarge { .. }) => {
                 return vec![Err(CortexError::provider(
                     "Anthropic SSE event limit exceeded",
                 ))]
+            }
+            Err(error) => {
+                return vec![Err(CortexError::provider(format!(
+                    "Anthropic SSE event rejected: {error}"
+                )))]
             }
         };
         events

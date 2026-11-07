@@ -1051,7 +1051,7 @@ pub fn build_provider_from_connection_with_policy(
                 descriptor.endpoint_validation == rook_core::EndpointValidation::AzureHost;
             let is_compatible = descriptor.endpoint_validation
                 == rook_core::EndpointValidation::OpenAiEndpointPolicy;
-            if is_compatible && base_url_override.is_none() {
+            if descriptor.requires_base_url && base_url_override.is_none() {
                 return Err(ProviderBuildError::ConstructionFailed(
                     "OpenAI-compatible provider requires base_url".to_string(),
                 ));
@@ -1154,7 +1154,9 @@ pub fn build_provider_from_connection_with_policy(
             let config = providers_gemini::GeminiProviderConfig {
                 id: ProviderId::new(connection_id.to_string()),
                 api_key,
-                base_url: base_url_override,
+                base_url: Some(
+                    base_url_override.unwrap_or_else(|| descriptor.default_base_url.to_string()),
+                ),
                 models: models.clone(),
                 timeout_secs: 60,
             };

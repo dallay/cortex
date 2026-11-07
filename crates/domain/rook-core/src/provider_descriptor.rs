@@ -453,7 +453,7 @@ const fn groq() -> ProviderDescriptor {
         oauth: None,
         paths: openai_paths(),
         canonical_base_urls: &["https://api.groq.com/openai/v1"],
-        capability_ceiling: limited_ceiling(),
+        capability_ceiling: openai_ceiling(),
         models: ModelSource::Catalog,
     }
 }

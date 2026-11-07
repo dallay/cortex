@@ -8,6 +8,7 @@ use rook_core::{
     ProviderPort, RequestMetadata, Role, TokenUsage,
 };
 use shared_kernel::{ProviderId, RequestId};
+use std::sync::Arc;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -914,6 +915,47 @@ async fn health_check_returns_unknown_when_not_supported() {
             ..
         } if reason == "health_check_not_supported"
     ));
+}
+
+#[tokio::test]
+async fn unknown_anthropic_provider_uses_messages_path_and_arc_path_override_is_persistent() {
+    let server = wiremock::MockServer::start().await;
+    for endpoint in ["/v1/messages", "/custom/messages"] {
+        wiremock::Mock::given(method("POST"))
+            .and(path(endpoint))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "id":"msg_test", "type":"message", "role":"assistant", "model":"claude-test",
+                    "content":[{"type":"text","text":"ok"}], "stop_reason":"end_turn",
+                    "usage":{"input_tokens":1,"output_tokens":1}
+                })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let original = AnthropicProvider::new(AnthropicProviderConfig {
+        id: ProviderId::new("anthropic-unknown"),
+        provider_id: "unknown-custom-provider",
+        api_key: "key".into(),
+        base_url: server.uri(),
+        models: vec![],
+        timeout_secs: 10,
+    })
+    .unwrap();
+    let customized = Arc::clone(&original).with_chat_path("/custom/messages");
+    original
+        .complete(&make_test_request("claude-test"))
+        .await
+        .unwrap();
+    customized
+        .complete(&make_test_request("claude-test"))
+        .await
+        .unwrap();
+    let requests = server.received_requests().await.unwrap();
+    let mut paths: Vec<_> = requests.iter().map(|request| request.url.path()).collect();
+    paths.sort_unstable();
+    assert_eq!(paths, vec!["/custom/messages", "/v1/messages"]);
 }
 
 #[tokio::test]

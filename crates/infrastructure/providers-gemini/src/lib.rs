@@ -114,19 +114,29 @@ impl GeminiProvider {
     }
 
     /// Configure the generate-content endpoint from the provider descriptor.
-    pub fn with_generate_content_path(mut self: Arc<Self>, path: &str) -> Arc<Self> {
-        Arc::get_mut(&mut self)
-            .expect("newly constructed provider has a unique Arc")
-            .generate_content_path = path.to_string();
-        self
+    pub fn with_generate_content_path(self: Arc<Self>, path: &str) -> Arc<Self> {
+        Arc::new(Self {
+            config: self.config.clone(),
+            client: self.client.clone(),
+            oauth_token_port: self.oauth_token_port.clone(),
+            connection_id: self.connection_id,
+            project_id: self.project_id.clone(),
+            generate_content_path: path.to_string(),
+            health_path: self.health_path.clone(),
+        })
     }
 
     /// Configure the model/health endpoint from the provider descriptor.
-    pub fn with_health_path(mut self: Arc<Self>, path: &str) -> Arc<Self> {
-        Arc::get_mut(&mut self)
-            .expect("newly constructed provider has a unique Arc")
-            .health_path = path.to_string();
-        self
+    pub fn with_health_path(self: Arc<Self>, path: &str) -> Arc<Self> {
+        Arc::new(Self {
+            config: self.config.clone(),
+            client: self.client.clone(),
+            oauth_token_port: self.oauth_token_port.clone(),
+            connection_id: self.connection_id,
+            project_id: self.project_id.clone(),
+            generate_content_path: self.generate_content_path.clone(),
+            health_path: path.to_string(),
+        })
     }
 
     fn base_url(&self) -> String {

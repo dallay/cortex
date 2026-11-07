@@ -267,10 +267,16 @@ impl OpenAIProvider {
             quota_recorder,
             oauth_token_port: None,
             connection_id: None,
-            chat_path: paths.map_or_else(String::new, |paths| paths.chat.to_string()),
-            health_path: paths.map_or_else(String::new, |paths| paths.health.to_string()),
-            quota_header_policy: rook_core::QuotaHeaderPolicy::OpenAi,
-            provider_name: "OpenAI",
+            chat_path: paths.map_or_else(
+                || "/chat/completions".to_string(),
+                |paths| paths.chat.to_string(),
+            ),
+            health_path: paths
+                .map_or_else(|| "/models".to_string(), |paths| paths.health.to_string()),
+            quota_header_policy: descriptor.map_or(rook_core::QuotaHeaderPolicy::OpenAi, |d| {
+                d.quota_header_policy
+            }),
+            provider_name: descriptor.map_or("OpenAI", |d| d.display_name),
         })
     }
 
@@ -1069,6 +1075,8 @@ impl ProviderPort for OpenAIProvider {
     ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
         let body = Self::build_stream_request(req);
         let resp = self.send_stream_request(&body).await?;
+
+        self.record_quota_headers(resp.headers()).await;
 
         if !resp.status().is_success() {
             let error =
