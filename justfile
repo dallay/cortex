@@ -8,6 +8,11 @@ set positional-arguments := true
 GREEN := `printf '\033[0;32m'`
 YELLOW := `printf '\033[0;33m'`
 RED := `printf '\033[0;31m'`
+BLUE := `printf '\033[0;34m'`
+CYAN := `printf '\033[0;36m'`
+MAGENTA := `printf '\033[0;35m'`
+BOLD := `printf '\033[1m'`
+DIM := `printf '\033[2m'`
 RESET := `printf '\033[0m'`
 
 # === Dev ===
@@ -15,6 +20,13 @@ RESET := `printf '\033[0m'`
 # Run rook in watch mode (check + test + clippy)
 dev:
     @cd apps/rook && cargo watch -x check -x test -x clippy
+
+# Run rook in watch mode (explicit alias for dev)
+rook-dev: dev
+
+# Run huginn in watch mode (check + test + clippy)
+huginn-dev:
+    cargo watch -x "check -p huginn" -x "test -p huginn" -x "clippy -p huginn"
 
 # === Dev Container (Docker) ===
 # Run rook in an isolated container to smoke-test without touching the host OS.
@@ -154,6 +166,13 @@ build:
 build-app:
     cargo build -p rook --release
 
+# Build the rook backend binary in release mode (explicit alias for build-app)
+build-rook: build-app
+
+# Build the huginn coding agent binary in release mode
+build-huginn:
+    cargo build -p huginn --release
+
 # Cross-compile the rook binary for all supported release targets
 build-targets:
     # Cross-compile for all targets
@@ -189,6 +208,9 @@ huginn-test: huginn-architecture
 run:
     cargo run -p rook
 
+# Run the rook backend in dev mode (explicit alias for run)
+rook-run: run
+
 # Create the default Rook config at ~/.cortex/rook/config.toml (never overwrites)
 init-config:
     @mkdir -p ~/.cortex/rook
@@ -211,7 +233,7 @@ dashboard-install:
 
 # Always delete all three files together; a leftover -wal against a fresh DB
 # causes SQLite error 522 ("file truncated") on the next startup.
-# Delete the SQLite database and WAL/SHM files for a clean reset.
+# Delete the Rook SQLite database and WAL/SHM files for a clean reset.
 db-reset:
     @rm -f ~/.cortex/rook/rook.db{,-wal,-shm}
     @echo "{{GREEN}}Database reset — rook.db, rook.db-wal, rook.db-shm removed{{RESET}}"
@@ -220,15 +242,28 @@ db-reset:
 kill-backend:
     @lsof -ti :3773 | xargs kill -9 2>/dev/null && echo "{{GREEN}}Killed process on :3773{{RESET}}" || echo "{{YELLOW}}Nothing running on :3773{{RESET}}"
 
-# One-shot first-time setup: install dashboard deps + verify Rust toolchain
+# One-shot first-time setup: install workspace & dashboard deps + verify Rust toolchain
 setup:
-    @echo "{{YELLOW}}Installing dashboard dependencies...{{RESET}}"
-    cd apps/rook/dashboard && pnpm install
+    @echo "{{YELLOW}}Installing workspace and dashboard dependencies...{{RESET}}"
+    pnpm install
     @echo "{{YELLOW}}Verifying Rust toolchain...{{RESET}}"
     rustup show
     @just init-config
     @bash scripts/setup-codegraph.sh
-    @echo "{{GREEN}}Setup complete — run 'just run' in one terminal and 'just run-dashboard' in another{{RESET}}"
+    @echo ""
+    @echo "{{BOLD}}{{GREEN}}Setup complete for Cortex monorepo (Rook + Huginn)!{{RESET}}"
+    @echo ""
+    @echo "  {{BOLD}}{{CYAN}}Rook{{RESET}} {{DIM}}(AI Provider Proxy & Router):{{RESET}}"
+    @echo "    {{GREEN}}just run{{RESET}} (or {{GREEN}}just rook-run{{RESET}})   - Start backend daemon on http://localhost:3773"
+    @echo "    {{GREEN}}just run-dashboard{{RESET}}            - Start Vue dashboard on http://localhost:4747"
+    @echo ""
+    @echo "  {{BOLD}}{{CYAN}}Huginn{{RESET}} {{DIM}}(Local Coding Agent):{{RESET}}"
+    @echo "    {{GREEN}}just huginn-run{{RESET}}               - Run agent TUI / interactive CLI"
+    @echo "    {{GREEN}}just huginn-test{{RESET}}              - Run tests and architecture validation"
+    @echo ""
+    @echo "  {{BOLD}}{{CYAN}}Workspace Diagnostics & Verification:{{RESET}}"
+    @echo "    {{GREEN}}just doctor{{RESET}}                   - Check required/optional local tools"
+    @echo "    {{GREEN}}just ci-ci{{RESET}}                    - Fast local PR gates (no Docker required)"
 
 # Read-only checks for the local development environment
 doctor:
@@ -272,11 +307,15 @@ check-providers:
 check-infra:
     cargo check -p transport-axum -p cache-memory -p audit-sqlite -p observability
 
-# === Domain ===
+# === Domain & Crate Checks ===
 
 # Fast check of core domain crates (shared-kernel, rook-core)
 check-domain:
     cargo check -p shared-kernel -p rook-core
+
+# Fast check of Huginn component crates
+check-huginn:
+    cargo check -p huginn-core -p huginn-application -p huginn-runtime -p huginn-presentation -p huginn-plugin-api -p huginn-reference-extension -p huginn-guards -p huginn
 
 # === Doc ===
 
@@ -584,64 +623,71 @@ release-dry-run:
 
 # === Help ===
 
-# Show the legacy command overview (use `just --list` for recipe descriptions)
+# Show the command overview grouped by product and category (use `just --list` for descriptions)
 help:
-    @echo "cortex/rook - available commands:"
+    @echo "{{BOLD}}{{CYAN}}cortex — monorepo command reference{{RESET}}"
     @echo ""
-    @echo "Quality:"
-    @echo "  just fmt          - Format code"
-    @echo "  just fmt-check    - Check formatting"
-    @echo "  just clippy       - Run clippy (deny warnings)"
-    @echo "  just test         - Run all tests (unit + integration + doc)"
-    @echo "  just test-unit    - Run unit tests only (lib)"
-    @echo "  just test-integration - Run integration tests"
-    @echo "  just coverage     - Generate HTML coverage report"
-    @echo "  just audit        - Check for vulnerabilities"
-    @echo "  just ci           - Run local PR gates (fail-fast: stops on first error)"
-    @echo "  just ci-local     - Backward-compatible alias for just ci"
-    @echo "  just ci-ci        - Full CI without E2E (no Docker needed)"
-    @echo "  just ci-lint-only - Lint + fmt only"
-    @echo "  just ci-check-only - Clippy + cargo check only"
-    @echo "  just ci-test-only - Rust + Vitest tests only"
+    @echo "{{BOLD}}{{YELLOW}}Workspace & Quality:{{RESET}}"
+    @echo "  {{GREEN}}just fmt{{RESET}}             - Format code"
+    @echo "  {{GREEN}}just fmt-check{{RESET}}       - Check formatting"
+    @echo "  {{GREEN}}just clippy{{RESET}}          - Run clippy (deny warnings)"
+    @echo "  {{GREEN}}just test{{RESET}}            - Run all tests (unit + integration + doc)"
+    @echo "  {{GREEN}}just test-unit{{RESET}}       - Run unit tests only (lib)"
+    @echo "  {{GREEN}}just test-integration{{RESET}} - Run integration tests"
+    @echo "  {{GREEN}}just coverage{{RESET}}        - Generate HTML coverage report"
+    @echo "  {{GREEN}}just audit{{RESET}}           - Check for vulnerabilities"
+    @echo "  {{GREEN}}just ci{{RESET}}              - Run local PR gates (fail-fast: stops on first error)"
+    @echo "  {{GREEN}}just ci-local{{RESET}}        - Backward-compatible alias for just ci"
+    @echo "  {{GREEN}}just ci-ci{{RESET}}           - Full CI without E2E (no Docker needed)"
+    @echo "  {{GREEN}}just ci-lint-only{{RESET}}    - Lint + fmt only"
+    @echo "  {{GREEN}}just ci-check-only{{RESET}}   - Clippy + cargo check only"
+    @echo "  {{GREEN}}just ci-test-only{{RESET}}    - Rust + Vitest tests only"
     @echo ""
-    @echo "E2E Tests (Playwright):"
-    @echo "  just test-e2e-build      - Build Docker image for e2e"
-    @echo "  just test-e2e             - Run Playwright e2e tests"
-    @echo "  just test-e2e-dev        - Start e2e env for manual testing"
-    @echo "  just test-e2e-cleanup    - Stop/remove e2e containers"
-    @echo "  just test-e2e-install-deps - Install dashboard dependencies"
+    @echo "{{BOLD}}{{YELLOW}}Rook (AI Provider Proxy & Router):{{RESET}}"
+    @echo "  {{GREEN}}just run{{RESET}}             - Run rook backend daemon (localhost:3773)"
+    @echo "  {{GREEN}}just rook-run{{RESET}}        - Explicit alias for just run"
+    @echo "  {{GREEN}}just run-dashboard{{RESET}}   - Run Vue dashboard dev server (localhost:4747)"
+    @echo "  {{GREEN}}just dev{{RESET}}             - Watch mode for Rook (check + test + clippy)"
+    @echo "  {{GREEN}}just rook-dev{{RESET}}        - Explicit alias for dev watch mode"
+    @echo "  {{GREEN}}just build-app{{RESET}}       - Build rook binary in release mode"
+    @echo "  {{GREEN}}just build-rook{{RESET}}      - Explicit alias for build-app"
+    @echo "  {{GREEN}}just build-targets{{RESET}}   - Cross-compile rook for all platforms"
+    @echo "  {{GREEN}}just db-reset{{RESET}}        - Delete rook.db + WAL files (clean slate)"
+    @echo "  {{GREEN}}just kill-backend{{RESET}}    - Kill stale process on port 3773"
+    @echo "  {{GREEN}}just test-e2e-build{{RESET}}  - Build Docker image for Rook E2E"
+    @echo "  {{GREEN}}just test-e2e{{RESET}}        - Run Playwright E2E tests"
+    @echo "  {{GREEN}}just test-e2e-dev{{RESET}}    - Start E2E env for manual testing"
+    @echo "  {{GREEN}}just test-e2e-cleanup{{RESET}} - Stop/remove E2E containers"
+    @echo "  {{GREEN}}just dev-run{{RESET}}         - Build image + start Rook dev container (waits for /health)"
+    @echo "  {{GREEN}}just dev-up{{RESET}}          - Start Rook dev container"
+    @echo "  {{GREEN}}just dev-down{{RESET}}        - Stop and remove Rook dev container"
+    @echo "  {{GREEN}}just dev-logs{{RESET}}        - Tail Rook dev container logs"
+    @echo "  {{GREEN}}just dev-shell{{RESET}}       - Shell into running Rook dev container"
+    @echo "  {{GREEN}}just dev-status{{RESET}}      - Container + /health status"
+    @echo "  {{GREEN}}just dev-clean{{RESET}}       - Remove Rook dev image and container"
     @echo ""
-    @echo "Build:"
-    @echo "  just build        - Build release (all targets)"
-    @echo "  just build-app    - Build rook binary"
-    @echo "  just build-targets - Cross-compile for all platforms"
-    @echo "  just target-size  - Show Cargo artifact sizes before cleaning"
+    @echo "{{BOLD}}{{YELLOW}}Huginn (Local Coding Agent):{{RESET}}"
+    @echo "  {{GREEN}}just huginn-run{{RESET}}      - Run coding agent TUI / CLI (e.g. just huginn-run --provider mock run 'list files')"
+    @echo "  {{GREEN}}just huginn-test{{RESET}}     - Run Huginn tests and architecture validation"
+    @echo "  {{GREEN}}just huginn-dev{{RESET}}      - Watch mode for Huginn (check + test + clippy)"
+    @echo "  {{GREEN}}just check-huginn{{RESET}}    - Fast cargo check across all Huginn crates"
+    @echo "  {{GREEN}}just huginn-architecture{{RESET}} - Validate layered architecture boundaries"
+    @echo "  {{GREEN}}just build-huginn{{RESET}}    - Build huginn binary in release mode"
+    @echo "  {{GREEN}}just huginn-wasm-build{{RESET}} - Build independent Rust outline WASM component"
+    @echo "  {{GREEN}}just huginn-wasm-test{{RESET}} - Run WASM outline tests"
     @echo ""
-    @echo "Dev:"
-    @echo "  just setup           - First-time setup (dashboard deps + toolchain check)"
-    @echo "  just doctor          - Diagnose required and optional development tools"
-    @echo "  just doctor-test     - Test the doctor checks"
-    @echo "  just dev             - Watch mode with check+test+clippy"
-    @echo "  just run             - Run rook backend"
-    @echo "  just run-dashboard   - Run Vue dashboard dev server (localhost:4747)"
-    @echo "  just dashboard-install - Install dashboard npm dependencies"
-    @echo "  just push [args...]   - Push and clean Cargo artifacts on success"
+    @echo "{{BOLD}}{{YELLOW}}Build & Workspace:{{RESET}}"
+    @echo "  {{GREEN}}just build{{RESET}}           - Build release binaries across the entire workspace"
+    @echo "  {{GREEN}}just target-size{{RESET}}     - Show Cargo artifact sizes before cleaning"
+    @echo "  {{GREEN}}just clean{{RESET}}           - Clean Cargo build artifacts and coverage data"
+    @echo "  {{GREEN}}just clean-git{{RESET}}       - Clean local Git stale worktrees, merged branches, refs"
+    @echo "  {{GREEN}}just push [args...]{{RESET}}  - Push and clean Cargo artifacts on success"
     @echo ""
-    @echo "DB:"
-    @echo "  just db-reset        - Delete rook.db + WAL files (clean slate)"
-    @echo "  just kill-backend    - Kill stale process on port 3773"
+    @echo "{{BOLD}}{{YELLOW}}Diagnostics & Setup:{{RESET}}"
+    @echo "  {{GREEN}}just setup{{RESET}}           - First-time setup for Cortex monorepo (deps + toolchain + config)"
+    @echo "  {{GREEN}}just doctor{{RESET}}          - Diagnose required and optional development tools"
+    @echo "  {{GREEN}}just doctor-test{{RESET}}     - Test the doctor checks"
     @echo ""
-    @echo "Dev Container (Docker — no host pollution):"
-    @echo "  just dev-run      - Build image + start container (waits for /health)"
-    @echo "  just dev-up       - Start container (builds image if missing)"
-    @echo "  just dev-build    - Build the rook:dev image only"
-    @echo "  just dev-down     - Stop and remove container"
-    @echo "  just dev-logs     - Tail container logs"
-    @echo "  just dev-shell    - Shell into the running container"
-    @echo "  just dev-restart  - Restart the container"
-    @echo "  just dev-status   - Container + /health status"
-    @echo "  just dev-clean    - Remove image and container"
-    @echo ""
-    @echo "Doc:"
-    @echo "  just doc          - Generate docs"
-    @echo "  just doc-open     - Generate and open docs"
+    @echo "{{BOLD}}{{YELLOW}}Doc:{{RESET}}"
+    @echo "  {{GREEN}}just doc{{RESET}}             - Generate docs"
+    @echo "  {{GREEN}}just doc-open{{RESET}}        - Generate and open docs"
