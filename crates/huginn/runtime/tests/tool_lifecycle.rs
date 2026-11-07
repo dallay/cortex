@@ -452,7 +452,20 @@ async fn public_plugin_registration_cannot_forge_native_file_provenance_or_resou
     let policy = huginn_application::authorization::HostPolicy::new(
         Arc::new(SpoofDecision),
         Default::default(),
+    )
+    .for_session("spoof-session");
+    assert_eq!(
+        policy
+            .approve(&request, CancellationToken::new())
+            .await
+            .unwrap(),
+        huginn_core::ApprovalDecision::Reject
     );
+    let mut request = request;
+    request.resource = Some(huginn_core::ApprovalResource {
+        canonical_path: workspace.path().join("eligible.txt"),
+        sensitive: false,
+    });
     assert_eq!(
         policy
             .approve(&request, CancellationToken::new())

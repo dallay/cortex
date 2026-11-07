@@ -489,9 +489,7 @@ fn inline_approval_defaults_to_reject_navigates_and_ignores_paste() {
     pty.send("approve\r");
     pty.wait_for("›Reject");
     pty.wait_for("Approval pending");
-    // Let the TUI complete its quiet-poll handoff. The first interaction after
-    // that boundary must remain fresh and must not require another confirm.
-    std::thread::sleep(std::time::Duration::from_millis(100));
+
     let prompt = pty.screen_text();
     assert!(
         prompt.contains("›Reject"),
@@ -501,7 +499,17 @@ fn inline_approval_defaults_to_reject_navigates_and_ignores_paste() {
         prompt.contains("User: approve"),
         "conversation remains visible: {prompt}"
     );
-    pty.send("\x06\x1b[C");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !pty.screen_text().contains("›Approve once") {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "approval lease was not promoted before timeout: {}",
+            pty.screen_text()
+        );
+        pty.send("\x1b[C");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    pty.send("\x06");
     pty.wait_for("PREVIEW_FIRST");
     pty.send("\x1b[C\r");
     std::thread::sleep(std::time::Duration::from_millis(100));

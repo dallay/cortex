@@ -1,3 +1,4 @@
+use crossterm::event::KeyCode;
 use huginn_core::{
     ApprovalPrompt, ApprovalRequest, CancellationToken, Event, EventSink, Message, Role,
     ScopedEventSink, Session, StepId, TurnId,
@@ -2060,5 +2061,267 @@ mod paste_marker_tests {
         assert_eq!(paste::visible_text(&state), " [Pasted ~3 lines]");
         assert_eq!(paste::submitted_text(&state), format!(" {SECOND}"));
         assert_eq!(paste::pending_paste_count(&state), 1);
+    }
+}
+
+async fn pending_approval() -> (
+    Arc<Ui>,
+    tokio::task::JoinHandle<huginn_core::Result<huginn_core::ApprovalDecision>>,
+) {
+    let ui = ui();
+    let task = {
+        let ui = ui.clone();
+        tokio::spawn(async move {
+            ui.request_decision(&request(), &APPROVAL_DECISIONS, CancellationToken::new())
+                .await
+        })
+    };
+    pending(&ui).await;
+    (ui, task)
+}
+
+#[tokio::test]
+async fn public_resolver_rejects_positive_decision_for_unarmed_modal() {
+    let (ui, task) = pending_approval().await;
+    {
+        let mut state = ui.lock();
+        let modal = state.modal_mut().unwrap();
+        modal.armed = false;
+    }
+    ui.resolve_modal(true);
+    assert_eq!(
+        task.await.unwrap().unwrap(),
+        huginn_core::ApprovalDecision::Reject
+    );
+}
+
+#[tokio::test]
+async fn public_resolver_rejects_collapsed_native_file_approval() {
+    let (ui, task) = pending_approval().await;
+    {
+        let mut state = ui.lock();
+        let modal = state.modal_mut().unwrap();
+        modal.armed = true;
+    }
+    ui.resolve_modal(true);
+    assert_eq!(
+        task.await.unwrap().unwrap(),
+        huginn_core::ApprovalDecision::Reject
+    );
+}
+
+#[tokio::test]
+async fn public_resolver_accepts_fully_reviewed_native_file_approval() {
+    let (ui, task) = pending_approval().await;
+    {
+        let mut state = ui.lock();
+        let modal = state.modal_mut().unwrap();
+        modal.armed = true;
+        modal.expanded = true;
+        modal.details_rendered = true;
+        modal.last_scroll = 2;
+        modal.scroll = 2;
+        modal.rendered_scroll = 2;
+    }
+    ui.resolve_modal(true);
+    assert_eq!(
+        task.await.unwrap().unwrap(),
+        huginn_core::ApprovalDecision::ApproveOnce
+    );
+}
+
+#[tokio::test]
+async fn public_resolver_allows_rejecting_collapsed_native_file_request() {
+    let (ui, task) = pending_approval().await;
+    {
+        let mut state = ui.lock();
+        let modal = state.modal_mut().unwrap();
+        modal.armed = true;
+    }
+    ui.resolve_modal(false);
+    assert_eq!(
+        task.await.unwrap().unwrap(),
+        huginn_core::ApprovalDecision::Reject
+    );
+}
+
+#[tokio::test]
+async fn reject_can_be_confirmed_before_expanded_preview_is_read() {
+    let (ui, task) = pending_approval().await;
+    {
+        let mut state = ui.lock();
+        let modal = state.modal_mut().unwrap();
+        modal.armed = true;
+        modal.expanded = true;
+        modal.details_rendered = true;
+        modal.last_scroll = 3;
+        modal.scroll = 0;
+    }
+
+    overlay_key(&ui, KeyCode::Enter);
+
+    assert_eq!(
+        task.await.unwrap().unwrap(),
+        huginn_core::ApprovalDecision::Reject
+    );
+}
+
+#[tokio::test]
+async fn collapsed_native_file_approval_is_blocked_without_disarming_modal() {
+    let (ui, task) = pending_approval().await;
+    {
+        let mut state = ui.lock();
+        let modal = state.modal_mut().unwrap();
+        modal.armed = true;
+        modal.selected = 1;
+    }
+
+    overlay_key(&ui, KeyCode::Enter);
+
+    assert!(!task.is_finished());
+    assert!(ui.lock().modal().unwrap().armed);
+}
+
+#[tokio::test]
+async fn collapsed_native_file_request_can_be_rejected_immediately() {
+    let (ui, task) = pending_approval().await;
+    {
+        let mut state = ui.lock();
+        let modal = state.modal_mut().unwrap();
+        modal.armed = true;
+    }
+
+    overlay_key(&ui, KeyCode::Enter);
+
+    assert_eq!(
+        task.await.unwrap().unwrap(),
+        huginn_core::ApprovalDecision::Reject
+    );
+}
+
+#[tokio::test]
+async fn approval_waits_for_the_final_preview_page_to_be_painted() {
+    let (ui, task) = pending_approval().await;
+    {
+        let mut state = ui.lock();
+        let modal = state.modal_mut().unwrap();
+        modal.armed = true;
+        modal.expanded = true;
+        modal.details_rendered = true;
+        modal.last_scroll = 3;
+        modal.scroll = 3;
+        modal.selected = 1;
+        modal.rendered_scroll = 2;
+    }
+
+    overlay_key(&ui, KeyCode::Enter);
+
+    assert!(!task.is_finished());
+}
+
+#[tokio::test]
+async fn shell_approval_requires_expanding_and_rendering_the_complete_command() {
+    let (ui, task) = pending_approval().await;
+    {
+        let mut state = ui.lock();
+        let modal = state.modal_mut().unwrap();
+        modal.request.action = "native.shell".into();
+        modal.request.preview = "Directory: /workspace\nCommand: echo first\necho second".into();
+        modal.armed = true;
+        modal.selected = 1;
+    }
+
+    let enter = KeyCode::Enter;
+    overlay_key(&ui, enter);
+    assert!(!task.is_finished());
+
+    let reject = KeyCode::Left;
+    overlay_key(&ui, reject);
+    overlay_key(&ui, enter);
+    assert_eq!(
+        task.await.unwrap().unwrap(),
+        huginn_core::ApprovalDecision::Reject
+    );
+}
+
+#[tokio::test]
+async fn shell_approval_waits_for_sequential_rendering_through_the_last_scroll_position() {
+    let (ui, task) = pending_approval().await;
+    {
+        let mut state = ui.lock();
+        let modal = state.modal_mut().unwrap();
+        modal.request.action = "native.shell".into();
+        modal.armed = true;
+        modal.expanded = true;
+        modal.details_rendered = true;
+        modal.selected = 1;
+        modal.last_scroll = 2;
+        modal.rendered_scroll = 0;
+    }
+    let enter = KeyCode::Enter;
+    let end = KeyCode::End;
+
+    overlay_key(&ui, enter);
+    assert!(!task.is_finished());
+    overlay_key(&ui, end);
+    assert!(!task.is_finished());
+    overlay_key(&ui, enter);
+    assert!(!task.is_finished());
+
+    {
+        let mut state = ui.lock();
+        let modal = state.modal_mut().unwrap();
+        modal.scroll = 1;
+        modal.rendered_scroll = 1;
+    }
+    overlay_key(&ui, enter);
+    assert!(!task.is_finished());
+    {
+        let mut state = ui.lock();
+        let modal = state.modal_mut().unwrap();
+        modal.scroll = 2;
+        modal.rendered_scroll = 2;
+    }
+    overlay_key(&ui, enter);
+    assert_eq!(
+        task.await.unwrap().unwrap(),
+        huginn_core::ApprovalDecision::ApproveOnce
+    );
+}
+
+#[tokio::test]
+async fn shell_scroll_waits_for_each_frame_while_other_approvals_can_advance() {
+    for action in ["native.shell", "native.edit_file"] {
+        for key in [KeyCode::Down, KeyCode::PageDown] {
+            let (ui, task) = pending_approval().await;
+            {
+                let mut state = ui.lock();
+                let modal = state.modal_mut().unwrap();
+                modal.request.action = action.into();
+                modal.expanded = true;
+                modal.last_scroll = 3;
+            }
+            overlay_key(&ui, key);
+            overlay_key(&ui, key);
+            assert_eq!(
+                ui.lock().modal().unwrap().scroll,
+                if action == "native.shell" { 1 } else { 2 }
+            );
+            ui.lock().modal_mut().unwrap().rendered_scroll = 1;
+            overlay_key(&ui, key);
+            assert_eq!(
+                ui.lock().modal().unwrap().scroll,
+                if action == "native.shell" { 2 } else { 3 }
+            );
+            ui.lock().modal_mut().unwrap().rendered_scroll = 3;
+            overlay_key(&ui, key);
+            overlay_key(&ui, key);
+            assert_eq!(ui.lock().modal().unwrap().scroll, 3);
+            ui.resolve_modal(false);
+            assert_eq!(
+                task.await.unwrap().unwrap(),
+                huginn_core::ApprovalDecision::Reject
+            );
+        }
     }
 }

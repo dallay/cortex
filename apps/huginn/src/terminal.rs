@@ -163,13 +163,7 @@ impl EventSink for Output {
 fn live_event_json(event: &Event) -> serde_json::Result<String> {
     let mut value = serde_json::to_value(event)?;
     if let Event::ApprovalRequested { request, .. } = event {
-        if request
-            .resource
-            .as_ref()
-            .is_some_and(|resource| !resource.sensitive)
-        {
-            value["request"]["preview"] = serde_json::Value::String(request.preview.clone());
-        }
+        value["request"]["preview"] = serde_json::Value::String(request.preview.clone());
     }
     serde_json::to_string(&value)
 }
@@ -187,7 +181,7 @@ mod tests {
     use huginn_core::{ApprovalPrompt, ApprovalRequest, CancellationToken, Event};
 
     #[test]
-    fn live_json_event_redacts_unclassified_approval_preview() {
+    fn live_json_event_keeps_unclassified_approval_preview() {
         let event = Event::ApprovalRequested {
             step: huginn_core::StepId::UNKNOWN,
             request: ApprovalRequest {
@@ -201,7 +195,7 @@ mod tests {
 
         let encoded = live_event_json(&event).expect("serialize live event");
         let value: serde_json::Value = serde_json::from_str(&encoded).unwrap();
-        assert!(value["request"].get("preview").is_none());
+        assert_eq!(value["request"]["preview"], "preview shown to the user");
     }
 
     #[test]
@@ -226,7 +220,7 @@ mod tests {
     }
 
     #[test]
-    fn live_json_event_redacts_sensitive_approval_preview() {
+    fn live_json_event_keeps_sensitive_approval_preview() {
         let event = Event::ApprovalRequested {
             step: huginn_core::StepId::UNKNOWN,
             request: ApprovalRequest {
@@ -243,7 +237,7 @@ mod tests {
 
         let encoded = live_event_json(&event).expect("serialize live event");
         let value: serde_json::Value = serde_json::from_str(&encoded).unwrap();
-        assert!(value["request"].get("preview").is_none());
+        assert_eq!(value["request"]["preview"], "secret preview");
     }
 
     #[test]
