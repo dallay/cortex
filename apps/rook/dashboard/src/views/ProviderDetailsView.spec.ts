@@ -75,9 +75,11 @@ vi.mock("@/components/LoadingState.vue", () => ({
 }));
 vi.mock("@/components/ErrorBanner.vue", () => ({
 	default: defineComponent({
+		name: "ErrorBanner",
 		props: ["message"],
 		emits: ["retry"],
-		template: '<div data-testid="error-banner" />',
+		template:
+			'<div data-testid="error-banner"><button data-testid="retry-button" @click="$emit(\'retry\')" /></div>',
 	}),
 }));
 vi.mock("@/components/EmptyState.vue", () => ({
@@ -295,5 +297,62 @@ describe("ProviderDetailsView", () => {
 			customDescriptors,
 		);
 		expect(wrapper.text()).toContain("Fallback Label");
+	});
+
+	it("renders loading state while descriptors are loading and entry is not yet resolved", async () => {
+		const { descriptors, loading } = useProviderDescriptors();
+		descriptors.value = [];
+		loading.value = true;
+		const router = buildRouter("/providers/openai");
+		await router.isReady();
+		const wrapper = mount(ProviderDetailsView, {
+			global: {
+				plugins: [router, i18n],
+			},
+		});
+		expect(wrapper.find('[data-testid="loading"]').exists()).toBe(true);
+		loading.value = false;
+	});
+
+	it("renders error banner with retry when descriptor fetch rejects", async () => {
+		const { descriptors } = useProviderDescriptors();
+		descriptors.value = [];
+		const apiSpy = vi
+			.spyOn(useApi(), "getProviderDescriptors")
+			.mockRejectedValue(new Error("Network connection dropped"));
+
+		const router = buildRouter("/providers/openai");
+		await router.isReady();
+		const wrapper = mount(ProviderDetailsView, {
+			global: {
+				plugins: [router, i18n],
+			},
+		});
+		await flushPromises();
+
+		expect(wrapper.find('[data-testid="error-banner"]').exists()).toBe(true);
+
+		apiSpy.mockResolvedValueOnce([
+			{
+				id: "openai" as ProviderDescriptorResponse["id"],
+				label: "OpenAI",
+				protocol: "openAiChat",
+				authKinds: ["apiKey"],
+				supportsOAuth: false,
+				iconKey: "openai",
+				capabilityCeiling: {
+					tools: "supported",
+					vision: "unsupported",
+					reasoning: "unsupported",
+					streaming: "supported",
+					contextTokens: null,
+				},
+			},
+		]);
+
+		await wrapper.find('[data-testid="retry-button"]').trigger("click");
+		await flushPromises();
+
+		expect(apiSpy).toHaveBeenCalledTimes(2);
 	});
 });

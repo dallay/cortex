@@ -2,7 +2,9 @@
 //! identity. The table itself is compile-time data; these tests pin its
 //! completeness, alias resolution and the nan entry criteria.
 
-use rook_core::{descriptor_by_id, descriptor_for, ModelSource, Protocol, PROVIDER_DESCRIPTORS};
+use rook_core::{
+    descriptor_by_id, descriptor_for, AuthKind, ModelSource, Protocol, PROVIDER_DESCRIPTORS,
+};
 
 #[test]
 fn every_descriptor_is_fully_declared() {
@@ -132,6 +134,12 @@ fn every_descriptor_declares_accepted_auth_kinds() {
             "{} accepted_auth_kinds must contain primary auth kind {:?}",
             descriptor.id,
             descriptor.auth
+        );
+        assert_eq!(
+            descriptor.accepted_auth_kinds.contains(&AuthKind::OAuth),
+            descriptor.oauth.is_some(),
+            "{} must declare AuthKind::OAuth if and only if it has an OAuthConfig",
+            descriptor.id
         );
     }
 }

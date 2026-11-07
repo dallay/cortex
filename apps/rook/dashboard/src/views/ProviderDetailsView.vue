@@ -304,4 +304,10 @@ function closeProviderDialog() {
       @deleted="closeProviderDialog"
     />
   </div>
+  <LoadingState v-else-if="descriptorsLoading" />
+  <ErrorBanner
+    v-else-if="descriptorsError"
+    :message="descriptorsError"
+    @retry="fetchDescriptors"
+  />
 </template>
