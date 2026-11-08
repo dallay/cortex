@@ -33,14 +33,14 @@ Riesgo del presupuesto de 400 líneas: Alto
 - [ ] 1.1 RED: Añadir pruebas deterministas de `HostPolicy` para catálogo cerrado, procedencia host, sensibilidad, recurso canónico y fallback desconocido; cubrir lectura/listado/búsqueda y permisos de creación/edición.
 - [ ] 1.2 GREEN: Implementar autorización host-side del catálogo ratificado; `write_file` solo crea rutas nuevas, `edit_file` edita archivos ordinarios existentes y reemplazo/destructivos requieren aprobación.
 - [ ] 1.3 REFACTOR: Consolidar clasificación y decisión sin ampliar autoridad; repetir pruebas de aplicación y revisar que plugins/hooks/modelo no conceden permisos.
-- [ ] 1.4 RED: Probar grants exactos por sesión+acción+recurso canónico+workspace, clones dentro de sesión, sensibilidad, cambios de scope y ausencia tras nueva sesión/reanudación.
-- [ ] 1.5 GREEN: Limitar grants a memoria y coincidencia exacta; invalidarlos al cerrar sesión/cambiar workspace, sin comodines ni persistencia.
-- [ ] 1.6 REFACTOR: Simplificar el estado compartido de `HostPolicy` y verificar decisiones permitidas y precedencia de `--allow`.
+- [ ] 1.4 RED: Probar grants exactos por sesión+acción+recurso canónico+workspace; `SessionPolicy` sin workspace confiable no concede grants; cubrir clones del mismo scope, separación de roots, recurso fuera del root, sensibilidad y ausencia tras nueva sesión/reanudación.
+- [ ] 1.5 GREEN: Fijar el root canónico confiable en `SessionPolicy` desde el composition root; incluir root en la clave, comprobar pertenencia del recurso e impedir grants sin scope. Mantener grants en memoria, sin comodines ni persistencia.
+- [ ] 1.6 REFACTOR: Simplificar el estado compartido de `HostPolicy`; verificar decisiones permitidas y precedencia de `--allow` sin permitir que clones cambien el root fijado.
 
 ## Fase 2: revalidación y modos de ejecución — capa 1
 
-- [ ] 2.1 RED: Añadir pruebas con filesystem/fakes deterministas para symlink/escape, error de canonicalización, sensibilidad o workspace cambiado y contenido obsoleto; afirmar cero escrituras ante fallo.
-- [ ] 2.2 GREEN: Aplicar preparación→autorización→revalidación inmediata→ejecución en el adapter nativo; invalidar propuestas modificadas y fallar cerradas.
+- [ ] 2.1 RED: Añadir pruebas con filesystem/fakes deterministas para symlink/escape, error de canonicalización, sensibilidad, workspace root cambiado o fuera del scope fijado, y contenido obsoleto; afirmar cero escrituras ante fallo.
+- [ ] 2.2 GREEN: Aplicar preparación→autorización→revalidación inmediata→ejecución en el adapter nativo; revalidar root fijado, pertenencia/ruta/symlinks, sensibilidad e identidad/contenido; invalidar propuestas modificadas y fallar cerradas.
 - [ ] 2.3 REFACTOR: Eliminar comprobaciones duplicadas sin debilitar el límite final del adapter; repetir pruebas de runtime.
 - [ ] 2.4 RED: Probar catálogo por defecto en TUI, `run` y `--json`; shell, cada llamada MCP y otros efectos excluidos requieren aprobador y no ejecutan si falta.
 - [ ] 2.5 GREEN: Componer defaults y errores observables en `apps/huginn`; conservar aprobación separada para inicio MCP y cada llamada.
