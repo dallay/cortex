@@ -471,6 +471,20 @@ fn skills_templates_denial_and_cancellation_release_the_tui_and_resume_cleanly()
     // starts collapsed, so expand it before waiting for the command preview.
     pty.send("\x1b[200~huginn-mock: load_skill shellout\x1b[201~\r");
     pty.wait_for("›Reject");
+    // The modal can render before its focus lease is promoted. Wait until a
+    // navigation key changes the selection so Ctrl+F is not discarded.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !pty.screen_text().contains("›Approve once") {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "approval lease was not promoted before timeout: {}",
+            pty.screen_text()
+        );
+        pty.send("\x1b[C");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    pty.send("\x1b[D");
+    pty.wait_for("›Reject");
     pty.send("\x06");
     pty.wait_for("touch pwned-shell");
     pty.wait_for("›Reject");
