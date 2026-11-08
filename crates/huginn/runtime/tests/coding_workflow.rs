@@ -83,12 +83,20 @@ fn fixture(
     model: Arc<dyn ModelProvider>,
     db: &std::path::Path,
 ) -> (StandardLoop, Arc<SqliteSessions>) {
+    fixture_with_shell_timeout(model, db, 2)
+}
+
+fn fixture_with_shell_timeout(
+    model: Arc<dyn ModelProvider>,
+    db: &std::path::Path,
+    shell_timeout_secs: u64,
+) -> (StandardLoop, Arc<SqliteSessions>) {
     let sessions = Arc::new(SqliteSessions::open(db).unwrap());
     (
         StandardLoop {
             instructions: Arc::new(huginn_runtime::instructions::FilesystemInstructions),
             model,
-            tools: Arc::new(Registry::native(2).unwrap()),
+            tools: Arc::new(Registry::native(shell_timeout_secs).unwrap()),
             sessions: sessions.clone(),
             config: LoopConfig::default(),
             lifecycle: CancellationToken::new(),
@@ -1467,7 +1475,7 @@ async fn interruption_during_approved_shell_records_unknown_completion_without_r
         ]])),
         requests: Mutex::new(vec![]),
     });
-    let (engine, store) = fixture(model, &data.path().join("sessions.db"));
+    let (engine, store) = fixture_with_shell_timeout(model, &data.path().join("sessions.db"), 30);
     let mut session = Session::new(workspace.path().canonicalize().unwrap());
     let token = CancellationToken::new();
     let trigger = token.clone();
