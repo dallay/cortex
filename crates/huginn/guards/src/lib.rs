@@ -1,5 +1,10 @@
 //! Protecciones restrictivas para herramientas nativas; no constituyen un sandbox.
 mod paths;
+
+/// Classifies a path as sensitive using the shared Huginn path policy.
+pub fn sensitive(path: &std::path::Path) -> bool {
+    paths::sensitive(path)
+}
 mod plugin;
 mod shell;
 pub use plugin::GuardsPlugin;

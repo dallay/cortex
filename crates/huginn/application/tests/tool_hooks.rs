@@ -83,6 +83,8 @@ impl Tool for Shell {
                 id: call.id.clone(),
                 action: "native.shell".into(),
                 preview: "rm -rf .".into(),
+                resource: None,
+                provenance: None,
             }),
             payload: serde_json::json!({}),
         })
@@ -104,9 +106,18 @@ impl ToolRegistry for Tools {
 struct Approve(Arc<Counts>, bool);
 #[async_trait]
 impl ApprovalPrompt for Approve {
-    async fn request_decision(&self, _: &ApprovalRequest, _: CancellationToken) -> Result<bool> {
+    async fn request_decision(
+        &self,
+        _: &ApprovalRequest,
+        _: &[huginn_core::ApprovalDecision],
+        _: CancellationToken,
+    ) -> Result<huginn_core::ApprovalDecision> {
         self.0.prompts.fetch_add(1, Ordering::SeqCst);
-        Ok(self.1)
+        Ok(if self.1 {
+            huginn_core::ApprovalDecision::ApproveOnce
+        } else {
+            huginn_core::ApprovalDecision::Reject
+        })
     }
 }
 #[derive(Default)]

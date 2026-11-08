@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {HTMLAttributes} from "vue";
 import {cn} from "@/lib/utils";
 import type {ButtonGroupVariants} from ".";
@@ -12,11 +12,11 @@ const props = defineProps<{
 
 <template>
   <div
-    role="group"
-    data-slot="button-group"
-    :data-orientation="props.orientation"
     :class="cn(buttonGroupVariants({ orientation: props.orientation }), props.class)"
+    :data-orientation="props.orientation"
+    data-slot="button-group"
+    role="group"
   >
-    <slot />
+    <slot/>
   </div>
 </template>

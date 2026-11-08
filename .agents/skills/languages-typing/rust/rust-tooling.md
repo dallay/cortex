@@ -217,12 +217,12 @@ cargo geiger --manifest-path Cargo.toml
 
 ## Non-Rust CI Tools
 
-| Herramienta         | Uso                                       | Receta             |
-|---------------------|-------------------------------------------|--------------------|
-| `gitleaks`          | Secret detection                          | `just ci-gitleaks` |
-| `semgrep`           | Static analysis (Rust, Docker, Actions)   | `just ci-semgrep`  |
-| `trivy`             | Image and filesystem vulnerabilities      | `just ci-trivy`    |
-| `markdownlint-cli2` | Canonical Markdown                        | `just ci-lint`     |
+| Herramienta         | Uso                                     | Receta             |
+|---------------------|-----------------------------------------|--------------------|
+| `gitleaks`          | Secret detection                        | `just ci-gitleaks` |
+| `semgrep`           | Static analysis (Rust, Docker, Actions) | `just ci-semgrep`  |
+| `trivy`             | Image and filesystem vulnerabilities    | `just ci-trivy`    |
+| `markdownlint-cli2` | Canonical Markdown                      | `just ci-lint`     |
 
 ## Related Files
 

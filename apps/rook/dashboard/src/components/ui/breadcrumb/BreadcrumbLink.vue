@@ -14,11 +14,11 @@ const props = withDefaults(
 
 <template>
   <Primitive
-    data-slot="breadcrumb-link"
     :as="as"
     :as-child="asChild"
     :class="cn('hover:text-foreground transition-colors', props.class)"
+    data-slot="breadcrumb-link"
   >
-    <slot />
+    <slot/>
   </Primitive>
 </template>

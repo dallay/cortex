@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {Eye, EyeOff} from "@lucide/vue";
 import {useVModel} from "@vueuse/core";
 import {ref} from "vue";
@@ -33,22 +33,22 @@ const toggleVisibility = () => {
     <Input
       :id="id"
       v-model="model"
-      :type="showPassword ? 'text' : 'password'"
       :autocomplete="type"
-      :required="required"
       :class="{ 'border-destructive': error }"
+      :required="required"
+      :type="showPassword ? 'text' : 'password'"
       class="pr-10"
     />
     <Button
+      :aria-label="showPassword ? 'Hide password' : 'Show password'"
+      class="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+      size="sm"
       type="button"
       variant="ghost"
-      size="sm"
-      class="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
       @click="toggleVisibility"
-      :aria-label="showPassword ? 'Hide password' : 'Show password'"
     >
-      <Eye v-if="!showPassword" class="h-4 w-4 text-muted-foreground" />
-      <EyeOff v-else class="h-4 w-4 text-muted-foreground" />
+      <Eye v-if="!showPassword" class="h-4 w-4 text-muted-foreground"/>
+      <EyeOff v-else class="h-4 w-4 text-muted-foreground"/>
     </Button>
   </div>
 </template>

@@ -437,7 +437,7 @@ async fn responses_malformed_or_pending_sse_fails_without_losing_prior_chunks() 
                 concat!(
                 "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n",
                 "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"input_tokens\":3,\"output_tokens\":2}}\n\n"
-            )
+                )
             } else {
                 ""
             };
@@ -549,13 +549,13 @@ async fn responses_tool_summary_does_not_repeat_name_without_upstream_id() {
 async fn responses_accepts_ping_comments_and_clean_eof_without_message_stop() {
     let server = MockServer::start().await;
     let sse = concat!(
-        ": keepalive\n\n",
-        "event: ping\ndata: {\"type\":\"ping\"}\n\n",
-        "data:{\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\n",
-        "data: {\"type\":\"content_block_delta\",\"index\":0,\n",
-        "data: \"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n",
-        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n",
-        ": another keepalive\n\ndata: {\"type\":\"ping\"}\n\n"
+    ": keepalive\n\n",
+    "event: ping\ndata: {\"type\":\"ping\"}\n\n",
+    "data:{\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\n",
+    "data: {\"type\":\"content_block_delta\",\"index\":0,\n",
+    "data: \"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n",
+    "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n",
+    ": another keepalive\n\ndata: {\"type\":\"ping\"}\n\n"
     );
     Mock::given(method("POST"))
         .and(path("/v1/messages"))
@@ -714,10 +714,10 @@ async fn stream_merges_initial_input_and_cache_usage_with_terminal_output() {
     let server = MockServer::start().await;
     Mock::given(method("POST")).and(path("/v1/messages"))
         .respond_with(ResponseTemplate::new(200).set_body_string(concat!(
-            "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":12,\"output_tokens\":0,\"cache_read_input_tokens\":8,\"cache_creation_input_tokens\":2}}}\n\n",
-            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n",
-            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":7}}\n\n",
-            "data: {\"type\":\"message_stop\"}\n\n"
+        "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":12,\"output_tokens\":0,\"cache_read_input_tokens\":8,\"cache_creation_input_tokens\":2}}}\n\n",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n",
+        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":7}}\n\n",
+        "data: {\"type\":\"message_stop\"}\n\n"
         ))).mount(&server).await;
     let provider = test_provider(&server);
     let mut req = make_test_request("claude-3-5-sonnet");
@@ -1357,12 +1357,12 @@ async fn responses_stream_skips_well_formed_unknown_event_and_delta() {
         .and(path("/v1/messages"))
         .respond_with(ResponseTemplate::new(200).set_body_string(
             concat!(
-                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"before\"}}\n\n",
-                "data: {\"type\":\"future_event\",\"extra\":true}\n\n",
-                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"future_delta\",\"value\":7}}\n\n",
-                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"after\"}}\n\n",
-                "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2,\"input_tokens\":1}}\n\n",
-                "data: {\"type\":\"message_stop\"}\n\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"before\"}}\n\n",
+            "data: {\"type\":\"future_event\",\"extra\":true}\n\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"future_delta\",\"value\":7}}\n\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"after\"}}\n\n",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2,\"input_tokens\":1}}\n\n",
+            "data: {\"type\":\"message_stop\"}\n\n",
             ),
         ))
         .mount(&server)

@@ -129,7 +129,15 @@ async fn build_native_plugin(
         || crate::tools::native_tools(timeout_secs),
         |policy| crate::tools::native_tools_with_guards(timeout_secs, policy.clone()),
     );
-    for tool in tools {
+    let (file_builtins, other_tools): (Vec<_>, Vec<_>) = tools
+        .into_iter()
+        .partition(|tool| matches!(tool.definition().name.as_str(), "write_file" | "edit_file"));
+    if !file_builtins.is_empty() {
+        supervisor.register(Box::new(crate::tools::NativeBuiltinToolPlugin(
+            file_builtins,
+        )))?;
+    }
+    for tool in other_tools {
         supervisor.register(Box::new(crate::tools::NativeToolPlugin(tool)))?;
     }
     supervisor.register(Box::new(SessionsPlugin(sessions)))?;

@@ -53,13 +53,19 @@ impl AgentLoop for Engine {
                             .chain(std::iter::once("PREVIEW_LAST".to_owned()))
                             .collect::<Vec<_>>()
                             .join("\n"),
+                        resource: None,
+                        provenance: None,
                     },
                     cancel.clone(),
                 )
                 .await?;
             session.messages.push(Message::text(
                 Role::Assistant,
-                if approved { "APPROVED" } else { "DENIED" },
+                if approved == huginn_core::ApprovalDecision::Reject {
+                    "DENIED"
+                } else {
+                    "APPROVED"
+                },
             ));
             return Ok(());
         }
@@ -291,16 +297,16 @@ impl Plugin for ProviderSelectPlugin {
                                                                 })
                                                             }),
                                                         )?
-                                                        .with_overlay_kind(OverlayKind::Login)?,
+                                                            .with_overlay_kind(OverlayKind::Login)?,
                                                     ))
                                                 })
                                             }),
                                         )?
-                                        .with_overlay_kind(OverlayKind::Login)?,
+                                            .with_overlay_kind(OverlayKind::Login)?,
                                     ))
                                 })
                             }))?
-                            .with_overlay_kind(OverlayKind::Login)?,
+                                .with_overlay_kind(OverlayKind::Login)?,
                         ))
                     }),
                 },
@@ -578,7 +584,13 @@ async fn main() -> Result<()> {
                         id: "modal-probe".into(),
                         action: "native.edit".into(),
                         preview: "MODAL_PROBE".into(),
+                        resource: None,
+                        provenance: None,
                     },
+                    &[
+                        huginn_core::ApprovalDecision::Reject,
+                        huginn_core::ApprovalDecision::ApproveOnce,
+                    ],
                     CancellationToken::new(),
                 )
                 .await?;

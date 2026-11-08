@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {MoreHorizontal} from "@lucide/vue";
 import {reactiveOmit} from "@vueuse/core";
 import type {PaginationEllipsisProps} from "reka-ui";
@@ -15,12 +15,12 @@ const delegatedProps = reactiveOmit(props, "class");
 
 <template>
   <PaginationEllipsis
+    :class="cn('flex size-9 items-center justify-center', props.class)"
     data-slot="pagination-ellipsis"
     v-bind="delegatedProps"
-    :class="cn('flex size-9 items-center justify-center', props.class)"
   >
     <slot>
-      <MoreHorizontal class="size-4" />
+      <MoreHorizontal class="size-4"/>
       <span class="sr-only">More pages</span>
     </slot>
   </PaginationEllipsis>

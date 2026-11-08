@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {HTMLAttributes} from "vue";
 import {cn} from "@/lib/utils";
 
@@ -9,10 +9,10 @@ const props = defineProps<{
 
 <template>
   <div
-    data-slot="sidebar-header"
-    data-sidebar="header"
     :class="cn('flex flex-col gap-2 p-2', props.class)"
+    data-sidebar="header"
+    data-slot="sidebar-header"
   >
-    <slot />
+    <slot/>
   </div>
 </template>

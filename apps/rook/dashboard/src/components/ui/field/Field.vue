@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {HTMLAttributes} from "vue";
 import {cn} from "@/lib/utils";
 import type {FieldVariants} from ".";
@@ -12,14 +12,14 @@ const props = defineProps<{
 
 <template>
   <div
-    role="group"
-    data-slot="field"
-    :data-orientation="orientation"
     :class="cn(
       fieldVariants({ orientation }),
       props.class,
     )"
+    :data-orientation="orientation"
+    data-slot="field"
+    role="group"
   >
-    <slot />
+    <slot/>
   </div>
 </template>

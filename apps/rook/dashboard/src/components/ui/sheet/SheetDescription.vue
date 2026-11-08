@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {DialogDescriptionProps} from "reka-ui";
 import {DialogDescription} from "reka-ui";
@@ -14,10 +14,10 @@ const delegatedProps = reactiveOmit(props, "class");
 
 <template>
   <DialogDescription
-    data-slot="sheet-description"
     :class="cn('text-muted-foreground text-sm', props.class)"
+    data-slot="sheet-description"
     v-bind="delegatedProps"
   >
-    <slot />
+    <slot/>
   </DialogDescription>
 </template>

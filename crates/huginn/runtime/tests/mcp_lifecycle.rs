@@ -13,8 +13,12 @@ use std::collections::BTreeMap;
 struct Allow;
 #[async_trait]
 impl ApprovalPolicy for Allow {
-    async fn approve(&self, _: &ApprovalRequest, _: CancellationToken) -> Result<bool> {
-        Ok(true)
+    async fn approve(
+        &self,
+        _: &ApprovalRequest,
+        _: CancellationToken,
+    ) -> Result<huginn_core::ApprovalDecision> {
+        Ok(huginn_core::ApprovalDecision::ApproveOnce)
     }
 }
 fn mcp_config(marker: &std::path::Path) -> ServerConfig {

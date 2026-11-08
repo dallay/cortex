@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {ListboxContentProps} from "reka-ui";
 import {ListboxContent, useForwardProps} from "reka-ui";
@@ -16,12 +16,12 @@ const forwarded = useForwardProps(delegatedProps);
 
 <template>
   <ListboxContent
+    :class="cn('max-h-[300px] scroll-py-1 overflow-x-hidden overflow-y-auto', props.class)"
     data-slot="command-list"
     v-bind="forwarded"
-    :class="cn('max-h-[300px] scroll-py-1 overflow-x-hidden overflow-y-auto', props.class)"
   >
     <div role="presentation">
-      <slot />
+      <slot/>
     </div>
   </ListboxContent>
 </template>

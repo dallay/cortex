@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {PrimitiveProps} from "reka-ui";
 import {Primitive, useForwardProps} from "reka-ui";
@@ -14,10 +14,10 @@ const forwardedProps = useForwardProps(delegatedProps);
 
 <template>
   <Primitive
+    :class="cn('flex items-center', props.class)"
     data-slot="pin-input-group"
     v-bind="forwardedProps"
-    :class="cn('flex items-center', props.class)"
   >
-    <slot />
+    <slot/>
   </Primitive>
 </template>

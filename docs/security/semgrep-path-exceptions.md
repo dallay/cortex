@@ -147,8 +147,7 @@ The scanner regression does not replace the runtime's native boundary tests.
 - GREEN: the four controls gave 1, 0, 1, and 0 results respectively;
   their exit codes were 1, 0, 0, and 0. Inventory: 7 new, 7 historical unchanged.
 - GREEN B1: Semgrep 1.126.0, three CI rulesets, and
-  `--severity ERROR --error --json`: exit code 0, zero findings, 226 targets
-  (177 Rust, 47 YAML, 2 Dockerfiles). RED: exit code 1, seven findings over the
+  `--severity ERROR --error --json`: exit code 0, zero findings, 226 targets (177 Rust, 47 YAML, 2 Dockerfiles). RED: exit code 1, seven findings over the
   same targets. None belongs to `target` or `node_modules`.
 - Four `PartialParsing` warnings persist in `release.yml:159,181`: two rules
   try to analyze PowerShell fragments as Bash. They match exactly

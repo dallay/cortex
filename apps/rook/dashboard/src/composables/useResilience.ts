@@ -7,6 +7,7 @@ export function useResilience() {
 	const states = ref<CircuitStateResponse[]>([]);
 	const loading = ref(false);
 	const error = ref<string | null>(null);
+
 	async function fetch() {
 		loading.value = true;
 		error.value = null;
@@ -21,6 +22,7 @@ export function useResilience() {
 			loading.value = false;
 		}
 	}
+
 	async function reset(provider: string) {
 		try {
 			await api.resetProviderResilience(provider);
@@ -32,5 +34,6 @@ export function useResilience() {
 			return false;
 		}
 	}
+
 	return { states, loading, error, fetch, reset };
 }

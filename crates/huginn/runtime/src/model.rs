@@ -84,8 +84,8 @@ fn transport_builder(
             && (!allow_loopback_http || !huginn_core::connections::is_loopback_endpoint(&parsed)))
     {
         return Err(AgentError::Configuration(
-                "endpoint requires validated HTTPS or explicitly enabled literal loopback HTTP; no credentials, query or fragment".into(),
-            ));
+            "endpoint requires validated HTTPS or explicitly enabled literal loopback HTTP; no credentials, query or fragment".into(),
+        ));
     }
     let mut builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
@@ -248,9 +248,12 @@ impl ModelProvider for OpenAiProvider {
                 };
                 match parsed {
                     Ok(items) => state.queued.extend(items.into_iter().map(Ok)),
-                    Err(error) => { state.queued.push_back(Err(error)); state.ended=true; }
+                    Err(error) => {
+                        state.queued.push_back(Err(error));
+                        state.ended = true;
+                    }
                 }
-                if state.parser.done { state.ended=true; }
+                if state.parser.done { state.ended = true; }
             }
         }).boxed())
     }

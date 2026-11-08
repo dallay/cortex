@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {PaginationListProps} from "reka-ui";
 import {PaginationList} from "reka-ui";
@@ -15,10 +15,10 @@ const delegatedProps = reactiveOmit(props, "class");
 <template>
   <PaginationList
     v-slot="slotProps"
+    :class="cn('flex flex-row items-center gap-1', props.class)"
     data-slot="pagination-content"
     v-bind="delegatedProps"
-    :class="cn('flex flex-row items-center gap-1', props.class)"
   >
-    <slot v-bind="slotProps" />
+    <slot v-bind="slotProps"/>
   </PaginationList>
 </template>

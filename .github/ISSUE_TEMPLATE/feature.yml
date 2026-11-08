@@ -1,6 +1,6 @@
 name: Feature request
 description: Propose a new user-visible capability
-labels: ["type/feature"]
+labels: [ "type/feature" ]
 body:
   - type: dropdown
     id: product

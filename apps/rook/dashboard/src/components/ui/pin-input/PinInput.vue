@@ -1,4 +1,4 @@
-<script setup lang="ts" generic="Type extends 'text' | 'number' = 'text'">
+<script generic="Type extends 'text' | 'number' = 'text'" lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {PinInputRootEmits, PinInputRootProps} from "reka-ui";
 import {PinInputRoot, useForwardPropsEmits} from "reka-ui";
@@ -20,10 +20,11 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
 
 <template>
   <PinInputRoot
+    :class="cn('flex items-center gap-2 has-disabled:opacity-50 disabled:cursor-not-allowed', props.class)"
     :otp="props.otp"
     data-slot="pin-input"
-    v-bind="forwarded" :class="cn('flex items-center gap-2 has-disabled:opacity-50 disabled:cursor-not-allowed', props.class)"
+    v-bind="forwarded"
   >
-    <slot />
+    <slot/>
   </PinInputRoot>
 </template>

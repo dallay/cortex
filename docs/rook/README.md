@@ -34,35 +34,43 @@ rook/
 ## Documentation
 
 ### Product
+
 - [Product Requirements](product-requirements.md) — Product scope, requirements, and open questions
 - [Router Roadmap](router-roadmap.md) — Parity roadmap, phased issue specifications, and dependency graph
 
 ### Getting started
+
 1. [Configuration](configuration.md) — How to configure Rook
 2. [API Reference](api.md) — Available endpoints
 3. [Providers](providers.md) — Configuring AI models
 4. [Dashboard](../../apps/rook/dashboard/README.md) — Visual management interface
 
 ### Development
+
 - [Local development](../development/rook.md) — Run, smoke-test, and validate the Rook backend
 - [Architecture](architecture.md) — Internal design and layers
 - [Deployment](deployment.md) — Production and containers
 
 ### Architecture decisions
+
 - [ADR Index](adr/README.md) — Rook technical decisions
 
 ## Key concepts
 
 ### Proxy and Router
+
 Rook acts as an intelligent proxy between your application and multiple AI providers (OpenAI, Anthropic, Ollama, etc.). It enables:
+
 - Dynamic routing by model, provider, or priority
 - Circuit breaker for resilience
 - Rate limiting by tier
 
 ### Compatible API
+
 Rook exposes an OpenAI-compatible API (`/v1/chat/completions`) that abstracts away the complexity of multiple providers.
 
 ### Dashboard
+
 The Vue SPA dashboard is embedded in the Rook binary under `/dashboard/` and allows visual management of providers and API keys.
 
 ## Additional resources

@@ -123,13 +123,11 @@ the entire workflow. During saving, cancellation retains the existing manager
 fences and reconciliation rules. A completed save clears backward history so that
 a result cannot reopen a submitted credential form.
 
-When a provider already has connections, choose **Manage existing connections** or
-**Add another connection** explicitly. Connection rows include the connection ID
+When a provider already has connections, choose **Manage existing connections** or **Add another connection** explicitly. Connection rows include the connection ID
 and storage mode. Adding a connection never implicitly replaces another record.
 
 The result reports local configuration separately from remote authorization and
-model discovery. Saving does not change the active model. Choose **Select model
-(/model)**, **Manage connections**, or **Close**. The four stages and Close do not
+model discovery. Saving does not change the active model. Choose **Select model (/model)**, **Manage connections**, or **Close**. The four stages and Close do not
 add conversation messages. A remote discovery error remains an editable form
 error; it is not a successful configuration result.
 

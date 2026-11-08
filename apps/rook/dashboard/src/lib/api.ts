@@ -285,6 +285,7 @@ export interface CachedCompletionResponse {
 	model: string;
 	choices: unknown[];
 	usage?: unknown;
+
 	[key: string]: unknown;
 }
 

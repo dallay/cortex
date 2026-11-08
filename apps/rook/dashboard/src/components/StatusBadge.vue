@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {computed} from "vue";
 import {Badge} from "@/components/ui/badge";
 
@@ -46,7 +46,7 @@ const colorClass = computed(() => {
 </script>
 
 <template>
-  <Badge :variant="variant" :class="colorClass">
+  <Badge :class="colorClass" :variant="variant">
     {{ status }}
   </Badge>
 </template>

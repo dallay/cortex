@@ -3,6 +3,16 @@ id = "generic_api_key"
 description = "Generic API Key"
 regex = '''(?i)(api[_-]?key|apikey|api[_-]?token|apitoken)['"]?\s*[=:]\s*['"]?[a-zA-Z0-9_-]{20,}'''
 
+[[rules.allowlists]]
+description = "Synthetic persistence-test markers from the published Huginn permission commit"
+condition = "AND"
+regexTarget = "match"
+paths = ['''^crates/huginn/runtime/tests/sessions_persistence\.rs$''']
+regexes = [
+  '''(?i)^API_KEY=history-secret-marker$''',
+  '''(?i)^API_KEY=legacy-history-secret$''',
+]
+
 [[rules]]
 id = "aws_access_key"
 description = "AWS Access Key"
@@ -18,19 +28,19 @@ id = "generic_secret"
 description = "Generic Secret"
 regex = '''(?i)(secret|password|passwd|pwd|token)['"]?\s*[=:]\s*['"]?[a-zA-Z0-9_-]{20,}'''
 
-  [[rules.allowlists]]
-  description = "Generated password fixture in bootstrap status tests"
-  condition = "AND"
-  regexTarget = "match"
-  paths = ['''^crates/application/rook-usecases/src/auth/bootstrap_status\.rs$''']
-  regexes = ['''(?i)^password:\s*strong_password_fixture$''']
+[[rules.allowlists]]
+description = "Generated password fixture in bootstrap status tests"
+condition = "AND"
+regexTarget = "match"
+paths = ['''^crates/application/rook-usecases/src/auth/bootstrap_status\.rs$''']
+regexes = ['''(?i)^password:\s*strong_password_fixture$''']
 
-  [[rules.allowlists]]
-  description = "Synthetic cargo registry token fixture in the GM-05 build harness test"
-  condition = "AND"
-  regexTarget = "match"
-  paths = ['''^dev/muninn/tests/test_gm05_build\.py$''']
-  regexes = ['''(?i)^token\s*=\s*"synthetic-test-value$''']
+[[rules.allowlists]]
+description = "Synthetic cargo registry token fixture in the GM-05 build harness test"
+condition = "AND"
+regexTarget = "match"
+paths = ['''^dev/muninn/tests/test_gm05_build\.py$''']
+regexes = ['''(?i)^token\s*=\s*"synthetic-test-value$''']
 
 [[rules]]
 id = "openai_gcp_hf_api_key"

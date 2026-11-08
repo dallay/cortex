@@ -17,15 +17,14 @@ effects, so any interception point must not become a second approval path.
 ## Decision
 
 1. `huginn-core::hooks` defines `ToolHook` with two optional methods:
-   - `before(call, ctx)` returns `ToolVerdict::Continue` or `ToolVerdict::Block(reason)`.
-   - `after(call, outcome, ctx)` may return a note for the model-visible result.
+    - `before(call, ctx)` returns `ToolVerdict::Continue` or `ToolVerdict::Block(reason)`.
+    - `after(call, outcome, ctx)` may return a note for the model-visible result.
 2. No verdict authorizes an action. Hooks can only restrict, observe or annotate.
 3. The loop evaluates `before` hooks after tool lookup and **before**
    `prepare`, approval and execution. A blocked call produces no preview, no
    approval prompt and no effect. It is returned to the model as a tool error.
 4. Hooks run sequentially in hook-id order and the first block wins.
-5. A hook error, panic or timeout (default 2 s per hook) blocks the call
-   (fail closed). After an effect has run, a failure becomes a visible note
+5. A hook error, panic or timeout (default 2 s per hook) blocks the call (fail closed). After an effect has run, a failure becomes a visible note
    instead, because it cannot undo the effect.
 6. Hook reasons and notes are stripped of control and bidi characters and are
    bounded to 4 KiB each.

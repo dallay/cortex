@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 /**
  * ProviderCategorySection — collapsible section of the catalog view
  * grouping provider cards by category (API Key, OAuth, Local).
@@ -27,7 +27,8 @@ const {t} = useI18n();
 </script>
 
 <template>
-  <section v-if="items.length > 0" class="space-y-3" :data-testid="`catalog-section-${category.kind}`">
+  <section v-if="items.length > 0" :data-testid="`catalog-section-${category.kind}`"
+           class="space-y-3">
     <div>
       <h2 class="text-lg font-semibold tracking-tight">
         {{ t(category.displayNameKey) }}

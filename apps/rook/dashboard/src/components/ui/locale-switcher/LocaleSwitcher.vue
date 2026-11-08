@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {AcceptableValue} from "reka-ui";
 import {useI18n} from "vue-i18n";
 import {
@@ -27,7 +27,7 @@ function handleChange(value: AcceptableValue) {
 <template>
   <Select :model-value="locale" @update:model-value="handleChange">
     <SelectTrigger class="h-8 w-[130px]">
-      <SelectValue />
+      <SelectValue/>
     </SelectTrigger>
     <SelectContent>
       <SelectItem v-for="loc in locales" :key="loc.code" :value="loc.code">

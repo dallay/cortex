@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {ListboxRootEmits, ListboxRootProps} from "reka-ui";
 import {ListboxRoot, useFilter, useForwardPropsEmits} from "reka-ui";
@@ -83,10 +83,10 @@ provideCommandContext({
 
 <template>
   <ListboxRoot
+    :class="cn('bg-popover text-popover-foreground flex h-full w-full flex-col overflow-hidden rounded-md', props.class)"
     data-slot="command"
     v-bind="forwarded"
-    :class="cn('bg-popover text-popover-foreground flex h-full w-full flex-col overflow-hidden rounded-md', props.class)"
   >
-    <slot />
+    <slot/>
   </ListboxRoot>
 </template>

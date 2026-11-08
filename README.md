@@ -54,10 +54,10 @@ Cortex is a **production-ready AI infrastructure stack** built in Rust that hand
 
 ### The Two Products
 
-| Product | Purpose | What it does |
-|---------|---------|--------------|
-| **🛡️ Rook** | AI Proxy | Routes requests, handles fallbacks, caches responses, logs everything |
-| **🤖 Huginn** | Coding Agent | Your local AI coding partner with native tool access |
+| Product       | Purpose      | What it does                                                          |
+|---------------|--------------|-----------------------------------------------------------------------|
+| **🛡️ Rook**   | AI Proxy     | Routes requests, handles fallbacks, caches responses, logs everything |
+| **🤖 Huginn** | Coding Agent | Your local AI coding partner with native tool access                  |
 
 ---
 
@@ -91,16 +91,16 @@ Request
 
 #### Key Features
 
-| Feature | Description |
-|---------|-------------|
-| 🔌 **OpenAI Compatible** | Drop-in replacement for any OpenAI client |
+| Feature                    | Description                                              |
+|----------------------------|----------------------------------------------------------|
+| 🔌 **OpenAI Compatible**   | Drop-in replacement for any OpenAI client                |
 | 🔄 **Automatic Fallbacks** | Define combo chains: `gpt-4` → `claude-3` → `gemini-pro` |
-| 🏷️ **Model Aliasing** | Use `gpt-4-turbo` → maps to actual model in config |
-| ⚡ **Smart Caching** | TTL-based response caching to cut costs |
-| 📊 **Full Audit Trail** | Every request/response logged to SQLite |
-| 🔑 **API Key Management** | Create, revoke, rotate keys from dashboard |
-| 🚀 **Streaming** | SSE streaming with tool call support |
-| 🌐 **Web Dashboard** | Vue 3 SPA embedded in binary |
+| 🏷️ **Model Aliasing**      | Use `gpt-4-turbo` → maps to actual model in config       |
+| ⚡ **Smart Caching**       | TTL-based response caching to cut costs                  |
+| 📊 **Full Audit Trail**    | Every request/response logged to SQLite                  |
+| 🔑 **API Key Management**  | Create, revoke, rotate keys from dashboard               |
+| 🚀 **Streaming**           | SSE streaming with tool call support                     |
+| 🌐 **Web Dashboard**       | Vue 3 SPA embedded in binary                             |
 
 #### Providers Supported
 
@@ -153,14 +153,14 @@ Huginn is a Rust-powered coding assistant that runs locally with access to your 
 
 #### Key Features
 
-| Feature | Description |
-|---------|-------------|
-| 💻 **Native TUI** | Beautiful terminal interface with Ratatui |
-| 🔒 **Privacy First** | With local providers, code stays local; remote providers receive prompts and file context |
-| 🛠️ **Native Tools** | File ops, terminal, git — all built-in |
-| 🔌 **MCP Integration** | Connect to any MCP stdio server |
-| 💾 **Session Memory** | SQLite-backed conversation history |
-| 📋 **Scoped Context** | Per-repo `AGENTS.md` for instructions |
+| Feature                | Description                                                                               |
+|------------------------|-------------------------------------------------------------------------------------------|
+| 💻 **Native TUI**      | Beautiful terminal interface with Ratatui                                                 |
+| 🔒 **Privacy First**   | With local providers, code stays local; remote providers receive prompts and file context |
+| 🛠️ **Native Tools**    | File ops, terminal, git — all built-in                                                    |
+| 🔌 **MCP Integration** | Connect to any MCP stdio server                                                           |
+| 💾 **Session Memory**  | SQLite-backed conversation history                                                        |
+| 📋 **Scoped Context**  | Per-repo `AGENTS.md` for instructions                                                     |
 
 📖 [Docs](docs/huginn/README.md) · [TUI Guide](docs/huginn/README.md#-tui-guide) · [MCP Setup](docs/huginn/README.md#-mcp-integration)
 
@@ -172,13 +172,13 @@ Huginn is a Rust-powered coding assistant that runs locally with access to your 
 
 Building with AI is fragile:
 
-| Pain Point | Impact |
-|------------|--------|
-| Provider goes down | Your app breaks |
+| Pain Point            | Impact                  |
+|-----------------------|-------------------------|
+| Provider goes down    | Your app breaks         |
 | Need to switch models | Code changes everywhere |
-| Audit requirements | No visibility |
-| Cost spikes | Budget surprises |
-| Multiple providers | SDK hell |
+| Audit requirements    | No visibility           |
+| Cost spikes           | Budget surprises        |
+| Multiple providers    | SDK hell                |
 
 ### The Solution
 
@@ -198,12 +198,12 @@ Building with AI is fragile:
 
 ### Performance
 
-| Metric | Value |
-|--------|-------|
-| **Response Time** | <5ms overhead (proxy latency) |
-| **Cache Hit** | ~50ms (vs 500ms+ API call) |
-| **Memory Footprint** | ~20MB (Rook) |
-| **Binary Size** | ~15MB (static, musl) |
+| Metric               | Value                         |
+|----------------------|-------------------------------|
+| **Response Time**    | <5ms overhead (proxy latency) |
+| **Cache Hit**        | ~50ms (vs 500ms+ API call)    |
+| **Memory Footprint** | ~20MB (Rook)                  |
+| **Binary Size**      | ~15MB (static, musl)          |
 
 ---
 
@@ -356,16 +356,16 @@ cortex/
 
 ### Tech Stack
 
-| Layer | Technology | Why |
-|-------|------------|-----|
-| **Language** | Rust 1.81+ | Memory safety, performance |
-| **HTTP Server** | Axum | Ergonomic, async |
-| **Runtime** | Tokio | Proven async runtime |
-| **Database** | SQLite | Zero-config, portable |
-| **Frontend** | Vue 3 + TypeScript | Reactive, typed |
-| **Build** | Vite | Fast HMR |
-| **TUI** | Ratatui | Native, cross-platform |
-| **Testing** | Vitest + Playwright | Fast + E2E |
+| Layer           | Technology          | Why                        |
+|-----------------|---------------------|----------------------------|
+| **Language**    | Rust 1.81+          | Memory safety, performance |
+| **HTTP Server** | Axum                | Ergonomic, async           |
+| **Runtime**     | Tokio               | Proven async runtime       |
+| **Database**    | SQLite              | Zero-config, portable      |
+| **Frontend**    | Vue 3 + TypeScript  | Reactive, typed            |
+| **Build**       | Vite                | Fast HMR                   |
+| **TUI**         | Ratatui             | Native, cross-platform     |
+| **Testing**     | Vitest + Playwright | Fast + E2E                 |
 
 ---
 
@@ -417,15 +417,15 @@ pnpm typecheck && pnpm build && pnpm exec vitest run
 
 ## 📚 Documentation
 
-| Guide | Description |
-|-------|-------------|
-| [Rook Architecture](docs/rook/architecture.md) | How Rook works internally |
-| [API Reference](docs/rook/api.md) | All HTTP endpoints |
-| [Configuration](docs/rook/configuration.md) | Complete config reference |
-| [Providers](docs/rook/providers.md) | Provider setup & quirks |
-| [Deployment](docs/rook/deployment.md) | Production deployment |
-| [Huginn Docs](docs/huginn/README.md) | Coding agent documentation |
-| [Dev Testing](dev/README.md) | Local testing with Docker |
+| Guide                                          | Description                |
+|------------------------------------------------|----------------------------|
+| [Rook Architecture](docs/rook/architecture.md) | How Rook works internally  |
+| [API Reference](docs/rook/api.md)              | All HTTP endpoints         |
+| [Configuration](docs/rook/configuration.md)    | Complete config reference  |
+| [Providers](docs/rook/providers.md)            | Provider setup & quirks    |
+| [Deployment](docs/rook/deployment.md)          | Production deployment      |
+| [Huginn Docs](docs/huginn/README.md)           | Coding agent documentation |
+| [Dev Testing](dev/README.md)                   | Local testing with Docker  |
 
 ---
 
@@ -433,13 +433,13 @@ pnpm typecheck && pnpm build && pnpm exec vitest run
 
 <div align="center">
 
-| Metric | Value |
-|--------|-------|
-| 🦀 **Rust Version** | 1.81+ (MSRV) |
-| 📦 **Crates** | 15+ packages |
-| 🌐 **Providers** | 5 (OpenAI, Anthropic, Gemini, Ollama, Groq) |
-| 📄 **License** | MIT |
-| ⭐ **Stars** | [GitHub](https://github.com/dallay/cortex/stargazers) |
+| Metric              | Value                                                 |
+|---------------------|-------------------------------------------------------|
+| 🦀 **Rust Version** | 1.81+ (MSRV)                                          |
+| 📦 **Crates**       | 15+ packages                                          |
+| 🌐 **Providers**    | 5 (OpenAI, Anthropic, Gemini, Ollama, Groq)           |
+| 📄 **License**      | MIT                                                   |
+| ⭐ **Stars**        | [GitHub](https://github.com/dallay/cortex/stargazers) |
 
 </div>
 
@@ -466,11 +466,11 @@ MIT License. See [LICENSE](LICENSE).
 
 ## 👥 Community
 
-| Channel | Purpose |
-|---------|---------|
+| Channel                                                        | Purpose           |
+|----------------------------------------------------------------|-------------------|
 | 💬 [Discussions](https://github.com/dallay/cortex/discussions) | Questions & ideas |
-| 🐛 [Issues](https://github.com/dallay/cortex/issues) | Bug reports |
-| 🌐 [DeepWiki](https://deepwiki.com/dallay/cortex) | AI-powered docs |
+| 🐛 [Issues](https://github.com/dallay/cortex/issues)           | Bug reports       |
+| 🌐 [DeepWiki](https://deepwiki.com/dallay/cortex)              | AI-powered docs   |
 
 ---
 

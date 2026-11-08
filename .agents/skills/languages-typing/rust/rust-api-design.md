@@ -76,14 +76,14 @@ In Cortex: Apply this to builders in `transport-axum` and any `Result` that must
 
 Derivation guide:
 
-| Trait       | When to derive                     |
- |-------------|------------------------------------|
-| `Debug`     | Always for public types            |
-| `Clone`     | The type can be duplicated         |
-| `Copy`      | Small, simple types                |
-| `PartialEq` | Equality comparison is meaningful  |
-| `Eq`        | Total equality, without floats     |
-| `Hash`      | For `HashMap` keys                 |
+| Trait       | When to derive                    |
+ |-------------|-----------------------------------|
+| `Debug`     | Always for public types           |
+| `Clone`     | The type can be duplicated        |
+| `Copy`      | Small, simple types               |
+| `PartialEq` | Equality comparison is meaningful |
+| `Eq`        | Total equality, without floats    |
+| `Hash`      | For `HashMap` keys                |
 
  ```rust
  // Minimum for domain types

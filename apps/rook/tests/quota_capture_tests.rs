@@ -117,7 +117,7 @@ async fn successful_provider_response_is_not_changed_by_recorder_failure() {
             "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
         }),
     )
-    .await;
+        .await;
     let recorder = Arc::new(Recorder {
         fail: true,
         ..Default::default()

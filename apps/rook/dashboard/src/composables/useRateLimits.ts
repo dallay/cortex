@@ -31,6 +31,7 @@ export function useRateLimits() {
 			loading.value = false;
 		}
 	}
+
 	async function create(data: CreateRateLimitRequest): Promise<boolean> {
 		saving.value = true;
 		error.value = null;
@@ -46,6 +47,7 @@ export function useRateLimits() {
 			saving.value = false;
 		}
 	}
+
 	async function update(
 		id: string,
 		data: Partial<
@@ -66,6 +68,7 @@ export function useRateLimits() {
 			saving.value = false;
 		}
 	}
+
 	async function remove(id: string): Promise<boolean> {
 		saving.value = true;
 		error.value = null;
@@ -81,6 +84,7 @@ export function useRateLimits() {
 			saving.value = false;
 		}
 	}
+
 	async function fetchStatus(
 		scope: RateLimitScope,
 		target: string,
@@ -95,6 +99,7 @@ export function useRateLimits() {
 					: "Failed to load rate limit status";
 		}
 	}
+
 	return {
 		rules,
 		status,

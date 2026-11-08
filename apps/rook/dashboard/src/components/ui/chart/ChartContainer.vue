@@ -7,7 +7,7 @@ import {provideChartContext} from ".";
 import {cn} from "@/lib/utils";
 </script>
 
-<script setup lang="ts">
+<script lang="ts" setup>
 const props = defineProps<{
   id?: HTMLAttributes["id"]
   class?: HTMLAttributes["class"]
@@ -22,7 +22,7 @@ defineSlots<{
   }
 }>()
 
-const { config } = toRefs(props)
+const {config} = toRefs(props)
 const uniqueId = useId()
 const chartId = computed(() => `chart-${props.id || uniqueId.replaceAll(":", "")}`)
 
@@ -34,12 +34,11 @@ provideChartContext({
 
 <template>
   <div
-    data-slot="chart"
-    :data-chart="chartId"
     :class="cn(
       `[&_.tick_text]:!fill-muted-foreground [&_.tick_line]:!stroke-border/50 [&_.recharts-curve.recharts-tooltip-cursor]:stroke-border [&_.recharts-polar-grid_[stroke='#ccc']]:stroke-border [&_.recharts-radial-bar-background-sector]:fill-muted [&_.recharts-rectangle.recharts-tooltip-cursor]:fill-muted [&_.recharts-reference-line_[stroke='#ccc']]:stroke-border flex flex-col aspect-video justify-center text-xs [&_.recharts-dot[stroke='#fff']]:stroke-transparent [&_.recharts-layer]:outline-hidden [&_.recharts-sector]:outline-hidden [&_.recharts-sector[stroke='#fff']]:stroke-transparent [&_.recharts-surface]:outline-hidden [&_[data-vis-xy-container]]:h-full [&_[data-vis-single-container]]:h-full h-full [&_[data-vis-xy-container]]:w-full [&_[data-vis-single-container]]:w-full w-full `,
       props.class,
     )"
+    :data-chart="chartId"
     :style="{
       '--vis-tooltip-padding': '0px',
       '--vis-tooltip-background-color': 'transparent',
@@ -51,8 +50,9 @@ provideChartContext({
       '--vis-crosshair-line-stroke-width': cursor ? '1px' : '0px',
       '--vis-font-family': 'var(--font-sans)',
     }"
+    data-slot="chart"
   >
-    <slot :id="uniqueId" :config="config" />
-    <ChartStyle :id="chartId" />
+    <slot :id="uniqueId" :config="config"/>
+    <ChartStyle :id="chartId"/>
   </div>
 </template>

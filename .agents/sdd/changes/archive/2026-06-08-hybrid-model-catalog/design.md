@@ -6,11 +6,11 @@ Expand the `StaticModelCatalog` to include all Ollama Cloud models from the refe
 
 ## Architecture Decisions
 
-| Decision          | Choice                               | Rationale                                                                                   |
-|-------------------|--------------------------------------|---------------------------------------------------------------------------------------------|
+| Decision          | Choice                               | Rationale                                                                                               |
+|-------------------|--------------------------------------|---------------------------------------------------------------------------------------------------------|
 | Model ID format   | `ollamacloud/{model-name}`           | Consistent with the reference gateway's `ollamacloud` alias; prefixed to disambiguate from local Ollama |
-| ProviderKind      | `ProviderKind::OllamaCloud`          | Already exists; no new enum variant needed                                                  |
-| Data organization | Grouped by `provider_kind` in arrays | Mirrors existing pattern; easy to scan and maintain                                         |
+| ProviderKind      | `ProviderKind::OllamaCloud`          | Already exists; no new enum variant needed                                                              |
+| Data organization | Grouped by `provider_kind` in arrays | Mirrors existing pattern; easy to scan and maintain                                                     |
 
 ## Data Flow
 
@@ -26,8 +26,8 @@ catalog() → Vec<ModelCatalogEntry>
 
 ## File Changes
 
-| File                                              | Action | Description                                                 |
-|---------------------------------------------------|--------|-------------------------------------------------------------|
+| File                                              | Action | Description                                                         |
+|---------------------------------------------------|--------|---------------------------------------------------------------------|
 | `crates/infrastructure/models-catalog/src/lib.rs` | Modify | Replace `ollama_cloud` array with full reference-gateway model list |
 
 ## Current Code Structure

@@ -87,19 +87,30 @@ impl ApprovalPrompt for LinePrompt {
     async fn request_decision(
         &self,
         request: &ApprovalRequest,
+        allowed_decisions: &[huginn_core::ApprovalDecision],
         cancel: CancellationToken,
-    ) -> Result<bool> {
+    ) -> Result<huginn_core::ApprovalDecision> {
         self.display(request);
         let Some(input) = &self.input else {
             eprintln!("Denied: no interactive approval or explicit action grant.");
-            return Ok(false);
+            return Ok(huginn_core::ApprovalDecision::Reject);
         };
         eprint!("Approve this exact change? [y/N] ");
         std::io::stderr().flush()?;
         let line = tokio::select! {_=cancel.cancelled()=>return Err(AgentError::Cancelled),line=input.line()=>line?};
-        Ok(line
+        let decision = if line
             .as_deref()
-            .is_some_and(|s| matches!(s.trim(), "y" | "Y" | "yes")))
+            .is_some_and(|s| matches!(s.trim(), "y" | "Y" | "yes"))
+        {
+            huginn_core::ApprovalDecision::ApproveOnce
+        } else {
+            huginn_core::ApprovalDecision::Reject
+        };
+        Ok(if allowed_decisions.contains(&decision) {
+            decision
+        } else {
+            huginn_core::ApprovalDecision::Reject
+        })
     }
 }
 pub struct Output {
@@ -108,7 +119,7 @@ pub struct Output {
 impl EventSink for Output {
     fn emit(&self, event: Event) {
         if self.json {
-            if let Ok(encoded) = serde_json::to_string(&event) {
+            if let Ok(encoded) = live_event_json(&event) {
                 println!("{encoded}");
             }
             return;
@@ -148,6 +159,15 @@ impl EventSink for Output {
         }
     }
 }
+
+fn live_event_json(event: &Event) -> serde_json::Result<String> {
+    let mut value = serde_json::to_value(event)?;
+    if let Event::ApprovalRequested { request, .. } = event {
+        value["request"]["preview"] = serde_json::Value::String(request.preview.clone());
+    }
+    serde_json::to_string(&value)
+}
+
 fn safe(text: &str) -> String {
     text.chars()
         .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))
@@ -156,9 +176,69 @@ fn safe(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{approval_header, effect_line, safe};
+    use super::{approval_header, effect_line, live_event_json, safe};
     use crate::terminal::LinePrompt;
-    use huginn_core::{ApprovalPrompt, ApprovalRequest, CancellationToken};
+    use huginn_core::{ApprovalPrompt, ApprovalRequest, CancellationToken, Event};
+
+    #[test]
+    fn live_json_event_keeps_unclassified_approval_preview() {
+        let event = Event::ApprovalRequested {
+            step: huginn_core::StepId::UNKNOWN,
+            request: ApprovalRequest {
+                id: "approval".into(),
+                action: "native.read".into(),
+                preview: "preview shown to the user".into(),
+                resource: None,
+                provenance: None,
+            },
+        };
+
+        let encoded = live_event_json(&event).expect("serialize live event");
+        let value: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(value["request"]["preview"], "preview shown to the user");
+    }
+
+    #[test]
+    fn live_json_event_keeps_explicitly_non_sensitive_approval_preview() {
+        let event = Event::ApprovalRequested {
+            step: huginn_core::StepId::UNKNOWN,
+            request: ApprovalRequest {
+                id: "approval".into(),
+                action: "native.read".into(),
+                preview: "preview shown to the user".into(),
+                resource: Some(huginn_core::ApprovalResource {
+                    canonical_path: "/workspace/file.txt".into(),
+                    sensitive: false,
+                }),
+                provenance: None,
+            },
+        };
+
+        let encoded = live_event_json(&event).expect("serialize live event");
+        let value: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(value["request"]["preview"], "preview shown to the user");
+    }
+
+    #[test]
+    fn live_json_event_keeps_sensitive_approval_preview() {
+        let event = Event::ApprovalRequested {
+            step: huginn_core::StepId::UNKNOWN,
+            request: ApprovalRequest {
+                id: "approval".into(),
+                action: "native.read".into(),
+                preview: "secret preview".into(),
+                resource: Some(huginn_core::ApprovalResource {
+                    canonical_path: "/workspace/secret.txt".into(),
+                    sensitive: true,
+                }),
+                provenance: None,
+            },
+        };
+
+        let encoded = live_event_json(&event).expect("serialize live event");
+        let value: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(value["request"]["preview"], "secret preview");
+    }
 
     #[test]
     fn approval_header_numbers_repeated_identical_requests_without_claiming_difference() {
@@ -258,15 +338,22 @@ mod tests {
             id: "first".into(),
             action: "native.shell".into(),
             preview: "Directory: /tmp/work\nCommand: echo hi".into(),
+            resource: None,
+            provenance: None,
         };
         // Drive two `approve()` calls synchronously via a oneshot runtime.
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .expect("runtime must build");
-        let first_approved = runtime.block_on(policy.request_decision(&request, cancel.clone()));
+        let allowed = [
+            huginn_core::ApprovalDecision::Reject,
+            huginn_core::ApprovalDecision::ApproveOnce,
+        ];
+        let first_approved =
+            runtime.block_on(policy.request_decision(&request, &allowed, cancel.clone()));
         assert!(first_approved.is_ok());
-        let second_approved = runtime.block_on(policy.request_decision(&request, cancel));
+        let second_approved = runtime.block_on(policy.request_decision(&request, &allowed, cancel));
         assert!(second_approved.is_ok());
         // The two calls advanced the counter to 2 within the same turn.
         assert_eq!(policy.turn_count(), 2);

@@ -25,6 +25,8 @@ impl Tool for Echo {
                 id: call.id.clone(),
                 action: "author.echo".into(),
                 preview: "Emitir echo".into(),
+                resource: None,
+                provenance: None,
             }),
             payload: Default::default(),
         })

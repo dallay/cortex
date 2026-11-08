@@ -74,11 +74,11 @@ From the reference gateway's `providerRegistry.ts`:
 
 ## Risks
 
-| Risk                                               | Likelihood | Mitigation                                              |
-|----------------------------------------------------|------------|---------------------------------------------------------|
-| Catalog drift (the reference gateway adds models)              | Medium     | Schedule periodic sync from reference-gateway registry          |
+| Risk                                               | Likelihood | Mitigation                                                          |
+|----------------------------------------------------|------------|---------------------------------------------------------------------|
+| Catalog drift (the reference gateway adds models)  | Medium     | Schedule periodic sync from reference-gateway registry              |
 | Model name format mismatch (`ollamacloud/` prefix) | Low        | Use exact IDs from the reference gateway; verify against actual API |
-| Memory bloat from excessive model entries          | Low        | Cap static catalog at ~50 models per provider kind      |
+| Memory bloat from excessive model entries          | Low        | Cap static catalog at ~50 models per provider kind                  |
 
 ## Rollback Plan
 

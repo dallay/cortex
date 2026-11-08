@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {HTMLAttributes} from "vue";
 import {cn} from "@/lib/utils";
 import type {AlertVariants} from ".";
@@ -12,10 +12,10 @@ const props = defineProps<{
 
 <template>
   <div
-    data-slot="alert"
     :class="cn(alertVariants({ variant }), props.class)"
+    data-slot="alert"
     role="alert"
   >
-    <slot />
+    <slot/>
   </div>
 </template>
