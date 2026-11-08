@@ -7,6 +7,8 @@ pub mod artifacts;
 pub mod auth;
 pub mod domain;
 pub mod embedding_port;
+#[cfg(feature = "h5-diagnostic")]
+pub mod h5_diagnostic;
 pub mod memory_search;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod minilm_checkpoint;

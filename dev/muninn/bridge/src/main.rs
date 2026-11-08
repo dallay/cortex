@@ -27,7 +27,6 @@ use sha2::{Digest, Sha256};
 
 struct App {
     store: Store,
-    token: String,
     secret_patterns: Vec<String>,
     encoder: std::sync::Arc<dyn EmbeddingPort + Send + Sync>,
 }
@@ -198,12 +197,12 @@ impl From<Conversation> for ConversationOutput {
     }
 }
 
-async fn authenticate(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
+async fn authenticate(State(token): State<String>, request: Request, next: Next) -> Response {
     let header = request
         .headers()
         .get("authorization")
         .map_or(&[][..], |v| v.as_bytes());
-    if !authorized(header, &app.token) {
+    if !authorized(header, &token) {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error":"unauthorized"})),
@@ -437,6 +436,75 @@ async fn search_messages(
     ))
 }
 
+#[cfg(feature = "h5-diagnostic")]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct H5DiagnosticInput {
+    query: String,
+    session_id: String,
+    limit: Option<u16>,
+    threshold: Option<f64>,
+    candidate_aliases: std::collections::HashMap<uuid::Uuid, String>,
+}
+
+#[cfg(feature = "h5-diagnostic")]
+#[derive(Serialize)]
+struct H5DiagnosticOutput {
+    ann: Vec<muninn_bridge_spike::h5_diagnostic::RankedHit>,
+    exact: Vec<muninn_bridge_spike::h5_diagnostic::RankedHit>,
+}
+
+/// Authenticated, feature-gated H5-only comparison. Never returns message payloads.
+#[cfg(feature = "h5-diagnostic")]
+async fn h5_diagnostic_search(
+    State(app): State<Arc<App>>,
+    payload: Result<Json<H5DiagnosticInput>, JsonRejection>,
+) -> Result<Json<H5DiagnosticOutput>, Error> {
+    let Json(input) = payload.map_err(|_| Error::Input)?;
+    let request = SearchInput {
+        query: input.query,
+        session_id: Some(input.session_id),
+        limit: input.limit,
+        threshold: input.threshold,
+    }
+    .normalize()
+    .map_err(|_| Error::Input)?;
+    if request.session_id.as_deref().is_none_or(str::is_empty)
+        || !muninn_bridge_spike::h5_diagnostic::validate_aliases(&input.candidate_aliases)
+    {
+        return Err(Error::Input);
+    }
+    if app
+        .secret_patterns
+        .iter()
+        .any(|secret| request.query.contains(secret))
+    {
+        return Err(Error::Input);
+    }
+    let embedding = embed(app.encoder.as_ref(), &request.query)?;
+    let ann = storage_call(app.store.search_messages(
+        &embedding,
+        request.session_id.as_deref(),
+        request.limit,
+        request.threshold,
+    ))
+    .await?;
+    let exact = storage_call(app.store.search_messages_exact(
+        &embedding,
+        request.session_id.as_deref(),
+        app.encoder.space_id(),
+        request.limit,
+        request.threshold,
+    ))
+    .await?;
+    Ok(Json(H5DiagnosticOutput {
+        ann: muninn_bridge_spike::h5_diagnostic::project(ann, &input.candidate_aliases)
+            .map_err(|_| Error::Input)?,
+        exact: muninn_bridge_spike::h5_diagnostic::project(exact, &input.candidate_aliases)
+            .map_err(|_| Error::Input)?,
+    }))
+}
+
 async fn get(
     State(app): State<Arc<App>>,
     payload: Result<Json<GetInput>, JsonRejection>,
@@ -541,8 +609,7 @@ async fn run() -> Result<(), &'static str> {
         .map_err(|_| "vector_index")?;
     let state = Arc::new(App {
         store,
-        token: token.clone(),
-        secret_patterns: vec![token, password.to_owned()],
+        secret_patterns: vec![token.clone(), password.to_owned()],
         encoder: Arc::new(encoder),
     });
     let app = Router::new()
@@ -558,9 +625,15 @@ async fn run() -> Result<(), &'static str> {
         .route("/clear_session", post(clear_session))
         .route("/delete_message", post(delete_message))
         .route("/search_messages", post(search_messages))
-        .fallback(unsupported)
+        .fallback(unsupported);
+    #[cfg(feature = "h5-diagnostic")]
+    let app = app.route("/h5/diagnostic/search", post(h5_diagnostic_search));
+    let app = app
         .layer(DefaultBodyLimit::max(1_048_576))
-        .layer(middleware::from_fn_with_state(state.clone(), authenticate))
+        .layer(middleware::from_fn_with_state(
+            token,
+            authenticate,
+        ))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080")
         .await
@@ -585,5 +658,29 @@ mod schema_input_tests {
         assert!(valid_schema_text("PERSON", 128));
         assert!(!valid_schema_text("  ", 128));
         assert!(!valid_schema_text(&"x".repeat(129), 128));
+    }
+
+    #[cfg(feature = "h5-diagnostic")]
+    #[tokio::test]
+    async fn h5_diagnostic_http_route_rejects_unauthenticated_requests() {
+        use axum::{body::Body, http::Request, middleware, routing::post, Router};
+        use tower::ServiceExt;
+
+        let app = Router::new()
+            .route("/h5/diagnostic/search", post(|| async { "unreachable" }))
+            .layer(middleware::from_fn_with_state(
+                "test-token".to_owned(),
+                authenticate,
+            ));
+        let response = app
+            .oneshot(
+                Request::post("/h5/diagnostic/search")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }

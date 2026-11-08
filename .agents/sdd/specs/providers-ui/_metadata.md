@@ -4,6 +4,8 @@ displayName: Providers UI
 version: 1.0.0
 status: active
 kind: frontend
+model: nan/deepseek-v4-flash
+thinking: high
 description: >
   Frontend UX for the Rook dashboard's AI provider management flows.
   Captures the 3-screen navigation model (Catalog → Details → Connection Modal),
