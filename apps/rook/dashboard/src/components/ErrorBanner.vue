@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {AlertCircle} from "@lucide/vue";
 import {Alert, AlertDescription} from "@/components/ui/alert";
 
@@ -12,8 +12,8 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <Alert variant="destructive" class="mb-4">
-    <AlertCircle class="h-4 w-4" />
+  <Alert class="mb-4" variant="destructive">
+    <AlertCircle class="h-4 w-4"/>
     <AlertDescription class="flex items-center justify-between gap-3">
       {{ message }}
       <button
@@ -24,7 +24,7 @@ const emit = defineEmits<{
       >
         Retry
       </button>
-      <slot v-else />
+      <slot v-else/>
     </AlertDescription>
   </Alert>
 </template>

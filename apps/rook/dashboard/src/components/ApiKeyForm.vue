@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 /**
  * ApiKeyForm — shared form for creating and editing API keys.
  *
@@ -28,10 +28,7 @@ import {Checkbox} from "@/components/ui/checkbox";
 import {Input} from "@/components/ui/input";
 import {NativeSelect, NativeSelectOption} from "@/components/ui/native-select";
 import type {ModelsByProvider} from "@/composables/useAvailableModels";
-import {
-  PROVIDER_KINDS,
-  type ProviderKind,
-} from "@/config/providerCatalog";
+import {PROVIDER_KINDS, type ProviderKind,} from "@/config/providerCatalog";
 import type {ScopeDef, ScopeGroup} from "@/config/scopes";
 import type {ProviderConnectionResponse} from "@/lib/api";
 
@@ -212,17 +209,17 @@ function scopeSlug(value: string): string {
 
 <template>
   <form
-    data-testid="api-key-form"
     class="space-y-6"
+    data-testid="api-key-form"
     @submit.prevent="emit('submit')"
   >
     <!-- Label -->
     <div class="space-y-2">
-      <label for="api-key-label" class="text-sm font-medium">Label</label>
+      <label class="text-sm font-medium" for="api-key-label">Label</label>
       <Input
         id="api-key-label"
-        data-testid="input-api-key-label"
         :model-value="modelValue.label"
+        data-testid="input-api-key-label"
         placeholder="e.g., opencode-agent, hermes-agent"
         @update:model-value="(v) => update('label', String(v ?? ''))"
       />
@@ -232,14 +229,15 @@ function scopeSlug(value: string): string {
     <div class="space-y-2" data-testid="api-key-scopes">
       <p class="text-sm font-medium">Scopes</p>
       <p class="text-xs text-muted-foreground">
-        Select what this key is allowed to do. Defaults to least-privilege — enable Admin explicitly if needed.
+        Select what this key is allowed to do. Defaults to least-privilege — enable Admin explicitly
+        if needed.
       </p>
       <div class="space-y-4 pt-2">
         <div
           v-for="entry in groupedScopes"
           :key="entry.group"
-          class="space-y-2"
           :data-testid="`scope-group-${entry.group}`"
+          class="space-y-2"
         >
           <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             {{ groupLabel[entry.group] }}
@@ -248,17 +246,17 @@ function scopeSlug(value: string): string {
             <label
               v-for="scope in entry.scopes"
               :key="scope.value"
-              :for="`scope-checkbox-${scopeSlug(scope.value)}`"
-              :data-testid="`scope-row-${scopeSlug(scope.value)}`"
-              :data-scope-value="scope.value"
-              class="flex items-start gap-3 rounded-md border p-3 hover:bg-muted/30 cursor-pointer"
               :class="scope.danger ? 'border-destructive/30 bg-destructive/5' : ''"
+              :data-scope-value="scope.value"
+              :data-testid="`scope-row-${scopeSlug(scope.value)}`"
+              :for="`scope-checkbox-${scopeSlug(scope.value)}`"
+              class="flex items-start gap-3 rounded-md border p-3 hover:bg-muted/30 cursor-pointer"
             >
               <Checkbox
                 :id="`scope-checkbox-${scopeSlug(scope.value)}`"
-                :model-value="isScopeChecked(scope)"
                 :aria-label="scope.label"
                 :data-testid="`scope-checkbox-${scopeSlug(scope.value)}`"
+                :model-value="isScopeChecked(scope)"
                 @update:model-value="(v) => toggleScope(scope.value, v === true)"
               />
               <div class="flex-1 space-y-0.5">
@@ -266,11 +264,11 @@ function scopeSlug(value: string): string {
                   <code class="text-sm font-mono font-semibold">{{ scope.label }}</code>
                   <Badge
                     v-if="scope.danger"
-                    variant="destructive"
                     :data-testid="`scope-danger-${scopeSlug(scope.value)}`"
                     class="gap-1"
+                    variant="destructive"
                   >
-                    <ShieldAlert class="h-3 w-3" />
+                    <ShieldAlert class="h-3 w-3"/>
                     Danger
                   </Badge>
                 </div>
@@ -284,12 +282,12 @@ function scopeSlug(value: string): string {
 
     <!-- Tier -->
     <div class="space-y-2">
-      <label for="api-key-tier" class="text-sm font-medium">Rate limit tier</label>
+      <label class="text-sm font-medium" for="api-key-tier">Rate limit tier</label>
       <NativeSelect
         id="api-key-tier"
         :model-value="modelValue.tier"
-        data-testid="api-key-tier"
         aria-label="Rate limit tier"
+        data-testid="api-key-tier"
         @update:model-value="(v) => update('tier', String(v ?? modelValue.tier))"
       >
         <NativeSelectOption
@@ -314,7 +312,7 @@ function scopeSlug(value: string): string {
       <div v-if="providers.length === 0" class="text-xs text-muted-foreground italic">
         No providers configured.
       </div>
-      <Accordion v-else type="multiple" class="w-full">
+      <Accordion v-else class="w-full" type="multiple">
         <AccordionItem
           v-for="[kind, kindProviders] in providersByKind"
           :key="kind"
@@ -324,24 +322,28 @@ function scopeSlug(value: string): string {
             <div class="flex items-center gap-2 w-full pr-2">
               <!-- Group-level select all checkbox -->
               <Checkbox
-                :model-value="isKindGroupChecked(kind)"
-                :indeterminate="isKindGroupIndeterminate(kind)"
                 :data-testid="`provider-kind-checkbox-${kind}`"
+                :indeterminate="isKindGroupIndeterminate(kind)"
+                :model-value="isKindGroupChecked(kind)"
                 @update:model-value="(checked: boolean | 'indeterminate') => { if (typeof checked === 'boolean') toggleKindGroup(kind, checked); }"
               />
               <span class="text-sm font-medium">
-                {{ getCatalogEntry(kind)?.displayNameKey
+                {{
+                  getCatalogEntry(kind)?.displayNameKey
                     ? $t(getCatalogEntry(kind)?.displayNameKey ?? kind)
-                    : kind }}
+                    : kind
+                }}
               </span>
-              <Badge variant="secondary" class="text-xs">
+              <Badge class="text-xs" variant="secondary">
                 {{ kindProviders.length }}
               </Badge>
               <!-- Show selected count -->
               <span class="text-xs text-muted-foreground ml-auto">
-                {{ kindProviders.filter(p => isProviderChecked(p.id)).length }}/{{ kindProviders.length }}
+                {{
+                  kindProviders.filter(p => isProviderChecked(p.id)).length
+                }}/{{ kindProviders.length }}
               </span>
-              <ChevronDown class="h-4 w-4 text-muted-foreground shrink-0" />
+              <ChevronDown class="h-4 w-4 text-muted-foreground shrink-0"/>
             </div>
           </AccordionTrigger>
           <AccordionContent>
@@ -349,15 +351,15 @@ function scopeSlug(value: string): string {
               <label
                 v-for="provider in kindProviders"
                 :key="provider.id"
+                :data-testid="`provider-row-${provider.id}`"
                 :for="`provider-checkbox-${provider.id}`"
                 class="flex items-center gap-2 cursor-pointer"
-                :data-testid="`provider-row-${provider.id}`"
               >
                 <Checkbox
                   :id="`provider-checkbox-${provider.id}`"
                   :aria-label="provider.name"
-                  :model-value="isProviderChecked(provider.id)"
                   :data-testid="`provider-checkbox-${provider.id}`"
+                  :model-value="isProviderChecked(provider.id)"
                   @update:model-value="(v) => toggleProvider(provider.id, v === true)"
                 />
                 <span class="text-sm">{{ provider.name }}</span>
@@ -381,8 +383,8 @@ function scopeSlug(value: string): string {
         <div
           v-for="entry in modelsByProvider"
           :key="entry.provider.id"
-          class="space-y-1"
           :data-testid="`model-group-${entry.provider.id}`"
+          class="space-y-1"
         >
           <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             {{ entry.provider.name }}
@@ -392,15 +394,15 @@ function scopeSlug(value: string): string {
             <label
               v-for="model in entry.models"
               :key="model"
+              :data-testid="`model-row-${entry.provider.id}-${model}`"
               :for="`model-checkbox-${entry.provider.id}-${model}`"
               class="flex items-center gap-2"
-              :data-testid="`model-row-${entry.provider.id}-${model}`"
             >
               <Checkbox
                 :id="`model-checkbox-${entry.provider.id}-${model}`"
                 :aria-label="model"
-                :model-value="isModelChecked(model)"
                 :data-testid="`model-checkbox-${entry.provider.id}-${model}`"
+                :model-value="isModelChecked(model)"
                 @update:model-value="(v) => toggleModel(model, v === true)"
               />
               <code class="text-xs font-mono">{{ model }}</code>
@@ -411,76 +413,83 @@ function scopeSlug(value: string): string {
     </div>
 
     <!-- Strict spending budget -->
-    <fieldset class="space-y-3 rounded-md border border-border p-4" data-testid="spending-budget-controls">
+    <fieldset class="space-y-3 rounded-md border border-border p-4"
+              data-testid="spending-budget-controls">
       <legend class="px-1 text-sm font-medium">{{ t('apiKeys.budgetTitle') }}</legend>
       <p class="text-xs text-muted-foreground">{{ t('apiKeys.budgetExplanation') }}</p>
       <label class="flex items-center gap-2 text-sm" for="spending-budget-enabled">
         <Checkbox
           id="spending-budget-enabled"
-          data-testid="checkbox-spending-budget-enabled"
           :aria-label="t('apiKeys.budgetEnabled')"
           :model-value="modelValue.spendingBudgetEnabled"
+          data-testid="checkbox-spending-budget-enabled"
           @update:model-value="(v) => setBudgetEnabled(v === true)"
         />
         {{ t('apiKeys.budgetEnabled') }}
       </label>
-      <div class="grid gap-3 sm:grid-cols-2" :aria-disabled="!modelValue.spendingBudgetEnabled">
+      <div :aria-disabled="!modelValue.spendingBudgetEnabled" class="grid gap-3 sm:grid-cols-2">
         <div class="space-y-2">
-          <label for="spending-budget-amount" class="text-sm font-medium">{{ t('apiKeys.budgetAmount') }}</label>
+          <label class="text-sm font-medium"
+                 for="spending-budget-amount">{{ t('apiKeys.budgetAmount') }}</label>
           <Input
             id="spending-budget-amount"
-            data-testid="input-spending-budget-amount"
-            type="number"
-            min="0.000001"
-            step="0.000001"
-            inputmode="decimal"
             :disabled="!modelValue.spendingBudgetEnabled"
             :model-value="modelValue.spendingBudgetAmountUsd"
+            data-testid="input-spending-budget-amount"
+            inputmode="decimal"
+            min="0.000001"
+            step="0.000001"
+            type="number"
             @update:model-value="(v) => update('spendingBudgetAmountUsd', String(v ?? ''))"
           />
         </div>
         <div class="space-y-2">
-          <label for="spending-budget-request-limit" class="text-sm font-medium">{{ t('apiKeys.budgetRequestLimit') }}</label>
+          <label class="text-sm font-medium"
+                 for="spending-budget-request-limit">{{ t('apiKeys.budgetRequestLimit') }}</label>
           <Input
             id="spending-budget-request-limit"
-            data-testid="input-spending-budget-request-limit"
-            type="number"
-            min="0.000001"
-            step="0.000001"
-            inputmode="decimal"
             :disabled="!modelValue.spendingBudgetEnabled"
             :model-value="modelValue.spendingBudgetRequestLimitUsd"
+            data-testid="input-spending-budget-request-limit"
+            inputmode="decimal"
+            min="0.000001"
+            step="0.000001"
+            type="number"
             @update:model-value="(v) => update('spendingBudgetRequestLimitUsd', String(v ?? ''))"
           />
         </div>
         <div class="space-y-2 sm:col-span-2">
-          <label for="spending-budget-window" class="text-sm font-medium">{{ t('apiKeys.budgetWindow') }}</label>
+          <label class="text-sm font-medium"
+                 for="spending-budget-window">{{ t('apiKeys.budgetWindow') }}</label>
           <NativeSelect
             id="spending-budget-window"
-            data-testid="select-spending-budget-window"
             :aria-label="t('apiKeys.budgetWindow')"
             :disabled="!modelValue.spendingBudgetEnabled"
             :model-value="modelValue.spendingBudgetWindow"
+            data-testid="select-spending-budget-window"
             @update:model-value="(v) => update('spendingBudgetWindow', v === 'monthly' ? 'monthly' : 'daily')"
           >
             <NativeSelectOption value="daily">{{ t('apiKeys.budgetDaily') }}</NativeSelectOption>
-            <NativeSelectOption value="monthly">{{ t('apiKeys.budgetMonthly') }}</NativeSelectOption>
+            <NativeSelectOption value="monthly">{{
+                t('apiKeys.budgetMonthly')
+              }}
+            </NativeSelectOption>
           </NativeSelect>
         </div>
       </div>
-      <p v-if="spendingLimitExceedsBudget" role="alert" class="text-sm text-destructive">
+      <p v-if="spendingLimitExceedsBudget" class="text-sm text-destructive" role="alert">
         {{ t('apiKeys.budgetValidation') }}
       </p>
     </fieldset>
 
     <!-- Expires at -->
     <div class="space-y-2">
-      <label for="api-key-expires" class="text-sm font-medium">Expires at (optional)</label>
+      <label class="text-sm font-medium" for="api-key-expires">Expires at (optional)</label>
       <Input
         id="api-key-expires"
+        :model-value="modelValue.expiresAt ?? ''"
         data-testid="input-api-key-expires"
         type="datetime-local"
-        :model-value="modelValue.expiresAt ?? ''"
         @update:model-value="(v) => update('expiresAt', v ? String(v) : null)"
       />
     </div>
@@ -488,22 +497,23 @@ function scopeSlug(value: string): string {
     <!-- Error display -->
     <div
       v-if="error"
-      data-testid="api-key-form-error"
       class="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"
+      data-testid="api-key-form-error"
     >
       <div class="flex items-start gap-2">
-        <AlertTriangle class="h-4 w-4 mt-0.5" />
+        <AlertTriangle class="h-4 w-4 mt-0.5"/>
         <span>{{ error }}</span>
       </div>
     </div>
 
     <!-- Footer -->
     <div class="flex items-center justify-end gap-2 pt-2">
-      <Button type="button" variant="outline" :data-testid="'api-key-cancel'" @click="emit('cancel')">
+      <Button :data-testid="'api-key-cancel'" type="button" variant="outline"
+              @click="emit('cancel')">
         {{ cancelLabel }}
       </Button>
-      <Button type="submit" :data-testid="'api-key-submit'">
-        <Key class="h-4 w-4 mr-1" />
+      <Button :data-testid="'api-key-submit'" type="submit">
+        <Key class="h-4 w-4 mr-1"/>
         {{ submitLabel }}
       </Button>
     </div>

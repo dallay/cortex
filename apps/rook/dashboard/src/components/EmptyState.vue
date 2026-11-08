@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {Component} from "vue";
 import {
   Empty,
@@ -20,14 +20,14 @@ defineProps<{
   <Empty>
     <EmptyHeader>
       <EmptyMedia v-if="icon" variant="icon">
-        <component :is="icon" />
+        <component :is="icon"/>
       </EmptyMedia>
       <EmptyTitle v-if="title">{{ title }}</EmptyTitle>
       <EmptyDescription v-if="description">{{ description }}</EmptyDescription>
     </EmptyHeader>
     <EmptyContent v-if="$slots.default || $slots.actions">
-      <slot />
-      <slot name="actions" />
+      <slot/>
+      <slot name="actions"/>
     </EmptyContent>
   </Empty>
 </template>

@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {HTMLAttributes} from "vue";
 import {cn} from "@/lib/utils";
 
@@ -9,9 +9,9 @@ const props = defineProps<{
 
 <template>
   <thead
-    data-slot="table-header"
     :class="cn('[&_tr]:border-b', props.class)"
+    data-slot="table-header"
   >
-    <slot />
+  <slot/>
   </thead>
 </template>

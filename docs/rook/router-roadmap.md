@@ -2,9 +2,7 @@
 
 Implementation plan for turning Rook into a small, intelligent AI router.
 
-**Status:** approved specification, awaiting Linear import.
-**Scope:** Rook only. Huginn is not covered.
-**Reference basis:** an external AI gateway implementation, consulted only as a capability checklist — never as a template.
+**Status:** approved specification, awaiting Linear import. **Scope:** Rook only. Huginn is not covered. **Reference basis:** an external AI gateway implementation, consulted only as a capability checklist — never as a template.
 
 ## Why this document exists
 
@@ -26,27 +24,27 @@ Compression engines, fusion and pipeline combos, per-step prompts, shadow routin
 
 ## Parity snapshot
 
-| Area | Rook today | Reference | Coverage |
-| --- | --- | --- | --- |
-| API key governance | 5 typed scopes, tiers, allowlists, USD budgets, rotation, revocation | + groups, IP allowlists, schedules, device binding | ~70% |
-| Routing selection | 1 wired strategy (`priority`), no scoring | 21 strategies, 16-factor scorer | ~15% |
-| Format and response | Domain pivot, SSE for OpenAI and Anthropic | N-squared pair registry, compression engines | ~20% |
-| Client endpoints | 4 client-facing routes | 40+ families | ~10% |
-| Providers | 8 kinds, 5 adapter crates, 2 auth mechanisms | ~380 provider ids, 8 auth mechanisms | ~5% |
-| Combos | Sound model, 1 strategy, no weights or nesting | Schema v2, nesting, wildcards, weights, fusion | ~35% |
+| Area                | Rook today                                                           | Reference                                          | Coverage |
+|---------------------|----------------------------------------------------------------------|----------------------------------------------------|----------|
+| API key governance  | 5 typed scopes, tiers, allowlists, USD budgets, rotation, revocation | + groups, IP allowlists, schedules, device binding | ~70%     |
+| Routing selection   | 1 wired strategy (`priority`), no scoring                            | 21 strategies, 16-factor scorer                    | ~15%     |
+| Format and response | Domain pivot, SSE for OpenAI and Anthropic                           | N-squared pair registry, compression engines       | ~20%     |
+| Client endpoints    | 4 client-facing routes                                               | 40+ families                                       | ~10%     |
+| Providers           | 8 kinds, 5 adapter crates, 2 auth mechanisms                         | ~380 provider ids, 8 auth mechanisms               | ~5%      |
+| Combos              | Sound model, 1 strategy, no weights or nesting                       | Schema v2, nesting, wildcards, weights, fusion     | ~35%     |
 
 Rook is already ahead on two axes and should not trade them away: key security (HMAC with a server secret, restrictions that fail closed, no plaintext at rest) and translation topology (domain pivot instead of an N-squared matrix).
 
 ## Roadmap at a glance
 
-| Phase | Goal | Issues | Gate |
-| --- | --- | --- | --- |
-| 0 | Integrity: remove what lies, keep what works | 6 | Suite green, no dead declarations |
-| 1 | Descriptor registry: providers become data | 8 | Adding NaN costs zero Rust |
-| 2 | Selection engine: the intelligent part | 6 | Every choice is explainable |
-| 3 | Explainability surface | 2 | Preview matches execution |
-| 4 | Client surface completion | 2 | Gemini and embeddings work |
-| 5 | Authentication breadth | 3 | Drivers, gated by DALLAY-692 |
+| Phase | Goal                                         | Issues | Gate                              |
+|-------|----------------------------------------------|--------|-----------------------------------|
+| 0     | Integrity: remove what lies, keep what works | 6      | Suite green, no dead declarations |
+| 1     | Descriptor registry: providers become data   | 8      | Adding NaN costs zero Rust        |
+| 2     | Selection engine: the intelligent part       | 6      | Every choice is explainable       |
+| 3     | Explainability surface                       | 2      | Preview matches execution         |
+| 4     | Client surface completion                    | 2      | Gemini and embeddings work        |
+| 5     | Authentication breadth                       | 3      | Drivers, gated by DALLAY-692      |
 
 Dependency edges are declared per issue below (`Depends on`). Phase 0 and Phase 1 can run concurrently; Phase 2 depends on Phase 1.
 
@@ -58,9 +56,9 @@ Shrink before growing. Nothing here adds a feature; every issue removes a false 
 
 ### ROOK-P0-1 · \[ROOK\]\[P1\] Delete the dead format-translation layer
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| High | `product/rook` `type/chore` `area/transport` | S | — |
+| Priority | Labels                                       | Size | Depends on |
+|----------|----------------------------------------------|------|------------|
+| High     | `product/rook` `type/chore` `area/transport` | S    | —          |
 
 #### Context
 
@@ -99,9 +97,9 @@ Adding new wire formats. Gemini ingress is ROOK-P4-2.
 
 ### ROOK-P0-2 · \[ROOK\]\[P1\] Make the declared routing surface truthful
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| High | `product/rook` `type/chore` `area/runtime` | S | — |
+| Priority | Labels                                     | Size | Depends on |
+|----------|--------------------------------------------|------|------------|
+| High     | `product/rook` `type/chore` `area/runtime` | S    | —          |
 
 #### Context
 
@@ -133,9 +131,9 @@ The new policy set (priority, weighted, round-robin, least-latency, least-cost, 
 
 ### ROOK-P0-3 · \[ROOK\]\[P1\] Consolidate the three TokenBucket implementations
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| High | `product/rook` `type/chore` `area/transport` | S | — |
+| Priority | Labels                                       | Size | Depends on |
+|----------|----------------------------------------------|------|------------|
+| High     | `product/rook` `type/chore` `area/transport` | S    | —          |
 
 #### Context
 
@@ -166,9 +164,9 @@ Changing rate-limit policies or the admin rule store.
 
 ### ROOK-P0-4 · \[ROOK\]\[P1\] Remove the unenforced tokens_per_minute field
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| High | `product/rook` `type/chore` `area/auth` | S | — |
+| Priority | Labels                                  | Size | Depends on |
+|----------|-----------------------------------------|------|------------|
+| High     | `product/rook` `type/chore` `area/auth` | S    | —          |
 
 #### Context
 
@@ -194,9 +192,9 @@ Implementing real per-key token limits. If that becomes a requirement it needs i
 
 ### ROOK-P0-5 · \[ROOK\]\[P1\] Fix per-key budgets rejecting every request
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| High | `product/rook` `type/bug` `area/runtime` | S–M | — |
+| Priority | Labels                                   | Size | Depends on |
+|----------|------------------------------------------|------|------------|
+| High     | `product/rook` `type/bug` `area/runtime` | S–M  | —          |
 
 #### Context
 
@@ -223,9 +221,9 @@ Upstream billing reconciliation and provider-side cost verification.
 
 ### ROOK-P0-6 · \[ROOK\]\[P2\] Correct documentation drift in Rook docs
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| Medium | `product/rook` `type/chore` | S | — |
+| Priority | Labels                      | Size | Depends on |
+|----------|-----------------------------|------|------------|
+| Medium   | `product/rook` `type/chore` | S    | —          |
 
 #### Context
 
@@ -259,9 +257,9 @@ The structural investment. After this phase, adding a provider is data.
 
 ### ROOK-P1-1 · \[ROOK\]\[P1\] Introduce ProviderDescriptor and the descriptor table
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| High | `product/rook` `type/feature` `area/runtime` | M | — |
+| Priority | Labels                                       | Size | Depends on |
+|----------|----------------------------------------------|------|------------|
+| High     | `product/rook` `type/feature` `area/runtime` | M    | —          |
 
 #### Context
 
@@ -309,9 +307,9 @@ Wiring descriptors into dependency injection (ROOK-P1-3) and deleting `ProviderK
 
 ### ROOK-P1-2 · \[ROOK\]\[P1\] Collapse provider crates into four protocol adapters
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| High | `product/rook` `type/feature` `area/runtime` | L | ROOK-P1-1 |
+| Priority | Labels                                       | Size | Depends on |
+|----------|----------------------------------------------|------|------------|
+| High     | `product/rook` `type/feature` `area/runtime` | L    | ROOK-P1-1  |
 
 #### Context
 
@@ -340,9 +338,9 @@ Adding new protocols (Bedrock, Vertex). Those are separate later issues.
 
 ### ROOK-P1-3 · \[ROOK\]\[P1\] Build adapters from descriptors instead of a match
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| High | `product/rook` `type/feature` `area/runtime` | M | ROOK-P1-1, ROOK-P1-2 |
+| Priority | Labels                                       | Size | Depends on           |
+|----------|----------------------------------------------|------|----------------------|
+| High     | `product/rook` `type/feature` `area/runtime` | M    | ROOK-P1-1, ROOK-P1-2 |
 
 #### Context
 
@@ -374,9 +372,9 @@ Removing `ProviderKind` from the domain (ROOK-P1-4).
 
 ### ROOK-P1-4 · \[ROOK\]\[P1\] Replace ProviderKind with a descriptor reference
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| High | `product/rook` `type/feature` `area/storage` | M | ROOK-P1-1 |
+| Priority | Labels                                       | Size | Depends on |
+|----------|----------------------------------------------|------|------------|
+| High     | `product/rook` `type/feature` `area/storage` | M    | ROOK-P1-1  |
 
 #### Context
 
@@ -401,9 +399,9 @@ Renaming or removing provider ids that are already public.
 
 ### ROOK-P1-5 · \[ROOK\]\[P1\] Retrofit the drift sites onto the descriptor table
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| High | `product/rook` `type/feature` `area/runtime` | M | ROOK-P1-4 |
+| Priority | Labels                                       | Size | Depends on |
+|----------|----------------------------------------------|------|------------|
+| High     | `product/rook` `type/feature` `area/runtime` | M    | ROOK-P1-4  |
 
 #### Context
 
@@ -436,9 +434,9 @@ Changing the OAuth flow itself (ROOK-P5-2).
 
 ### ROOK-P1-6 · \[ROOK\]\[P1\] Unify the model catalog and declare Tier-1 models
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| High | `product/rook` `type/feature` `area/runtime` | M | ROOK-P1-1 |
+| Priority | Labels                                       | Size | Depends on |
+|----------|----------------------------------------------|------|------------|
+| High     | `product/rook` `type/feature` `area/runtime` | M    | ROOK-P1-1  |
 
 #### Context
 
@@ -465,9 +463,9 @@ Fetching model lists dynamically from providers.
 
 ### ROOK-P1-7 · \[ROOK\]\[P1\] Drive the dashboard provider catalog from the backend
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| High | `product/rook` `type/feature` `area/dashboard` | M | ROOK-P1-1 |
+| Priority | Labels                                         | Size | Depends on |
+|----------|------------------------------------------------|------|------------|
+| High     | `product/rook` `type/feature` `area/dashboard` | M    | ROOK-P1-1  |
 
 #### Context
 
@@ -492,9 +490,9 @@ Redesigning the dashboard.
 
 ### ROOK-P1-8 · \[ROOK\]\[P1\] Prove plug and play: NaN is a table entry only
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| High | `product/rook` `type/test` `area/runtime` | S | ROOK-P1-3, ROOK-P1-6 |
+| Priority | Labels                                    | Size | Depends on           |
+|----------|-------------------------------------------|------|----------------------|
+| High     | `product/rook` `type/test` `area/runtime` | S    | ROOK-P1-3, ROOK-P1-6 |
 
 #### Context
 
@@ -532,9 +530,9 @@ Where "intelligent" actually lives. Depends on Phase 1 for a clean candidate set
 
 ### ROOK-P2-1 · \[ROOK\]\[P1\] Add the eligibility stage with reason codes
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| High | `product/rook` `type/feature` `area/runtime` | M | ROOK-P1-3 |
+| Priority | Labels                                       | Size | Depends on |
+|----------|----------------------------------------------|------|------------|
+| High     | `product/rook` `type/feature` `area/runtime` | M    | ROOK-P1-3  |
 
 #### Context
 
@@ -578,9 +576,9 @@ Scoring and ranking (ROOK-P2-2).
 
 ### ROOK-P2-2 · \[ROOK\]\[P1\] Add the scoring stage with Signals and SelectionReason
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| High | `product/rook` `type/feature` `area/runtime` | M | ROOK-P2-1 |
+| Priority | Labels                                       | Size | Depends on |
+|----------|----------------------------------------------|------|------------|
+| High     | `product/rook` `type/feature` `area/runtime` | M    | ROOK-P2-1  |
 
 #### Context
 
@@ -609,9 +607,9 @@ Scoring quality tuning and machine-learned ranking.
 
 ### ROOK-P2-3 · \[ROOK\]\[P1\] Replace RoutingStrategy with six policies
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| High | `product/rook` `type/feature` `area/runtime` | M | ROOK-P2-2 |
+| Priority | Labels                                       | Size | Depends on |
+|----------|----------------------------------------------|------|------------|
+| High     | `product/rook` `type/feature` `area/runtime` | M    | ROOK-P2-2  |
 
 #### Context
 
@@ -637,9 +635,9 @@ Route preview (ROOK-P3-1) and any adaptive or learned selection.
 
 ### ROOK-P2-4 · \[ROOK\]\[P2\] Make combo strategy real
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| Medium | `product/rook` `type/feature` `area/runtime` | S–M | ROOK-P2-3 |
+| Priority | Labels                                       | Size | Depends on |
+|----------|----------------------------------------------|------|------------|
+| Medium   | `product/rook` `type/feature` `area/runtime` | S–M  | ROOK-P2-3  |
 
 #### Context
 
@@ -666,9 +664,9 @@ New step fields (ROOK-P2-5).
 
 ### ROOK-P2-5 · \[ROOK\]\[P2\] Extend ComboStep with weight and a target union
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| Medium | `product/rook` `type/feature` `area/storage` | M | ROOK-P2-4 |
+| Priority | Labels                                       | Size | Depends on |
+|----------|----------------------------------------------|------|------------|
+| Medium   | `product/rook` `type/feature` `area/storage` | M    | ROOK-P2-4  |
 
 #### Context
 
@@ -694,9 +692,9 @@ Executing nested combos (ROOK-P2-6). This issue only permits referencing them.
 
 ### ROOK-P2-6 · \[ROOK\]\[P2\] Support nested combos with bounded depth
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| Medium | `product/rook` `type/feature` `area/runtime` | S–M | ROOK-P2-5 |
+| Priority | Labels                                       | Size | Depends on |
+|----------|----------------------------------------------|------|------------|
+| Medium   | `product/rook` `type/feature` `area/runtime` | S–M  | ROOK-P2-5  |
 
 #### Context
 
@@ -725,9 +723,9 @@ Fan-out or parallel execution of combo targets.
 
 ### ROOK-P3-1 · \[ROOK\]\[P2\] Expose POST /api/route/preview
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| Medium | `product/rook` `type/feature` `area/transport` | S–M | ROOK-P2-3 |
+| Priority | Labels                                         | Size | Depends on |
+|----------|------------------------------------------------|------|------------|
+| Medium   | `product/rook` `type/feature` `area/transport` | S–M  | ROOK-P2-3  |
 
 #### Context
 
@@ -754,9 +752,9 @@ Simulating an upstream response body.
 
 ### ROOK-P3-2 · \[ROOK\]\[P2\] Record bounded, redacted selection reasons in telemetry
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| Medium | `product/rook` `type/feature` `area/observability` | S | ROOK-P2-2 |
+| Priority | Labels                                             | Size | Depends on |
+|----------|----------------------------------------------------|------|------------|
+| Medium   | `product/rook` `type/feature` `area/observability` | S    | ROOK-P2-2  |
 
 #### Context
 
@@ -784,9 +782,9 @@ An analytics UI for selection reasons.
 
 ### ROOK-P4-1 · \[ROOK\]\[P2\] Support /v1/embeddings end to end
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| Medium | `product/rook` `type/feature` `area/transport` | S–M | ROOK-P1-2 |
+| Priority | Labels                                         | Size | Depends on |
+|----------|------------------------------------------------|------|------------|
+| Medium   | `product/rook` `type/feature` `area/transport` | S–M  | ROOK-P1-2  |
 
 #### Context
 
@@ -814,9 +812,9 @@ Rerank API, vector storage and RAG orchestration.
 
 ### ROOK-P4-2 · \[ROOK\]\[P2\] Add Gemini-compatible inbound ingress
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| Medium | `product/rook` `type/feature` `area/transport` | M | ROOK-P0-1, ROOK-P1-2 |
+| Priority | Labels                                         | Size | Depends on           |
+|----------|------------------------------------------------|------|----------------------|
+| Medium   | `product/rook` `type/feature` `area/transport` | M    | ROOK-P0-1, ROOK-P1-2 |
 
 #### Context
 
@@ -846,9 +844,9 @@ Vertex AI protocol and service-account authentication.
 
 ### ROOK-P5-1 · \[ROOK\]\[P2\] Extract an AuthDriver boundary
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| Medium | `product/rook` `type/feature` `area/auth` | M | ROOK-P1-1 |
+| Priority | Labels                                    | Size | Depends on |
+|----------|-------------------------------------------|------|------------|
+| Medium   | `product/rook` `type/feature` `area/auth` | M    | ROOK-P1-1  |
 
 #### Context
 
@@ -873,9 +871,9 @@ New auth mechanisms.
 
 ### ROOK-P5-2 · \[ROOK\]\[P2\] Consolidate OAuth into one driver
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| Medium | `product/rook` `type/feature` `area/auth` | M | ROOK-P5-1 |
+| Priority | Labels                                    | Size | Depends on |
+|----------|-------------------------------------------|------|------------|
+| Medium   | `product/rook` `type/feature` `area/auth` | M    | ROOK-P5-1  |
 
 #### Context
 
@@ -899,9 +897,9 @@ New OAuth providers.
 
 ### ROOK-P5-3 · \[ROOK\]\[P3\] Imported local-token driver
 
-| Priority | Labels | Size | Depends on |
-| --- | --- | --- | --- |
-| Low | `product/rook` `type/feature` `area/auth` | M | ROOK-P5-1, DALLAY-692 |
+| Priority | Labels                                    | Size | Depends on            |
+|----------|-------------------------------------------|------|-----------------------|
+| Low      | `product/rook` `type/feature` `area/auth` | M    | ROOK-P5-1, DALLAY-692 |
 
 #### Context
 
@@ -931,16 +929,16 @@ Browser cookie scraping, CLI token extraction, and anything DALLAY-692 does not 
 
 ## Existing issues affected
 
-| Existing issue | Disposition |
-| --- | --- |
-| DALLAY-712 — Consolidate the three TokenBucket implementations | Absorbed by ROOK-P0-3; close as superseded |
-| DALLAY-684 — Explainable cost, latency and weighted combo selection policies | Absorbed by ROOK-P2-2 and ROOK-P2-3; close as superseded |
-| DALLAY-688 — Deterministic route preview | Absorbed by ROOK-P3-1; close as superseded |
-| DALLAY-689 — Authorized embeddings requests | Absorbed by ROOK-P4-1; close as superseded |
-| DALLAY-690 — Native AWS Bedrock with SigV4 | Kept open. Becomes a Phase 6 issue: one adapter plus one descriptor, landing after Phase 1 and ROOK-P5-1 |
-| DALLAY-691 — Google Vertex AI with service authentication | Kept open, same disposition as DALLAY-690 |
-| DALLAY-692 — Validate authorized OAuth and subscription paths | Kept open. Gates ROOK-P5-3 and any imported-token work |
-| DALLAY-392 — Kiro provider integration | Kept open. Blocked on its upstream contract question, unrelated to this roadmap |
+| Existing issue                                                               | Disposition                                                                                              |
+|------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------|
+| DALLAY-712 — Consolidate the three TokenBucket implementations               | Absorbed by ROOK-P0-3; close as superseded                                                               |
+| DALLAY-684 — Explainable cost, latency and weighted combo selection policies | Absorbed by ROOK-P2-2 and ROOK-P2-3; close as superseded                                                 |
+| DALLAY-688 — Deterministic route preview                                     | Absorbed by ROOK-P3-1; close as superseded                                                               |
+| DALLAY-689 — Authorized embeddings requests                                  | Absorbed by ROOK-P4-1; close as superseded                                                               |
+| DALLAY-690 — Native AWS Bedrock with SigV4                                   | Kept open. Becomes a Phase 6 issue: one adapter plus one descriptor, landing after Phase 1 and ROOK-P5-1 |
+| DALLAY-691 — Google Vertex AI with service authentication                    | Kept open, same disposition as DALLAY-690                                                                |
+| DALLAY-692 — Validate authorized OAuth and subscription paths                | Kept open. Gates ROOK-P5-3 and any imported-token work                                                   |
+| DALLAY-392 — Kiro provider integration                                       | Kept open. Blocked on its upstream contract question, unrelated to this roadmap                          |
 
 ## Import procedure
 

@@ -576,9 +576,9 @@ async fn stream_returns_chunks_on_success() {
         .and(wiremock::matchers::path("/chat/completions"))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(
             concat!(
-                "data: {\"id\":\"groq-1\",\"model\":\"llama-3.3-70b\",\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n",
-                "data: {\"id\":\"groq-1\",\"model\":\"llama-3.3-70b\",\"choices\":[{\"delta\":{\"content\":\" world\"},\"finish_reason\":null}]}\n\n",
-                "data: [DONE]\n\n",
+            "data: {\"id\":\"groq-1\",\"model\":\"llama-3.3-70b\",\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"groq-1\",\"model\":\"llama-3.3-70b\",\"choices\":[{\"delta\":{\"content\":\" world\"},\"finish_reason\":null}]}\n\n",
+            "data: [DONE]\n\n",
             )
         ))
         .mount(&server)

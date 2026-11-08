@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {HTMLAttributes} from "vue";
 import {cn} from "@/lib/utils";
 
@@ -9,9 +9,9 @@ const props = defineProps<{
 
 <template>
   <tfoot
-    data-slot="table-footer"
     :class="cn('bg-muted/50 border-t font-medium [&>tr]:last:border-b-0', props.class)"
+    data-slot="table-footer"
   >
-    <slot />
+  <slot/>
   </tfoot>
 </template>

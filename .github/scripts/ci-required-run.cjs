@@ -1,4 +1,4 @@
-const { evaluateRequiredChecks } = require('./ci-required.cjs');
+const {evaluateRequiredChecks} = require('./ci-required.cjs');
 
 const resultKeys = {
   changes: 'CHANGES',
@@ -32,8 +32,10 @@ const outputKeys = {
   labeler: 'CHANGES_LABELER',
 };
 
-const results = Object.fromEntries(Object.entries(resultKeys).map(([job, envKey]) => [job, process.env[`RESULT_${envKey}`] || 'missing']));
-const changes = Object.fromEntries(Object.entries(outputKeys).map(([key, envKey]) => [key, process.env[envKey]]));
+const results = Object.fromEntries(Object.entries(resultKeys).map(
+    ([job, envKey]) => [job, process.env[`RESULT_${envKey}`] || 'missing']));
+const changes = Object.fromEntries(Object.entries(outputKeys).map(
+    ([key, envKey]) => [key, process.env[envKey]]));
 const outcome = evaluateRequiredChecks({
   eventName: process.env.EVENT_NAME,
   sonarTokenPresent: process.env.SONAR_TOKEN_PRESENT === 'true',
@@ -41,11 +43,17 @@ const outcome = evaluateRequiredChecks({
   results,
 });
 
-for (const [job, result] of Object.entries(results)) console.log(`${job}: ${result}`);
+for (const [job, result] of Object.entries(results)) {
+  console.log(
+      `${job}: ${result}`);
+}
 
 if (!outcome.ok) {
-  for (const error of outcome.errors) console.error(`::error::${error}`);
+  for (const error of outcome.errors) {
+    console.error(`::error::${error}`);
+  }
   process.exitCode = 1;
 } else {
-  console.log('CI / Required passed: every applicable check succeeded; all skipped jobs are justified.');
+  console.log(
+      'CI / Required passed: every applicable check succeeded; all skipped jobs are justified.');
 }

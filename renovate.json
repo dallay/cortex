@@ -1,11 +1,23 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:best-practices"],
+  "extends": [
+    "config:best-practices"
+  ],
   "timezone": "America/Havana",
-  "schedule": ["* 17-23,0-6 * * 1-5", "* * * * 0,6"],
-  "assignees": ["yacosta738"],
-  "reviewers": ["team:dbwh", "yacosta738"],
-  "labels": ["area/dependencies"],
+  "schedule": [
+    "* 17-23,0-6 * * 1-5",
+    "* * * * 0,6"
+  ],
+  "assignees": [
+    "yacosta738"
+  ],
+  "reviewers": [
+    "team:dbwh",
+    "yacosta738"
+  ],
+  "labels": [
+    "area/dependencies"
+  ],
   "minimumReleaseAge": "3 days",
   "dependencyDashboard": true,
   "prConcurrentLimit": 10,
@@ -13,75 +25,144 @@
   "osvVulnerabilityAlerts": true,
   "lockFileMaintenance": {
     "enabled": true,
-    "schedule": ["* 17-23,0-6 * * 1-5", "* * * * 0,6"]
+    "schedule": [
+      "* 17-23,0-6 * * 1-5",
+      "* * * * 0,6"
+    ]
   },
   "packageRules": [
     {
-      "matchManagers": ["cargo"],
-      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
       "groupName": "rust dependencies",
       "semanticCommitScope": "deps-rust",
-      "labels": ["area/dependencies"]
+      "labels": [
+        "area/dependencies"
+      ]
     },
     {
-      "matchManagers": ["cargo"],
-      "matchUpdateTypes": ["major"],
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
       "groupName": "rust major",
       "semanticCommitScope": "deps-rust",
-      "labels": ["area/dependencies"]
+      "labels": [
+        "area/dependencies"
+      ]
     },
     {
-      "matchManagers": ["npm"],
-      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "matchManagers": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
       "groupName": "javascript dependencies",
       "semanticCommitScope": "deps-js",
-      "labels": ["area/dependencies"],
-      "postUpdateOptions": ["pnpmDedupe"]
+      "labels": [
+        "area/dependencies"
+      ],
+      "postUpdateOptions": [
+        "pnpmDedupe"
+      ]
     },
     {
-      "matchManagers": ["npm"],
-      "matchUpdateTypes": ["major"],
+      "matchManagers": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
       "groupName": "javascript major",
       "semanticCommitScope": "deps-js",
-      "labels": ["area/dependencies"]
+      "labels": [
+        "area/dependencies"
+      ]
     },
     {
-      "matchManagers": ["github-actions"],
+      "matchManagers": [
+        "github-actions"
+      ],
       "groupName": "github-actions",
       "semanticCommitScope": "deps-actions",
-      "labels": ["area/dependencies", "area/ci"]
+      "labels": [
+        "area/dependencies",
+        "area/ci"
+      ]
     },
     {
-      "matchManagers": ["dockerfile"],
+      "matchManagers": [
+        "dockerfile"
+      ],
       "groupName": "docker",
       "semanticCommitScope": "deps-docker",
-      "labels": ["area/dependencies"]
+      "labels": [
+        "area/dependencies"
+      ]
     },
     {
-      "matchManagers": ["rust-toolchain"],
+      "matchManagers": [
+        "rust-toolchain"
+      ],
       "groupName": "rust-toolchain",
       "semanticCommitScope": "deps-rust",
-      "labels": ["area/dependencies"]
+      "labels": [
+        "area/dependencies"
+      ]
     },
     {
-      "matchPackageNames": ["vue"],
-      "matchUpdateTypes": ["major", "minor", "patch"],
+      "matchPackageNames": [
+        "vue"
+      ],
+      "matchUpdateTypes": [
+        "major",
+        "minor",
+        "patch"
+      ],
+      "minimumReleaseAge": "7 days",
       "groupName": "vue",
       "semanticCommitScope": "deps-js",
-      "labels": ["area/dependencies"]
+      "labels": [
+        "area/dependencies"
+      ]
     },
     {
       "description": "TypeScript 7 removed the typescript/lib/tsc export that vue-tsc resolves, so the dashboard type-check and build fail. Remove this rule once vue-tsc supports TypeScript 7.",
-      "matchManagers": ["npm"],
-      "matchPackageNames": ["typescript"],
-      "matchUpdateTypes": ["major"],
+      "matchManagers": [
+        "npm"
+      ],
+      "matchPackageNames": [
+        "typescript"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "minimumReleaseAge": false,
       "enabled": false
     },
     {
       "description": "pnpm trustPolicy no-downgrade rejects lefthook 2.2.2 as a possible package takeover, so the lockfile cannot be regenerated. Remove this rule once the package restores its trust evidence.",
-      "matchManagers": ["npm"],
-      "matchPackageNames": ["lefthook"],
-      "allowedVersions": "<2.2.2"
+      "matchManagers": [
+        "npm"
+      ],
+      "matchPackageNames": [
+        "lefthook"
+      ],
+      "allowedVersions": "<2.2.2",
+      "minimumReleaseAge": "7 days"
     }
   ]
 }

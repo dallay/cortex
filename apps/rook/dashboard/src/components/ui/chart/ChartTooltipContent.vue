@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {HTMLAttributes} from "vue";
 import {computed} from "vue";
 import {cn} from "@/lib/utils";
@@ -69,7 +69,7 @@ const tooltipLabel = computed(() => {
             cn('[&>svg]:text-muted-foreground flex w-full flex-wrap items-stretch gap-2 [&>svg]:h-2.5 [&>svg]:w-2.5',
                indicator === 'dot' && 'items-center')"
         >
-          <component :is="itemConfig.icon" v-if="itemConfig?.icon" />
+          <component :is="itemConfig.icon" v-if="itemConfig?.icon"/>
           <template v-else-if="!hideIndicator">
             <div
               :class="cn(
@@ -89,7 +89,8 @@ const tooltipLabel = computed(() => {
             />
           </template>
 
-          <div :class="cn('flex flex-1 justify-between leading-none', nestLabel ? 'items-end' : 'items-center')">
+          <div
+            :class="cn('flex flex-1 justify-between leading-none', nestLabel ? 'items-end' : 'items-center')">
             <div class="grid gap-1.5">
               <div v-if="nestLabel" class="font-medium">
                 {{ tooltipLabel }}

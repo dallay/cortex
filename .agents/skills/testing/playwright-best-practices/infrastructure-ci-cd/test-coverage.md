@@ -25,7 +25,7 @@ npm install -D nyc @istanbuljs/nyc-config-typescript
 
 ```typescript
 // playwright.config.ts
-import { defineConfig } from "@playwright/test";
+import {defineConfig} from "@playwright/test";
 
 export default defineConfig({
   use: {
@@ -41,14 +41,14 @@ export default defineConfig({
 
 ```typescript
 // fixtures/coverage.ts
-import { test as base, expect } from "@playwright/test";
+import {test as base, expect} from "@playwright/test";
 import fs from "fs";
 import path from "path";
-import { randomUUID } from "crypto";
+import {randomUUID} from "crypto";
 
 export const test = base.extend<{}, { collectCoverage: void }>({
   collectCoverage: [
-    async ({ page }, use) => {
+    async ({page}, use) => {
       // Note: Coverage is Chromium-only. For other browsers, skip coverage collection.
       const browserName = page.context().browser()?.browserType().name();
       if (browserName !== 'chromium') {
@@ -71,15 +71,15 @@ export const test = base.extend<{}, { collectCoverage: void }>({
       // Save coverage data
       const coverageDir = "./coverage";
       if (!fs.existsSync(coverageDir)) {
-        fs.mkdirSync(coverageDir, { recursive: true });
+        fs.mkdirSync(coverageDir, {recursive: true});
       }
 
       fs.writeFileSync(
-        path.join(coverageDir, `coverage-${randomUUID()}.json`),
-        JSON.stringify([...jsCoverage, ...cssCoverage])
+          path.join(coverageDir, `coverage-${randomUUID()}.json`),
+          JSON.stringify([...jsCoverage, ...cssCoverage])
       );
     },
-    { scope: "test", auto: true },
+    {scope: "test", auto: true},
   ],
 });
 ```
@@ -89,7 +89,7 @@ export const test = base.extend<{}, { collectCoverage: void }>({
 ### Per-Test Coverage
 
 ```typescript
-test("collect coverage for single test", async ({ page }) => {
+test("collect coverage for single test", async ({page}) => {
   // Start coverage collection
   await page.coverage.startJSCoverage({
     resetOnNavigation: false,
@@ -97,7 +97,7 @@ test("collect coverage for single test", async ({ page }) => {
 
   // Run test
   await page.goto("/app");
-  await page.getByRole("button", { name: "Submit" }).click();
+  await page.getByRole("button", {name: "Submit"}).click();
   await expect(page.getByText("Success")).toBeVisible();
 
   // Stop and get coverage
@@ -113,11 +113,11 @@ test("collect coverage for single test", async ({ page }) => {
 ### Coverage for Specific Files
 
 ```typescript
-test("track specific module coverage", async ({ page }) => {
+test("track specific module coverage", async ({page}) => {
   await page.coverage.startJSCoverage();
 
   await page.goto("/checkout");
-  await page.getByRole("button", { name: "Pay" }).click();
+  await page.getByRole("button", {name: "Pay"}).click();
 
   const coverage = await page.coverage.stopJSCoverage();
 
@@ -127,8 +127,8 @@ test("track specific module coverage", async ({ page }) => {
   if (checkoutCoverage) {
     const totalBytes = checkoutCoverage.text?.length || 0;
     const coveredBytes = checkoutCoverage.ranges.reduce(
-      (sum, range) => sum + (range.end - range.start),
-      0
+        (sum, range) => sum + (range.end - range.start),
+        0
     );
     const percentage = (coveredBytes / totalBytes) * 100;
 
@@ -141,7 +141,7 @@ test("track specific module coverage", async ({ page }) => {
 ### CSS Coverage
 
 ```typescript
-test("collect CSS coverage", async ({ page }) => {
+test("collect CSS coverage", async ({page}) => {
   await page.coverage.startCSSCoverage();
 
   await page.goto("/app");
@@ -156,8 +156,8 @@ test("collect CSS coverage", async ({ page }) => {
   for (const entry of cssCoverage) {
     const totalBytes = entry.text?.length || 0;
     const usedBytes = entry.ranges.reduce(
-      (sum, range) => sum + (range.end - range.start),
-      0
+        (sum, range) => sum + (range.end - range.start),
+        0
     );
     const unusedPercentage = ((totalBytes - usedBytes) / totalBytes) * 100;
 
@@ -174,7 +174,7 @@ test("collect CSS coverage", async ({ page }) => {
 
 ```typescript
 // scripts/convert-coverage.ts
-import { execSync } from "child_process";
+import {execSync} from "child_process";
 import fs from "fs";
 import path from "path";
 import v8ToIstanbul from "v8-to-istanbul";
@@ -187,7 +187,7 @@ async function convertCoverage() {
 
   for (const file of files) {
     const coverageData = JSON.parse(
-      fs.readFileSync(path.join(coverageDir, file), "utf-8")
+        fs.readFileSync(path.join(coverageDir, file), "utf-8")
     );
 
     for (const entry of coverageData) {
@@ -205,8 +205,8 @@ async function convertCoverage() {
   }
 
   fs.writeFileSync(
-    path.join(coverageDir, "coverage-final.json"),
-    JSON.stringify(istanbulCoverage)
+      path.join(coverageDir, "coverage-final.json"),
+      JSON.stringify(istanbulCoverage)
   );
 }
 
@@ -223,10 +223,18 @@ npx nyc report --reporter=html --reporter=text --temp-dir=./coverage
 ```typescript
 // package.json scripts
 {
-  "scripts": {
-    "test": "playwright test",
-    "test:coverage": "playwright test && npm run coverage:report",
-    "coverage:report": "npx nyc report --reporter=html --reporter=lcov --temp-dir=./coverage"
+  "scripts"
+:
+  {
+    "test"
+  :
+    "playwright test",
+        "test:coverage"
+  :
+    "playwright test && npm run coverage:report",
+        "coverage:report"
+  :
+    "npx nyc report --reporter=html --reporter=lcov --temp-dir=./coverage"
   }
 }
 ```
@@ -235,7 +243,7 @@ npx nyc report --reporter=html --reporter=text --temp-dir=./coverage
 
 ```typescript
 // reporters/coverage-reporter.ts
-import type { Reporter, FullResult } from "@playwright/test/reporter";
+import type {Reporter, FullResult} from "@playwright/test/reporter";
 import fs from "fs";
 import path from "path";
 
@@ -246,12 +254,12 @@ class CoverageReporter implements Reporter {
     // Aggregate all coverage files
     const coverageDir = "./coverage";
     const files = fs
-      .readdirSync(coverageDir)
-      .filter((f) => f.endsWith(".json"));
+        .readdirSync(coverageDir)
+        .filter((f) => f.endsWith(".json"));
 
     for (const file of files) {
       const data = JSON.parse(
-        fs.readFileSync(path.join(coverageDir, file), "utf-8")
+          fs.readFileSync(path.join(coverageDir, file), "utf-8")
       );
       this.coverageData.push(...data);
     }
@@ -278,8 +286,8 @@ class CoverageReporter implements Reporter {
         files.add(entry.url);
         totalBytes += entry.text?.length || 0;
         coveredBytes += entry.ranges.reduce(
-          (sum: number, r: any) => sum + (r.end - r.start),
-          0
+            (sum: number, r: any) => sum + (r.end - r.start),
+            0
         );
       }
     }
@@ -301,7 +309,7 @@ export default CoverageReporter;
 
 ```typescript
 // tests/coverage.spec.ts
-import { test, expect } from "@playwright/test";
+import {test, expect} from "@playwright/test";
 import fs from "fs";
 import path from "path";
 
@@ -314,15 +322,15 @@ test.afterAll(async () => {
 
   for (const file of files) {
     const coverage = JSON.parse(
-      fs.readFileSync(path.join(coverageDir, file), "utf-8")
+        fs.readFileSync(path.join(coverageDir, file), "utf-8")
     );
 
     for (const entry of coverage) {
       if (!entry.url.includes("/src/")) continue;
       totalBytes += entry.text?.length || 0;
       coveredBytes += entry.ranges.reduce(
-        (sum: number, r: any) => sum + (r.end - r.start),
-        0
+          (sum: number, r: any) => sum + (r.end - r.start),
+          0
       );
     }
   }
@@ -344,10 +352,10 @@ interface CoverageThreshold {
 }
 
 const thresholds: CoverageThreshold[] = [
-  { pattern: /\/src\/core\//, minCoverage: 90 },
-  { pattern: /\/src\/utils\//, minCoverage: 85 },
-  { pattern: /\/src\/components\//, minCoverage: 70 },
-  { pattern: /\/src\/pages\//, minCoverage: 60 },
+  {pattern: /\/src\/core\//, minCoverage: 90},
+  {pattern: /\/src\/utils\//, minCoverage: 85},
+  {pattern: /\/src\/components\//, minCoverage: 70},
+  {pattern: /\/src\/pages\//, minCoverage: 60},
 ];
 
 function checkThresholds(coverage: any[]): string[] {
@@ -362,8 +370,8 @@ function checkThresholds(coverage: any[]): string[] {
     for (const file of matchingFiles) {
       total += file.text?.length || 0;
       covered += file.ranges.reduce(
-        (sum: number, r: any) => sum + (r.end - r.start),
-        0
+          (sum: number, r: any) => sum + (r.end - r.start),
+          0
       );
     }
 
@@ -371,9 +379,9 @@ function checkThresholds(coverage: any[]): string[] {
 
     if (percent < threshold.minCoverage) {
       violations.push(
-        `${threshold.pattern}: ${percent.toFixed(1)}% < ${
-          threshold.minCoverage
-        }%`
+          `${threshold.pattern}: ${percent.toFixed(1)}% < ${
+              threshold.minCoverage
+          }%`
       );
     }
   }
@@ -389,7 +397,7 @@ function checkThresholds(coverage: any[]): string[] {
 ```typescript
 // scripts/merge-coverage.ts
 import fs from "fs";
-import { glob } from "glob";
+import {glob} from "glob";
 
 async function mergeCoverage() {
   const files = await glob("shard-*/coverage/*.json");
@@ -402,14 +410,14 @@ async function mergeCoverage() {
         const existing = merged.get(entry.url);
         existing.ranges.push(...entry.ranges);
       } else {
-        merged.set(entry.url, { ...entry });
+        merged.set(entry.url, {...entry});
       }
     }
   }
 
   fs.writeFileSync(
-    "./coverage/merged.json",
-    JSON.stringify([...merged.values()])
+      "./coverage/merged.json",
+      JSON.stringify([...merged.values()])
   );
 }
 
@@ -420,13 +428,13 @@ mergeCoverage();
 
 ```typescript
 // Check coverage only for changed files in CI
-import { execSync } from "child_process";
+import {execSync} from "child_process";
 import fs from "fs";
 
 const changedFiles = execSync("git diff --name-only HEAD~1")
-  .toString()
-  .split("\n")
-  .filter((f) => f.endsWith(".ts"));
+    .toString()
+    .split("\n")
+    .filter((f) => f.endsWith(".ts"));
 
 const coverage = JSON.parse(fs.readFileSync("./coverage/merged.json", "utf-8"));
 
@@ -434,9 +442,9 @@ for (const file of changedFiles) {
   const entry = coverage.find((c: any) => c.url.includes(file));
   if (entry) {
     const percent =
-      (entry.ranges.reduce((s: number, r: any) => s + r.end - r.start, 0) /
-        (entry.text?.length || 1)) *
-      100;
+        (entry.ranges.reduce((s: number, r: any) => s + r.end - r.start, 0) /
+            (entry.text?.length || 1)) *
+        100;
     console.log(`${file}: ${percent.toFixed(1)}%`);
   }
 }
@@ -450,7 +458,7 @@ for (const file of changedFiles) {
 # .github/workflows/test.yml
 name: Tests with Coverage
 
-on: [push, pull_request]
+on: [ push, pull_request ]
 
 jobs:
   test:

@@ -121,7 +121,7 @@ fn invalid_local_policy_stops_startup_and_project_cannot_relax_defaults() {
 }
 
 #[test]
-fn ordinary_shell_still_requires_host_authorization() {
+fn shell_allow_flag_does_not_replace_per_invocation_approval() {
     let root = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();
     let args = json!({"command":"printf ok > marker"});
@@ -134,9 +134,9 @@ fn ordinary_shell_still_requires_host_authorization() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(
-        std::fs::read_to_string(root.path().join("marker")).unwrap(),
-        "ok"
+    assert!(
+        !root.path().join("marker").exists(),
+        "--allow must not authorize a shell invocation without its per-invocation prompt"
     );
 }
 

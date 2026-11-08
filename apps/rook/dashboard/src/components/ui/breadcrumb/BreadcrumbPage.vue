@@ -9,10 +9,10 @@ const props = defineProps<{
 
 <template>
   <li
-    data-slot="breadcrumb-page"
-    aria-current="page"
     :class="cn('text-foreground font-normal', props.class)"
+    aria-current="page"
+    data-slot="breadcrumb-page"
   >
-    <slot />
+    <slot/>
   </li>
 </template>

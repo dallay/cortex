@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import {useForwardPropsEmits} from "reka-ui";
 import type {HTMLAttributes} from "vue";
@@ -22,9 +22,9 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
     v-slot="slotProps"
     v-bind="forwarded"
     :container-class="cn('flex items-center gap-2 has-disabled:opacity-50', props.class)"
-    data-slot="input-otp"
     class="disabled:cursor-not-allowed"
+    data-slot="input-otp"
   >
-    <slot v-bind="slotProps" />
+    <slot v-bind="slotProps"/>
   </OTPInput>
 </template>

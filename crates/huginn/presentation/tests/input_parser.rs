@@ -38,6 +38,24 @@ fn every_incomplete_paste_fragment_keeps_its_original_focus() {
 }
 
 #[test]
+fn delayed_control_sequence_is_revoked_at_handoff_and_fresh_input_is_delivered() {
+    let mut parser = Parser::default();
+
+    assert!(feed(&mut parser, b"\x1b[13;", OLD, OLD).is_empty());
+    parser.idle(OLD); // Reader observed no bytes on this poll.
+    parser.focus(NEW);
+    assert!(
+        feed(&mut parser, b"1u", NEW, NEW).is_empty(),
+        "a delayed Enter sequence must not become a key owned by the replacement focus"
+    );
+    assert_eq!(
+        feed(&mut parser, b"\r", NEW, NEW),
+        vec![(key(KeyCode::Enter), NEW)],
+        "one fresh Enter remains available after handoff"
+    );
+}
+
+#[test]
 fn doubled_escape_retains_second_sequence_start() {
     let mut parser = Parser::default();
     assert_eq!(

@@ -1483,7 +1483,7 @@ async fn test_setup_token_through_container() {
     let mut config: RookConfig = toml::from_str(&minimal_config_toml(
         "[provider_crud]\nenabled = false\n[auth.api_keys]\nenabled = false\n[telemetry]\nenabled = false",
     ))
-    .unwrap();
+        .unwrap();
     config.database.db_path = dir.path().join("rook.db").to_str().unwrap().to_string();
 
     let container = rook::di::RookContainer::build(&config).await.unwrap();

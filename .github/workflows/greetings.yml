@@ -2,9 +2,9 @@ name: 👋 Greetings
 
 on:
   pull_request:
-    types: [opened, reopened]
+    types: [ opened, reopened ]
   issues:
-    types: [opened, reopened]
+    types: [ opened, reopened ]
 
 permissions:
   issues: write

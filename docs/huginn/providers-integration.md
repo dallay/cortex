@@ -168,12 +168,12 @@ interoperability with a pre-rename executable.
 The focused follow-up on October 16, 2026 used Amazon Linux x86_64 and
 Rust/Cargo 1.99.0. The focused targets listed above produced these results:
 
-| Package | Test target | Passed | Failed | Ignored |
-| --- | --- | ---: | ---: | ---: |
-| `huginn-runtime` | `providers_integration` | 8 | 0 | 0 |
-| `huginn` | `providers_flow` | 6 | 0 | 0 |
-| `huginn` | `providers_recovery` | 7 | 0 | 0 |
-| `huginn` | `tui` | 7 | 0 | 0 |
+| Package          | Test target             | Passed | Failed | Ignored |
+|------------------|-------------------------|-------:|-------:|--------:|
+| `huginn-runtime` | `providers_integration` |      8 |      0 |       0 |
+| `huginn`         | `providers_flow`        |      6 |      0 |       0 |
+| `huginn`         | `providers_recovery`    |      7 |      0 |       0 |
+| `huginn`         | `tui`                   |      7 |      0 |       0 |
 
 All four targets ran without filters: 28 tests passed, none failed or were
 ignored. The recovery target also confirms the CLI's distinct stderr markers:

@@ -98,8 +98,8 @@ Add **3 tests** to the modern block: (1) `Ollama Cloud card navigates to /provid
 
 | # | Risk                                                                                                       | Mitigation                                                                                                            |
 |---|------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|
-| 1 | Visual quality of 4 authored SVGs may not match reference-gateway style                                            | sdd-apply browser-snaps the 6 cards; sdd-verify requires parity.                                                      |
-| 2 | Reference-gateway assets are brand marks                                                                           | LICENSE is MIT — redistribution OK. Trademarks: fair-use on a self-hosted dashboard. Fallback to author-mode SVG.     |
+| 1 | Visual quality of 4 authored SVGs may not match reference-gateway style                                    | sdd-apply browser-snaps the 6 cards; sdd-verify requires parity.                                                      |
+| 2 | Reference-gateway assets are brand marks                                                                   | LICENSE is MIT — redistribution OK. Trademarks: fair-use on a self-hosted dashboard. Fallback to author-mode SVG.     |
 | 3 | Router-level `beforeEnter` not unit-tested                                                                 | View-level `watch` bounce test (case #3) catches the same drift in practice. Direct router test tracked as follow-up. |
 | 4 | `vue-router ^5.1.0` typo in `package.json`; `provider_crud.enabled` + encryption env vars required for E2E | Out of scope; pre-existing E2E setup gates on env vars.                                                               |
 

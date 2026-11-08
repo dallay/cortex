@@ -64,10 +64,10 @@ async fn server(router: Router) -> (String, tokio::task::JoinHandle<()>) {
 fn streaming() -> Body {
     // Split through JSON, UTF-8, SSE boundaries, and tool argument fragments.
     let data = concat!(
-        "data: {\"choices\":[{\"delta\":{\"content\":\"héllo\"}}]}\r\n\r\n",
-        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call\",\"function\":{\"name\":\"list_files\",\"arguments\":\"{\\\"path\\\":\"}}]}}]}\n\n",
-        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\".\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
-        "data: [DONE]\n\n");
+    "data: {\"choices\":[{\"delta\":{\"content\":\"héllo\"}}]}\r\n\r\n",
+    "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call\",\"function\":{\"name\":\"list_files\",\"arguments\":\"{\\\"path\\\":\"}}]}}]}\n\n",
+    "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\".\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+    "data: [DONE]\n\n");
     Body::from_stream(futures::stream::iter(data.as_bytes().iter().map(|byte| {
         Ok::<_, std::convert::Infallible>(bytes::Bytes::from(vec![*byte]))
     })))

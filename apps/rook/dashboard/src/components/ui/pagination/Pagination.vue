@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {PaginationRootEmits, PaginationRootProps} from "reka-ui";
 import {PaginationRoot, useForwardPropsEmits} from "reka-ui";
@@ -19,10 +19,10 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
 <template>
   <PaginationRoot
     v-slot="slotProps"
+    :class="cn('mx-auto flex w-full justify-center', props.class)"
     data-slot="pagination"
     v-bind="forwarded"
-    :class="cn('mx-auto flex w-full justify-center', props.class)"
   >
-    <slot v-bind="slotProps" />
+    <slot v-bind="slotProps"/>
   </PaginationRoot>
 </template>

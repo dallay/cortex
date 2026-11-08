@@ -709,9 +709,9 @@ impl ModelProvider for PinnedModel {
         self.check()?;
         let pinned = self.clone();
         Ok(futures::stream::unfold((stream, lifetime, pinned, cancel, false),
-            |(mut stream, lifetime, pinned, cancel, ended)| async move {
-                if ended { return None; }
-                let item = tokio::select! {
+                                   |(mut stream, lifetime, pinned, cancel, ended)| async move {
+                                       if ended { return None; }
+                                       let item = tokio::select! {
                     biased;
                     _ = cancel.cancelled() => Some(Err(AgentError::Cancelled)),
                     _ = pinned.providers.cancellation.cancelled() => Some(Err(ProviderError::Revoked.into())),
@@ -719,11 +719,11 @@ impl ModelProvider for PinnedModel {
                     _ = pinned.connection.adapter.revoked.cancelled() => Some(Err(ProviderError::Revoked.into())),
                     result = stream.next() => result,
                 }?;
-                let item = pinned.check().and(item);
-                let ended = item.is_err();
-                if ended { lifetime.token.cancel(); }
-                Some((item, (stream, lifetime, pinned, cancel, ended)))
-            }).boxed())
+                                       let item = pinned.check().and(item);
+                                       let ended = item.is_err();
+                                       if ended { lifetime.token.cancel(); }
+                                       Some((item, (stream, lifetime, pinned, cancel, ended)))
+                                   }).boxed())
     }
 }
 

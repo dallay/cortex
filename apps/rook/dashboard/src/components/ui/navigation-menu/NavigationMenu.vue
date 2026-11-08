@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {NavigationMenuRootEmits, NavigationMenuRootProps} from "reka-ui";
 import {NavigationMenuRoot, useForwardPropsEmits} from "reka-ui";
@@ -26,12 +26,12 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
 <template>
   <NavigationMenuRoot
     v-slot="slotProps"
-    data-slot="navigation-menu"
-    :data-viewport="viewport"
-    v-bind="forwarded"
     :class="cn('group/navigation-menu relative flex max-w-max flex-1 items-center justify-center', props.class)"
+    :data-viewport="viewport"
+    data-slot="navigation-menu"
+    v-bind="forwarded"
   >
-    <slot v-bind="slotProps" />
-    <NavigationMenuViewport v-if="viewport" />
+    <slot v-bind="slotProps"/>
+    <NavigationMenuViewport v-if="viewport"/>
   </NavigationMenuRoot>
 </template>

@@ -665,10 +665,10 @@ async fn build_gateway_with_router(
         },
         None,
     )
-    .with_combo_alias_repository(Arc::new(MapComboAliasRepo {
-        aliases: Mutex::new(aliases),
-    }))
-    .with_spending_budget_ledger(Arc::new(HarnessLedger));
+        .with_combo_alias_repository(Arc::new(MapComboAliasRepo {
+            aliases: Mutex::new(aliases),
+        }))
+        .with_spending_budget_ledger(Arc::new(HarnessLedger));
 
     let user_repo: Arc<dyn UserRepositoryPort> = Arc::new(FakeUserRepo);
     let hasher: Arc<dyn PasswordHasher> = Arc::new(FakeHasher);
@@ -858,11 +858,11 @@ fn sse_json(body: &str) -> Vec<serde_json::Value> {
 
 fn fragmented_combo_sse() -> String {
     concat!(
-        "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_real\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"key\\\":\"}}]},\"finish_reason\":null}]}\n\n",
-        "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"value\\\"}\"}}]},\"finish_reason\":null}]}\n\n",
-        "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
-        "data: {\"model\":\"gpt-4o\",\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":7,\"total_tokens\":10}}\n\n",
-        "data: [DONE]\n\n"
+    "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_real\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"key\\\":\"}}]},\"finish_reason\":null}]}\n\n",
+    "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"value\\\"}\"}}]},\"finish_reason\":null}]}\n\n",
+    "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+    "data: {\"model\":\"gpt-4o\",\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":7,\"total_tokens\":10}}\n\n",
+    "data: [DONE]\n\n"
     ).into()
 }
 
@@ -1071,9 +1071,9 @@ async fn combo_stream_encoder_error_after_finish_does_not_emit_deferred_success(
 #[tokio::test]
 async fn combo_stream_reasoning_and_text_reach_anthropic_as_distinct_blocks() {
     let gw = build_gateway_planned(vec![], UpstreamMock::Sse(concat!(
-        "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"reasoning_content\":\"first thought\"},\"finish_reason\":null}]}\n\n",
-        "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"reasoning_content\":\" then\",\"content\":\"answer\"},\"finish_reason\":\"stop\"}]}\n\n",
-        "data: [DONE]\n\n").into()), UpstreamMock::Fail500).await;
+    "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"reasoning_content\":\"first thought\"},\"finish_reason\":null}]}\n\n",
+    "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"reasoning_content\":\" then\",\"content\":\"answer\"},\"finish_reason\":\"stop\"}]}\n\n",
+    "data: [DONE]\n\n").into()), UpstreamMock::Fail500).await;
     let (_, _, body) = post_sse(gw.app, "/v1/messages", anthropic_body("rook/openai", true)).await;
     let frames = sse_json(&body);
     let thinking: Vec<_> = frames
@@ -1170,8 +1170,8 @@ async fn combo_stream_native_tools_close_and_trailing_usage_reach_anthropic() {
 async fn combo_stream_late_error_is_terminal_in_both_protocols_without_fallback() {
     for anthropic in [false, true] {
         let gw = build_gateway_planned(vec![], UpstreamMock::Sse(concat!(
-            "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n",
-            "data: {invalid json}\n\n").into()), UpstreamMock::Fail500).await;
+        "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n",
+        "data: {invalid json}\n\n").into()), UpstreamMock::Fail500).await;
         let (uri, request) = if anthropic {
             ("/v1/messages", anthropic_body("rook/e2e", true))
         } else {
@@ -1201,11 +1201,11 @@ async fn combo_stream_late_error_is_terminal_in_both_protocols_without_fallback(
 #[tokio::test]
 async fn combo_stream_first_item_error_falls_back_before_headers() {
     let gw = build_gateway_planned(vec![], UpstreamMock::Sse("data: {invalid json}\n\n".into()),
-        UpstreamMock::Sse(concat!(
-            "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":0,\"cache_read_input_tokens\":1}}}\n\n",
-            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"fallback\"}}\n\n",
-            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n",
-            "data: {\"type\":\"message_stop\"}\n\n").into())).await;
+                                   UpstreamMock::Sse(concat!(
+                                   "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":0,\"cache_read_input_tokens\":1}}}\n\n",
+                                   "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"fallback\"}}\n\n",
+                                   "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n",
+                                   "data: {\"type\":\"message_stop\"}\n\n").into())).await;
     let (status, _, body) = post_sse(
         gw.app,
         "/v1/chat/completions",
@@ -1285,7 +1285,7 @@ async fn openai_streaming_sse() {
         ),
         UpstreamMock::Json(fallback_reply_body()),
     )
-    .await;
+        .await;
     let (status, content_type, body) = post_sse(
         gw.app.clone(),
         "/v1/chat/completions",
@@ -1313,7 +1313,7 @@ async fn anthropic_streaming_sse() {
                 .to_string(),
         ),
     )
-    .await;
+        .await;
     let (status, content_type, body) = post_sse(
         gw.app.clone(),
         "/v1/messages",

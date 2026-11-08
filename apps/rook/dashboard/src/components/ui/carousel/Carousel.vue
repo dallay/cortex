@@ -1,10 +1,6 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {cn} from "@/lib/utils";
-import type {
-  CarouselEmits,
-  CarouselProps,
-  WithClassAsProps,
-} from "./interface";
+import type {CarouselEmits, CarouselProps, WithClassAsProps,} from "./interface";
 import {useProvideCarousel} from "./useCarousel";
 
 const props = withDefaults(defineProps<CarouselProps & WithClassAsProps>(), {
@@ -53,13 +49,14 @@ function onKeyDown(event: KeyboardEvent) {
 
 <template>
   <div
-    data-slot="carousel"
     :class="cn('relative', props.class)"
-    role="region"
     aria-roledescription="carousel"
+    data-slot="carousel"
+    role="region"
     tabindex="0"
     @keydown="onKeyDown"
   >
-    <slot :can-scroll-next :can-scroll-prev :carousel-api :carousel-ref :orientation :scroll-next :scroll-prev />
+    <slot :can-scroll-next :can-scroll-prev :carousel-api :carousel-ref :orientation :scroll-next
+          :scroll-prev/>
   </div>
 </template>

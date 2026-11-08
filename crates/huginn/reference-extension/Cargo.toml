@@ -13,6 +13,7 @@ serde_json.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+huginn-core = { path = "../core" }
 tokio.workspace = true
 
 [lints]

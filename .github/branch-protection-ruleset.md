@@ -7,11 +7,13 @@ Este documento describe la configuración de protección de la rama `main` para 
 > Estado de migración DALLAY-628: el ruleset #17001295 NO se modifica con el cambio de código. Añadir `CI / Required` como required check solo después de validar el gate en ejecuciones reales y probar un fallo bloqueante desde una identidad sin bypass. Mantener intactos los checks actuales durante toda la transición.
 
 ### 1. Protección Básica de Rama
+
 - ✅ **Deletion**: No se puede eliminar la rama `main`
 - ✅ **Non-fast-forward**: No se permiten force pushes
 - ✅ **Required linear history**: Historial lineal obligatorio (no merge commits)
 
 ### 2. Pull Request Requirements
+
 - **Approvals**: 1 aprobación requerida
 - **Dismiss stale reviews**: Las reviews se descartan al pushear cambios
 - **Last push approval**: Se requiere aprobación después del último push
@@ -20,6 +22,7 @@ Este documento describe la configuración de protección de la rama `main` para 
 ### 3. Required Status Checks (Obligatorios para Merge)
 
 #### Plan de transición — ruleset #17001295 (pendiente de validación)
+
 1. No retirar ni reemplazar ninguno de los checks ya obligatorios.
 2. Ejecutar PRs representativas (docs, frontend, backend y workflows) hasta confirmar `CI / Required` verde, y una PR controlada con check requerido fallido que deje el gate rojo.
 3. Probar que esa PR no puede fusionarse con una identidad que no esté en bypass.
@@ -28,16 +31,19 @@ Este documento describe la configuración de protección de la rama `main` para 
 6. El ruleset requiere una aprobación humana y aprobación del último push. Para un solo mantenedor, mantener por ahora la política actual y documentar el bloqueo operativo; alternativa a acordar antes de eliminar bypass: quitar la aprobación obligatoria o designar un reviewer independiente. Nunca simular la aprobación mediante bypass administrativo.
 
 #### Fast Checks (Linting & Formatting)
+
 - ✅ **Format** - Rust formatting con `cargo fmt`
 - ✅ **Markdown** - Linting de archivos `.md`
 - ✅ **Clippy** - Linter de Rust (deny warnings)
 - ✅ **Check** - `cargo check` workspace
 
 #### Tests (Calidad del Código)
+
 - ✅ **Test (Rust)** - Tests completos del workspace Rust
 - ✅ **Test (Frontend)** - Tests Vitest del dashboard Vue.js
 
 #### Security (Merge Blockers)
+
 - ✅ **Security / Trivy** - Escaneo de vulnerabilidades filesystem + deps
 - ✅ **Security / Gitleaks** - Detección de secretos en commits
 - ✅ **Security / Semgrep** - SAST scan (Rust, Docker, GitHub Actions)
@@ -58,6 +64,7 @@ Los siguientes checks corren pero **NO** bloquean el merge:
 ## Estrategia de Checks
 
 ### Path-Based Execution
+
 Los checks se ejecutan según los archivos modificados:
 
 ```yaml
@@ -89,6 +96,7 @@ backend changes (crates/**, apps/rook/src/**):
 ```
 
 ### Fail-Fast Strategy
+
 1. **Fast checks primero** (fmt, markdown) - 1-2 min
 2. **Linting paralelo** (clippy, check, security) - 10 min
 3. **Tests unitarios** (rust, frontend) - 8 min
@@ -97,6 +105,7 @@ backend changes (crates/**, apps/rook/src/**):
 ## Bypass Actors
 
 Pueden saltarse las reglas:
+
 - **Organization Admins** - bypass mode: always
 - **Release Please Bot** (integration_id: 915548) - bypass mode: always
 
@@ -136,12 +145,14 @@ gh pr view 116 --json statusCheckRollup
 ## Filosofía
 
 **Bloquean merge:**
+
 - Formato correcto (fmt, markdown)
 - Compilación exitosa (clippy, check)
 - Tests unitarios pasan (rust, frontend)
 - Sin vulnerabilidades críticas (trivy, gitleaks, semgrep, audit)
 
 **NO bloquean merge:**
+
 - E2E tests (pesados, pueden ser flaky)
 - Coverage (informativo)
 - SonarCloud (informativo)

@@ -32,6 +32,7 @@ export function useUsage() {
 	});
 
 	let latestRequest = 0;
+
 	async function fetch(nextQuery: UsageQuery = query.value): Promise<void> {
 		const requestId = ++latestRequest;
 		query.value = { ...nextQuery };

@@ -17,7 +17,7 @@ coverage:
         target: auto
         threshold: 1%
         informational: false
-      
+
       # Backend (Rust) coverage target
       backend:
         target: 85%
@@ -25,7 +25,7 @@ coverage:
         flags:
           - backend
         informational: false
-      
+
       # Frontend (Dashboard) coverage target
       frontend:
         target: 80%
@@ -33,19 +33,19 @@ coverage:
         flags:
           - frontend
         informational: false
-    
+
     patch:
       default:
         target: 80%
         threshold: 5%
         informational: false
-      
+
       backend:
         target: 85%
         threshold: 5%
         flags:
           - backend
-      
+
       frontend:
         target: 75%
         threshold: 5%
@@ -56,7 +56,7 @@ coverage:
 flag_management:
   default_rules:
     carryforward: true
-  
+
   individual_flags:
     - name: backend
       paths:
@@ -64,7 +64,7 @@ flag_management:
         - "apps/rook/tests/**"
         - "crates/**"
       carryforward: true
-    
+
     - name: frontend
       paths:
         - "apps/rook/dashboard/**"

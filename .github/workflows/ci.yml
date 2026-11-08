@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [ main, develop ]
   pull_request:
-    branches: [main, develop]
+    branches: [ main, develop ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -160,7 +160,7 @@ jobs:
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
-    needs: [changes, build-dashboard]
+    needs: [ changes, build-dashboard ]
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -184,7 +184,7 @@ jobs:
   check:
     name: Check
     runs-on: ubuntu-latest
-    needs: [changes, build-dashboard]
+    needs: [ changes, build-dashboard ]
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -210,7 +210,7 @@ jobs:
     name: Test (Rust)
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [changes, build-dashboard, fmt, clippy]
+    needs: [ changes, build-dashboard, fmt, clippy ]
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -233,7 +233,7 @@ jobs:
     name: Test (Frontend)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: [changes]
+    needs: [ changes ]
     if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.github == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -262,7 +262,7 @@ jobs:
     name: Test (E2E)
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    needs: [changes, test, test-frontend]
+    needs: [ changes, test, test-frontend ]
     if: |
       always() &&
       (needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true' || needs.changes.outputs.docker == 'true' || needs.changes.outputs.github == 'true') &&
@@ -293,7 +293,7 @@ jobs:
   doc:
     name: Doc
     runs-on: ubuntu-latest
-    needs: [changes, build-dashboard]
+    needs: [ changes, build-dashboard ]
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -320,7 +320,7 @@ jobs:
   audit:
     name: Audit
     runs-on: ubuntu-latest
-    needs: [changes, build-dashboard]
+    needs: [ changes, build-dashboard ]
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -468,7 +468,7 @@ jobs:
   coverage:
     name: Coverage (Rust)
     runs-on: ubuntu-latest
-    needs: [changes, build-dashboard, test]
+    needs: [ changes, build-dashboard, test ]
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
     permissions:
       contents: read
@@ -505,7 +505,7 @@ jobs:
   coverage-frontend:
     name: Coverage (Frontend)
     runs-on: ubuntu-latest
-    needs: [changes, test-frontend]
+    needs: [ changes, test-frontend ]
     if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.github == 'true'
     permissions:
       contents: read
@@ -539,7 +539,7 @@ jobs:
     name: SonarCloud
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    needs: [changes, test, test-frontend, build-dashboard]
+    needs: [ changes, test, test-frontend, build-dashboard ]
     # Toda PR requiere análisis. Los push conservan los filtros por rutas.
     # Sin credenciales, también se bloquean forks y Dependabot.
     if: |
@@ -672,7 +672,7 @@ jobs:
   build-targets:
     name: Build (cross-compile validation)
     runs-on: ubuntu-latest
-    needs: [changes, build-dashboard, test]
+    needs: [ changes, build-dashboard, test ]
     if: |
       github.event_name == 'push' &&
       (needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true')
@@ -701,7 +701,7 @@ jobs:
   build-windows:
     name: Build (Windows validation)
     runs-on: windows-latest
-    needs: [changes, build-dashboard, test]
+    needs: [ changes, build-dashboard, test ]
     if: |
       github.event_name == 'push' &&
       (needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true')
@@ -731,7 +731,7 @@ jobs:
   build-darwin:
     name: Build (Darwin validation)
     runs-on: macos-latest
-    needs: [changes, build-dashboard, test]
+    needs: [ changes, build-dashboard, test ]
     if: |
       github.event_name == 'push' &&
       (needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true')
@@ -762,14 +762,14 @@ jobs:
   test-multi:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    needs: [changes, build-dashboard, test]
+    needs: [ changes, build-dashboard, test ]
     if: |
       github.event_name == 'push' &&
       (needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true')
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [ macos-latest, windows-latest ]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

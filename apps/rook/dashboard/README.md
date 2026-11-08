@@ -55,16 +55,16 @@ The Rook Dashboard is a **Vue 3 SPA** that provides a visual interface for manag
 
 ### Features
 
-| Feature | Description |
-|---------|-------------|
-| 🔐 **Authentication** | Secure login with Rook's admin credentials |
+| Feature                    | Description                                                                       |
+|----------------------------|-----------------------------------------------------------------------------------|
+| 🔐 **Authentication**      | Secure login with Rook's admin credentials                                        |
 | 🌍 **Provider Management** | Configure OpenAI, Anthropic, Gemini, Ollama and Groq, including OAuth connections |
-| 📊 **Provider Quota** | Token, cost and rate-limit usage per provider |
-| 🔑 **API Key CRUD** | Create, view, rotate and revoke API keys with model and provider restrictions |
-| 🧠 **Model Catalog** | Inspect the models available from active provider connections |
-| 🧩 **Combos** | Build fallback chains of provider/model steps ordered by priority |
-| 📡 **Endpoints** | Reference of client-facing endpoints with copyable base URLs |
-| 🌐 **i18n** | English and Spanish translations |
+| 📊 **Provider Quota**      | Token, cost and rate-limit usage per provider                                     |
+| 🔑 **API Key CRUD**        | Create, view, rotate and revoke API keys with model and provider restrictions     |
+| 🧠 **Model Catalog**       | Inspect the models available from active provider connections                     |
+| 🧩 **Combos**              | Build fallback chains of provider/model steps ordered by priority                 |
+| 📡 **Endpoints**           | Reference of client-facing endpoints with copyable base URLs                      |
+| 🌐 **i18n**                | English and Spanish translations                                                  |
 
 ### Current coverage
 
@@ -186,23 +186,23 @@ defineProps<Props>()
 
 ## 🔧 Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `API_TARGET` | `http://127.0.0.1:3773` | Rook backend URL |
-| `BASE_PATH` | `/dashboard` | Application base path |
-| `VITE_APP_TITLE` | `Rook Dashboard` | Browser tab title |
+| Variable         | Default                 | Description           |
+|------------------|-------------------------|-----------------------|
+| `API_TARGET`     | `http://127.0.0.1:3773` | Rook backend URL      |
+| `BASE_PATH`      | `/dashboard`            | Application base path |
+| `VITE_APP_TITLE` | `Rook Dashboard`        | Browser tab title     |
 
 ---
 
 ## 📚 Documentation
 
-| Resource | Description |
-|----------|-------------|
-| [Rook Docs](../../../docs/rook/README.md) | Rook proxy documentation |
-| [API Reference](../../../docs/rook/api.md) | Backend API endpoints |
-| [Configuration](../../../docs/rook/configuration.md) | Rook config options |
+| Resource                                                              | Description                            |
+|-----------------------------------------------------------------------|----------------------------------------|
+| [Rook Docs](../../../docs/rook/README.md)                             | Rook proxy documentation               |
+| [API Reference](../../../docs/rook/api.md)                            | Backend API endpoints                  |
+| [Configuration](../../../docs/rook/configuration.md)                  | Rook config options                    |
 | [Dashboard Development Guide](../../../docs/development/dashboard.md) | Local dashboard development and checks |
-| [Docker E2E Guide](../../../dev/README.md) | Docker-based integration testing |
+| [Docker E2E Guide](../../../dev/README.md)                            | Docker-based integration testing       |
 
 ---
 

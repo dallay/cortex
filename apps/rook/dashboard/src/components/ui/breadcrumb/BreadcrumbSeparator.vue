@@ -10,12 +10,12 @@ const props = defineProps<{
 
 <template>
   <li
-    data-slot="breadcrumb-separator"
-    aria-hidden="true"
     :class="cn('[&>svg]:size-3.5', props.class)"
+    aria-hidden="true"
+    data-slot="breadcrumb-separator"
   >
     <slot>
-      <ChevronRight />
+      <ChevronRight/>
     </slot>
   </li>
 </template>

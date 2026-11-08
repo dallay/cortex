@@ -268,13 +268,13 @@ async fn openai_chat_completions_http_sse_preserves_tools_and_propagates_truncat
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/chat/completions"))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(concat!(
-            r#"data: {"id":"chatcmpl-http","model":"gpt-4o","choices":[{"delta":{"content":"Looking up.","tool_calls":[{"index":0,"id":"call-http","type":"function","function":{"name":"lookup","arguments":"{\"key\":"}}]},"finish_reason":null}]}"#,
-            "\n\n",
-            r#"data: {"id":"chatcmpl-http","model":"gpt-4o","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"value\"}"}}]},"finish_reason":null}]}"#,
-            "\n\n",
-            r#"data: {"id":"chatcmpl-http","model":"gpt-4o","choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
-            "\n\n",
-            "data: [DONE]\n\n"
+        r#"data: {"id":"chatcmpl-http","model":"gpt-4o","choices":[{"delta":{"content":"Looking up.","tool_calls":[{"index":0,"id":"call-http","type":"function","function":{"name":"lookup","arguments":"{\"key\":"}}]},"finish_reason":null}]}"#,
+        "\n\n",
+        r#"data: {"id":"chatcmpl-http","model":"gpt-4o","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"value\"}"}}]},"finish_reason":null}]}"#,
+        "\n\n",
+        r#"data: {"id":"chatcmpl-http","model":"gpt-4o","choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+        "\n\n",
+        "data: [DONE]\n\n"
         )))
         .mount(&valid_server)
         .await;

@@ -14,7 +14,7 @@ Client wire format  →  Domain model  →  Provider wire format
 Instead of translating wire-to-wire (e.g., OpenAI JSON → Anthropic JSON directly), every format goes through the domain model first. This means:
 
 - **N formats → 2×N conversions** (one `from_wire` + one `to_wire` per format)
-- vs. **N×(N-1) conversions** for direct wire-to-wire mapping
+- vs. **N× (N-1) conversions** for direct wire-to-wire mapping
 - The domain model is the single source of truth — no implicit knowledge of "what OpenAI calls X" inside an Anthropic adapter
 
 ---

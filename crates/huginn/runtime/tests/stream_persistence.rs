@@ -77,7 +77,11 @@ impl ModelProvider for Model {
 struct NoApproval;
 #[async_trait]
 impl ApprovalPolicy for NoApproval {
-    async fn approve(&self, _: &ApprovalRequest, _: CancellationToken) -> Result<bool> {
+    async fn approve(
+        &self,
+        _: &ApprovalRequest,
+        _: CancellationToken,
+    ) -> Result<huginn_core::ApprovalDecision> {
         panic!("text-only turns must not request approval");
     }
 }

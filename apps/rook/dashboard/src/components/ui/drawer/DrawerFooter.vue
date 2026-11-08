@@ -9,9 +9,9 @@ const props = defineProps<{
 
 <template>
   <div
-    data-slot="drawer-footer"
     :class="cn('mt-auto flex flex-col gap-2 p-4', props.class)"
+    data-slot="drawer-footer"
   >
-    <slot />
+    <slot/>
   </div>
 </template>

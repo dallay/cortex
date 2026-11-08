@@ -1,6 +1,6 @@
 name: Technical task
 description: Maintenance, refactor, tooling, or operational work
-labels: ["type/chore"]
+labels: [ "type/chore" ]
 body:
   - type: dropdown
     id: product

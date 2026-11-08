@@ -229,17 +229,17 @@ impl ComboRepositoryPort for ComboSqliteRepository {
                     step.priority,
                 ],
             )
-            .map_err(|e| {
-                if e.sqlite_error_code() == Some(ErrorCode::ConstraintViolation) {
-                    ComboRepositoryError::Validation(
-                        rook_core::ComboValidationError::DuplicatePriority {
-                            priority: step.priority,
-                        },
-                    )
-                } else {
-                    db_error(e)
-                }
-            })?;
+                .map_err(|e| {
+                    if e.sqlite_error_code() == Some(ErrorCode::ConstraintViolation) {
+                        ComboRepositoryError::Validation(
+                            rook_core::ComboValidationError::DuplicatePriority {
+                                priority: step.priority,
+                            },
+                        )
+                    } else {
+                        db_error(e)
+                    }
+                })?;
         }
 
         tx.commit().map_err(db_error)
@@ -315,17 +315,17 @@ impl ComboRepositoryPort for ComboSqliteRepository {
                     step.priority,
                 ],
             )
-            .map_err(|e| {
-                if e.sqlite_error_code() == Some(ErrorCode::ConstraintViolation) {
-                    ComboRepositoryError::Validation(
-                        rook_core::ComboValidationError::DuplicatePriority {
-                            priority: step.priority,
-                        },
-                    )
-                } else {
-                    db_error(e)
-                }
-            })?;
+                .map_err(|e| {
+                    if e.sqlite_error_code() == Some(ErrorCode::ConstraintViolation) {
+                        ComboRepositoryError::Validation(
+                            rook_core::ComboValidationError::DuplicatePriority {
+                                priority: step.priority,
+                            },
+                        )
+                    } else {
+                        db_error(e)
+                    }
+                })?;
         }
 
         tx.commit().map_err(db_error)
@@ -580,9 +580,9 @@ mod tests {
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
-            
+
             CREATE UNIQUE INDEX IF NOT EXISTS idx_combos_name ON combos(name COLLATE NOCASE);
-            
+
             CREATE TABLE IF NOT EXISTS combo_steps (
                 combo_id TEXT NOT NULL,
                 step_order INTEGER NOT NULL,
@@ -593,7 +593,7 @@ mod tests {
                 PRIMARY KEY (combo_id, step_order),
                 FOREIGN KEY (combo_id) REFERENCES combos(id) ON DELETE CASCADE
             );
-            
+
             CREATE INDEX IF NOT EXISTS idx_combo_steps_combo_id ON combo_steps(combo_id);
             "#,
         )

@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {SplitterPanelEmits, SplitterPanelProps} from "reka-ui";
 import {SplitterPanel, useForwardExpose, useForwardPropsEmits} from "reka-ui";
 
@@ -16,6 +16,6 @@ const {forwardRef} = useForwardExpose();
     data-slot="resizable-panel"
     v-bind="forwarded"
   >
-    <slot v-bind="slotProps" />
+    <slot v-bind="slotProps"/>
   </SplitterPanel>
 </template>

@@ -107,12 +107,12 @@ sequenceDiagram
 
 ## Capabilities (C1 Scope)
 
-| Capability         | Description                                                          |
-|--------------------|----------------------------------------------------------------------|
-| Request Routing    | Route LLM requests to the appropriate provider based on model        |
-| Format Translation | Translate between OpenAI and Anthropic wire formats via domain pivot |
-| Fallback           | Automatically try next provider when one fails                       |
-| Caching            | Tenant-scoped, opt-in; cached entries are redacted/hashed; configurable TTL and retention; control to purge on demand |
+| Capability         | Description                                                                                                                               |
+|--------------------|-------------------------------------------------------------------------------------------------------------------------------------------|
+| Request Routing    | Route LLM requests to the appropriate provider based on model                                                                             |
+| Format Translation | Translate between OpenAI and Anthropic wire formats via domain pivot                                                                      |
+| Fallback           | Automatically try next provider when one fails                                                                                            |
+| Caching            | Tenant-scoped, opt-in; cached entries are redacted/hashed; configurable TTL and retention; control to purge on demand                     |
 | Audit Logging      | Tenant-scoped, minimal by default; PII redacted; raw request/response capture requires opt-in; configurable retention and access controls |
 
 **Out of scope for C1**: internal crate structure, database schema, encryption details.

@@ -3,9 +3,17 @@
   "version": "0.0.1",
   "description": "Rook native binary for macOS Intel.",
   "license": "MIT",
-  "os": ["darwin"],
-  "cpu": ["x64"],
-  "files": ["bin"],
-  "publishConfig": { "access": "public" },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": "dallay/cortex"
 }

@@ -111,7 +111,7 @@ impl SessionStore for SqliteSessions {
             .connection
             .lock()
             .map_err(|_| AgentError::Session("database lock poisoned".into()))?;
-        connection.execute("INSERT INTO sessions(id,data) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET data=excluded.data, updated_at=CURRENT_TIMESTAMP",params![session.id,data]).map_err(db_error)?;
+        connection.execute("INSERT INTO sessions(id,data) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET data=excluded.data, updated_at=CURRENT_TIMESTAMP", params![session.id,data]).map_err(db_error)?;
         drop(connection);
         Ok(())
     }

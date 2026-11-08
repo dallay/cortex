@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {computed} from "vue";
 import {Badge} from "@/components/ui/badge";
 
@@ -42,7 +42,7 @@ const colorClass = computed(() => {
 </script>
 
 <template>
-  <Badge :variant="variant" :class="colorClass" class="font-mono text-xs">
+  <Badge :class="colorClass" :variant="variant" class="font-mono text-xs">
     {{ method.toUpperCase() }}
   </Badge>
 </template>

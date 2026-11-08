@@ -28,13 +28,13 @@ Both reports were read in full before any file was moved or edited.
 
 The archive does not claim that the following QA notes are resolved. They remain open and visible in the archived `qa-report.md`:
 
-| Note | Severity | Status after archive |
-|---|---|---|
-| INFO-01 — two entries of the `tasks.md` verification matrix name tests that do not exist in the tree | P3 (documentation) | **Open.** The stale pointers were deliberately left in place; the matrix was not rewritten during archive. |
-| INFO-02 — in the 20-column viewport the compact header renders as `theme 1/5` instead of the exemplary `integrations (5/5)` wording | P3 (wording) | **Open.** The requirement (show active tab and position) is met; the wording difference stands. |
-| INFO-03 — scope hygiene: working-tree changes outside the feature scope (wiremock readiness-probe filter, clippy-driven refactors) | P3 (scope hygiene) | **Open by operator decision.** See §5. The changes were kept in this branch with an explicit scope note rather than split. |
-| INFO-04 — `just ci-local` was not re-executed during the QA pass | P3 (gate traceability) | **Open.** The gate result is inherited from the verify phase and was verified by log inspection only. |
-| INFO-05 — carried SUGGESTION-02 (frontend coverage percentage) and SUGGESTION-03 (artifact-size environment variables) | Informational | **Open.** The debug-profile variables affect artifact size only; they change neither test selection nor coverage thresholds. |
+| Note                                                                                                                                | Severity               | Status after archive                                                                                                         |
+|-------------------------------------------------------------------------------------------------------------------------------------|------------------------|------------------------------------------------------------------------------------------------------------------------------|
+| INFO-01 — two entries of the `tasks.md` verification matrix name tests that do not exist in the tree                                | P3 (documentation)     | **Open.** The stale pointers were deliberately left in place; the matrix was not rewritten during archive.                   |
+| INFO-02 — in the 20-column viewport the compact header renders as `theme 1/5` instead of the exemplary `integrations (5/5)` wording | P3 (wording)           | **Open.** The requirement (show active tab and position) is met; the wording difference stands.                              |
+| INFO-03 — scope hygiene: working-tree changes outside the feature scope (wiremock readiness-probe filter, clippy-driven refactors)  | P3 (scope hygiene)     | **Open by operator decision.** See §5. The changes were kept in this branch with an explicit scope note rather than split.   |
+| INFO-04 — `just ci-local` was not re-executed during the QA pass                                                                    | P3 (gate traceability) | **Open.** The gate result is inherited from the verify phase and was verified by log inspection only.                        |
+| INFO-05 — carried SUGGESTION-02 (frontend coverage percentage) and SUGGESTION-03 (artifact-size environment variables)              | Informational          | **Open.** The debug-profile variables affect artifact size only; they change neither test selection nor coverage thresholds. |
 
 The QA report also notes that QA did not modify source code and does not modify the technical verdict recorded in `verify-report.md`.
 
@@ -56,18 +56,18 @@ Both are outside the `settings-modal` feature scope. This report records that at
 
 ## 6. Archived contents
 
-| Artifact | Present | Notes |
-|---|---|---|
-| `proposal.md` | yes | Original intent, scope, and out-of-scope list. |
-| `exploration.md` | yes | Pre-implementation investigation. |
-| `design.md` | yes | Technical design and decisions of record. |
-| `tasks.md` | yes | Task matrix; T-15 complete. The two stale test-name pointers from INFO-01 remain visible. |
-| `apply-progress.md` | yes | Apply-phase progress record. |
-| `verify-report.md` | yes | Verdict PASS, with the aggregate gate log reference. |
-| `qa-report.md` | yes | Verdict PASS WITH WARNINGS; acceptance evidence preserved verbatim, including all blockers-none statement and the five informational notes. |
-| `specs/ui-settings/spec.md` | yes | Verbatim snapshot of the main spec. |
-| `state.yaml` | yes | `current_phase: archive`, `archive` completed, `next: null`, `archived_to` set. |
-| `archive-report.md` | yes | This report. |
+| Artifact                    | Present | Notes                                                                                                                                       |
+|-----------------------------|---------|---------------------------------------------------------------------------------------------------------------------------------------------|
+| `proposal.md`               | yes     | Original intent, scope, and out-of-scope list.                                                                                              |
+| `exploration.md`            | yes     | Pre-implementation investigation.                                                                                                           |
+| `design.md`                 | yes     | Technical design and decisions of record.                                                                                                   |
+| `tasks.md`                  | yes     | Task matrix; T-15 complete. The two stale test-name pointers from INFO-01 remain visible.                                                   |
+| `apply-progress.md`         | yes     | Apply-phase progress record.                                                                                                                |
+| `verify-report.md`          | yes     | Verdict PASS, with the aggregate gate log reference.                                                                                        |
+| `qa-report.md`              | yes     | Verdict PASS WITH WARNINGS; acceptance evidence preserved verbatim, including all blockers-none statement and the five informational notes. |
+| `specs/ui-settings/spec.md` | yes     | Verbatim snapshot of the main spec.                                                                                                         |
+| `state.yaml`                | yes     | `current_phase: archive`, `archive` completed, `next: null`, `archived_to` set.                                                             |
+| `archive-report.md`         | yes     | This report.                                                                                                                                |
 
 ## 7. Non-claims
 

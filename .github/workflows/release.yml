@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
   workflow_dispatch:
     inputs:
       dry_run:
@@ -193,7 +193,7 @@ jobs:
 
   upload-assets:
     name: Upload Rook release assets
-    needs: [release-please, build-binaries]
+    needs: [ release-please, build-binaries ]
     if: ${{ needs.release-please.outputs.rook_release_created == 'true' }}
     runs-on: ubuntu-latest
     permissions:
@@ -223,7 +223,7 @@ jobs:
 
   validate-npm:
     name: Validate Rook npm packages
-    needs: [release-please, build-binaries]
+    needs: [ release-please, build-binaries ]
     if: ${{ needs.release-please.outputs.rook_release_created == 'true' }}
     runs-on: ubuntu-latest
     steps:
@@ -251,7 +251,7 @@ jobs:
 
   publish-npm-platform:
     name: Publish Rook npm platform package (${{ matrix.name }})
-    needs: [release-please, build-binaries, validate-npm]
+    needs: [ release-please, build-binaries, validate-npm ]
     if: ${{ needs.release-please.outputs.rook_release_created == 'true' && vars.RELEASE_PUBLICATION_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     permissions:
@@ -333,7 +333,7 @@ jobs:
 
   publish-npm-base:
     name: Publish Rook npm base package
-    needs: [release-please, publish-npm-platform]
+    needs: [ release-please, publish-npm-platform ]
     if: ${{ needs.release-please.outputs.rook_release_created == 'true' && vars.RELEASE_PUBLICATION_ENABLED == 'true' && needs.publish-npm-platform.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
@@ -368,7 +368,7 @@ jobs:
 
   publish-docker:
     name: Publish Rook container
-    needs: [release-please, build-binaries]
+    needs: [ release-please, build-binaries ]
     if: ${{ needs.release-please.outputs.rook_release_created == 'true' && vars.RELEASE_PUBLICATION_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     permissions:
@@ -445,7 +445,7 @@ jobs:
 
   release-summary:
     name: Rook release summary
-    needs: [release-please, build-binaries, upload-assets, validate-npm, publish-npm-platform, publish-npm-base, publish-docker]
+    needs: [ release-please, build-binaries, upload-assets, validate-npm, publish-npm-platform, publish-npm-base, publish-docker ]
     if: ${{ always() && needs.release-please.outputs.rook_release_created == 'true' }}
     runs-on: ubuntu-latest
     steps:

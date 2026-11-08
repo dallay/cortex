@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {AlertDialogActionProps} from "reka-ui";
 import {AlertDialogAction} from "reka-ui";
@@ -14,7 +14,7 @@ const delegatedProps = reactiveOmit(props, "class");
 </script>
 
 <template>
-  <AlertDialogAction v-bind="delegatedProps" :class="cn(buttonVariants(), props.class)">
-    <slot />
+  <AlertDialogAction :class="cn(buttonVariants(), props.class)" v-bind="delegatedProps">
+    <slot/>
   </AlertDialogAction>
 </template>

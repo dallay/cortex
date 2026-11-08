@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {ScrollAreaRootProps} from "reka-ui";
 import {ScrollAreaCorner, ScrollAreaRoot, ScrollAreaViewport} from "reka-ui";
@@ -15,17 +15,17 @@ const delegatedProps = reactiveOmit(props, "class");
 
 <template>
   <ScrollAreaRoot
+    :class="cn('relative', props.class)"
     data-slot="scroll-area"
     v-bind="delegatedProps"
-    :class="cn('relative', props.class)"
   >
     <ScrollAreaViewport
-      data-slot="scroll-area-viewport"
       class="focus-visible:ring-ring/50 size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1"
+      data-slot="scroll-area-viewport"
     >
-      <slot />
+      <slot/>
     </ScrollAreaViewport>
-    <ScrollBar />
-    <ScrollAreaCorner />
+    <ScrollBar/>
+    <ScrollAreaCorner/>
   </ScrollAreaRoot>
 </template>
