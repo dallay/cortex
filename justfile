@@ -432,7 +432,7 @@ ci-trivy:
     mkdir -p reports/trivy
     report="reports/trivy/trivy-local.sarif"
     trap 'rm -f "$report"' EXIT
-    trivy fs --scanners vuln,misconfig --severity HIGH,CRITICAL --ignore-unfixed --format sarif --output "$report" --exit-code 1 .
+    trivy fs --scanners vuln,misconfig --severity HIGH,CRITICAL --ignore-unfixed --skip-dirs tmp --skip-dirs .opencode --skip-dirs .claude/worktrees --format sarif --output "$report" --exit-code 1 .
 
 # Scan commits in the PR range against .gitleaks.toml rules
 ci-gitleaks:

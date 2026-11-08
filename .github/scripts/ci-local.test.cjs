@@ -80,6 +80,9 @@ describe('local CI contract', () => {
         assert.match(recipeBlock('ci-semgrep'), /jq -e/);
         assert.match(recipeBlock('ci-semgrep'), /CORTEX_CI_TMPDIR/);
         assert.match(recipeBlock('ci-trivy'), /Trivy is required/);
+        assertContainsAll(recipeBlock('ci-trivy'),
+            ['--skip-dirs tmp', '--skip-dirs .opencode',
+              '--skip-dirs .claude/worktrees'], 'ci-trivy');
         assert.match(workflow, /--exit-code 1/);
       });
 
