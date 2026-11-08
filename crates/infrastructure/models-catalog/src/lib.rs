@@ -99,7 +99,7 @@ impl StaticModelCatalog {
                 for model_id in models {
                     let key = (descriptor.id.to_string(), (*model_id).to_string());
                     global_capabilities.entry(key).or_default();
-                    push_unique_model_entry(&mut global_entries, descriptor.id.as_ref(), model_id);
+                    push_unique_model_entry(&mut global_entries, descriptor.id, model_id);
                 }
             }
         }
