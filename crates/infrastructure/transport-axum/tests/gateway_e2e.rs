@@ -23,9 +23,10 @@ use rook_core::{
     AuditEntry, AuditPort, CachePort, CacheStats, Combo, ComboAlias, ComboAliasRepositoryError,
     ComboAliasRepositoryPort, ComboRepositoryError, ComboRepositoryPort, ComboStep, ComboStrategy,
     CompletionRequest, CompletionResponse, CortexResult, ModelAlias, ModelAliasRepositoryError,
-    ModelAliasRepositoryPort, NewSession, NewUser, PasswordHash, PasswordHashError, PasswordHasher,
-    ProviderPort, RouterPort, Session, SessionId, SessionRepositoryError, SessionRepositoryPort,
-    SignatureEntry, TokenCacheStats, User, UserId, UserRepositoryError, UserRepositoryPort,
+    ModelAliasRepositoryPort, ModelCatalogPort, NewSession, NewUser, PasswordHash,
+    PasswordHashError, PasswordHasher, ProviderPort, RouterPort, Session, SessionId,
+    SessionRepositoryError, SessionRepositoryPort, SignatureEntry, TokenCacheStats, User, UserId,
+    UserRepositoryError, UserRepositoryPort,
 };
 use rook_usecases::{
     AuthenticateClientApi, BootstrapStatus, EnsureAdminUser, FallbackRouter, HealthCheck, Login,
@@ -541,7 +542,7 @@ async fn build_gateway_planned(
     openai: UpstreamMock,
     anthropic: UpstreamMock,
 ) -> Gateway {
-    build_gateway_with_router(allowed_models, openai, anthropic, None).await
+    build_gateway_with_router_and_nan(allowed_models, openai, anthropic, None, false).await
 }
 
 async fn build_gateway_with_router(
@@ -549,6 +550,32 @@ async fn build_gateway_with_router(
     openai: UpstreamMock,
     anthropic: UpstreamMock,
     router: Option<Arc<dyn RouterPort>>,
+) -> Gateway {
+    build_gateway_with_router_and_nan(allowed_models, openai, anthropic, router, false).await
+}
+
+async fn build_gateway_with_nan() -> Gateway {
+    build_gateway_with_router_and_nan(
+        vec![],
+        UpstreamMock::Json(openai_ok_body()),
+        UpstreamMock::Json(serde_json::json!({
+            "id": "msg_nan", "type": "message", "role": "assistant",
+            "content": [{"type": "text", "text": "unused"}],
+            "model": "claude-e2e", "stop_reason": "end_turn", "stop_sequence": null,
+            "usage": {"input_tokens": 1, "output_tokens": 1}
+        })),
+        None,
+        true,
+    )
+    .await
+}
+
+async fn build_gateway_with_router_and_nan(
+    allowed_models: Vec<&str>,
+    openai: UpstreamMock,
+    anthropic: UpstreamMock,
+    router: Option<Arc<dyn RouterPort>>,
+    include_nan: bool,
 ) -> Gateway {
     let upstreams = start_upstreams_planned(openai, anthropic).await;
 
@@ -573,13 +600,60 @@ async fn build_gateway_with_router(
             timeout_secs: 10,
         })
         .unwrap();
-    let fallback_router = Arc::new(FallbackRouter::new(
-        vec![
-            declared_fixture(openai_provider),
-            declared_fixture(anthropic_provider),
-        ],
-        RoutingStrategy::Priority,
-    ));
+    let mut providers = vec![
+        declared_fixture(openai_provider),
+        declared_fixture(anthropic_provider),
+    ];
+    let model_catalog: Arc<dyn ModelCatalogPort> = if include_nan {
+        let descriptor = rook_core::descriptor_by_id("nan").expect("NaN descriptor");
+        let models = match descriptor.models {
+            rook_core::ModelSource::Static(models) => models
+                .iter()
+                .map(|model| ModelId::new(*model))
+                .collect::<Vec<_>>(),
+            other => panic!("NaN must declare static models, got {other:?}"),
+        };
+        let catalog = Arc::new(models_catalog::StaticModelCatalog::new());
+        let mut metadata = HashMap::new();
+        for model in &models {
+            metadata.insert(
+                model.clone(),
+                catalog.resolve(descriptor, None, model.as_str()).await,
+            );
+        }
+        let adapter = Arc::new(
+            OpenAIProvider::new(OpenAIProviderConfig {
+                provider_id: descriptor.id,
+                id: ProviderId::new(descriptor.id),
+                api_key: "upstream".to_string(),
+                base_url: upstreams.openai.uri(),
+                models,
+                timeout_secs: 10,
+            })
+            .expect("NaN descriptor should use the OpenAI-compatible adapter"),
+        );
+        let caps = descriptor.capability_ceiling;
+        let mut ceiling = rook_core::ModelCapabilities::default();
+        ceiling.apply(
+            &rook_core::CapabilityOverrides {
+                tools: (caps.tools != rook_core::CapabilityState::Unknown).then_some(caps.tools),
+                vision: (caps.vision != rook_core::CapabilityState::Unknown).then_some(caps.vision),
+                reasoning: (caps.reasoning != rook_core::CapabilityState::Unknown)
+                    .then_some(caps.reasoning),
+                streaming: (caps.streaming != rook_core::CapabilityState::Unknown)
+                    .then_some(caps.streaming),
+                context_tokens: caps.context_tokens,
+            },
+            "adapter",
+        );
+        providers.push(Arc::new(
+            rook_usecases::catalogued_provider::CataloguedProvider::new(adapter, metadata, ceiling),
+        ));
+        catalog
+    } else {
+        Arc::new(FakeCatalog)
+    };
+    let fallback_router = Arc::new(FallbackRouter::new(providers, RoutingStrategy::Priority));
 
     let mut combos = HashMap::new();
     let combo = Combo::new(
@@ -704,7 +778,7 @@ async fn build_gateway_with_router(
         Logout::new(sessions.clone()),
         Arc::new(RwLock::new(None)),
         sessions,
-        Arc::new(FakeCatalog),
+        model_catalog,
         fallback_router.clone(),
     ));
     let app = transport_axum::router(
@@ -1439,6 +1513,65 @@ async fn revoked_key_unauthorized_401() {
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{json}");
+}
+
+#[tokio::test]
+async fn nan_completion_routes_to_catalogued_provider_and_v1_models_exposes_catalog_metadata() {
+    let gw = build_gateway_with_nan().await;
+    let (status, models) = get_json(gw.app.clone(), "/v1/models").await;
+    assert_eq!(status, StatusCode::OK, "{models}");
+    assert_eq!(models["object"], "list");
+
+    let entries = models["data"].as_array().expect("model list");
+    for model in [
+        "deepseek-v4-flash",
+        "glm5.3",
+        "glm5.3-flash",
+        "qwen3.8-flash",
+        "qwen3.6",
+        "mimo-v2.6-flash",
+        "gemma4",
+    ] {
+        let entry = entries
+            .iter()
+            .find(|entry| entry["id"] == format!("nan/{model}"))
+            .unwrap_or_else(|| panic!("/v1/models must include nan/{model}: {entries:?}"));
+        assert_eq!(entry["owned_by"], "nan");
+        assert_eq!(entry["rook"]["capabilities"]["tools"]["state"], "supported");
+        assert_eq!(entry["rook"]["capabilities"]["tools"]["source"], "bundled");
+        assert_eq!(
+            entry["rook"]["capabilities"]["streaming"]["state"],
+            "supported"
+        );
+        assert_eq!(
+            entry["rook"]["capabilities"]["streaming"]["source"],
+            "bundled"
+        );
+        assert_eq!(
+            entry["rook"]["capabilities"]["context_tokens"]["value"],
+            131072
+        );
+        assert_eq!(
+            entry["rook"]["capabilities"]["context_tokens"]["source"],
+            "bundled"
+        );
+    }
+
+    let (status, completion) = post_json(
+        gw.app.clone(),
+        "/v1/chat/completions",
+        openai_body("deepseek-v4-flash", false),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{completion}");
+    assert_eq!(completion["choices"][0]["message"]["content"], "mock reply");
+
+    let requests = gw.upstreams.openai.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].headers["authorization"], "Bearer upstream");
+    let request_body: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(request_body["model"], "deepseek-v4-flash");
 }
 
 #[tokio::test]
