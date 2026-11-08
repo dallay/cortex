@@ -42,6 +42,63 @@ fn completion_request(model: &str) -> CompletionRequest {
 }
 
 #[tokio::test]
+async fn nan_descriptor_routes_chat_completion_with_bearer_auth() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .and(wiremock::matchers::header(
+            "authorization",
+            "Bearer nan-test-key",
+        ))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "chatcmpl-nan",
+                "model": "deepseek-v4-flash",
+                "choices": [{
+                    "message": {"role": "assistant", "content": "NaN replied"},
+                    "finish_reason": "stop"
+                }],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}
+            })),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut descriptor = *rook_core::descriptor_by_id("nan").expect("NaN descriptor");
+    descriptor.default_base_url = Box::leak(server.uri().into_boxed_str());
+    let descriptor = Box::leak(Box::new(descriptor));
+    let models = match descriptor.models {
+        rook_core::ModelSource::Static(models) => {
+            models.iter().map(|model| ModelId::new(*model)).collect()
+        }
+        other => panic!("NaN must declare static models, got {other:?}"),
+    };
+
+    let provider = build_provider_from_connection(
+        &ConnectionId::new(),
+        descriptor,
+        &DecryptedCredentials::ApiKey {
+            api_key: "nan-test-key".into(),
+        },
+        None,
+        models,
+    )
+    .expect("NaN should build from its descriptor");
+    let response = provider
+        .complete(&completion_request("deepseek-v4-flash"))
+        .await
+        .expect("NaN chat completion should succeed");
+
+    assert_eq!(response.content, "NaN replied");
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].url.path(), "/chat/completions");
+    let request_body: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(request_body["model"], "deepseek-v4-flash");
+}
+
+#[tokio::test]
 async fn migrated_openai_providers_route_with_bearer_auth() {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("POST"))
