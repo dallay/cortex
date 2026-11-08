@@ -672,8 +672,11 @@ const fn nan() -> ProviderDescriptor {
         capability_ceiling: openai_ceiling(),
         models: ModelSource::Static(&[
             "deepseek-v4-flash",
+            "glm5.3",
             "glm5.3-flash",
             "qwen3.8-flash",
+            "qwen3.6",
+            "mimo-v2.6-flash",
             "gemma4",
         ]),
     }
