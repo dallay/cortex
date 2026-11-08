@@ -356,6 +356,8 @@ jobs:
         run: mkdir -p reports/trivy
       - name: Run Trivy filesystem + dependency scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         with:
           version: v0.76.1
           scan-type: fs
@@ -367,7 +369,7 @@ jobs:
           output: reports/trivy/trivy-pr.sarif
           exit-code: '1'
       - name: Upload Trivy SARIF
-        if: always()
+        if: always() && hashFiles('reports/trivy/trivy-pr.sarif') != ''
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e
         with:
           sarif_file: reports/trivy/trivy-pr.sarif

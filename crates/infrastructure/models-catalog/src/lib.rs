@@ -5,6 +5,23 @@ use rook_core::{
     ConnectionId, ModelCapabilities, ModelCatalogEntry, ModelCatalogPort, ModelDeclaration,
 };
 
+/// Adds a model to the catalog unless the provider/model pair already exists.
+fn push_unique_model_entry(
+    entries: &mut Vec<ModelCatalogEntry>,
+    provider_id: &str,
+    model_id: &str,
+) {
+    if !entries
+        .iter()
+        .any(|entry| entry.provider_id == provider_id && entry.model_id == model_id)
+    {
+        entries.push(ModelCatalogEntry {
+            model_id: model_id.to_string(),
+            provider_id: provider_id.to_string(),
+        });
+    }
+}
+
 /// Immutable declarative catalog. Runtime discovery can supply IDs to `resolve`
 /// without making unverified capability assertions.
 pub struct StaticModelCatalog {
@@ -65,14 +82,7 @@ impl StaticModelCatalog {
             let key = (entry.provider_id.clone(), entry.model_id.clone());
             let caps = global_capabilities.entry(key.clone()).or_default();
             caps.apply(&entry.capabilities, "bundled");
-            if !global_entries.iter().any(|e: &ModelCatalogEntry| {
-                e.provider_id == entry.provider_id && e.model_id == entry.model_id
-            }) {
-                global_entries.push(ModelCatalogEntry {
-                    model_id: entry.model_id.clone(),
-                    provider_id: entry.provider_id.clone(),
-                });
-            }
+            push_unique_model_entry(&mut global_entries, &entry.provider_id, &entry.model_id);
         }
 
         // Level 2: Configured global declarations (connection_id.is_none())
@@ -80,14 +90,7 @@ impl StaticModelCatalog {
             let key = (entry.provider_id.clone(), entry.model_id.clone());
             let caps = global_capabilities.entry(key.clone()).or_default();
             caps.apply(&entry.capabilities, "provider_configuration");
-            if !global_entries.iter().any(|e: &ModelCatalogEntry| {
-                e.provider_id == entry.provider_id && e.model_id == entry.model_id
-            }) {
-                global_entries.push(ModelCatalogEntry {
-                    model_id: entry.model_id.clone(),
-                    provider_id: entry.provider_id.clone(),
-                });
-            }
+            push_unique_model_entry(&mut global_entries, &entry.provider_id, &entry.model_id);
         }
 
         // Level 3: Descriptors with inline static model lists contribute to the catalog
@@ -96,14 +99,7 @@ impl StaticModelCatalog {
                 for model_id in models {
                     let key = (descriptor.id.to_string(), (*model_id).to_string());
                     global_capabilities.entry(key).or_default();
-                    if !global_entries.iter().any(|e: &ModelCatalogEntry| {
-                        e.provider_id == descriptor.id && e.model_id == *model_id
-                    }) {
-                        global_entries.push(ModelCatalogEntry {
-                            model_id: (*model_id).to_string(),
-                            provider_id: descriptor.id.to_string(),
-                        });
-                    }
+                    push_unique_model_entry(&mut global_entries, descriptor.id.as_ref(), model_id);
                 }
             }
         }
