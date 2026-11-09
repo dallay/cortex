@@ -2,84 +2,90 @@
 
 ## Intent
 
-Provide Huginn with least-privilege, user-controlled authorization for host effects, including a predictable approval flow for workspace file writes. A user must be able to deny an effect, allow it once, or persistently allow it for the current workspace within a narrow capability/action/resource scope. After a user persistently grants matching workspace file writes, later matching writes in that workspace must not prompt again.
+Provide Huginn with least-privilege, user-controlled authorization for host effects. Users must be able to deny an effect, allow it once, or persistently allow it for the current workspace within a narrow capability/action/resource scope. Matching authorized writes in that workspace must not prompt again.
 
-The change must keep authorization separate from process sandboxing and agent behavioral instructions. It must also preserve native filesystem boundaries, administrator control, granular MCP authorization, three-OS parity goals, and accessible mouse and approval interactions. Current code does not yet provide the requested persistent workspace grant or the required verified policy sources.
+Persistent grants remain a required outcome, but they must not become an authorization authority that same-user shell processes can read or alter. Huginn shell processes share the user's UID on macOS/Linux or `TokenUser` on Windows and can access user files unless sandbox enforcement prevents it. Therefore, prove sandbox isolation first; only then activate persistent grant storage. Keep authorization separate from sandbox enforcement and behavioral instructions.
 
 ## Scope
 
 ### In Scope
 
-- Provide three effect decisions: deny, allow once, and allow persistently for the current workspace. A persistent grant MUST be limited to the canonical workspace root and the narrow capability, action, and resource it covers. Matching authorized writes in that workspace MUST NOT prompt again.
-- Store persistent workspace grants only in a user-owned configuration or registry keyed by canonical root. Project-controlled files MUST NOT create, alter, or persist trusted permission state.
-- Support configurable global/user policy rules and administrator rules as separate authorities. Administrator rules MUST only restrict and MUST override user grants when they conflict. Invalid or unverifiable administrator rules MUST fail closed.
-- Preserve least privilege and `OnRequest` approval behavior. Define how a denied-by-profile effect can become eligible for a prompt without weakening administrator restrictions or silently expanding a grant.
-- Keep authorization independent from sandbox selection and enforcement. Approval MUST NOT disable or broaden a sandbox. Preserve native filesystem path, symlink, capability, and resource checks at each effect boundary.
-- Keep shell authorization and MCP authorization granular and separate. Do not let native file grants authorize shell or MCP effects; define MCP decisions at the server/tool/action/resource scope where supported.
-- Preserve behavioral instructions as distinct from host capability authorization. Instructions such as “do not list environment variables” guide agent behavior but MUST NOT grant or replace host permissions; this change addresses host capability permissions only.
-- Preserve and verify sandbox enforcement across macOS, Linux, and Windows. Do not claim platform parity based only on shared interfaces, compilation, stubs, or fail-closed behavior.
-- Preserve mouse and keyboard interaction in TUI menus and approval flows. Approval UX MUST clearly show the requested action and resource, provide safe denial/cancellation, and make the three decisions understandable and reviewable.
-- Reconcile existing tests with effective policy behavior. In particular, distinguish a safe default choice in a displayed prompt from whether the current `Restricted` policy should reach that prompt.
+- Provide deny, allow once, and allow persistently for the current workspace. Bound persistent grants to the canonical workspace root and narrow capability/action/resource. Matching writes must not prompt again.
+- Retain persistent grants in user-owned state; project-controlled files must not create, alter, or persist trusted permission state. Do not activate or rely on this store until sandbox isolation has been proven.
+- First implement and verify sandbox restrictions that deny shell read, write, replacement, and enumeration access to grant state on macOS, Linux, and Windows. Require real-platform adversarial tests for each OS before persistent grants become active.
+- Treat `private-fs` 0.2.1 as unsuitable as a standalone authorization safeguard: its security contract excludes same-principal attackers. Compilation or file ownership checks alone do not prove shell isolation.
+- Support configurable global/user policy and administrator rules as separate authorities. Administrator rules must only restrict and override conflicting user grants. Invalid or unverifiable administrator rules must fail closed.
+- Preserve least privilege and `OnRequest` behavior. Define prompt eligibility for profile-denied effects without weakening administrator restrictions or silently expanding a grant.
+- Keep authorization independent from sandbox selection and enforcement. Approval must not disable or broaden a sandbox. Preserve native filesystem path, symlink, capability, and resource checks at each effect boundary.
+- Keep shell authorization and MCP authorization granular and separate. Native file grants must not authorize shell or MCP effects. Keep MCP decisions at the server/tool/action/resource scope where supported.
+- Keep behavioral instructions distinct from host capability authorization. Instructions such as “do not list environment variables” guide agent behavior but must not grant or replace host permissions.
+- Require Huginn Windows test and clippy parity gates; current Windows CI excludes Huginn. Do not claim parity from shared interfaces, compilation, stubs, or fail-closed behavior alone.
+- Preserve mouse and keyboard approval flows, clear action/resource details, safe denial/cancellation, and understandable decisions. Reconcile the `Restricted` prompt-eligibility behavior with existing TUI expectations.
 
 ### Out of Scope
 
-- YOLO, Exit, full-access, or other permissive authorization modes. Do not expand or expose the existing `FullAccess` profile as part of this change.
-- Persisting grants in project-controlled files, broad workspace trust, or grants that implicitly include other workspaces, resources, actions, shell execution, or MCP calls.
+- YOLO, Exit, full-access, or other permissive authorization modes. Do not expand or expose the existing `FullAccess` profile.
+- Project-controlled grant storage, broad workspace trust, or grants that include other workspaces, resources, actions, shell execution, or MCP calls implicitly.
 - Treating behavioral instructions as authorization or process isolation.
 - Unsandboxed execution fallback or any claim that approval itself provides sandboxing.
 
 ## Approach
 
-Resolve effective authorization from distinct configurable global/user rules, user-owned canonical-root workspace grants, and administrator restrictions. Enforce administrator restrictions before honoring a grant. Treat missing, invalid, or unverifiable authority data as a denial. Keep grant identity bounded to the canonical workspace root and explicit capability/action/resource, and revalidate the requested effect against current policy and native filesystem boundaries before execution.
+Order delivery by security dependency. First establish sandbox controls and demonstrate on each supported OS that shell processes cannot read, write, replace, or enumerate the future grant state. Add real-platform adversarial tests and enable equivalent Huginn Windows CI coverage. Persistent grants remain inactive until these gates pass. A private user-owned store is not sufficient protection while same-principal shell processes can access it; `private-fs` 0.2.1 must not serve as a standalone authorization authority.
 
-Use `OnRequest` to present the three user decisions only when policy permits an approval request. A successful persistent workspace decision is stored outside the project and suppresses later prompts only for matching operations. Maintain a separate authorization path for granular MCP effects. Keep process sandbox choice and enforcement independent from all approval decisions, and verify the declared restrictions on each target OS.
+After isolation is proven, add persistent user-owned grants keyed by canonical workspace root and explicit capability/action/resource. Resolve effective authorization from distinct global/user rules, grants, and administrator restrictions; apply administrator restrictions before honoring grants. Fail closed on missing, invalid, or unverifiable authority data, and revalidate every effect against current policy and native filesystem boundaries. Use `OnRequest` for the three decisions only when policy permits prompting. Keep MCP authorization separate and preserve independent sandbox selection/enforcement.
 
-Implementation is blocked until a safe user-owned grant registry and a machine-managed source for administrator rules have been proven trustworthy and verifiable across macOS, Linux, and Windows. The current implementation has only session-scoped in-memory approvals, resolves `Restricted` writes to denial before prompting unless explicitly escalated, and has no user-owned persistent workspace-grant store or administrator policy source in the examined configuration path. Do not present the requested behavior or cross-platform verification as existing functionality.
+Current Huginn approvals are session-scoped and in-memory. `Restricted` writes are denied before prompting unless explicitly escalated. The existing TUI test expects a displayed prompt, which must be reconciled with that policy path. Current Windows CI excludes Huginn test/clippy commands. Do not present any requested persistent behavior or platform verification as existing functionality.
 
 ## Affected Areas
 
 | Area | Impact | Description |
 |------|--------|-------------|
-| `crates/huginn/application/src/authorization.rs` | Modified | Replace session-only approval semantics with bounded one-time and persistent workspace decisions; enforce current policy before effects. |
-| `crates/huginn/application/src/permission_policy.rs` | Modified | Resolve user/global policy separately from administrator restrictions and establish explicit precedence and prompt eligibility. |
-| `apps/huginn/src/config.rs` and `apps/huginn/src/main.rs` | Modified | Load and compose user rules, the user-owned grant registry, and administrator rules without trusting project-controlled state. |
-| `crates/huginn/presentation/src/terminal.rs` and approval state | Modified | Present deny, allow once, and allow for this workspace; preserve mouse/keyboard operation and safe review/cancel states. |
-| Huginn native filesystem and sandbox adapters | Modified | Preserve effect-level path/resource checks and independently enforce platform sandbox boundaries. |
-| `crates/huginn/runtime/src/mcp.rs` | Modified | Maintain separate, granular MCP authorization without inheriting native workspace grants. |
-| `apps/huginn/tests/tui.rs` and Huginn policy/runtime tests | Modified | Verify decisions, no-repeat matching writes, authority precedence, boundary failures, UI behavior, and platform restrictions. |
+| Huginn sandbox adapters and platform tests | Modified | Prove shell cannot read, write, replace, or enumerate grant state before enabling persistence; cover macOS, Linux, and Windows. |
+| Huginn CI configuration | Modified | Add Windows Huginn test and clippy parity gates required for the security boundary. |
+| `crates/huginn/application/src/authorization.rs` | Modified | Add bounded one-time and persistent workspace decisions only after isolation is proven; enforce current policy before effects. |
+| `crates/huginn/application/src/permission_policy.rs` | Modified | Resolve global/user policy separately from restriction-only administrator rules and define prompt eligibility. |
+| `apps/huginn/src/config.rs` and `apps/huginn/src/main.rs` | Modified | Load and compose user rules, user-owned grants, and administrator rules without trusting project state. |
+| `crates/huginn/presentation/src/terminal.rs` and approval state | Modified | Present the three decisions and preserve mouse/keyboard operation and safe review/cancel states. |
+| Huginn native filesystem adapters | Modified | Preserve effect-level path/resource checks independently of authorization and process isolation. |
+| `crates/huginn/runtime/src/mcp.rs` | Modified | Maintain granular MCP authorization without inheriting native workspace grants. |
+| `apps/huginn/tests/tui.rs` and Huginn policy/runtime tests | Modified | Verify policy, grant behavior, authority precedence, sandbox denial boundary, UI behavior, and platform restrictions. |
 
 ## Risks
 
 | Risk | Likelihood | Mitigation |
 |------|------------|------------|
-| A grant key or canonical-root check covers a different workspace or resource than intended. | High | Bind grants to canonical root and explicit capability/action/resource; revalidate at each effect boundary and test path/symlink edge cases. |
-| A project-controlled file or unsafe registry grants permissions. | High | Keep grants in user-owned state, reject project-sourced grant data, and block implementation until registry ownership and integrity are proven across all target OSes. |
-| Administrator rules are bypassed by user grants or are accepted from an unverifiable source. | High | Enforce restrictions after user rules/grants in precedence, fail closed, and block implementation pending verified machine-managed source design on all target OSes. |
-| `Restricted` denies writes before the approval UI can present the requested choices. | High | Specify prompt eligibility and any bounded escalation explicitly; keep administrator denials final and reconcile the existing TUI test with policy behavior. |
-| Approval is mistaken for sandboxing or a native file grant leaks into shell/MCP. | High | Keep authorization, sandbox enforcement, native filesystem permissions, and MCP decisions as separate controls with boundary tests. |
-| Sandbox enforcement differs across operating systems. | High | Require real platform evidence before claiming parity; fail closed where enforcement or required authority verification is unavailable. |
-| Approval choices are unclear or mouse interaction regresses. | Medium | Test keyboard and mouse flows, decision labels, focus/hit testing, resource details, and denial/cancellation states. |
+| Same-principal shell code reads or alters authorization state. | High | Keep persistence inactive until sandbox denial of read/write/replace/enumerate is proven with real-platform adversarial tests on all three OSes. |
+| A grant key or canonical-root check covers an unintended workspace/resource. | High | Bind grants to canonical root and explicit capability/action/resource; revalidate at each effect boundary and test path/symlink cases. |
+| Project state or an unsafe registry grants permissions. | High | Keep grants user-owned, reject project-sourced grant data, and gate activation on verified isolation. |
+| Administrator rules are bypassed or accepted from an unverifiable source. | High | Keep administrator policy restriction-only, enforce its precedence, fail closed, and verify its source on all target OSes. |
+| `Restricted` denies writes before the approval UI can present choices. | High | Specify prompt eligibility and bounded escalation; keep administrator denials final and reconcile the TUI test. |
+| Windows CI continues to omit Huginn tests. | High | Add Windows Huginn test/clippy gates and require real Windows evidence before parity claims or grant activation. |
+| Approval is mistaken for sandboxing or native grants leak into shell/MCP. | High | Keep authorization, sandboxing, native filesystem checks, and MCP decisions separate and test each boundary. |
+| Approval choices or mouse interaction regress. | Medium | Test keyboard/mouse flows, labels, focus/hit testing, resource details, and denial/cancellation. |
 
 ## Rollback Plan
 
-Revert affected policy, persistence, and presentation slices independently. If registry ownership, administrator source verification, or a platform enforcement check fails, disable persistent grants or the affected capability/platform and return an observable denial; do not fall back to project state, session-only behavior presented as persistent, or unsandboxed execution. Remove grants that exceed the effective policy. Rollback cannot reverse effects that already occurred.
+Revert sandbox, persistence, policy, and presentation slices independently. If any platform fails the isolation or authority verification gates, keep persistent grants inactive and return an observable denial for affected capabilities; do not fall back to project state, mislabel session-only behavior as persistent, or run unsandboxed. Remove grants that exceed effective policy. Rollback cannot reverse effects that already occurred.
 
 ## Dependencies
 
-- Prove a safe user-owned workspace-grant registry and canonical-root identity on macOS, Linux, and Windows.
-- Prove a machine-managed administrator-rule source and its ownership, integrity, and restriction-only semantics on all three operating systems.
+- Implement and prove sandbox denial of shell read/write/replace/enumerate access to grant state on macOS, Linux, and Windows before activating persistent grants.
+- Provide real-platform adversarial test environments for all three OSes and add Huginn Windows CI test/clippy coverage, currently excluded.
+- Prove a user-owned grant store and canonical-root identity after the isolation prerequisite; do not treat `private-fs` 0.2.1 as a standalone safeguard.
+- Prove a machine-managed administrator-rule source with ownership, integrity, and restriction-only semantics on all target OSes.
 - Resolve the `Restricted`/`OnRequest` prompt-eligibility contract without weakening least privilege or administrator restrictions.
-- Provide platform-capable environments for tests that demonstrate real sandbox and filesystem restrictions.
-- Reconcile current specifications, design, task breakdown, and UI test expectations with this proposal before implementation.
+- Reconcile current specifications, design, task breakdown, and UI test expectations before implementation.
 
 ## Success Criteria
 
-- [ ] Each eligible effect offers deny, allow once, or allow persistently for the current workspace, with the persistent decision bounded to canonical root and narrow capability/action/resource.
-- [ ] After a persistent workspace write grant, subsequent matching writes in that workspace do not prompt again; non-matching writes and other workspaces remain unauthorized unless separately approved.
-- [ ] Persistent grants exist only in verified user-owned state; project-controlled files cannot grant or modify permissions.
-- [ ] Configurable global/user rules and administrator rules remain distinct; administrator rules only restrict and override conflicting grants.
-- [ ] Registry and administrator-rule source integrity and verification are demonstrated on macOS, Linux, and Windows before implementation is considered unblocked.
+- [ ] Sandbox tests on macOS, Linux, and Windows demonstrate that a shell process cannot read, write, replace, or enumerate grant state; persistent grants remain inactive until all platform gates pass.
+- [ ] Huginn Windows test and clippy CI gates run and pass; parity is supported by real-platform evidence, not compilation alone.
+- [ ] After isolation is proven, eligible effects offer deny, allow once, or allow persistently for the current workspace, bounded to canonical root and narrow capability/action/resource.
+- [ ] After a persistent workspace write grant, matching writes in that workspace do not prompt again; non-matching writes and other workspaces remain unauthorized unless separately approved.
+- [ ] Persistent grants exist only in user-owned state; project-controlled files and same-principal shell processes cannot grant or modify permissions.
+- [ ] Global/user rules and administrator rules remain distinct; administrator rules only restrict and override conflicting grants.
 - [ ] `OnRequest`, least privilege, and fail-closed behavior remain intact; no permissive mode is introduced.
-- [ ] Approval does not alter sandbox selection, and native filesystem boundaries remain independently enforced on all three operating systems before parity is claimed.
+- [ ] Approval does not alter sandbox selection; native filesystem boundaries remain independently enforced on all three OSes.
 - [ ] MCP remains granular and separate from native workspace grants; behavioral instructions do not act as host permissions.
-- [ ] Mouse and keyboard approval flows are usable, reviewable, and tested, including safe denial and cancellation.
+- [ ] Mouse and keyboard approval flows are usable and tested, including safe denial and cancellation.

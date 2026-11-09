@@ -162,7 +162,7 @@ Huginn MUST resolve authorization and sandboxing as independent controls from co
 
 ### Requirement: Bounded Effect Authorization Decisions
 
-For an effect that policy permits the user to authorize, Huginn MUST present the decisions `Allow once`, `Allow for this workspace`, and `Deny`. `Allow once` MUST authorize only the presented operation and MUST NOT persist. `Allow for this workspace` MUST be an explicit user authorization stored only in user-owned configuration or a user-owned registry, keyed by the canonical workspace root and a narrow capability/action/resource scope. Huginn MUST validate ownership, protection, and canonical workspace identity before honoring a stored grant on macOS, Linux, and Windows. Project-controlled files or configuration MUST NOT create, modify, or persist this grant. Subsequent matching operations within that workspace scope MUST NOT prompt again. An operation outside any part of the grant scope MUST be resolved by current policy and, when policy permits, offered as a separate bounded approval. `Deny` MUST block the presented operation and MUST NOT be converted to implicit allow. Managed restrictions MUST override every user grant and MUST only restrict. Grants MUST NOT remove or broaden the baseline OS sandbox. Behavioral instructions, including instructions not to enumerate environment variables, are not host permission grants and are outside this change. No permissive YOLO, Exit, or full-access mode is in scope.
+For an effect that policy permits the user to authorize, Huginn MUST provide the decisions `Deny` and `Allow once`, and MUST provide `Allow for this workspace` only when persistent grants are safe to use. `Allow once` MUST authorize only the presented operation and MUST NOT persist. `Allow for this workspace` MUST be an explicit user authorization stored only in user-owned configuration or a user-owned registry, keyed by the canonical workspace root and the exact narrow capability/action/resource identity. Huginn MUST validate ownership, protection, and canonical workspace identity before honoring a stored grant on macOS, Linux, and Windows. Project-controlled files or configuration MUST NOT create, modify, or persist this grant. Subsequent matching operations within that exact workspace scope MUST NOT prompt again, subject to current policy and sandbox enforcement. An operation outside any part of the grant scope MUST be resolved by current policy and, when policy permits, offered as a separate bounded approval. `Deny` MUST block the presented operation and MUST NOT be converted to implicit allow. Managed restrictions MUST override every user grant and MUST only restrict. Grants MUST NOT remove or broaden the baseline OS sandbox. Behavioral instructions, including instructions not to enumerate environment variables, are not host permission grants and are outside this change. No permissive YOLO, Exit, or full-access mode is in scope.
 
 #### Scenario: Allow once is operation-scoped
 
@@ -175,10 +175,28 @@ For an effect that policy permits the user to authorize, Huginn MUST present the
 #### Scenario: Persistent workspace grant suppresses matching write prompts
 
 - GIVEN the user explicitly selects `Allow for this workspace` for a file-write operation
+- AND verified native sandbox enforcement on the current supported operating system prevents shell processes from reading, enumerating, creating, modifying, or replacing the grant registry and every ancestor
 - AND the grant is valid for the canonical workspace root and the narrow capability/action/resource scope
 - WHEN Huginn later requests a matching file write in that workspace
 - THEN Huginn authorizes the write without prompting again, subject to current policy and sandbox enforcement
 - AND the grant remains in user-owned state and is not stored in project-controlled data
+
+#### Scenario: Persistent choice is unavailable before isolation is verified
+
+- GIVEN shell processes share the user's OS identity and can access user-owned files
+- AND native sandbox enforcement on the current supported operating system has not been verified to prevent shell read, enumeration, creation, modification, and replacement access to the grant registry and all its ancestors
+- WHEN Huginn presents a permission decision for an effect
+- THEN it offers `Deny` and `Allow once` when policy permits
+- AND it does not offer or honor `Allow for this workspace`
+- AND no persisted grant, including a stale or modified grant, suppresses an approval prompt
+
+#### Scenario: Stored grant is not trusted while shell can access its registry
+
+- GIVEN shell processes share the user's OS identity and can read, enumerate, create, modify, or replace the grant registry or one of its ancestors
+- WHEN Huginn resolves an operation that matches a stored workspace grant
+- THEN Huginn does not load or honor the persisted grant
+- AND the stored grant does not suppress a prompt or authorize the operation
+- AND Huginn offers only the decisions permitted by current policy, including `Deny` and `Allow once`
 
 #### Scenario: Workspace grant does not cross privilege scope
 
@@ -228,7 +246,9 @@ Huginn MUST execute shell within the process or OS sandbox required by the selec
 
 Native file tools MUST apply the effective filesystem policy of the profile, including applicable read and write capabilities, roots, and exceptions. They MUST NOT be treated as shell or reduced to a single `write_file` operation; authorization of a native operation and shell sandboxing are distinct controls. A file operation not authorized by its capabilities or roots MUST be denied or escalated according to the effective policy. A path that cannot be verified MUST fail closed.
 
-The sandbox MUST be enforced by an OS-specific backend with verifiable capabilities and limits. Huginn MUST NOT claim equivalence across Linux, macOS, and Windows merely because they share a profile or interface name. Huginn MUST implement and verify the required capability on each of Linux, macOS, and Windows before declaring parity across those platforms. If the required backend is missing, unavailable, unable to enforce isolation, or the policy resolves to no sandbox, Huginn MUST reject execution and MUST NOT run shell without isolation as a fallback.
+The sandbox MUST be enforced by an OS-specific backend with verifiable capabilities and limits. Huginn MUST NOT claim equivalence across Linux, macOS, and Windows merely because they share a profile or interface name. Huginn MUST implement and verify the required capability on each of Linux, macOS, and Windows before declaring parity across those platforms. Before Huginn loads or honors any persisted workspace grant, verified native sandbox enforcement on the current supported operating system MUST prevent shell processes from reading, enumerating, creating, modifying, or replacing the grant registry and every ancestor needed to access or replace it. Until that capability is verified, persistent workspace grants MUST be unavailable, and stored grants MUST NOT suppress prompts or authorize effects. If the required backend is missing, unavailable, unable to enforce isolation, or the policy resolves to no sandbox, Huginn MUST reject shell execution and MUST NOT run shell without isolation as a fallback.
+
+The `private-fs` 0.2.1 documented exclusion of attackers sharing the same UID on Unix or `TokenUser` on Windows means that package is only a candidate for private storage. It MUST NOT be treated as shell-process isolation or as a substitute for the native sandbox enforcement required above.
 
 #### Scenario: Shell permitted by sandbox
 
@@ -250,6 +270,23 @@ The sandbox MUST be enforced by an OS-specific backend with verifiable capabilit
 - WHEN shell execution is requested
 - THEN Huginn returns an observable error or result indicating that sandboxing is unavailable
 - AND it does not start the process or fall back to execution without a sandbox
+
+#### Scenario: Sandbox does not isolate the grant registry
+
+- GIVEN shell processes share the user's OS identity
+- AND the native sandbox cannot be verified to prevent shell read, enumeration, creation, modification, and replacement access to the grant registry and all its ancestors
+- WHEN Huginn starts or evaluates a shell operation
+- THEN Huginn does not load or honor persisted workspace grants
+- AND a stored grant does not suppress a prompt
+- AND Huginn does not offer `Allow for this workspace` until isolation is verified
+- AND shell execution is rejected if the required sandbox policy cannot be enforced
+
+#### Scenario: Private storage candidate does not prove shell isolation
+
+- GIVEN a private-storage package documents exclusion of same-UID or same-`TokenUser` attackers
+- WHEN Huginn evaluates whether persistent grants can be activated
+- THEN it treats that package only as a candidate for private storage
+- AND it requires independent verified native sandbox enforcement against shell access
 
 #### Scenario: Native operation is outside permitted roots
 
@@ -430,7 +467,7 @@ Timeout, missing UI or approver, configuration error, unknown profile, unverifia
 
 ### Requirement: Platform-Specific and Observable-Outcome Verification
 
-Tests MUST separately verify profile and trust-state resolution, approval decisions, workspace grant persistence and scope, filesystem policies, escalation, sandbox enforcement by OS backend, fail-closed behavior, and MCP modes. Support or equivalence MUST NOT be declared for a platform without specific evidence that its backend enforces the required capabilities. This verification MUST address Linux, macOS, and Windows individually before parity across them is declared. TUI tests MUST verify mouse and keyboard input, hit testing, focus, resize, complete review, approval states, and no-op behavior. Tests MUST be deterministic and MUST NOT depend on `sleep` or arbitrary timing.
+Tests MUST separately verify profile and trust-state resolution, approval decisions, workspace grant persistence and scope, filesystem policies, escalation, sandbox enforcement by OS backend, fail-closed behavior, and MCP modes. Real integration tests MUST run on Linux, macOS, and Windows and MUST adversarially verify that shell cannot read, enumerate, create, modify, or replace the grant registry or any of its ancestors. The Huginn test suite MUST run in CI on Windows. Support or equivalence MUST NOT be declared for a platform without specific evidence that its backend enforces the required capabilities. This verification MUST address Linux, macOS, and Windows individually before parity across them is declared. TUI tests MUST verify mouse and keyboard input, hit testing, focus, resize, complete review, approval states, and no-op behavior. Tests MUST be deterministic and MUST NOT depend on `sleep` or arbitrary timing.
 
 #### Scenario: Supported backend and unavailable backend
 
@@ -438,6 +475,21 @@ Tests MUST separately verify profile and trust-state resolution, approval decisi
 - WHEN shell execution tests run
 - THEN the available backend demonstrates enforcement of the declared policy
 - AND the missing or incapable case demonstrates denial without starting an unsandboxed process
+
+#### Scenario: Real integration coverage for grant isolation on each operating system
+
+- GIVEN the Linux, macOS, and Windows CI environments
+- WHEN Huginn's real sandbox integration tests run on each environment
+- THEN each test demonstrates that a shell process cannot read, enumerate, create, modify, or replace the grant registry or any ancestor
+- AND a failed or unavailable enforcement check leaves persistent grants unavailable and stored grants unable to suppress prompts
+- AND CI runs the Huginn test suite on Windows
+
+#### Scenario: Toolchain-compatible persistent storage dependency
+
+- GIVEN a storage dependency is proposed for persistent workspace grants
+- WHEN Huginn evaluates adoption of that dependency
+- THEN the dependency is compatible with both its consuming package toolchain and the Cargo workspace toolchain
+- AND if an app-only dependency is used despite being incompatible with the workspace toolchain, the mismatch is documented and the dependency remains app-only rather than being treated as workspace-compatible
 
 #### Scenario: MCP modes and adversarial metadata
 

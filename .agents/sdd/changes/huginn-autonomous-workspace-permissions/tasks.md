@@ -5,84 +5,74 @@
 | Field | Value |
 |---|---|
 | Review budget | 400 changed lines |
-| Estimated workload | High: policy, persistence, filesystem, MCP, TUI, three native OS backends, CI, and docs |
-| Decision needed before apply | No; continue the approved feature-branch chain |
-| Chained PRs recommended | Yes |
-| 400-line budget risk | High |
-| Chain strategy | `feature-branch-chain`; trunk `main`; parent/base `integration/huginn-autonomous-workspace-permissions`; current branch `feature/huginn-workspace-autonomy-policy`; position 1 |
-| Work-unit balance | Dependency-ordered behavior slices; each includes tests and relevant docs. Keep each slice independently verifiable and rollbackable. |
+| Estimated workload | High: native sandbox backends, adversarial OS tests, grant storage, filesystem, MCP, TUI, CI, and docs |
+| Chain strategy | `feature-branch-chain`; trunk `main`; parent/base `integration/huginn-autonomous-workspace-permissions`; branch `feature/huginn-workspace-autonomy-policy`; position 1 |
+| Work-unit balance | Dependency-ordered slices: policy; sandbox/isolation proof; gated storage/grants; filesystem/MCP/TUI; final CI/docs. Each slice includes focused verification. |
 
-Decision needed before apply: No
+Decision needed before apply: Yes
 Chained PRs recommended: Yes
 400-line budget risk: High
 
-Do not claim platform parity without real enforcement evidence on Linux, macOS, and Windows. Preserve `unsafe_code = deny`; no unsafe wrapper or lint relaxation. `private-fs` 0.2.1 remains an unevaluated candidate, not an adopted dependency.
+Before any macOS sandbox implementation or macOS parity claim, the user must choose one option: (A) approve a temporary `sandbox-exec(1)` exception despite deprecation and removal risk; (B) fail closed or disable shell on macOS until a supported mechanism exists, with no three-OS parity; or (C) investigate/redesign for signed App Sandbox packaging and workspace access, a larger change with unproven feasibility. Apple marks `sandbox-exec(1)` and `sandbox_init(3)` deprecated; the investigated dynamic options rely only on deprecated APIs. Until the user chooses, the macOS sandbox task is blocked. Preserve fail-closed behavior, keep grants inactive and unloaded until real isolation probes pass independently on each OS, and do not weaken `unsafe_code = deny` or introduce YOLO, Exit, or other permissive modes.
 
-## Phase 1: Policy foundations and workspace grants — current slice
+## Phase 1: Policy and one-operation decisions — completed
 
-- [x] 1.1 RED: Add application tests for typed policy settings, profile outcomes, managed restrictions, trust provenance, and bounded escalation; the initial tests exposed missing policy types and an unsafe `Always` path.
-- [x] 1.2 GREEN: Add typed effective-policy resolution and restrictive defaults in `crates/huginn/application/src/permission_policy.rs` and `apps/huginn/src/config.rs`.
+- [x] 1.1 RED: Test typed policy, profile outcomes, managed restrictions, trust provenance, and bounded escalation.
+- [x] 1.2 GREEN: Add effective-policy resolution and restrictive defaults in `permission_policy.rs` and `apps/huginn/src/config.rs`.
 - [x] 1.3 GREEN: Pass immutable policy through interactive/headless composition in `apps/huginn/src/main.rs`.
-- [x] 1.4 RED: Add a failing `HostPolicy` regression test proving ordinary out-of-profile native writes under `OnRequest` reach the prompt (including empty escalation configuration); managed denial remains final. Current TUI regression: write action is rejected before UI prompt.
-- [x] 1.5 GREEN: Fix `HostPolicy::approve_for` and policy/action mapping so prompt eligibility is not pre-denied; keep policy resolution outside presentation and preserve the managed-denial precedence.
-- [x] 1.6 REFACTOR: Run policy, composition, HostPolicy, and TUI tests; prove no allowlist/session shortcut or approval changes the selected sandbox.
-- [x] 1.7 RED: Test separate global/user rules and workspace grants, deterministic precedence, user prohibitions, and managed restrictions overriding grants.
-- [x] 1.8 GREEN: Implement distinct policy authorities and precedence in `permission_policy.rs` and `authorization.rs`.
+- [x] 1.4 RED: Test that prompt-eligible out-of-profile native writes reach the prompt while managed denial remains final.
+- [x] 1.5 GREEN: Correct `HostPolicy::approve_for` and policy/action mapping without moving policy resolution into presentation.
+- [x] 1.6 REFACTOR: Verify policy, composition, HostPolicy, TUI behavior, and unchanged sandbox selection.
+- [x] 1.7 RED: Test distinct global/user rules, workspace grants, precedence, user prohibitions, and managed restrictions.
+- [x] 1.8 GREEN: Implement policy authorities and precedence in `permission_policy.rs` and `authorization.rs`.
 - [x] 1.9 REFACTOR: Verify policy provenance and that behavioral instructions do not affect host authorization.
-- [x] 1.10 RED: Test `Allow once` for one operation only, no durable state, and `Deny` for zero execution. Characterization test confirms the existing volatile approval contract.
-- [x] 1.11 GREEN: Implement operation-scoped `Allow once` and denial in application/approval contracts. Existing implementation already satisfies the contract; no behavior change was needed.
-- [x] 1.12 REFACTOR: Verify neither decision widens scope or changes the sandbox. Repeat approval prompted again; both decisions preserved the `Restricted` profile.
-- [ ] 1.13 EVALUATE: Assess `private-fs` 0.2.1 only as a user-state candidate: security, API, license, targets, and toolchain compatibility. No adoption without review and real-platform proof; preserve `unsafe_code = deny`. Complete this gate before implementing persistent storage.
-- [ ] 1.14 RED: Test durable grant identity by canonical root/capability/action/resource; matching later writes prompt zero times; mismatched path/action/capability/workspace prompts or denies under policy.
-- [ ] 1.15 GREEN: Only after task 1.13 passes, implement `Allow for this workspace` and a verified user-owned store in `apps/huginn/src/`; accept only exact current-policy matches. Never read project grants.
-- [ ] 1.16 REFACTOR: Verify narrow scope, prompt suppression, and no shell/MCP inheritance.
-- [ ] 1.17 RED: Test grant listing/edit/revocation, immediate revocation, malformed/unavailable storage, and persistence-failure feedback.
-- [ ] 1.18 GREEN: Implement explicit grant management and observable failures; failed persistence never becomes an allow.
-- [ ] 1.19 REFACTOR: Verify edited/revoked state is applied before the next authorization decision.
-- [ ] 1.20 RED: Test exact action/resource revalidation, canonical roots, symlink/stale-content changes, native-boundary enforcement, and unchanged sandbox.
-- [ ] 1.21 GREEN: Enforce the tested sequence in `authorization.rs` and native adapters; grants cannot bypass effect checks.
-- [ ] 1.22 REFACTOR: Rerun boundary tests and confirm changed requests require fresh review or denial.
-- [ ] 1.23 BLOCKED: Keep managed-source verification unresolved. Never treat unverifiable policy as absent; fail closed until protected-source verification passes on all three OSes.
+- [x] 1.10 RED: Characterize operation-only `Allow once`, no durable state, and zero execution on `Deny`.
+- [x] 1.11 GREEN: Preserve operation-scoped `Allow once` and denial in application/approval contracts.
+- [x] 1.12 REFACTOR: Verify decisions do not widen scope or change the `Restricted` sandbox profile.
+- [x] 1.13 EVALUATE: Assess `private-fs` 0.2.1 as a possible user-state candidate. It compiles in external scratch with Rust 1.89 (crate MSRV 1.88; Huginn package 1.89; workspace 1.81; pinned toolchain 1.99), but its security contract excludes same-effective-UID/`TokenUser` attackers and shell shares that identity. With no sandbox yet, outcome: **NO GO for active authorization today**. Adding this crate cannot authorize persistent grants. Re-evaluate only after sandbox gates.
 
-## Phase 2: Native sandbox and shell — slice 2
+## Phase 2: Native sandbox and isolation proof — slice 2
 
-- [ ] 2.1 RED: Test zero spawns when a backend is absent, incompatible, or fails; add real enforcement probes for each OS and prove approval does not change the profile.
-- [ ] 2.2 GREEN: Implement native macOS, Linux, and Windows backends and enforce before spawn in `crates/huginn/runtime/src/tools.rs`; preserve limits and provide no unsandboxed fallback.
-- [ ] 2.3 REFACTOR: Review backend dependencies/security and rerun contract/failure tests; do not claim unsupported OS parity.
+- [ ] 2.1 DECISION GATE — BLOCKED: Obtain the user's explicit choice of (A) temporary deprecated `sandbox-exec(1)` exception despite deprecation/removal risk; (B) fail closed or disable macOS shell until a supported mechanism exists, accepting no three-OS parity; or (C) investigate/redesign for signed App Sandbox packaging/workspace access, a larger change with feasibility unproven. Do not implement or claim a macOS sandbox before this choice; `sandbox_init(3)` is also deprecated and is not an investigated non-deprecated alternative.
+- [ ] 2.2 RED: After the decision gate, add adversarial shell probes on each target OS for denial of read, list/enumerate, create, modify, and replace access to future grant state and every ancestor needed to access or replace it. The macOS probe/backend remains blocked until option A or C is explicitly selected; option B means no macOS sandbox implementation or parity claim.
+- [ ] 2.3 GREEN: After platform mechanism decisions, implement only selected OS-specific sandbox backends and fail-closed pre-spawn enforcement in `crates/huginn/runtime/src/`; missing or failed isolation must produce zero shell spawns. No unsandboxed fallback.
+- [ ] 2.4 GREEN: Add blocking Windows Huginn test CI coverage in `.github/workflows/ci.yml`; run real sandbox probes and Huginn tests on each supported OS. Do not treat compilation or metadata checks as evidence.
+- [ ] 2.5 REFACTOR: Record per-OS runtime evidence for every denial operation and backend failure; keep grants dormant and no persistent choice available unless that OS passes every gate. Do not claim three-OS parity when macOS is disabled, unsupported, or unverified.
 
-## Phase 3: Native filesystem — slice 3
+## Phase 3: Re-evaluate storage, then gated grants — slice 3
 
-- [ ] 3.1 RED: Test read/list/search/write/edit roots, capabilities, traversal, symlink/stale-state changes, matching and nonmatching grants, and zero effects on denial.
-- [ ] 3.2 GREEN: Enforce and revalidate policy at native effect boundaries in `crates/huginn/runtime/src/tools.rs`; never authorize by tool name or route builtins through shell.
-- [ ] 3.3 REFACTOR: Consolidate checks without weakening boundaries; rerun application/runtime suites.
+- [ ] 3.1 EVALUATE: After Phase 2 passes on the target OS, re-evaluate `private-fs` 0.2.1 API, threat boundary, license, targets, and package/workspace toolchain compatibility; select no store unless real-OS store security tests can pass independently.
+- [ ] 3.2 RED: After isolation and store gates pass, test that missing/failed isolation does not open or honor storage, malformed/unavailable state fails closed, and project files cannot create or modify grants.
+- [ ] 3.3 GREEN: Implement the user-owned store in `apps/huginn/src/config.rs` and gate its load/write and persistent UI choice on verified current-OS isolation; preserve observable fail-closed outcomes.
+- [ ] 3.4 RED: Test exact canonical root + capability + action + resource matching, matching writes suppressing prompts, and mismatches prompting or denying under current policy.
+- [ ] 3.5 GREEN: Implement exact grant identity and effect-time policy/isolation revalidation in `crates/huginn/application/src/authorization.rs` and `apps/huginn/src/main.rs`.
+- [ ] 3.6 RED: Test listing/editing/revocation taking effect before the next authorization, including malformed and unavailable stores.
+- [ ] 3.7 GREEN: Implement explicit grant management and immediate revocation; persistence failure never becomes authorization.
+- [ ] 3.8 REFACTOR: Verify storage remains dormant before gates and project-controlled data never becomes an authority.
 
-## Phase 4: Granular MCP — slice 4
+## Phase 4: Native filesystem boundaries — slice 4
 
-- [ ] 4.1 RED: Test `auto`/`prompt`/`writes`/`approve`, annotation failures, server/tool precedence, startup versus call approval, and no native-grant inheritance.
-- [ ] 4.2 GREEN: Implement separate policy in `crates/huginn/runtime/src/mcp.rs` and `composition.rs`; retain existing scoped session semantics.
-- [ ] 4.3 REFACTOR: Verify policy bounds and ensure no MCP isolation claim relies on shell sandboxing.
+- [ ] 4.1 RED: Test native read/list/search/write/edit roots, traversal, symlinks, stale resources, and zero effects on denial in Huginn runtime/application tests.
+- [ ] 4.2 GREEN: Enforce and revalidate path, capability, and resource policy at native effect boundaries in `crates/huginn/runtime/src/tools.rs`; grants never bypass checks or route builtins through shell.
+- [ ] 4.3 REFACTOR: Rerun boundary and platform suites; changed requests require fresh review or denial.
 
-## Phase 5: Mouse support — slice 5
+## Phase 5: MCP and TUI — slices 5–6
 
-- [ ] 5.1 RED: Test mouse/keyboard equivalence, hit testing, focus, scrolling, overlays, resize, and protected/stale actions across selectable menus.
-- [ ] 5.2 GREEN: Implement visible-geometry hit testing and restore mouse capture on exit, error, and cancellation.
-- [ ] 5.3 REFACTOR: Run deterministic PTY regressions without sleeps or a second event reader.
+- [ ] 5.1 RED: Test MCP `auto`/`prompt`/`writes`/`approve`, annotation failures, server/tool precedence, startup/call approval, and no native-grant inheritance in `crates/huginn/runtime/src/mcp.rs`.
+- [ ] 5.2 GREEN: Implement independent granular MCP decisions in `mcp.rs` and `composition.rs`; verify no shell-sandbox isolation claim.
+- [ ] 5.3 RED: Test approval action/resource/risk/preview, permitted labels, keyboard/mouse equivalence, hit testing, resize, incomplete review, cancellation, revocation, and no-op feedback in `crates/huginn/presentation/` and `apps/huginn/tests/tui.rs`.
+- [ ] 5.4 GREEN: Present only host-authorized choices; preserve review, safe denial/cancellation, focus, and deterministic terminal behavior.
+- [ ] 5.5 REFACTOR: Run deterministic PTY tests without sleeps or a second event reader.
 
-## Phase 6: Approval UX — slice 6
+## Phase 6: Final gates and documentation
 
-- [ ] 6.1 RED: Test exact action/resource/risk/preview, all three labels, narrow/resized terminals, incomplete review, missing/revoked approver, denial, cancellation, and no-op feedback.
-- [ ] 6.2 GREEN: Present only host-authorized choices and clear non-execution/persistence-failure feedback; presentation must not grant authority.
-- [ ] 6.3 REFACTOR: Verify keyboard/Escape, focus, mouse, review completeness, and deterministic PTY states.
-
-## Phase 7: Gates, documentation, and superseding ADR
-
-- [ ] 7.1 Update `apps/huginn/config.example.toml` and `docs/huginn/` for rule precedence, grant scope/revocation, profiles, MCP, sandbox limits, and unresolved managed verification; make no unverified parity claim.
-- [ ] 7.2 Add blocking CI tests on macOS/Linux/Windows for real backend enforcement and fail-closed zero-spawn behavior, including Huginn tests on Windows.
-- [ ] 7.3 Run affected tests, PTY suites, `just huginn-architecture`, fmt, relevant clippy, dependency/lockfile checks, and real-OS probes. Missing runners are blocked evidence, not passes.
-- [ ] 7.4 Add `docs/huginn/adr/0018-effective-workspace-permissions-and-platform-sandboxing.md`, superseding conflicting ADR-0006/0007 decisions without editing historical ADRs.
+- [ ] 6.1 BLOCKER: Keep protected managed-source verification explicitly unresolved; never treat unverifiable policy as absent or mark this verifier complete.
+- [ ] 6.2 Update `apps/huginn/config.example.toml` and `docs/huginn/` with policy/grant scope, revocation, sandbox gates, platform evidence, MCP separation, and unresolved managed verification; make no unsupported parity claim.
+- [ ] 6.3 Run affected tests, PTY suites, `just huginn-architecture`, fmt, relevant clippy, dependency/lockfile checks, and real OS probes; missing platform evidence is blocked, not passed.
+- [ ] 6.4 Add `docs/huginn/adr/0018-effective-workspace-permissions-and-platform-sandboxing.md`, superseding conflicting ADR-0006/0007 decisions without editing historical ADRs.
 
 ## Gates retained
 
-- User-owned grant storage remains unavailable until ownership, protection, canonical identity, atomic updates, revocation, and all three OS tests pass. Any candidate dependency is conditional and must not be described as adopted before approval.
-- Managed-source verification remains unresolved and blocks effects that require verified managed absence, as well as final parity claims.
-- Each native OS sandbox is a separate deliverable requiring actual enforcement evidence. Fail closed on missing policy, verifier, approver, resource validation, or backend; do not fall back to project state or unsandboxed execution.
+- Sandbox/store work is not complete. Persistent grants require real per-OS proof that shell cannot read/list/create/modify/replace the state or its ancestors, plus independent store security evidence.
+- Managed-source verification remains unresolved and blocks any effect requiring verified managed absence and all final parity/release claims.
+- Keep native file-boundary, MCP, and TUI authorization separate. No project grant authority, unsandboxed fallback, `unsafe`, YOLO, or Exit mode.

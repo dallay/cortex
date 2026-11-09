@@ -2,191 +2,224 @@
 
 ## Technical approach
 
-Implement explicit, least-privilege host authorization in Huginn's existing core/application/runtime/presentation boundaries. Resolve user rules, explicit user-owned workspace grants, and verified administrator restrictions into one immutable policy at the application composition boundary. Keep behavior instructions, host authorization, native filesystem checks, process sandboxing, and MCP authorization separate.
+Implement the change in dependency order. Establish policy outcomes and one-operation `Allow once` behavior first. Before any sandbox implementation or platform-support claim, resolve the blocking macOS backend decision below. Apple explicitly documents `sandbox-exec(1)` and `sandbox_init(3)` as deprecated; `sandbox_init(3)` further states that predefined profiles must not be used when building against SDK >= 27.0 and that processes are killed. Do not select or implement either deprecated mechanism without explicit user approval. Until a supported macOS approach is established, shell execution on macOS MUST fail closed (or remain disabled), and macOS persistent grants MUST remain unavailable. Then evaluate candidate native isolation on Linux and Windows and prove, on each supported OS, that same-identity shell processes cannot read, enumerate, create, modify, or replace the future user grant registry or any ancestor needed to access or replace it. Until the relevant OS-specific proof passes, Huginn MUST neither load nor honor persisted grants, MUST NOT offer a persistent choice, and MUST NOT let stale or modified stored state suppress a prompt. Shell execution fails closed if the required sandbox cannot be enforced. Preserve `unsafe_code = deny`; do not add unsafe Rust as a workaround.
 
-Eligible effects expose `Allow once`, `Allow for this workspace`, and `Deny`. The persistent choice applies only to file writes for the canonical workspace root and the narrow capability/action/resource scope presented. Store it in verified user-owned state outside the project. Revalidate current policy, grant scope, resource identity, roots, stale content, and sandbox requirements at the effect boundary. Matching writes do not prompt again; a mismatch is resolved again by current policy and may prompt where escalation is permitted.
+Only after isolation proof may the implementation evaluate and integrate a user-owned grant store, with real OS security tests. Then implement exact grant matching and revocation, followed by native filesystem and MCP integration, TUI completion, and final CI/review gates. A successful build, file permission check, registry ownership check, or common backend interface is not isolation evidence. Do not claim cross-platform parity until each OS passes its own runtime security tests.
 
-Managed policy remains a separate, restriction-only authority. A valid managed denial, invalid policy, failed source verification, invalid resource, or unavailable approver is final and prevents execution. A normal `Restricted` profile decision outside the profile is not itself a managed denial: with `OnRequest`, Huginn must reach the user decision when no explicit restriction bars escalation. An empty optional escalation list must not suppress that ordinary prompt. Approval authorizes only its reviewed effect scope and never changes or bypasses the required sandbox.
+Shell child processes run with the same OS user identity as Huginn: the same UID on macOS/Linux or `TokenUser` on Windows. `private-fs` 0.2.1 explicitly excludes same-UID/TokenUser attackers from its security guarantee. It is therefore only a conditional storage candidate and never an isolation control. It compiled in an external scratch project with Rust 1.89, but that provides no OS integration evidence. Huginn's package MSRV is 1.89, the Cargo workspace MSRV is 1.81, and the selected toolchain is 1.99; any dependency placement and compatibility decision must account for all three. Current CI excludes Huginn tests and clippy on Windows. Platform mechanisms remain candidates, not decisions: Linux Landlock may need namespace isolation and/or a dedicated launcher to cover the required filesystem and process boundary; kernel/API availability, inherited restrictions, and launcher behavior require validation. Windows AppContainer and ACL-based approaches have token, capability, object-coverage, and process-launch constraints; ACL checks alone do not prove isolation against same-token shell processes. No committed backend decision exists for either platform.
 
-The present managed-source verifier is unresolved. `private-fs` 0.2.1 is only a conditionally reviewed candidate for secure per-user grant state, not an adopted dependency or proof of safety. Do not represent the verifier or three-OS parity as implemented. Final parity is blocked until each OS's actual enforcement and state-verification requirements pass real-platform tests.
+Managed restriction-source verification remains a separate unresolved, blocking deliverable. Keep authorization, sandbox enforcement, native filesystem checks, managed policy, MCP policy, and behavioral instructions as independent boundaries. Preserve explicit user decisions and exact operation scope: `Allow once` covers only the presented operation; a persistent grant, if eventually enabled, is limited to the canonical workspace root and exact capability/action/resource. Matching grants remain subject to current policy and sandbox enforcement.
 
 ## Architecture decisions
 
-### Decision: Persist explicit scoped grants in user-owned state
+### Decision: Resolve policy and one-operation approval before persistence
 
-**Choice:** Add a dedicated registry adapter at the `apps/huginn` configuration/composition boundary. Registry records are created only after the user explicitly selects `Allow for this workspace`. Key each record by canonical workspace root and explicit capability, action, and resource scope. Keep registry state separate from trust state and general policy. Provide user-visible listing, editing, and revocation; revocation takes effect before subsequent effect authorization. Reject project files, project metadata, model output, instructions, and workspace location as grant authorities.
+**Choice:** First implement policy resolution and bounded `Deny`/`Allow once` behavior in `crates/huginn/application/src/permission_policy.rs` and `crates/huginn/application/src/authorization.rs`. Keep policy eligibility distinct from presentation. A policy-permitted request may be approved once; this decision is never stored. Preserve managed denials, invalid-policy denial, and safe cancellation as final non-execution outcomes.
 
-**Alternatives considered:** Project-local grants, broad workspace trust, implicit persistence after `Allow once`, or persistence in generic policy settings.
+**Alternatives considered:** Build the grant registry and prompt UI before establishing policy outcomes, or represent `Allow once` as a persistent/session grant.
 
-**Rationale:** User-owned state preserves explicit choice and prevents repository-controlled content from minting or widening host authority. A narrow record permits exact matching without turning workspace membership into trust.
+**Rationale:** This yields a safe, useful authorization path without making persistent state a prerequisite or confusing a one-operation choice with durable authority.
 
-### Decision: Treat `private-fs` 0.2.1 as a gated candidate only
+### Decision: Prove native sandbox isolation before grant storage access
 
-**Choice:** Evaluate `private-fs` 0.2.1 only for the per-user grant registry. Do not adopt it unless API/security review, compatibility checks, and real macOS/Linux/Windows tests prove it meets the exact state boundary. Do not use it for administrator-owned configuration. Verify compatibility with the workspace and Huginn Rust toolchain constraints before any dependency change. Its stated security review is conditional; it is not approval.
+**Choice:** Treat platform backend selection as unresolved. The macOS mechanism is a blocking open decision before sandbox code or macOS sandbox-support claims. `sandbox-exec(1)` and `sandbox_init(3)` are explicitly deprecated by Apple; the `sandbox_init(3)` documentation says predefined profiles must not be used when building against SDK >= 27.0, or processes are killed. Do not choose or implement a deprecated macOS backend without explicit user approval. Record these macOS paths for a decision: (1) a temporary `sandbox-exec` exception, with deprecation and removal risk; (2) fail closed or disable shell on macOS pending a supported mechanism, with no macOS parity; (3) investigate/redesign around signed App Sandbox packaging and workspace access, a large product change whose feasibility as a dynamic per-workspace CLI sandbox is not proven. Apple recommends the signed App Sandbox model, but it is not established as a drop-in replacement for Huginn's dynamic per-workspace shell sandbox. Linux Landlock (potentially combined with namespaces and/or a launcher) and Windows AppContainer/ACL are investigation candidates only; their constraints and ability to enforce the complete policy remain unproven. No committed backend decision exists. After a supported backend is selected for an OS, implement its adversarial runtime probes before adding or activating any persistent grant-store integration. Probe shell access to the registry location and every ancestor for read, enumeration, creation, modification, and replacement. Tie proof to the actual enforcement configuration used for shell execution. If a platform/backend cannot demonstrate every denial, persistent grants stay unavailable and shell execution that requires missing isolation is rejected; there is no unsandboxed fallback.
 
-**Alternatives considered:** Adopt immediately based on its API description, use it for both user and managed state, or infer protection from path placement and metadata alone.
+**Alternatives considered:** Load grants based on owner/mode/ACL checks, rely on private storage, infer safety from compilation or backend interfaces, treat deprecated macOS APIs as an approved implementation, or enable persistence on platforms without runtime evidence.
 
-**Rationale:** The dependency's current evidence does not establish the complete guarantees required here, particularly for managed roots and all platform paths. Consumer-side unsafe code or weakened lint rules are not acceptable substitutes.
+**Rationale:** Huginn and its shell children share an OS identity. Storage protections that exclude same-principal attackers cannot protect authorization state from shell code. Native sandbox isolation is therefore a strict prerequisite, not a property of the store. On macOS, deprecated mechanisms and the unresolved signed App Sandbox fit cannot support a safe implementation decision by assumption. User approval and a supported mechanism are required before proceeding with macOS sandbox code.
 
-### Decision: Keep managed restrictions independent and restriction-only
+### Decision: Block macOS sandbox implementation pending supported mechanism approval
 
-**Choice:** Load administrator rules from a protected system source through a separately reviewed verifier. Accept only validated restrictions. Managed rules may reduce effective permission, must override conflicting user grants, and must never grant trust or authority. Treat present-but-invalid, unreadable, or unverifiable managed state as an observable fail-closed error; never interpret verifier failure as verified absence.
+**Choice:** No macOS sandbox backend is selected in this design. Stop before implementing or claiming one until the user explicitly resolves the mechanism and its support constraints. Pending that decision, macOS shell execution must fail closed or remain disabled; persistent grants and macOS parity claims remain blocked. `unsafe_code = deny` remains in force.
 
-**Alternatives considered:** Load managed policy from user/project configuration, merge all sources as equivalent rules, or silently ignore invalid fields.
+**Alternatives considered:** Use deprecated `sandbox-exec(1)` temporarily; use deprecated `sandbox_init(3)` and a predefined profile; assume Apple's signed App Sandbox is a dynamic CLI-compatible substitute; or proceed with Linux/Windows and imply full platform parity.
 
-**Rationale:** Distinct provenance and restriction-only composition prevent user grants or untrusted state from overriding administrator controls. The verifier, protected locations, and end-to-end platform coverage remain unresolved and block final parity.
+**Rationale:** Apple marks both legacy interfaces deprecated, and `sandbox_init(3)` documents the SDK >= 27.0 predefined-profile process-kill constraint. Apple's recommended signed App Sandbox is materially different from a demonstrated dynamically configured per-workspace CLI sandbox. Choosing it without evidence would turn an unresolved platform and product-design issue into an unsupported security claim.
 
-### Decision: Separate policy eligibility from presentation and preserve the normal decision
+### Decision: Treat Linux and Windows mechanisms as candidates, not committed backends
 
-**Choice:** The application policy produces distinct outcomes for allowed, prompt-eligible, and final-denial effects, with reasons/provenance sufficient for the host and UI. Under `OnRequest`, an out-of-profile capability is prompt-eligible unless an explicit effective restriction (including a managed denial) prohibits it. An absent or empty optional escalation list does not turn this normal user decision into a pre-prompt denial. A configured restrictive rule may prohibit escalation. `Always` retains its configured approval semantics. When the approver is missing, revoked, or fails, do not execute.
+**Choice:** Investigate Linux Landlock, potentially with namespaces and/or a launcher, and Windows AppContainer/ACL-based designs. Do not freeze an API, dependency, or architecture until real-platform probes show the required registry and ancestor access denials, process-launch behavior, and policy limits. ACL ownership/protection validation is not a substitute for shell isolation. Preserve `unsafe_code = deny` throughout.
 
-**Alternatives considered:** Require every out-of-profile capability to appear in a non-empty allowlist, interpret `Restricted` as an unconditional pre-prompt denial, or let the UI decide whether policy permits escalation.
+**Alternatives considered:** Treat a shared interface, compilation, ACL configuration, or nominal OS feature availability as proof; claim parity from Linux and Windows alone.
 
-**Rationale:** Policy determines whether the choice is available; presentation collects but does not create authority. This resolves prompt eligibility without weakening explicit user or managed restrictions.
+**Rationale:** Kernel/API versioning, capability coverage, token behavior, inheritance, and process launch details constrain these approaches. None has been selected or verified in this change context. Linux/Windows implementation alone does not complete macOS/Linux/Windows parity.
 
-### Decision: Enforce an ordered host authorization sequence
+### Decision: Evaluate `private-fs` 0.2.1 only as conditional storage
 
-**Choice:** For every effect, use this sequence:
+**Choice:** Consider `private-fs` 0.2.1 only as a possible user-owned storage adapter after native isolation has passed. Do not use it to establish isolation or as a standalone authorization safeguard. Evaluate its API/security fit and compatibility separately for the Huginn package and the workspace before adoption. The external Rust 1.89 scratch compilation is not repository integration or OS security evidence; no OS integration tests have been completed for it.
 
-1. Prepare and classify the exact capability, action, and resource; resolve/canonicalize the workspace and resource. Reject invalid or unresolvable identity.
-2. Load the current immutable effective policy and required authority state. Invalid/unavailable policy or unverifiable required managed state fails closed.
-3. Apply managed restrictions first. A managed denial is final and cannot be prompted around.
-4. Revalidate native roots, symlinks, resource identity, operation content, and other effect-specific constraints. A stale or out-of-root request is rejected or prepared for fresh review; no grant can bypass these checks.
-5. Resolve the user policy. Honor an explicit persistent grant only if canonical root and every capability/action/resource dimension match, the grant registry is verified, and current policy still permits it. Do not prompt for a matching valid grant.
-6. If the effect is in policy, continue under the selected sandbox and native boundary checks. If it is outside user policy but `OnRequest` permits escalation, request approval from an available valid approver—even when the optional escalation list is empty. If effective policy explicitly prohibits escalation, deny without prompting.
-7. Present only eligible choices: `Deny` and `Allow once` for an eligible effect; include `Allow for this workspace` only for supported native file-write actions with a verified canonical workspace and registry. Record only the explicit persistent choice. A denial, cancellation, timeout, unavailable approver, or persistence failure never becomes an allow.
-8. Revalidate policy, scope, resource, content, and sandbox immediately before effect. Execute only the approved operation under the unchanged required sandbox. A change after review requires fresh review/authorization or denial.
+**Alternatives considered:** Adopt it immediately, use it as the sandbox, or infer safe operation from its successful scratch compilation.
 
-This ordering is independent of whether the effect originates in shell, native file tools, or MCP; each family retains its own scope and enforcement rules. Workspace grants never authorize shell or MCP.
+**Rationale:** Its documented threat boundary excludes the exact same-UID/TokenUser attacker model that applies to Huginn shell processes. Package compilation and storage behavior must not substitute for native isolation proof.
 
-**Alternatives considered:** Prompt before managed policy, treat approval as profile elevation, reuse one broad grant across effects, or rely on preparation-time checks alone.
+### Decision: Keep stored grants dormant until current-OS isolation is verified
 
-**Rationale:** The ordering makes authority precedence explicit and prevents user choices from bypassing managed denial, sandbox enforcement, roots, stale-resource validation, or approver availability.
+**Choice:** At startup and before authorization, establish a verified isolation capability for the current OS and the current registry path/ancestors. If the proof is absent, failed, stale, or unavailable, do not open or parse the grant registry; ignore any grant as an authority and do not let it suppress a prompt. In that state, expose only `Deny` and `Allow once` when policy permits, and never present `Allow for this workspace`. If isolation is required to run the shell operation and is unavailable, do not spawn the process.
 
-### Decision: Preserve platform-specific sandbox enforcement and block parity claims
+**Alternatives considered:** Read grants but decline to apply them, retain a persistent UI choice behind a warning, or trust previously verified state without rechecking the active sandbox configuration.
 
-**Choice:** Maintain a platform-neutral observable profile contract with native macOS, Linux, and Windows enforcement implementations. Each backend must prove the required filesystem/process restrictions on its target OS and reject unsupported or failed enforcement before spawn. A shared interface, compile success, fail-closed stub, or equivalent profile name is not parity evidence. Do not provide an unsandboxed fallback. Three-OS parity remains blocked until all three real-platform gates pass.
+**Rationale:** Even reading or enumerating the registry can reveal protected state, and a dormant-looking entry can otherwise suppress an approval prompt. The fail-closed boundary must precede store access and all persistent-choice behavior.
 
-**Alternatives considered:** Treat common interfaces as parity, ship unsupported backends as final behavior, or allow approval to bypass isolation.
+### Decision: Preserve narrow user choices and revocation semantics
 
-**Rationale:** Authorization and isolation solve different problems. Native enforcement evidence is required for each OS, and approval must not widen the baseline sandbox.
+**Choice:** After isolation and store-security gates pass, store only explicit `Allow for this workspace` choices in user-owned state. Bind each grant to canonical workspace root and exact capability/action/resource identity. Provide user-visible listing, editing, and revocation. Revalidate policy, identity, and scope at effect time; revocation applies before subsequent authorization. Never import project-controlled grants or promote existing session decisions.
 
-### Decision: Keep MCP and behavior instructions separate
+**Alternatives considered:** Project-local grants, broad workspace trust, implicit persistence, or a grant that applies across capabilities or resources.
 
-**Choice:** Preserve MCP's own server/tool/action/resource policy and existing `auto`, `prompt`, `writes`, and `approve` semantics. Do not inherit native file-write grants into MCP. Keep behavioral instructions (including instructions about environment-variable enumeration) as agent guidance, not host capability authorization. Preserve independent MCP server-startup and invocation controls.
+**Rationale:** Explicit scope preserves the user's chosen boundary and prevents workspace location or project contents from creating authority. Revocation is meaningful only if checks consult current state before each later effect.
 
-**Alternatives considered:** Share workspace grants with MCP, infer MCP security from annotations, or use behavioral instructions as permission controls.
+### Decision: Keep managed restrictions unresolved and independently blocking
 
-**Rationale:** These mechanisms have distinct trust boundaries and scopes. Combining them would create unintended authorization and sandbox claims.
+**Choice:** Keep managed restrictions as a distinct restriction-only authority with a separately reviewed protected-source verifier. Invalid, unreadable, or unverifiable managed state must fail closed; do not interpret verifier failure as verified absence. Do not claim the managed-source verifier is complete, and do not let grant-store or sandbox completion close this gate.
 
-### Decision: Preserve complete TUI interaction and review
+**Alternatives considered:** Load administrator rules from ordinary user/project files, merge sources as equivalent, or silently ignore an unverified source.
 
-**Choice:** Keep mouse and keyboard operation for all interactive TUI menus and approval flows. Show the requested action, exact resource, risk, and complete required preview. Expose only host-authorized decisions. Preserve focus, hit testing, resize behavior, cancellation, safe denial, and explicit no-op feedback.
+**Rationale:** A user grant cannot override a managed restriction. The source verifier has separate ownership, integrity, and platform requirements and remains unresolved/blocking.
 
-**Alternatives considered:** Keyboard-only menus, click-to-approve shortcuts, or assuming a rendered prompt proves complete review.
+### Decision: Keep enforcement and effect families separate
 
-**Rationale:** Input parity and complete review are separate requirements from the authorization algorithm; neither may bypass policy or approve stale requests.
+**Choice:** Approval never disables or broadens the selected sandbox. Native filesystem tools retain path, root, symlink, capability, and resource checks at each effect boundary. Native workspace grants do not authorize shell or MCP. MCP retains server/tool/action/resource policy, and behavioral instructions remain guidance rather than host authorization.
+
+**Alternatives considered:** Treat approval as profile elevation, reuse file grants for shell/MCP, or treat behavioral text or MCP annotations as isolation.
+
+**Rationale:** These controls have different scopes and trust boundaries. Separation prevents one user choice from silently expanding authority.
+
+### Decision: Do not claim platform parity without per-OS evidence
+
+**Choice:** Treat Linux, macOS, and Windows as separate support claims. Each requires implementation and real-platform evidence for shell isolation, registry/ancestor denial, and the relevant Huginn tests. Add blocking Windows Huginn test and clippy coverage; current CI excludes Huginn there. Shared contracts, compilation, stubs, and fail-closed behavior alone do not establish parity.
+
+**Alternatives considered:** Claim parity from a shared profile/backend interface, cross-compilation, or Linux/macOS-only CI.
+
+**Rationale:** Native sandbox mechanisms and security behavior differ by OS. Evidence must test the actual backend and shell process on each target.
 
 ## Data flow
 
 ```text
-User policy + verified user grant registry + managed source status
-  -> apps/huginn composition loads and validates independent authorities
-  -> application resolves immutable EffectivePolicy and provenance
-  -> effect preparation identifies capability/action/resource and canonical roots
-  -> HostPolicy applies managed restrictions, current policy, and exact grant match
-       | final denial / invalid state -> observable non-execution
-       | permitted matching grant -> continue without prompt
-       | prompt-eligible and approver available -> TUI collects eligible choice
-       | otherwise -> observable denial/unavailable-approver outcome
-  -> immediately before effect: revalidate policy, grant, roots, resource, content
-  -> runtime native file / sandboxed shell adapter enforces independent OS boundary
-  -> effect executes only within the approved scope and required sandbox
+1. Policy settings + managed-source status
+   -> application resolves allowed / prompt-eligible / final-denial outcome
+   -> eligible request presents Deny or Allow once
+   -> Allow once authorizes only the prepared operation; no persistence
 
-MCP -> separate server/tool policy -> scoped MCP approval -> MCP runtime
-     (never inherits native workspace grants or shell sandbox claims)
+2. Platform decision and candidate evaluation
+   -> macOS backend approval is a blocking prerequisite; no deprecated backend is selected implicitly
+   -> evaluate Linux Landlock with any required namespace/launcher support
+   -> evaluate Windows AppContainer/ACL constraints and process launch
+   -> unresolved, unsupported, or unverified platform fails closed
+
+3. Per-OS native sandbox implementation after backend decision
+   -> launch adversarial shell probes under the real sandbox
+   -> verify denial of read/enumerate/create/modify/replace for registry + ancestors
+   -> only a passing current-OS proof enables the next stage
+
+4. Verified isolation capability + user-owned store candidate
+   -> evaluate storage API, compatibility, and real OS security behavior
+   -> integrate store only after its separate gates pass
+   -> otherwise do not load/honor grants or offer persistent choice
+
+5. Explicit persistent user choice
+   -> exact canonical workspace/capability/action/resource record
+   -> matching authorization rechecks current policy and isolation
+   -> revocation/edit is reflected before the next authorization
+
+6. Native filesystem / MCP / TUI integration
+   -> native effects revalidate path/resource boundaries
+   -> MCP uses its independent server/tool policy
+   -> presentation displays only eligible choices and safe denial/cancel states
 ```
 
-Persist only an explicit `Allow for this workspace` user choice. Registry failure does not convert that choice to `Allow once` unless the user separately selects `Allow once`; report that no persistent grant was created. Registry editing/revocation uses the same verified user-owned storage path. A grant match suppresses later prompts only after current managed policy, user policy, and effect-boundary checks succeed.
+Managed restrictions are loaded and verified through a separate source path. Failure of that required verifier remains a final fail-closed outcome. No flow above treats behavioral instructions as host authority.
 
 ## Interfaces / contracts
 
-Names below are conceptual; reconcile them with existing types during implementation.
-
-- **`EffectivePolicy` (application):** immutable user policy, verified managed restrictions/status, approval mode, allowed/prompt-eligible/denied outcome, provenance, and profile. Represent final managed denial separately from ordinary out-of-profile prompt eligibility.
-- **`WorkspaceGrant` (application contract):** canonical workspace root plus narrow capability, action, resource scope, and explicit user-choice provenance. No trust or generic “workspace trusted” field. Exact equality or a documented safe containment relation must be defined for resource matching; lexical path-prefix matching is insufficient.
-- **`WorkspaceGrantStore` (apps/config adapter):** verified user-owned load, atomic explicit write, enumerate/edit/revoke. Project-controlled inputs are never accepted as grant writes. Reject malformed state, unsafe paths, links/reparse points, ownership/protection failures, or unresolved canonical roots. Storage implementation is unresolved pending candidate evaluation.
-- **`ManagedPolicySource` (apps/config adapter):** distinct outcomes for verified absence, verified restriction-only configuration, and verification/read/parse error. Its cross-platform protected source verifier and locations are unresolved. Until verified, do not claim successful absence or policy loading where the source is required.
-- **`HostPolicy` (application):** apply the ordered authorization sequence and return a structured decision. Presentation receives allowed decisions but does not own grants or policy.
-- **`ApprovalDecision`:** user-visible decisions include `Allow once`, `Allow for this workspace`, and `Deny`. Map to existing enum/API only after ensuring the persistent choice cannot be confused with session remembrance. `Allow once` is one prepared operation and is never persisted.
-- **`SandboxBackend` (runtime):** target-specific enforcement contract. Must not expose an unsandboxed fallback or accept authorization decisions as a reason to widen the selected profile.
-- **MCP policy:** retain separate server/tool-level mode and scope contracts. Native workspace grants are not valid MCP grants.
+- **Policy decision (application):** Distinguish allowed, prompt-eligible, and final-denial outcomes, including source/reason sufficient for the host and UI. `Allow once` applies only to the prepared operation.
+- **Isolation capability (runtime):** A target-specific result must attest that the active sandbox prevents shell read, enumeration, creation, modification, and replacement access to the configured grant registry and every ancestor needed to reach or replace it. Missing or unverifiable capability means no grant-store access and no persistent choice. It is not inferred from storage metadata.
+- **Workspace grant (application contract):** Canonical workspace root plus exact capability, action, and resource identity, with explicit user-choice provenance. Define resource matching safely; lexical path-prefix matching is insufficient. Grant lookup is disabled until the isolation capability is verified.
+- **Grant store (apps/config adapter):** After prerequisites pass, support verified user-owned load, explicit atomic write, listing/editing, and revocation. Reject malformed or unverifiable state. Never accept project-controlled grant writes. Its own security tests do not replace sandbox probes.
+- **Managed policy source (apps/config adapter):** Separate verified-absence, valid restriction-only configuration, and verification/read/parse failure outcomes. Protected locations and a complete cross-platform verifier remain unresolved and blocking.
+- **Sandbox backend (runtime):** OS-specific enforcement; no unsandboxed fallback. Approval cannot change selected profile or sandbox.
+- **Platform backend status:** macOS mechanism is a blocking open decision; no deprecated backend without explicit user approval. Linux Landlock (possibly namespaces/launcher) and Windows AppContainer/ACL are investigation candidates, not selected implementations. Do not claim parity from Linux/Windows evidence while macOS remains unresolved or unavailable.
+- **MCP policy:** Preserve independent server/tool/action/resource authorization. Native workspace grants are not MCP grants.
 
 ## File changes
 
 | File | Action | Description |
 |---|---|---|
-| `crates/huginn/application/src/permission_policy.rs` | Modify | Separate allowed, prompt-eligible, and final-denial outcomes; ensure empty optional escalation configuration does not suppress normal `OnRequest` user decisions; preserve managed restrictions. |
-| `crates/huginn/application/src/authorization.rs` | Modify | Implement ordered host checks, explicit persistent grant matching, distinct user decisions, denial/revalidation behavior, and no-repeat matching writes. |
-| `apps/huginn/src/config.rs` | Modify | Resolve separate user policy and managed source; define safe user-state path without treating temporary fallback or project state as trusted storage. |
-| `apps/huginn/src/main.rs` | Modify | Compose verified policy and grant-store adapters consistently for interactive and headless execution; fail closed on unresolved required authority. |
-| `apps/huginn/src/` | Add/modify as justified | Implement user-owned workspace-grant storage and management UI/API. Evaluate `private-fs` 0.2.1 conditionally for this registry only; no adoption before security, compatibility, and real-OS test gates. |
-| Managed-policy adapter in `apps/huginn/src/` | Add only after design gate | Protected-source verifier and per-OS locations remain unresolved; do not describe this adapter as implemented until reviewed end-to-end verification exists. |
-| `crates/huginn/runtime/src/tools.rs` and native filesystem adapters | Modify | Preserve path, root, symlink, stale-resource, and effect-boundary checks; consume authorization without allowing grants to bypass enforcement. |
-| Huginn runtime sandbox modules and target-specific manifests | Modify/add as justified | Implement native Linux, macOS, and Windows enforcement; block parity until real OS integration gates pass. |
-| `crates/huginn/runtime/src/mcp.rs` | Modify only as needed | Preserve separate granular MCP modes and scope; do not inherit workspace file grants. |
-| `crates/huginn/presentation/src/approval.rs`, TUI menu/event code | Modify | Present exact eligible decisions, complete review, safe denial/cancellation, and preserve mouse and keyboard operation. |
-| `apps/huginn/tests/`, `crates/huginn/application/tests/`, `crates/huginn/runtime/tests/`, `crates/huginn/presentation/tests/` | Modify/add | Cover grant storage/scope, policy order, prompt eligibility, stale checks, MCP independence, platform enforcement, and TUI interactions. |
-| `.github/workflows/ci.yml` | Modify | Add blocking Huginn runtime/security gates for Linux, macOS, and Windows; platform parity cannot be claimed from build-only jobs. |
-| `apps/huginn/config.example.toml`, `docs/huginn/` | Modify | Document profiles, authority precedence, persistent grant scope/revocation, unresolved managed-source status, sandbox behavior, and separate MCP policy. |
+| `crates/huginn/application/src/permission_policy.rs` | Modify | Establish explicit policy outcomes and prompt eligibility; keep managed restrictions final and separate from user choices. |
+| `crates/huginn/application/src/authorization.rs` | Modify | Implement bounded `Deny`/`Allow once` first; later add grant lookup and exact scope only behind verified current-OS isolation. |
+| `crates/huginn/runtime/src/` sandbox modules | Add/modify only after platform decisions | Implement only selected, supported OS backends and the capability result required to gate all persistent-store access. macOS implementation is blocked pending explicit mechanism approval; Linux/Windows candidates require evidence before selection. No parity assumption from common interfaces. |
+| Target-specific runtime manifests/configuration | Modify only after backend selection | Configure supported native sandbox backends without weakening workspace lint, `unsafe_code = deny`, or introducing an unsandboxed fallback. |
+| `crates/huginn/runtime/tests/` | Add/modify | Add adversarial real-platform probes for registry and ancestor read/enumerate/create/modify/replace denial, plus sandbox failure/no-spawn cases. |
+| `apps/huginn/src/config.rs` | Modify after isolation gate | Evaluate and, if approved by evidence, implement a user-owned grant store. `private-fs` 0.2.1 is conditional storage only; verify compatibility at Huginn MSRV 1.89 and workspace MSRV 1.81 under toolchain 1.99. |
+| `apps/huginn/src/main.rs` | Modify by phase | Compose policy and sandbox first; only instantiate/load the store after the current OS isolation proof passes; later wire grant management and revocation. |
+| `crates/huginn/application/tests/` and `apps/huginn/tests/` | Add/modify | Cover policy, `Allow once`, fail-closed dormant-store behavior, exact grant scope, matching, revocation, and non-matching decisions. |
+| `crates/huginn/runtime/src/tools.rs` and native filesystem adapters | Modify in later integration phase | Preserve native path, root, symlink, and effect-boundary checks independently of authorization and shell isolation. |
+| `crates/huginn/runtime/src/mcp.rs` | Modify only as needed | Maintain separate MCP policy; do not inherit workspace file grants or shell-isolation claims. |
+| `crates/huginn/presentation/src/approval.rs` and related TUI code | Modify in later integration phase | Show `Deny`/`Allow once` before the persistence gate; show persistent choice only after it passes. Preserve reviewed scope, mouse/keyboard operation, and safe cancellation. |
+| `.github/workflows/ci.yml` | Modify | Add Windows Huginn test and clippy gates and real-platform security coverage. Current Windows jobs exclude Huginn. |
+| Managed-policy adapter in `apps/huginn/src/` | Separate unresolved work | Protected-source verifier remains blocking; do not mark as implemented by this change's sandbox/store evidence. |
+| Huginn documentation and configuration examples | Modify in final integration | Document exact choice scopes, sandbox gate, disabled persistent behavior before proof, platform-specific evidence, and unresolved managed-source verification. |
 
-Exact modules and dependency choices are implementation work. Do not add a dependency until its threat model, maintenance, licenses, target support, toolchain compatibility, and safe API fit are verified.
+Exact module boundaries and any dependency addition remain implementation decisions. Preserve the existing Huginn layering: core owns contracts, application owns orchestration, runtime implements I/O, presentation owns UI, and `apps/huginn` is the composition root.
 
 ## Testing strategy
 
 | Layer | What to test | Approach |
 |---|---|---|
-| Policy unit | User rules, managed restriction-only precedence, `OnRequest`, empty escalation list, explicit prohibition, prompt eligibility vs final denial | Pure deterministic matrix; prove `Restricted` plus empty optional escalation list reaches a valid user prompt under `OnRequest`, while managed denial does not. |
-| Grant-store security | User ownership/protection, canonical root, exact scope, malformed state, atomic updates, edit/revocation, link/reparse and ancestor failures | Inject verifier for deterministic cases plus real-OS tests. Persist only an explicit user choice; project data cannot write grants. |
-| Candidate dependency gate | `private-fs` 0.2.1 API fit, ownership/ACL/mode checks, ancestor and link handling, atomic update, target and toolchain compatibility | Focused probes on macOS, Linux, and Windows before adoption. Require security review. Failure means do not adopt; it does not justify weakened checks. |
-| Host authorization integration | Exact ordered checks, valid matching grants suppress prompts, non-matches prompt/deny by policy, all three decisions, unavailable approver, invalid policy, persistence failure | Fake store and prompt. Assert grants cannot bypass managed denial, roots, sandbox, stale validation, or approval availability. |
-| Native filesystem integration | Read/write/edit/list/search boundaries, canonical roots, symlink/path traversal, stale resource/content, grant match and mismatch | Temporary fixtures and zero-effect assertions; revalidate immediately before mutation. |
-| Sandbox per OS | Effective filesystem/process restrictions, backend absence/failure, approval with unchanged sandbox, zero spawn on failure | Real Linux/macOS/Windows runtime probes against the same observable fixtures. Compile-only and fake-backend tests do not establish parity. |
-| Managed source | Protected path acquisition, owner/ACL, ancestor verification, verified absence vs invalid source, restriction-only parsing | Remains a blocking unresolved gate. Until a complete reviewed verifier and real-OS tests exist, assert fail-closed outcomes and do not claim implementation. |
-| MCP | `auto`, `prompt`, `writes`, `approve`, per-server/tool precedence, missing/adversarial annotations, persistence scope | Independent policy matrix and fakes; assert no native grant inheritance or sandbox equivalence claims. |
-| TUI | Mouse/keyboard parity, hit testing, focus, resize, complete preview, eligible choices, deny/cancel, revocation feedback/no-op | Deterministic terminal events and PTY tests without arbitrary sleeps. |
-| Architecture/CI | Dependency direction, target gates, blocking PR coverage | Run Huginn architecture and relevant crate suites; Windows jobs must exercise Huginn, not only cross-compile it. |
+| Policy and approval | `Deny`, one-operation `Allow once`, `OnRequest`, managed denial, invalid policy, unavailable approver | Deterministic application tests. Verify no persistent state is written for `Allow once`. |
+| Sandbox unit/contract | Unsupported or failed enforcement, no-spawn behavior, capability reporting | Fake backends for deterministic failure contracts; these tests do not establish OS support. |
+| Real OS isolation | Shell cannot read, enumerate, create, modify, or replace the grant registry and every ancestor on macOS, Linux, and Windows | Run adversarial subprocess probes inside the actual selected native sandbox on each OS. Require explicit pass evidence for every operation and target; inability to run is a blocked gate, not a pass. macOS probes cannot authorize a deprecated backend absent explicit user approval and a decision; until then macOS shell remains disabled/fail-closed and the gate is blocked. |
+| Grant-store evaluation | `private-fs` API/security fit, maintenance, target behavior, ownership, atomic updates, links/ancestors, and toolchain compatibility | Conditional candidate review only after sandbox probes. External Rust 1.89 compilation is not integration evidence. Run real OS security tests before adoption. |
+| Dormant-store fail-closed | Missing/failed isolation proof never reads/honors stale grants, suppresses prompts, or exposes persistent choice | Instrumented store fake that fails the test if accessed; assert only policy-permitted `Deny`/`Allow once` are offered. |
+| Grant matching and revocation | Exact canonical root/capability/action/resource match, mismatches, current-policy override, revocation | Deterministic store/application tests plus real store integration after security gates. Test subsequent operation behavior after revocation. |
+| Native filesystem | Read/write/edit/list/search boundaries, roots, symlinks, traversal, stale resource/content | Temporary fixtures and zero-effect assertions; revalidate immediately before effects. |
+| Managed source | Protected source verification, verified absence vs invalid source, restriction-only semantics | Remains an unresolved blocking gate. Until reviewed verifier and real OS evidence exist, test and preserve fail-closed behavior; do not claim source verification. |
+| MCP and TUI | MCP modes remain separate; approval choices, review completeness, keyboard/mouse, resize, cancellation, no-op feedback | Independent policy tests and deterministic terminal/PTY interaction tests. Persistent choice is absent until isolation is proven. |
+| CI and architecture | Huginn suites, clippy, architecture boundaries, platform-specific security probes | Add blocking Windows Huginn test/clippy; run `just huginn-architecture` and focused crate suites. Do not call compilation parity. |
 
 ## Migration / rollout
 
-No project-file migration is allowed. Do not import or infer grants from project configuration, workspace trust, model state, or existing allowlists. Existing session-scoped decisions are not persistent workspace grants and must not be silently promoted. Any new registry begins with no grants; users create each grant through an explicit choice. Provide review, edit, and revocation before enabling persistent grants broadly.
+Do not import project-file grants or promote session-scoped decisions. Start with no persistent grants. Existing persisted or externally supplied grant data remains inert until the active OS sandbox has passed every required adversarial probe and the store has separately passed its security and compatibility evaluation. In the unverified state, do not load or honor the store, do not suppress a prompt, and do not offer a persistent choice. If shell isolation itself is unavailable, reject shell execution.
 
-Rollout gates:
+Implementation sequence and gates:
 
-1. Resolve and test exact grant identity and resource matching, registry ownership/protection, atomic update, and user-facing revocation. Evaluate `private-fs` 0.2.1 only as a conditional candidate for this per-user store; do not adopt without review, toolchain compatibility, and real-platform tests.
-2. Define protected managed locations and a complete safe verifier for macOS, Linux, and Windows. This remains unresolved; keep the final parity gate blocked and do not represent managed verification as implemented.
-3. Implement host policy and the ordered authorization sequence, including normal `OnRequest` prompt eligibility for out-of-profile effects when no explicit restriction bars escalation.
-4. Implement and independently verify each OS sandbox and native filesystem boundary. Do not use approval as an isolation fallback.
-5. Complete TUI mouse/keyboard review and separate MCP contract tests. Add blocking per-OS CI gates.
-6. Enable persistent grants only after storage and policy gates pass. Release or declare three-OS parity only after all required real-platform verifier and enforcement gates pass.
+1. **Policy and `Allow once`:** implement policy outcomes, prompt eligibility, denial/cancellation, and operation-scoped `Allow once`; do not introduce persistent store access.
+2. **Platform mechanism decision:** resolve the macOS backend as a blocking decision before any sandbox implementation or macOS sandbox-support claim. Apple documents `sandbox-exec(1)` and `sandbox_init(3)` as deprecated; do not choose either without explicit user approval. Compare temporary `sandbox-exec` use (deprecation/removal risk), fail-closed/disabled macOS shell (no parity), and investigate/redesign for signed App Sandbox packaging/workspace access (large product change; dynamic per-workspace CLI feasibility unproven). Investigate Linux Landlock (possibly namespaces/launcher) and Windows AppContainer/ACL constraints without treating either as committed. Keep persistent grants disabled.
+3. **Native sandbox and isolation probes:** after supported backend decisions, implement only those selected backends and real-platform probes for shell read/enumerate/create/modify/replace access to the registry and all ancestors. Failure or unresolved mechanism on any OS blocks that OS's persistent grants and parity claim; there is no fallback.
+4. **Store evaluation and integration:** only after a target OS passes isolation, evaluate conditional storage, toolchain placement/compatibility, and real OS store security tests. Add store integration behind the proven isolation capability. Until each applicable gate passes, fail closed without opening the registry.
+5. **Grant matching and revocation:** add exact scope matching, explicit persistent-choice recording, listing/editing/revocation, and checks proving revocation governs the next authorization.
+6. **Native filesystem, MCP, and TUI:** complete effect-boundary validation, preserve MCP separation, and finalize accessible review/approval interactions with only currently eligible choices.
+7. **Final CI and review:** add/run blocking per-OS tests and clippy, including Windows Huginn coverage; run architecture and relevant quality gates. Review the managed-source verifier as a separate unresolved blocker. Do not claim parity unless each OS has real evidence, and do not claim managed verification is complete without its independent gate.
 
-If any source, registry, approver, resource, or backend becomes unverifiable, disable the affected authorization path and return an observable denial/error. Do not fall back to project state, a broader grant, or unsandboxed execution. Revocation must prevent subsequent matching operations; it cannot reverse effects already completed.
+No phase may skip a prior security dependency. Rollback or failed evidence disables persistent grants for the affected OS; it must not fall back to project state, session remembrance, a broader grant, or unsandboxed shell execution. Revocation cannot reverse effects that already occurred.
 
 ## Open questions
 
-- Does `private-fs` 0.2.1 satisfy the per-user grant registry's exact security and API requirements on all three OSes, and can it meet the repository's toolchain constraints? It remains a conditionally reviewed candidate pending evidence.
-- Which protected per-OS locations and safe, reviewed APIs can verify the complete managed-source path, owner/ACL, and ancestor chain? This is unresolved and blocks final parity.
-- What exact resource-scope matching relation is safe for directory-scoped writes while preventing prefix, symlink, and canonicalization bypasses? Define this before storage format implementation.
-- Which native sandbox mechanisms and supported profile dimensions meet the same observable contract on macOS, Linux, and Windows? Each requires real platform evidence.
-- Which existing settings/API surfaces will expose grant listing, editing, and revocation without introducing project-controlled authorization inputs?
+- **Blocking:** Which supported macOS mechanism, if any, will be approved for shell isolation? Do not begin macOS sandbox implementation or claim macOS sandbox support until this is resolved. Options are a temporary deprecated `sandbox-exec` exception with deprecation/removal risk; fail-closed/disabled macOS shell pending a supported mechanism (no parity); or investigate/redesign signed App Sandbox packaging/workspace access (large product change; dynamic per-workspace CLI feasibility unproven).
+- Which Linux Landlock design, possibly combined with namespaces and/or a launcher, and which Windows AppContainer/ACL design can prove all required registry and ancestor access denials for same-UID/TokenUser shell processes? No backend decision is committed; constraints need runtime evidence.
+- Does `private-fs` 0.2.1 meet the user-store requirements after isolation proof, and can it be used without violating Huginn's 1.89 MSRV and the workspace's 1.81 MSRV under the 1.99 toolchain? Its scratch compilation used Rust 1.89 and had no OS integration tests.
+- What exact resource matching relation supports intended narrow write scope without prefix, symlink, or canonicalization bypasses?
+- Which settings surface will expose persistent grant listing, editing, and revocation?
+- Which protected locations and reviewed APIs verify the managed restriction source and its full ancestor chain on each OS? This is unresolved and independently blocks final parity/release claims.
+- What evidence and release criteria will mark isolation as verified for a particular OS and sandbox configuration, and how will configuration changes invalidate that evidence?
 
 ## Risks
 
-- An overly broad or unstable grant key can authorize a different workspace/resource than the user selected. Use canonical identity, narrow scope, effect-boundary revalidation, and adversarial path tests.
-- A user-owned registry that is not securely acquired, verified, and atomically updated can be modified or raced. Keep the candidate evaluation and real-OS tests as adoption gates.
-- Managed-source verification is unresolved. Treating unverifiable state as absent can bypass administrator restrictions; this blocks final parity and must remain visible.
-- Prompt eligibility can regress into a pre-prompt deny for `Restricted` effects if an empty optional escalation list is interpreted as prohibition. Test the exact policy/UI sequence; explicit managed/user denials remain final.
-- Persistent grants may be mistaken for project trust or general access. Keep them separate, explicit, narrowly scoped, editable, and revocable.
-- A grant or approval could be incorrectly treated as bypassing sandbox, roots, stale-resource checks, or approver availability. Enforce and test each independently.
-- Platform sandbox behavior, registry protection, and managed source may differ. Do not claim three-OS parity until all real-OS gates pass.
-- Mouse support or incomplete previews could make approval ambiguous or bypass review. Verify hit testing, keyboard paths, resize, review completeness, and safe no-op feedback.
+- Same-identity shell code may read or alter a user-owned registry unless native isolation is proven for the registry and every ancestor. Keep all persisted state dormant and persistent choices unavailable until per-OS adversarial probes pass.
+- `private-fs` 0.2.1 excludes same-UID/TokenUser attackers. Treating it as isolation would create a direct authorization bypass. Its external scratch compilation is not a security test.
+- Toolchain constraints differ: Huginn MSRV 1.89, workspace MSRV 1.81, selected toolchain 1.99. A dependency can compile in an app-only scratch project and still be unsuitable for workspace integration.
+- Current CI excludes Huginn on Windows. Until Windows Huginn tests, clippy, and actual runtime probes run as blocking gates, there is no Windows parity evidence.
+- macOS has no approved sandbox backend in this design. Apple's `sandbox-exec(1)` and `sandbox_init(3)` documentation marks these mechanisms deprecated; `sandbox_init(3)` warns against predefined profiles with SDK >= 27.0 and says processes are killed. An explicit user decision is required before considering a deprecated exception. Apple's signed App Sandbox recommendation is not proven to provide dynamic per-workspace CLI isolation. Until resolved, macOS shell must fail closed or remain disabled, persistent grants stay blocked, and platform parity is incomplete.
+- Linux Landlock plus possible namespaces/launcher and Windows AppContainer/ACL are candidates only. API/kernel support, token/capability limits, and launcher/object coverage may prevent equivalent enforcement; Linux/Windows results alone do not establish three-platform parity.
+- Native isolation may not be demonstrable on one or more target OSes. Persistent grants and cross-platform parity must remain unavailable/unclaimed there; never substitute a weaker storage check.
+- The managed-source verifier remains unresolved and blocking independently of sandbox/store work. Treating verification failure as source absence could bypass administrator restrictions.
+- Broad or unstable resource matching can expand a grant. Require canonical identity, exact operation scope, effect-boundary revalidation, and adversarial path tests.
+- UI or task ordering may accidentally expose a persistent choice before the gate passes or let an old grant suppress prompting. Test choice availability and dormant-store behavior as explicit security properties.
+
+## Platform research references
+
+- Apple `sandbox-exec(1)` manual: deprecated. `https://developer.apple.com/library/archive/documentation/Security/Conceptual/AppSandboxDesignGuide/`
+- Apple `sandbox_init(3)` manual: deprecated; predefined profiles must not be used when building against SDK >= 27.0 because processes are killed. See the Apple Developer Documentation entry for `sandbox_init(3)`.
+- Apple App Sandbox design guidance recommends the signed App Sandbox model. This guidance does not establish that signed entitlements provide a drop-in dynamic per-workspace sandbox for this CLI. `https://developer.apple.com/library/archive/documentation/Security/Conceptual/AppSandboxDesignGuide/`
+- Linux Landlock documentation: `https://docs.kernel.org/userspace-api/landlock.html`
+- Windows AppContainer overview: `https://learn.microsoft.com/windows/win32/secauthz/appcontainer-for-legacy-applications`
+- Windows access-control overview: `https://learn.microsoft.com/windows/security/identity-protection/access-control/access-control`
