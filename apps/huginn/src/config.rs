@@ -19,6 +19,8 @@ pub struct Config {
     pub context_tokens: usize,
     pub max_output_tokens: u32,
     pub mcp: Vec<ServerConfig>,
+    #[serde(default)]
+    pub permissions: PermissionConfig,
     /// TUI preferences — populated from `[ui]` in `config.toml`. REQ-10,
     /// REQ-11: default-tolerant; inner structs do **not** carry
     /// `deny_unknown_fields`.
@@ -26,6 +28,37 @@ pub struct Config {
     pub ui: UiConfig,
     #[serde(skip)]
     pub provider_explicit: bool,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConfiguredProfile {
+    Restricted,
+    Workspace,
+    FullAccess,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConfiguredApprovalMode {
+    OnRequest,
+    Always,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PermissionConfig {
+    pub profile: ConfiguredProfile,
+    pub approval: ConfiguredApprovalMode,
+}
+
+impl Default for PermissionConfig {
+    fn default() -> Self {
+        Self {
+            profile: ConfiguredProfile::Restricted,
+            approval: ConfiguredApprovalMode::OnRequest,
+        }
+    }
 }
 
 /// Name of the per-user directory that holds Cortex configuration and state.
@@ -71,12 +104,31 @@ impl Default for Config {
             context_tokens: 32768,
             max_output_tokens: 4096,
             mcp: vec![],
+            permissions: PermissionConfig::default(),
             ui: UiConfig::defaults(),
             provider_explicit: false,
         }
     }
 }
 impl Config {
+    pub fn effective_policy(&self) -> huginn_application::permission_policy::EffectivePolicy {
+        use huginn_application::permission_policy::{
+            ApprovalMode, EffectivePolicy, PolicySettings, ProcessProfile, ProjectTrust,
+        };
+        let settings = PolicySettings {
+            profile: match self.permissions.profile {
+                ConfiguredProfile::Restricted => ProcessProfile::Restricted,
+                ConfiguredProfile::Workspace => ProcessProfile::Workspace,
+                ConfiguredProfile::FullAccess => ProcessProfile::FullAccess,
+            },
+            approval_mode: match self.permissions.approval {
+                ConfiguredApprovalMode::OnRequest => ApprovalMode::OnRequest,
+                ConfiguredApprovalMode::Always => ApprovalMode::Always,
+            },
+        };
+        EffectivePolicy::resolve(settings, None, ProjectTrust::default())
+    }
+
     /// Fill any unset optional fields from the canonical `HUGINN_*`
     /// environment variables, falling back to the legacy `AGENT_*` names
     /// with a one-shot deprecation warning. Custom values explicitly
@@ -251,5 +303,55 @@ impl Config {
             },
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod permission_config_tests {
+    use super::*;
+
+    #[test]
+    fn permission_defaults_are_restrictive_and_on_request() {
+        let config = Config::parse("").expect("empty configuration uses defaults");
+        let policy = config.effective_policy();
+        assert_eq!(
+            policy.profile(),
+            huginn_application::permission_policy::ProcessProfile::Restricted
+        );
+        assert_eq!(
+            policy.approval_mode(),
+            huginn_application::permission_policy::ApprovalMode::OnRequest
+        );
+        assert_eq!(
+            policy.trust().state(),
+            huginn_application::permission_policy::TrustState::Untrusted
+        );
+        assert_eq!(policy.trust().provenance(), None);
+    }
+
+    #[test]
+    fn configured_policy_values_are_resolved_explicitly() {
+        let config =
+            Config::parse("[permissions]\nprofile = 'workspace'\napproval = 'on-request'\n")
+                .expect("known policy values parse");
+        let policy = config.effective_policy();
+        assert_eq!(
+            policy.profile(),
+            huginn_application::permission_policy::ProcessProfile::Workspace
+        );
+        assert_eq!(
+            policy.approval_mode(),
+            huginn_application::permission_policy::ApprovalMode::OnRequest
+        );
+    }
+
+    #[test]
+    fn unknown_profile_fails_configuration_loading() {
+        let error = Config::parse("[permissions]\nprofile = 'unknown'\n")
+            .err()
+            .expect("unknown profile must not fall back to a permissive choice");
+        assert!(error
+            .to_string()
+            .contains("invalid Huginn TOML configuration"));
     }
 }

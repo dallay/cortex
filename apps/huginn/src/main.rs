@@ -379,6 +379,7 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     let (mut session, prompt, lease) = prepare_session(&cli, &sessions).await?;
+    let effective_policy = Arc::new(config.effective_policy());
     let guards = huginn_runtime::guardrails::load_guardrails(&session.workspace)?;
     let _lease = match lease {
         Some(lease) => lease,
@@ -388,8 +389,14 @@ async fn main() -> anyhow::Result<()> {
     let (_, tui, input) = prepare_interaction(&cli, prompt.is_some(), is_doctor)?;
     let allowed = cli.allow.into_iter().collect::<BTreeSet<_>>();
     let prompt_adapter = Arc::new(LinePrompt::new(input.clone()));
+    let policy_context = PolicyContext {
+        allowed: allowed.clone(),
+        effective: effective_policy.clone(),
+    };
     let policy = Arc::new(
-        HostPolicy::new(prompt_adapter.clone(), allowed.clone()).for_session(session.id.clone()),
+        HostPolicy::new(prompt_adapter.clone(), policy_context.allowed.clone())
+            .with_effective_policy(policy_context.effective.clone())
+            .for_session(session.id.clone()),
     );
     let output = Output { json: cli.json };
     let model = if is_doctor && config.model_readiness() == ModelReadiness::Unconfigured {
@@ -457,7 +464,7 @@ async fn main() -> anyhow::Result<()> {
             cli.config.as_deref(),
             &mut session,
             &mut supervisor,
-            allowed,
+            policy_context,
             model_readiness,
             connection_management,
         )
@@ -653,12 +660,18 @@ async fn run_compact(
     agent_loop.compact(session, output, cancel).await
 }
 
+#[derive(Clone)]
+struct PolicyContext {
+    allowed: BTreeSet<String>,
+    effective: Arc<huginn_application::permission_policy::EffectivePolicy>,
+}
+
 async fn tui_chat(
     config: &Config,
     cli_config: Option<&std::path::Path>,
     session: &mut Session,
     supervisor: &mut huginn_core::kernel::Supervisor,
-    allowed: BTreeSet<String>,
+    policy_context: PolicyContext,
     model_readiness: ServiceSlotHandle<ModelService>,
     connection_management: bool,
 ) -> anyhow::Result<()> {
@@ -720,7 +733,11 @@ async fn tui_chat(
     {
         ui.notification(message);
     }
-    let policy = Arc::new(HostPolicy::new(ui.clone(), allowed).for_session(session.id.clone()));
+    let policy = Arc::new(
+        HostPolicy::new(ui.clone(), policy_context.allowed)
+            .with_effective_policy(policy_context.effective)
+            .for_session(session.id.clone()),
+    );
     let result: anyhow::Result<()> = async {
         let startup = CancellationToken::new();
         let startup_operation = ui.begin(startup.clone());
