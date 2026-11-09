@@ -1,71 +1,85 @@
-# Tareas: autonomía y permisos de workspace de Huginn
+# Tasks: Effective Workspace Permissions and Platform Parity
 
-## Previsión de carga de revisión
+## Review Workload Forecast
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
-| Presupuesto de revisión | 400 líneas modificadas |
-| Carga estimada | Alta: política, runtime, CLI/TUI, menús, pruebas y documentación |
-| PR encadenados recomendados | Sí |
-| Estrategia | `feature-branch-chain` elegida por el usuario |
-| Balance de entregas | Capas por entregable autónomo: permisos/revalidación; entrada de ratón; aprobación y documentación. Cada capa incluye pruebas y reversión coherentes. |
-| Base | `main` |
-| Rama de integración | `integration/huginn-autonomous-workspace-permissions` |
-| Seguimiento | `.agents/rpi/plan/tasks/huginn-approval-interactions.md` |
-| Slice 1 | `feature/huginn-workspace-autonomy-policy`, desde integración |
-| Slice 2 | `feature/huginn-tui-mouse-menus`, desde slice 1 |
-| Slice 3 | `feature/huginn-approval-ui`, desde slice 2 |
+| Review budget | 400 changed lines; high-risk multi-surface security change |
+| Estimated workload | High; three OS backends, policy, filesystem, MCP, TUI, CI/docs, and new dependency evaluation |
+| Decision needed before apply | No; complete macOS/Linux/Windows parity remains the target |
+| Chained PRs recommended | Yes |
+| 400-line budget risk | High |
+| Chain strategy | `feature-branch-chain`; integration base `integration/huginn-autonomous-workspace-permissions`, trunk `main` |
+| Work-unit balance | Six dependency-ordered, reviewable deliverables; each carries behavior, tests, and relevant documentation. New `private-fs` evaluation increases review load; forecast remains High. |
 
-Decisiones de estrategia/base/seguimiento/commits locales antes de apply: resueltas por el usuario
-PR encadenados recomendados: Sí
-Riesgo del presupuesto de 400 líneas: Alto
+Decision needed before apply: No
+Chained PRs recommended: Yes
+400-line budget risk: High
 
-### Metadatos de ramas por slice
+Each OS backend requires real enforcement evidence; common interfaces, fakes, compilation, and fail-closed stubs are not parity. Fail closed before effects whenever required policy or enforcement is unavailable. Preserve `unsafe_code = deny`; add no unsafe wrapper or lint relaxation.
 
-| Posición | `trunk` | `parent_branch` | `base` | `branch` | Issue/tracker |
+### Feature-branch-chain metadata
+
+| Position | `trunk` | `parent_branch` | `base` | `branch` | Tracking |
 |---|---|---|---|---|---|
-| 1 de 3 | `main` | `integration/huginn-autonomous-workspace-permissions` | `integration/huginn-autonomous-workspace-permissions` | `feature/huginn-workspace-autonomy-policy` | Tracker RPI local; sin issue externo |
-| 2 de 3 | `main` | `feature/huginn-workspace-autonomy-policy` | `feature/huginn-workspace-autonomy-policy` | `feature/huginn-tui-mouse-menus` | Tracker RPI local; sin issue externo |
-| 3 de 3 | `main` | `feature/huginn-tui-mouse-menus` | `feature/huginn-tui-mouse-menus` | `feature/huginn-approval-ui` | Tracker RPI local; sin issue externo |
+| 1 | `main` | `integration/huginn-autonomous-workspace-permissions` | `integration/huginn-autonomous-workspace-permissions` | `feature/huginn-workspace-autonomy-policy` (checked-out branch) | Local plan; no external issue |
+| 2 | `main` | `feature/huginn-workspace-autonomy-policy` | same as parent | `feature/huginn-cross-platform-sandbox` | Local plan |
+| 3 | `main` | `feature/huginn-cross-platform-sandbox` | same as parent | `feature/huginn-native-filesystem` | Local plan |
+| 4 | `main` | `feature/huginn-native-filesystem` | same as parent | `feature/huginn-mcp-policy` | Local plan |
+| 5 | `main` | `feature/huginn-mcp-policy` | same as parent | `feature/huginn-tui-mouse-menus` | Local plan |
+| 6 | `main` | `feature/huginn-tui-mouse-menus` | same as parent | `feature/huginn-approval-ux` | Local plan |
 
-## Fase 1: política y efectos nativos — capa 1
+## Phase 1: Policy and trust foundation — slice 1
 
-- [ ] 1.1 RED: Añadir pruebas deterministas de `HostPolicy` para catálogo cerrado, procedencia host, sensibilidad, recurso canónico y fallback desconocido; cubrir lectura/listado/búsqueda y permisos de creación/edición.
-- [ ] 1.2 GREEN: Implementar autorización host-side del catálogo ratificado; `write_file` solo crea rutas nuevas, `edit_file` edita archivos ordinarios existentes y reemplazo/destructivos requieren aprobación.
-- [ ] 1.3 REFACTOR: Consolidar clasificación y decisión sin ampliar autoridad; repetir pruebas de aplicación y revisar que plugins/hooks/modelo no conceden permisos.
-- [ ] 1.4 RED: Probar grants exactos por sesión+acción+recurso canónico+workspace; `SessionPolicy` sin workspace confiable no concede grants; cubrir clones del mismo scope, separación de roots, recurso fuera del root, sensibilidad y ausencia tras nueva sesión/reanudación.
-- [ ] 1.5 GREEN: Fijar el root canónico confiable en `SessionPolicy` desde el composition root; incluir root en la clave, comprobar pertenencia del recurso e impedir grants sin scope. Mantener grants en memoria, sin comodines ni persistencia.
-- [ ] 1.6 REFACTOR: Simplificar el estado compartido de `HostPolicy`; verificar decisiones permitidas y precedencia de `--allow` sin permitir que clones cambien el root fijado.
+- [ ] 1.1 RED: Test untrusted defaults, explicit user-registry trust, canonical roots (no lexical-prefix matches), project-file non-authority, invalid registry failure, and policy composition in interactive/headless paths.
+- [ ] 1.2 EVALUATE: Review `private-fs` **0.2.1 only** for security/audit status, version, license, targets, API/handle guarantees, and compatibility; resolve Huginn MSRV 1.89 versus workspace MSRV 1.81 using actual resolver/toolchain builds. Treat it as unapproved; preserve `unsafe_code = deny` without wrappers or lint changes.
+- [ ] 1.3 EVALUATE: Build focused private-root and user-registry fixtures/probes for secure root acquisition, ownership/ACL/path checks, ancestor handling, no-follow/reparse rejection, canonical identity, and atomic registry read/write; run integration tests on macOS, Linux, and Windows. If any audit, MSRV, fixture, or OS gate fails, stop evaluation, do not adopt, and fail closed; choose no substitute without separate review.
+- [ ] 1.4 BLOCKED: Do not implement machine-managed source loading until a secure end-to-end verifier exists for system/admin ownership, ACL/DACL, and same-handle no-symlink/reparse traversal on macOS, Linux, and Windows. `win-authorization-sys` alone is insufficient; macOS ACL handle inspection remains unresolved. Do not treat verifier failure as absence; keep affected effects fail-closed.
+- [ ] 1.5 GREEN: Only after a successful, reviewed registry evaluation, integrate the approved adapter at `apps/huginn/src/config.rs`; keep registry outside project/config overrides, user-owned, atomically persisted, and reject fallback roots. Otherwise leave trust unavailable and fail closed.
+- [ ] 1.6 RED: Add failing `EffectivePolicy`/`HostPolicy` tests for provenance, restriction precedence, deny-before-allowlist/prompt/session grant, approval scope, and policy errors.
+- [ ] 1.7 GREEN: Inject the same resolved policy in interactive/headless composition and enforce decisions in `HostPolicy` without implicit allow or sandbox broadening.
+- [ ] 1.8 REFACTOR: Rerun policy/composition tests; verify approval cannot weaken isolation and policy errors fail closed.
 
-## Fase 2: revalidación y modos de ejecución — capa 1
+## Phase 2: Native sandbox and shell — slice 2
 
-- [ ] 2.1 RED: Añadir pruebas con filesystem/fakes deterministas para symlink/escape, error de canonicalización, sensibilidad, workspace root cambiado o fuera del scope fijado, y contenido obsoleto; afirmar cero escrituras ante fallo.
-- [ ] 2.2 GREEN: Aplicar preparación→autorización→revalidación inmediata→ejecución en el adapter nativo; revalidar root fijado, pertenencia/ruta/symlinks, sensibilidad e identidad/contenido; invalidar propuestas modificadas y fallar cerradas.
-- [ ] 2.3 REFACTOR: Eliminar comprobaciones duplicadas sin debilitar el límite final del adapter; repetir pruebas de runtime.
-- [ ] 2.4 RED: Probar catálogo por defecto en TUI, `run` y `--json`; shell, cada llamada MCP y otros efectos excluidos requieren aprobador y no ejecutan si falta.
-- [ ] 2.5 GREEN: Componer defaults y errores observables en `apps/huginn`; conservar aprobación separada para inicio MCP y cada llamada.
-- [ ] 2.6 REFACTOR: Verificar precedencia TOML/CLI/`--allow` y fallos cerrados con mocks deterministas; no inferir sandbox para shell/MCP.
+- [ ] 2.1 RED: Test zero spawns for absent, incompatible, and failing backends; approval must not change the profile. Add black-box enforcement probes for declared capabilities on all three OSes.
+- [ ] 2.2 GREEN: Implement native macOS, Linux, and Windows backends and select/enforce them before spawn in `crates/huginn/runtime/src/tools.rs`; preserve timeout, cancellation, output limits, and descendant termination. No unsandboxed fallback.
+- [ ] 2.3 REFACTOR: Review target dependencies, security, license, and `unsafe_code = deny`; rerun backend contract and failure tests. Do not claim an OS supported without its real enforcement evidence.
 
-## Fase 3: ratón y menús interactivos — capa 2
+## Phase 3: Native filesystem policy — slice 3
 
-- [ ] 3.1 RED: Añadir pruebas de presentación para cada menú/selector, clic de fila/botón, clic fuera, scroll, foco/teclado, overlay obsoleto y geometría invalidada por resize; exigir que clic y teclado produzcan la misma transición válida.
-- [ ] 3.2 GREEN: Implementar hit-testing desde geometría del último frame y despachar `Event::Mouse` por el event loop existente a través de `InputEffect`/ticket vigente; cubrir overlays y selector/completion de línea.
-- [ ] 3.3 REFACTOR: Unificar rutas de entrada y verificar que clic vacío no cambia selección ni activa acciones protegidas.
-- [ ] 3.4 RED: Añadir prueba PTY de habilitación/restauración de captura de ratón en salida normal, error y cancelación.
-- [ ] 3.5 GREEN: Habilitar captura junto a bracketed paste y restaurar terminal en todos los caminos de salida.
-- [ ] 3.6 REFACTOR: Repetir prueba PTY y confirmar que no se introduce un segundo lector de eventos.
+- [ ] 3.1 RED: Test read/list/search/write/edit and registered tools for roots, capabilities, traversal, symlink changes, stale state, and verification failure; assert zero effects on denial.
+- [ ] 3.2 GREEN: Enforce and immediately revalidate effective policy at native effect boundaries in `crates/huginn/runtime/src/tools.rs`; do not authorize by tool name or route builtins through shell.
+- [ ] 3.3 REFACTOR: Consolidate checks without weakening effect boundaries; rerun focused application/runtime suites.
 
-## Fase 4: aprobación, integración y documentación — capa 3
+## Phase 4: Granular MCP policy — slice 4
 
-- [ ] 4.1 RED: Probar que Allow once/Allow session por clic y teclado no omiten revisión íntegra, no aceptan preview incompleto/solicitud obsoleta, y que rechazo, cancelación, no-op o aprobador ausente nunca ejecutan el efecto.
-- [ ] 4.2 GREEN: Mejorar jerarquía visual de acción, recurso, riesgo y preview; mantener decisiones autorizadas por host, gate de revisión y feedback claro de no ejecución.
-- [ ] 4.3 REFACTOR: Verificar terminal estrecha, navegación del preview completo, resize, foco y Escape; repetir pruebas de presentación y PTY sin sleeps.
-- [ ] 4.4 RED: Añadir pruebas de integración de loop con `ApprovalPrompt`, herramientas y `EventSink` falsos para aprobación, cancelación, revocación y ausencia; afirmar cero llamadas de ejecución no autorizadas y no replay.
-- [ ] 4.5 GREEN: Conectar estados de aprobación y resultados observables en core/application/runtime/presentation y CLI sin ampliar la autoridad de UI.
-- [ ] 4.6 REFACTOR: Ejecutar pruebas de paquetes Huginn afectados, `just huginn-architecture`, fmt y clippy pertinentes; revisar rollback por capa.
-- [ ] 4.7 Documentación — validación documental: actualizar ADR-0007, `docs/huginn/architecture.md`, `implementation-specification.md` y `README.md`; comprobar catálogo, grants, defaults, fallos cerrados y que shell/MCP no están sandboxed.
-- [ ] 4.8 Validación documental: revisar consistencia contra spec/diseño y que ninguna documentación afirme aislamiento del sistema operativo.
+- [ ] 4.1 RED: Test `auto`/`prompt`/`writes`/`approve`, missing/adversarial annotations, tool-server-default precedence, explicit full-access, and startup versus call approval.
+- [ ] 4.2 RED: Test session remembrance identity/scope, cross-scope isolation, session expiry, and no persistent change; test narrow persistent approval, safe config edit/reload, ineligible sources, and write/reload failure.
+- [ ] 4.3 GREEN: Implement policy and scoped session remembrance in `crates/huginn/runtime/src/mcp.rs` and `composition.rs`; implement only explicit eligible persistent amendments. Unknown `auto` metadata prompts; persistence failure reports unchanged settings and retains session choice only if explicitly selected.
+- [ ] 4.4 REFACTOR: Verify integration and ensure remembered/persistent decisions never exceed policy; do not claim MCP isolation from shell sandboxing.
 
-## Orden y control de apply
+## Phase 5: Mouse support in all menus — slice 5 (independent)
 
-Completar cada capa con sus pruebas y documentación asociada antes de iniciar la siguiente. Registrar primero los artifacts SDD como commit convencional en la rama de integración; después actualizar la rama del slice 1 para que herede esa base. Encadenar los tres slices con las ramas indicadas y mantener el seguimiento en el documento RPI. El usuario autorizó commits locales convencionales por entrega. No usar metadatos de GitHub Stack ni hacer push/crear PRs sin autorización. Ninguna tarea autoriza persistir grants ni ampliar el catálogo ratificado.
+- [ ] 5.1 RED: Test mouse/keyboard equivalence, hit-testing, outside clicks, focus, scrolling, overlays, resize, and protected/stale actions across selectable menus.
+- [ ] 5.2 GREEN: Implement hit-testing against visible geometry and restore terminal mouse capture on exit, error, and cancellation.
+- [ ] 5.3 REFACTOR: Run deterministic PTY regressions without sleeps or a second event reader.
+
+## Phase 6: Approval UX — slice 6 (independent)
+
+- [ ] 6.1 RED: Test action/resource/risk/full preview, narrow/resized terminals, pending review, premature clicks, missing/revoked approver, denial, cancellation, and no-op; assert no unauthorized execution.
+- [ ] 6.2 GREEN: Present complete review, host-authorized choices, and clear non-execution feedback; presentation must not grant authority.
+- [ ] 6.3 REFACTOR: Verify keyboard/Escape, focus, mouse, and deterministic PTY states without sleeps.
+
+## Phase 7: Platform gates, docs, and superseding ADR
+
+- [ ] 7.1 Update `apps/huginn/config.example.toml` and `docs/huginn/` for profiles, defaults, MCP modes, platform capabilities, and limitations; make no unverified parity claim.
+- [ ] 7.2 Add blocking PR CI tests on macOS/Linux/Windows for real backend enforcement and unavailable/failing zero-spawn behavior; include Huginn crates on Windows.
+- [ ] 7.3 Run affected Huginn tests, integration/PTY suites, `just huginn-architecture`, fmt, relevant clippy, dependency/lockfile checks, and real-OS probes. Missing runners/capabilities are blocked evidence, not passes; release requires all three OS gates.
+- [ ] 7.4 Add `docs/huginn/adr/0018-effective-workspace-permissions-and-platform-sandboxing.md`, explicitly superseding conflicting ADR-0006/0007 decisions without editing historical ADRs.
+
+## Technical blockers
+
+- Machine-managed configuration and effects requiring its verified absence remain blocked until the complete safe three-OS verifier and real-OS tests exist. `win-authorization-sys` supplied-handle inspection is insufficient; safe macOS ACL handle inspection is unresolved.
+- User trust remains unavailable unless `private-fs` 0.2.1 passes its audit/version/MSRV evaluation, user-registry fixture tests, all three OS integration tests, and security review. Any failure stops adoption; no unsafe wrapper or lint relaxation is permitted.
+- Any missing/failing sandbox backend or OS evidence blocks that OS's support/parity claim and the final release; shell remains fail-closed.

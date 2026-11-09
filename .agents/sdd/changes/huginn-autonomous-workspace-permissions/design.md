@@ -1,161 +1,203 @@
-# Diseño: autonomía y permisos de workspace de Huginn
+# Design: Cross-platform workspace permission parity
 
-## Enfoque técnico
+## Technical approach
 
-La autorización seguirá siendo una decisión del host. `huginn-core` conservará contratos independientes de terminal e I/O; `huginn-application::HostPolicy` aplicará el catálogo cerrado y el scope de grants; `huginn-runtime` asignará identidad/procedencia confiables y preparará/revalidará recursos; `huginn-presentation` recogerá decisiones y mostrará estados, sin autoridad propia; `apps/huginn` compondrá la política y resolverá configuración/modo. Este diseño sigue ADR-0006/0007/0009/0016 y la separación `core → application → runtime/presentation → apps` establecida en `.agents/contexts/huginn.md`.
+Implement the same observable permission profiles on macOS, Linux, and Windows, using a native enforcement backend for each operating system. Platform parity means equivalent effective restrictions and approval outcomes for the same profile; it does not mean that the three implementations use the same operating-system mechanism or have identical internal behavior. This is a binding scope decision. A fail-closed runtime response is required when enforcement is unavailable, but it is not an acceptable final platform implementation or release state.
 
-**Decisiones ratificadas por el usuario:** lectura, listado, búsqueda, creación y edición ordinaria de archivos dentro del workspace se autorizan por defecto en TUI, `run` y `--json`; `write_file` solo crea sin prompt una ruta nueva, mientras reemplazar un archivo existente requiere aprobación; los grants de sesión son exactos y volátiles; shell/MCP, recursos sensibles, externos, destructivos no clasificados y fuera del workspace conservan controles; todos los menús interactivos aceptan clic; el diálogo mejora su jerarquía visual. Ninguna decisión convierte shell/MCP en sandboxed.
+Keep authorization and process isolation as separate controls. The application resolves the effective approval policy and profile; runtime adapters enforce process restrictions before spawn and filesystem rules at each native file operation. Approval may permit a bounded escalation only where the effective policy allows it. Approval MUST NOT remove the baseline sandbox. MCP approval remains a separate, per-server/per-tool policy and does not claim to sandbox an MCP process.
 
-## Decisiones de arquitectura
+The current Huginn architecture provides the appropriate boundaries: core owns permission/action contracts, application resolves policy, runtime owns process/filesystem/MCP adapters, `apps/huginn` resolves configuration and composition, and presentation communicates decisions without granting authority (`crates/huginn/core/src/lib.rs:362-454`; `crates/huginn/application/src/authorization.rs:13-189`; `crates/huginn/runtime/src/tools.rs:500-650,825-920`; `crates/huginn/runtime/src/mcp.rs:230-289`; `apps/huginn/src/main.rs:376-429`).
 
-### Decisión: clasificación cerrada de efectos asignada por el host
+## Architecture decisions
 
-Añadir una clasificación interna tipada (por ejemplo, `EffectClass` más identidad de acción nativa) cuya fuente sea el registro del host/runtime. No derivar permisos del texto de preview, los argumentos del modelo, los nombres aportados por plugins ni la ruta sin validar. `HostPolicy` compara acción exacta, clase, procedencia y recurso; valor ausente/desconocido, discrepancia o error significa aprobación explícita si existe aprobador, de otro modo rechazo/fallo cerrado.
+### Decision: Semantic parity with native platform backends
 
-Catálogo ratificado:
+**Choice:** Define one platform-neutral profile contract with observable filesystem and network restrictions, then implement three concrete runtime backends selected by compile-time target and validated at runtime. Each backend must either prove it can enforce the requested profile or return an observable unsupported/unavailable/enforcement error before process creation. A shared interface is an internal seam, not evidence of parity.
 
-- Autónomos: lecturas, listados y búsquedas nativas dentro del workspace activo canónico, no sensibles, solo si la identidad está registrada por el host. Mantener su comportamiento actual.
-- Autónomos: `native.write_file` solo para crear una ruta nueva; `native.edit_file` para modificar un archivo ordinario existente mediante la edición puntual. En ambos casos el recurso es no sensible y está canónicamente dentro del workspace; la propuesta se prepara y revalida justo antes de escribir.
-- Requiere aprobación: `native.write_file` al reemplazar un archivo existente, además de borrado, movimiento, rename y otras operaciones destructivas no clasificadas.
-- Siempre fuera de la autonomía: shell (incluidas variantes), cada invocación MCP, arranque/consentimiento MCP como grant de llamadas, efectos externos, recursos sensibles, fuera del root, procedencia desconocida, operaciones destructivas no clasificadas y cualquier error de verificación. Shell y MCP no están sandboxed; el cwd, el grant, guardrails y autorización host-side no aíslan procesos.
+**Evidence and implementation constraints:** The inspected reference implementation selects backends centrally, requests a required sandbox, and rejects `SandboxType::None` (`exec-server/src/sandbox_selection.rs:21-45`; `exec-server/src/fs_sandbox.rs:146-169`). Its macOS path builds a Seatbelt policy and uses `/usr/bin/sandbox-exec` (`sandboxing/src/seatbelt.rs:56-60,805-840`). Its Linux path selects a system or bundled Bubblewrap launcher, probes required capabilities, and reports it unavailable when neither is usable (`linux-sandbox/src/launcher.rs:18-23,41-65,135-150,159-219`); a legacy Landlock path is separately gated and rejects unsupported filesystem policies (`linux-sandbox/src/linux_run_main.rs:383-390`). Its Windows path selects legacy or elevated sandbox execution and rejects managed-network requirements when only the legacy path is selected (`windows-sandbox-rs/src/unified_exec/mod.rs:49-103`). These implementations demonstrate platform-specific mechanisms, not interchangeable guarantees.
 
-**Alternativas/tradeoffs**: limitar autonomía a lectura/listado/búsqueda conserva prompts de escritura que motivan el cambio. Hacer autónomas todas las escrituras nativas dentro del workspace mezcla creación/edición con truncado y reemplazo potencialmente destructivo. La decisión ratificada permite creación y edición puntual, y conserva aprobación para `write_file` que reemplaza contenido existente. Una categoría genérica como «tool interna» se rechaza: no prueba alcance ni efecto.
+**Cortex target evidence:** Existing CI runs the main Rust workspace on Ubuntu (`.github/workflows/ci.yml:208-230`), runs macOS tests on `macos-latest`, but its Windows test command excludes all Huginn crates (`.github/workflows/ci.yml:763-801`). Cross-compilation targets include Linux, Windows, and macOS (`.github/workflows/ci.yml:673-761`), but build-only checks do not verify runtime enforcement. Release targets likewise build binaries on all three OS families without sandbox integration tests (`.github/workflows/release.yml:75-98`). The Huginn platform test gates therefore need expansion; current CI does not establish Huginn parity.
 
-### Decisión: revalidación en el límite inmediatamente anterior al efecto
+**Alternatives considered:** A portable wrapper that shells out identically on every OS; supporting one OS and permanently returning unavailable on the others; or claiming parity from a common profile name. **Rationale:** These alternatives either lack native enforcement evidence or contradict the binding three-platform scope.
 
-Mantener el ciclo `prepare → host authorization → revalidate → execute` en el adapter nativo. La autorización debe ligar decisión/grant a la misma acción y recurso canónico que fueron preparados. Antes de mutar, runtime vuelve a verificar root activo, resolución de ruta/symlinks, sensibilidad, identidad de recurso y vigencia/huella de contenido; cualquier cambio invalida la autorización de esa propuesta. No transformar automáticamente un cambio en nueva aprobación: el host debe devolver propuesta obsoleta/no verificable y preparar una revisión nueva o fallar cerrado. La comprobación final debe ocurrir dentro del adapter que ejecuta, no solo en el loop/UI.
+### Decision: Three backend deliverables, one profile contract
 
-No se debe presentar esta revalidación como sandbox ni como eliminación total de carreras del sistema de archivos. Para reducir TOCTOU, mantener handles/operaciones relativas al directorio cuando las APIs existentes lo permitan; si la garantía de la plataforma no está disponible, denegar el caso no verificable. No añadir nueva dependencia sin necesidad probada.
+**Choice:** Deliver macOS, Linux, and Windows as distinct backend work units, each against the same profile fixtures and observable contract:
 
-### Decisión: ciclo de vida de grants
+| OS | Backend direction evidenced by source | Required Huginn behavior |
+|---|---|---|
+| macOS | Seatbelt policy through the native `sandbox-exec` path | Translate effective read/write roots, deny rules, and network policy; reject policy translation or sandbox launch failure before spawning the requested command. |
+| Linux | Bubblewrap process/filesystem isolation; Landlock only if a separately verified implementation can cover the selected profile | Probe the actual launcher and required capabilities; do not assume its presence or accept a weaker policy. Reject unavailable, incompatible, or failed enforcement before spawn. |
+| Windows | Windows sandbox process/session implementation with explicit permission mapping | Enforce the same observable filesystem/network profile through native Windows controls. Reject unsupported profile or failed provisioning before spawn. |
 
-Conservar los grants solo como estado en memoria, con coincidencia exacta `(identidad de sesión, acción, ruta canónica, workspace activo)` y solo para recursos no sensibles y acciones nativas elegibles. `apps/huginn` debe fijar el workspace canónico confiable en `SessionPolicy` desde el límite de composición; el root no lo puede aportar el modelo, la UI ni metadata de herramientas. La política comprueba que cada recurso canónico pertenece al root fijado y usa ese root en la clave del grant. `for_session` sin root confiable no concede ni reutiliza grants de sesión. Los clones comparten el almacenamiento en memoria de la sesión, pero no pueden cambiar el root fijado. Nunca serializar grants ni reconstruirlos desde historial/SQLite/resume. Invalidar al terminar sesión o crear un nuevo scope de workspace. No aceptar comodines.
+The Linux source explicitly distinguishes Bubblewrap and legacy Landlock paths (`linux-sandbox/src/launcher.rs:18-65`; `linux-sandbox/src/linux_run_main.rs:265-325,383-390`). The Windows source has different execution paths for selected levels (`windows-sandbox-rs/src/unified_exec/mod.rs:49-103`). Do not port source APIs or assume those backends can be imported as dependencies. Select Huginn-compatible dependencies or native adapters only after reviewing maintenance, license, security, target availability, and `unsafe_code = deny` constraints.
 
-La identidad de workspace vive en `SessionPolicy`, no en `ApprovalRequest`/`ApprovalResource`: así se evita ampliar contratos core y serializaciones, mientras el host conserva la autoridad. Una ruta absoluta no basta por sí sola para demostrar el scope del grant. La raíz se canonicaliza/valida al preparar o reanudar la sesión; si no se puede fijar, la política falla cerrada para autonomía/grants.
+**Acceptance for semantic equivalence:** For every supported profile, each OS backend must pass the same black-box probes for readable/writable/denied paths, process/network capabilities, escalation behavior, and fail-closed behavior. Platform-specific exceptions are allowed only when documented and when the effective observable profile remains no less restrictive; otherwise report a genuine profile capability gap and do not claim parity or release support.
 
-**Alternativas/tradeoffs**: un grant por turno minimiza exposición, pero no elimina prompts dentro de un mismo flujo y es más restrictivo que `ApproveForSession` existente. Mantener grants durante toda la sesión conversacional satisface continuidad y conserva semántica actual, con riesgo acotado por clave exacta y volatilidad. Persistirlos o restaurarlos simplifica reanudación, pero amplía el riesgo a otro proceso/contexto y contradice el alcance propuesto; no recomendado. `--allow` conserva sus nombres explícitos por invocación y no pasa a significar autorización genérica de shell/MCP/escrituras; resolver la precedencia de autonomía y `--allow` en composición sin relajar clases excluidas.
+**Alternatives considered:** Same implementation on every platform; a single Linux-first release with stubs elsewhere; or native implementations with unrelated permission semantics. **Rationale:** Native mechanisms differ, while the user-facing restrictions and approval semantics must remain aligned.
 
-### Decisión: configuración y modos
+### Decision: Fail-closed runtime fallback and release gate
 
-El catálogo ratificado se activa por defecto en TUI, `run` y `--json`. Los efectos excluidos que requieren aprobación fallan cerrados cuando no hay canal/aprobador disponible. Cualquier configuración u override futuro conserva estas clases excluidas y no transforma la ausencia de interfaz en autorización.
+**Choice:** At runtime, validate the selected backend, its required host facilities, and profile coverage before preparing or spawning the command. If the backend is missing, disabled, incompatible, cannot initialize, cannot establish required policy, or fails to launch, return an explicit error and perform zero command spawns. Never retry through an unsandboxed host shell or silently downgrade the profile. Retrying with a strictly more restrictive backend is allowed only when the user-visible effective profile remains at least as restrictive and the alternate backend is independently validated for that profile.
 
-**Alternativas/tradeoffs**: pedir activación explícita por sesión reduce sorpresas, pero conserva fricción. Un catálogo cerrado y verificable permite aplicar la misma autonomía sin prompt en los tres modos ratificados; la falta de aprobador sigue denegando los efectos excluidos. Si luego se añade override, la precedencia y el alcance de `--allow` deben documentarse y probarse.
+**Release condition:** Do not release this permission-parity change until the macOS, Linux, and Windows backends are all implemented and the required per-OS CI enforcement gates pass. Compile-only targets, fake-backend tests, or a fail-closed stub do not satisfy the release condition. If any OS gate is unavailable or failing, block the release rather than shipping the other two as final parity.
 
-### Decisión: entrada de ratón y geometría de menús
+**Alternatives considered:** Keep unsupported platforms permanently fail-closed; allow an approval to bypass the sandbox; or make the platform gates informational. **Rationale:** Fail-closed is the safe response to runtime failure, but permanent non-support contradicts the decided deliverable. Approval cannot replace process isolation, and non-blocking gates cannot verify release claims.
 
-Activar/desactivar la captura de ratón junto a bracketed paste en el ciclo de vida existente del terminal, incluyendo restauración incluso ante error/salida. El loop de Crossterm ya centraliza `Event` y `Resize`; añadir el despacho de `Event::Mouse` a la capa de entrada/presentación y no introducir otro lector de eventos. Ratatui no proporciona el manejo de entrada: el código debe conservar el pipeline de eventos propio.
+### Decision: Effective policy and bounded escalation
 
-Usar un modelo de hit testing derivado de la geometría que se dibujó en el último frame, con Rects/filas/botones y generación/identidad del overlay. Ratón primario sobre una fila ejecuta la misma transición que teclado; botones invocan el mismo `InputEffect`. Clic en espacio vacío/borde/fuera es no-op, no cambia foco ni activa acción. Scroll modifica el viewport/lista y vuelve a dibujar antes de aceptar coordenadas posteriores. Resize invalida la geometría previa y la reemplaza al render siguiente; no reutilizar hitboxes viejas. Verificar identidad de overlay/ticket y que siga activo antes de comprometer efectos, siguiendo el patrón existente de `TransitionTicket`/snapshot.
+**Choice:** Resolve a single immutable effective policy at composition time. It records approval mode, verified project-trust state, selected process profile, native filesystem policy, and managed constraints with their source and precedence. Managed restrictions take precedence over user settings. `OnRequest` means request approval for a permitted escalation, not for every shell command. A project path or workspace membership does not imply trust. Approval is bound to the prepared action and resource, is revalidated before effect, and does not alter the sandbox profile.
 
-El alcance incluye overlays de settings, provider/login/model picker, help, confirm/approval, workflow y plugin dialogs; también selectores/completions que se presenten como menú (incluida la línea interactiva de `apps/huginn`). Mantener navegación, foco visible, Enter/Escape y activación protegida por teclado. Las vistas que no son menús seleccionables no necesitan targets inventados.
+**Alternatives considered:** Treat `trusted` as unrestricted access, use a universal approval default, or combine approval and sandbox into one permission value. **Rationale:** Separate values preserve effective policy provenance, authorization boundaries, and enforcement invariants.
 
-La API instalada es Ratatui `=0.30.2` y Crossterm `=0.29.0`. Según la documentación actual consultada, Ratatui delega el input a Crossterm; Crossterm aporta `EnableMouseCapture`/`DisableMouseCapture` y `Event::Mouse`. En resize, volver a dibujar usando el área actual del frame: Ratatui documenta que `draw` actualiza el tamaño del backend, incluso si eventos resize fueron agrupados o no procesados. Usar coordenadas de evento y Rects en coordenadas de terminal. No asumir captura de ratón por Ratatui ni APIs no presentes en las versiones fijadas.
+### Decision: User trust registry and protected managed configuration
 
-### Decisión: aprobación y feedback
+**Choice:** Store project trust only in a host-owned registry outside the project, beneath the existing per-user Huginn configuration root `~/.cortex/huginn/` (resolved by `Config::primary_config_path()` in `apps/huginn/src/config.rs`). Use a dedicated registry file, keyed by the canonical project-root identity, rather than a project file or project metadata. Trust records have only user-granted meaning; workspace membership, opening a folder, repository content, and project configuration do not create records. Resolve project identity using OS canonicalization and stable normalized path comparison appropriate to that OS; reject unresolved roots and do not resolve trust from a lexical prefix. The required user-visible trust behavior is complete parity across macOS, Linux, and Windows; a common interface, compile success, or fail-closed stub is not a completed implementation.
 
-La solicitud que entra a `ApprovalPrompt` sigue siendo la fuente para acción/recurso/riesgo/preview; la UI no crea ni amplía decisiones permitidas. Presentar primero identidad/acción y recurso, etiqueta clara del riesgo y luego preview completo. El indicador de progreso debe diferenciar «pendiente por revisar» de «revisado completo»; recorte visual no equivale a revisión. Conservar navegación vertical/paginación para preview completa y layout de terminal estrecha. Solo habilitar aprobación después del requisito de revisión ya existente y de volver a validar identidad/estado de la solicitud. El clic no elude ese gate.
+`Config::resolve_path()` defines the active user config target, including explicit `--config`; `Config::load()` is read-only. The existing `apps/huginn/src/ui_settings.rs` uses `toml_edit::DocumentMut` to preserve comments for UI settings, but it is not a general secure config persistence API. Do not put trust into the user TOML file or reuse that helper as proof of protected storage. Trust registry persistence must use a dedicated, atomic, no-follow write path under the validated user-owned directory, with restrictive creation and post-write verification. The registry path must be derived from the trusted per-user root, not `--config`; if home resolution falls back to a temporary directory or the user root fails verification, do not read or write trust there. Managed configuration is separate from both locations.
 
-Ausencia/revocación del prompt, cancelación, rechazo, no-op, error de revalidación y ejecución deben producir estados visibles y distintos; nunca mostrar éxito si no se ejecutó. Para shell, seguir mostrando preview íntegra y advertencia explícita de que no está sandboxed. Mantener `ApprovalDecision` permitido por host y las restricciones actuales para `ApproveForSession`.
+The user registry's file and every directory from the registry leaf to the trusted home/config anchor must be checked before use. New evidence makes `private-fs` 0.2.1 a candidate for this user-trust boundary only. It is edition 2024, requires Rust 1.88, is MIT/Apache licensed, declares `deny(unsafe_code)`, and provides handle-oriented `PrivateDir` operations that verify user ownership, mode, ACL, path/reparse state, and atomic state. Security-engineer review is conditional and is not approval. The evidence excludes same-user attackers and machine/administrator-owned roots; do not use it to validate managed configuration or claim a stronger threat model than the dependency supports. Evaluate its API against the registry's exact needs before integration, including secure initial path acquisition, canonical project identity, atomic updates, and whether all relevant ancestor checks remain bound to verified handles. Its internal safe encapsulation is a property of the dependency; it does not authorize a consumer-side `unsafe` wrapper, a lint exception, or weakening workspace `unsafe_code = "deny"`.
 
-## Flujo de datos
+The integration evaluation must first establish the actual Rust version constraints: the workspace toolchain/MSRV is 1.81, while the Huginn package MSRV is 1.89. Since the dependency requires 1.88 and edition 2024, determine whether it can be confined to Huginn without raising the workspace-wide MSRV or breaking supported workspace builds, and validate that conclusion using the repository's actual Cargo resolver/toolchain matrix. Do not add it to a shared crate or managed-config path. If accepted after security review and compatibility testing, place its adapter at the Huginn application/configuration boundary and use it only for the per-user trust registry. If it is rejected or cannot prove the required properties, select another reviewed safe implementation; do not substitute unverified metadata checks.
+
+For any alternative or remaining OS-specific path, registry and containing directories must be owned by the effective user (or the documented user account identity), protected against unauthorized writes, and checked without path races. Creation must use restrictive permissions and atomic replacement must preserve them without following a leaf link. `rustix` provides a possible safe handle-based `openat` route on Linux, but that is not yet an end-to-end verifier. The available `win-authorization-sys` safe API can inspect owner/DACL data for a supplied Windows handle, but does not securely acquire and resolve the full path. No safe high-level macOS ACL inspection from retained handles has been verified. Therefore, none of these partial capabilities independently establishes complete three-OS trust-registry protection. Reject any registry state whose ownership, ACL, path identity, or protection cannot be established.
+
+On Windows, use the OS security descriptor and access-control APIs through an existing project-supported Windows library if present, or a reviewed target-specific dependency/direct Windows API adapter selected during implementation. Verify the registry owner SID matches the current user SID and that the DACL does not grant write/modify/delete or ownership/ACL-changing rights to unprivileged principals other than that user; system/administrator access is acceptable. Apply equivalent checks to each parent directory up to the user profile/config anchor. Reject reparse points on the path, including the leaf, and reject absent, NULL, malformed, or unverifiable security descriptors. Rust `std::fs::Metadata` alone does not establish Windows ACL safety. If the chosen supported API cannot make these checks, trust lookup fails closed on Windows; this limitation does not remove Windows from the final scope.
+
+Managed restrictions are read only from a platform's protected system configuration location, not from user configuration or project files. This path remains explicitly unresolved: current evidence does not establish a complete safe managed-config verifier on any supported end-to-end three-OS path. `private-fs` is not a candidate for this boundary because it does not cover machine/administrator-owned roots. `rustix`'s Linux handle-based opens and `win-authorization-sys`'s inspection of a supplied handle do not solve full secure path acquisition and verification; no verified safe high-level macOS ACL inspection from retained handles is available. Do not claim this design has selected or validated the managed locations, secure acquisition, owner/ACL checks, and ancestor-chain verification across all three OSes.
+
+The implementation must define a protected system location and an administrator deployment path per OS, then provide a reviewed safe verifier for the complete path and configuration object. Intended checks remain: root ownership and no unauthorized writes on macOS/Linux; SYSTEM/Administrators ownership and a DACL that prevents unprivileged modification on Windows; reject links/reparse points and unverifiable descriptors; never create a missing managed file from an unprivileged process. Distinguish verified absence from present-but-invalid/unreadable configuration only after the source path itself can be safely established. Until that verifier and its real-OS tests exist, managed configuration MUST remain visibly unresolved and permission-governed effects MUST fail closed whenever managed state is required or its absence cannot be securely established. Do not treat verification failure as absence, and do not describe this unresolved design item as implemented behavior.
+
+Once the managed source verifier is implemented and reviewed, its parser must accept only restrictive dimensions: a profile no broader than the user profile, approval mode no less restrictive than the user mode, and an explicit set of denied capabilities. Reject unknown fields, invalid values, and any proposed grant or weakening rather than dropping the offending field. Only then may a validated `ManagedRestrictions` value be composed with provenance for the protected system source. Where a platform cannot establish the required owner/ACL and path-integrity checks with supported safe OS APIs, managed restrictions cannot be consumed there and permission-governed effects remain fail-closed. That is a blocker to final three-OS support, not a permanent platform exemption.
+
+**Alternatives considered:** Put trust in project-local configuration; treat home-directory placement alone as proof; accept whatever ACLs are present; load managed policy from a user-writable file; or silently ignore unrecognized managed values. **Rationale:** These approaches allow project-controlled or unprivileged data to mint trust or weaken administrator restrictions. Ownership, ACL, ancestor-path, and link checks make the trust boundary explicit and testable.
+
+### Decision: Resolve and consume one effective policy at every effect boundary
+
+**Choice:** Keep the application-level `EffectivePolicy` as the immutable result of user settings, verified registry trust provenance, and optional validated managed restrictions. The target composition contract must load the inputs, resolve the canonical project root and trust entry, and distinguish verified managed absence from a managed-source error before constructing runtime services. Because the managed verifier and protected paths remain unresolved, this contract is not yet implementable end to end: until resolved and verified per OS, composition must not report managed absence from an unverified path, and permission-governed effects must fail closed. `HostPolicy` remains the approval/effect authorization boundary; it must receive the same `Arc<EffectivePolicy>` and consult it when deciding whether an action is allowed, denied, or requires a bounded prompt. Runtime shell, native filesystem, and MCP adapters must consume the corresponding effective dimensions; they must not independently reconstruct defaults or infer trust.
+
+**Current integration gap:** `Config::effective_policy()` in `apps/huginn/src/config.rs` currently calls `EffectivePolicy::resolve(settings, None, ProjectTrust::default())`, so it passes no managed restrictions and no explicit trusted-registry result. `HostPolicy::new()` defaults in the same restrictive manner, with `.with_effective_policy()` used during main composition (`apps/huginn/src/main.rs`), but `HostPolicy::approve_for()` currently uses the effective policy only as stored state and does not apply its decisions to requests. The current shell and native effects therefore do not yet consume the resolved `EffectivePolicy` authorization decisions. Implementation tasks MUST explicitly cover loading/validation, composition for interactive and headless paths, policy-aware `HostPolicy` decisions, and propagation/enforcement at shell, native filesystem, and MCP effect boundaries. Do not describe the existing `with_effective_policy` plumbing as completed enforcement.
+
+**Test seam:** Keep OS file-security access behind a narrow configuration/registry loader seam so unit tests can inject trusted metadata snapshots or a fake verifier and cover malformed input, ownership/ACL failures, symlink/reparse rejection, verified absence, and permission denial deterministically. For the `private-fs` candidate, first add a focused dependency-evaluation test/probe at the application/config boundary: exercise actual `PrivateDir` creation/open/read/update behavior, ancestor and link/reparse handling, ACL and ownership rejection, and atomic replacement on macOS, Linux, and Windows. Run it on real OS runners, not only fakes; assert that a same-user attacker is outside the claimed guarantee and that machine-owned roots are not accepted as supported use. Test dependency feature/target selection and workspace-plus-Huginn MSRV compatibility with the supported Cargo toolchain matrix. This is an evaluation gate, not an assumption that the crate is approved or suitable. Keep deterministic injected-verifier tests in addition to real-OS tests. Managed-config validation needs its own independently reviewed end-to-end OS verifier and real protected-path tests; until those exist, tests must assert fail-closed behavior rather than a successful managed-config load. The policy resolver itself remains pure and receives only already-validated values. Avoid adding filesystem or OS-security I/O to `huginn-core` or `huginn-application`.
+
+**Alternatives considered:** Resolve trust inside domain policy from a project file, let each runtime adapter independently reload config, or treat the stored `EffectivePolicy` field as proof that it is enforced. **Rationale:** The composition boundary already owns config loading and service construction, while adapters enforce effects. A single validated immutable policy avoids inconsistent authority and allows deterministic tests without conflating policy with OS I/O.
+
+### Decision: Native filesystem operations use host policy
+
+**Choice:** Apply the resolved filesystem policy to every native file tool (read, list, search, write, edit, and registered file operations). Check operation identity, canonical resource, roots, sensitivity, and exceptions at preparation and again immediately before effect. Reject or escalate according to policy; unverifiable paths, symlink changes, stale content, and root changes fail closed. Native tools do not rely on shell isolation.
+
+The current preparation/execution seams resolve and revalidate paths and mutation content (`crates/huginn/runtime/src/tools.rs:533-675`). Preserve and extend those checks; a workspace-prefix string comparison alone is not a security boundary.
+
+### Decision: MCP approval persistence follows explicit scope semantics
+
+**Choice:** Implement MCP policy resolution by tool override, then server override, then effective default; preserve the modes `auto`, `prompt`, `writes`, and `approve`. In `auto`, absent or incomplete annotations require approval unless metadata establishes read-only behavior without destructive or open-world effects. `prompt` always asks; `writes` asks unless `read_only_hint=true`; `approve` skips per-call approval only when explicitly configured. Full-access, if Huginn exposes it, is a separate explicit effective context and must be visible; it is not inferred from trust, workspace, or `approve`.
+
+Reproduce the evidenced remembered-approval semantics with two distinct scopes:
+
+1. **Session remembrance:** An explicit “approve for this session” decision is keyed at least by server identity and tool name, with any configured connector/plugin/account identity needed to prevent cross-server or cross-account reuse. It expires with that session. It does not change persistent configuration.
+2. **Persistent policy amendment:** Offer persistence only as an explicit user decision for eligible configured servers/tools. Persist the narrowest server/tool approval override in Huginn’s user configuration using the existing safe config-edit path, then reload effective configuration. Do not persist for dynamically selected/unconfigured plugin sources unless Huginn can establish a stable, user-owned configuration entry. If persistence fails, keep only the session-scoped remembrance when that was explicitly selected and report that persistent settings did not change; do not claim it persisted.
+
+Evidence: the reference implementation creates a session key only for `auto` and identifies the tool with server/plugin/connector/link/tool fields (`core/src/mcp_tool_call.rs:1982-2011`); persistent approval writes an `approve` mode at the connector/tool or configured server/tool level and reloads user configuration, with failure falling back to session remembrance (`core/src/mcp_tool_call.rs:2575-2660`); selected plugin policies disallow persistence (`core/src/mcp_tool_call.rs:1277-1305`). Tests demonstrate policy-dependent prompt behavior and explicit full-access bypass (`core/src/mcp_tool_call_tests.rs:3540-3592`). Huginn should reproduce these user-visible scope distinctions without copying private APIs or unrelated connector architecture.
+
+MCP annotations are untrusted policy metadata, not process isolation. Do not claim MCP servers inherit the shell sandbox (`crates/huginn/runtime/src/mcp.rs:100-102`).
+
+**Alternatives considered:** No remembered approvals; persist every approval automatically; or grant server-wide access after approval of one tool. **Rationale:** Session-only remembrance and explicit narrow persistence match the evidenced behavior while limiting accidental authority expansion.
+
+## Data flow
 
 ```text
-ToolCall no confiable
-  → runtime identifica registro nativo y prepara propuesta/recurso
-  → HostPolicy valida acción + procedencia + clase + scope + recurso
-      ├─ catálogo autónomo exacto + recurso verificado → decisión host-side
-      └─ resto → ApprovalPrompt disponible → decisión validada por HostPolicy
-                       └─ ausente/cancelado/error → denegar/fallar cerrado
-  → runtime revalida ruta/root/sensibilidad/contenido inmediatamente antes de mutar
-  → execute solo si la misma propuesta sigue vigente
-
-Crossterm Event (Key/Mouse/Resize)
-  → event loop único y Ui/overlay actual
-  → transición pura de presentación con geometry snapshot + identity ticket
-  → host confirma que overlay sigue vigente y ejecuta el InputEffect
-  → render; resize invalida y recompone hitboxes
+User config + verified user trust registry + verified protected managed config
+  → apps/huginn composition resolves immutable EffectivePolicy and provenance
+  → HostPolicy checks the policy before each effect/approval decision
+  → application authorizes prepared action / requests bounded approval
+  → runtime selects the native backend for the compiled OS target
+      → backend validates profile and host prerequisites
+      → backend creates the sandboxed process or returns error (zero unsandboxed spawn)
+  → native file tools check and revalidate the effective filesystem policy
+  → MCP resolves tool/server/default policy and annotation-based decision
+      → session remembrance or explicit narrow persistent config amendment
 ```
 
-## Contratos propuestos
+## Interfaces / contracts
 
-Los nombres siguientes son conceptuales; conservar los tipos y convenciones reales donde ya existan.
+Names are conceptual and must be reconciled with existing types during implementation.
 
-```rust
-enum EffectClass {
-    ReadWorkspace,
-    WriteOrdinaryFile,
-    Destructive,
-    External,
-    Unknown,
-}
+- **`EffectivePolicy` (application/config):** immutable resolved approval policy, trust provenance, process profile, filesystem policy, managed constraints, and source/precedence.
+- **Trust registry adapter (apps/config boundary):** loads only from the per-user Huginn config area, validates canonical project root identity and owner/protection before returning explicit `ProjectTrust`; project files are never an input. Evaluate `private-fs` 0.2.1 for this adapter only, subject to security approval, compatibility with workspace MSRV 1.81 and Huginn package MSRV 1.89, and successful real-OS tests. It remains a candidate, not an approved dependency or a completed verifier.
+- **Managed configuration adapter (apps/config boundary):** target contract returns `VerifiedAbsent`, validated restriction-only data, or an error. A complete safe cross-platform verifier and protected locations are unresolved; until resolved and tested, do not return `VerifiedAbsent` based on an unverifiable path and fail closed for permission-governed effects.
+- **Platform path-security verifier:** must check file identity, owner, mode/DACL, every relevant parent, and symlink/reparse status through safe handle-bound operations. Linux `rustix` and Windows `win-authorization-sys` supply only partial capabilities described above; no verified safe high-level macOS ACL path or complete three-OS managed verifier is established. Do not assume a crate/API absent from the manifests; dependency selection requires review and must preserve consumer `unsafe_code = deny` without wrappers or lint relaxation.
+- **`ProcessProfile` (platform-neutral):** observable filesystem and network restrictions; contains no native OS handles or backend-specific implementation flags.
+- **`SandboxBackend` (runtime):** identifies its target OS and supported profile capabilities; prepares or starts only a process under the requested profile. Returns typed unavailable, unsupported-profile, policy-translation, or enforcement errors. No unsandboxed fallback API.
+- **`AuthorizationOutcome` (core/application):** distinguishes allowed, requires approval, denied, and invalid/failed policy. Approval result does not mutate `ProcessProfile`.
+- **MCP approval key:** stable server identity plus tool identity and applicable connector/account/plugin scope. Session and persistent records have distinct storage and expiry semantics.
 
-struct VerifiedEffect {
-    action: NativeActionId,       // identidad registrada por host, no string del modelo
-    class: EffectClass,
-    resource: Option<VerifiedResource>,
-    provenance: ApprovalProvenance,
-}
+## File changes
 
-enum AuthorizationOutcome {
-    Authorized(ApprovalDecision),
-    NeedsApproval(ApprovalRequest),
-    Denied(AuthorizationFailure),
-}
-```
-
-No es necesario añadir una interfaz por tipo; el objetivo del contrato es que `Unknown` no pueda colarse como clase permitida y que presentación nunca produzca `Authorized`. La revalidación puede expresar `Current`, `Stale` o `Unverifiable`; solo `Current` continúa con la misma decisión. El tipo exacto puede seguir siendo `AgentError`/`ApprovalRequest` si satisface el estado observable sin añadir variantes innecesarias.
-
-Para TUI, mantener la traducción de input a efectos puros en `overlay.rs`, extendiéndola con hit testing en un snapshot de geometría; usar `InputEffect` existente y el ticket de transición como check de commit. El estado del overlay es owner del foco; un evento Mouse no debe mutar un callback/handle de plugin directamente.
-
-## Archivos afectados
-
-| Archivo | Acción | Descripción |
+| File | Action | Description |
 |---|---|---|
-| `crates/huginn/application/src/authorization.rs` | Modificar | Política de catálogo cerrado, modo de autorización y grants exactos/no persistentes; mantener `HostPolicy` como autoridad y validar decisiones recibidas. |
-| `crates/huginn/core/src/lib.rs` | Modificar si hace falta | Contrato de resultado/estado de aprobación o autorización; sin dependencias de terminal/adapter. Evitar cambio si contratos existentes alcanzan. |
-| `crates/huginn/application/src/loop_engine.rs` | Modificar si hace falta | Orquestar aprobador ausente/denegación y preservar la secuencia sin reintento/replay de efectos. |
-| `crates/huginn/runtime/src/tools.rs` | Modificar | Clasificación host-originada para builtins; preparación/revalidación de escritura y rechazo de propuestas obsoletas. |
-| `crates/huginn/runtime/src/mcp.rs`, `composition.rs` | Modificar si hace falta | Preservar permiso por llamada MCP y procedencia; no inferir aislamiento. |
-| `apps/huginn/src/main.rs`, `config.rs`, `terminal.rs` | Modificar | Resolver configuración/defaults/modo en composition root; mantener fallos observables de no-interactivo. |
-| `crates/huginn/presentation/src/terminal.rs` | Modificar | Habilitar/restaurar captura, despacho de Mouse y actualización tras resize sin segundo lector. |
-| `crates/huginn/presentation/src/overlay.rs`, `state.rs`, `input.rs` | Modificar | Añadir geometría/hit-test y transición común a teclado; validar overlay/ticket y mantener cancelación/foco. |
-| `crates/huginn/presentation/src/approval.rs` y dibujo asociado en `terminal.rs` | Modificar | Jerarquía, estado de revisión completa, riesgo y feedback de rechazo/no-op/no aprobador. |
-| `apps/huginn` selector/line UI y `crates/huginn/presentation` menús | Modificar tras inventario | Añadir targets de ratón a todos los menús seleccionables, incluidas completion/line UI si se presenta como menú. |
-| Pruebas `application/tests`, `runtime/tests`, `apps/huginn/tests`, `presentation` | Modificar | TDD de política, ejecución/revalidación, modos, geometría, teclado/ratón y PTY. |
-| `docs/huginn/adr/0007-read-freely-approve-effects.md`, `docs/huginn/{architecture.md,implementation-specification.md,README.md}` | Modificar | Documentar catálogo ratificado, grants/modos y distinción entre autorización host-side y sandbox. |
+| `crates/huginn/core/src/lib.rs` | Review/modify if needed | Platform-neutral action, profile, and authorization contracts. |
+| `crates/huginn/application/src/authorization.rs` | Modify | Resolve effective policy and bounded escalation independently from isolation. |
+| `crates/huginn/runtime/src/tools.rs` | Modify | Apply native filesystem policy; integrate selected sandbox adapter before shell spawn. |
+| `crates/huginn/runtime/src/mcp.rs`, `composition.rs` | Modify | Resolve MCP modes, scoped remembrance, and explicit persistent configuration amendments. |
+| `crates/huginn/runtime/Cargo.toml`, `Cargo.lock` | Review/modify | Add only reviewed native backend dependencies as needed. |
+| `crates/huginn/runtime/src/` | Add target-specific modules as justified | Implement Seatbelt, Linux isolation, and Windows process/session adapters with compile-time target selection. Do not invent a portable enforcement API. |
+| `apps/huginn/src/config.rs`, `main.rs`, `terminal.rs` | Modify | Validate config and compose the same effective policy for interactive and headless execution. |
+| `apps/huginn/src/` configuration modules | Add/modify as justified | Evaluate and, only if approved, integrate `private-fs` for user trust registry operations; keep it out of managed configuration. Resolve MSRV and target compatibility, canonical identity, ownership/ACL, ancestor/path integrity, and atomic updates at the composition/config boundary. Keep managed config visibly unresolved until a separate complete safe verifier and per-OS locations are approved and tested; fail closed meanwhile. |
+| `crates/huginn/application/src/permission_policy.rs`, `authorization.rs` | Modify | Preserve pure restrict-only resolution and make `HostPolicy` actually apply effective authorization outcomes before implicit allow, approval, or session-grant paths. |
+| `crates/huginn/presentation/` | Modify in separate slices | Mouse support for all menus and approval review/feedback UX; presentation does not grant permissions. |
+| `.github/workflows/ci.yml` | Modify | Add blocking Huginn policy/backend integration test jobs on Ubuntu, macOS, and Windows. Include Windows Huginn crates rather than excluding them. Ensure these gates run on pull requests, not only pushes. |
+| `apps/huginn/config.example.toml`, `docs/huginn/` | Modify | Document effective profiles, platform-specific mechanisms and limitations, MCP modes/persistence, and fail-closed runtime behavior. |
+| `docs/huginn/adr/` | Add a superseding ADR | Record the approved permission, sandbox, and MCP contract; supersede conflicting decisions in ADR-0006 and ADR-0007 without rewriting their historical records. |
+| `docs/huginn/adr/0018-effective-workspace-permissions-and-platform-sandboxing.md` | Add | Superseding decision record for the trust source, protected managed restrictions, policy composition, separated authorization/sandboxing, MCP contract, and three-OS evidence gate. Preserve ADR-0006 and ADR-0007 unchanged as historical records. |
+| Application/runtime/presentation tests | Modify | Deterministic policy, process-enforcement, MCP, and TUI coverage. |
 
-## Estrategia de pruebas (TDD)
+## Testing strategy
 
-| Capa | Casos | Método |
+| Layer | Coverage | Approach |
 |---|---|---|
-| Unit: application authorization | Catálogo exacto; acción/procedencia desconocida; sensibilidad; fuera del root; acción/recurso/sesión/workspace distintos; cancelación y aprobador no disponible; decisiones no permitidas | Escribir primero pruebas fallidas de `HostPolicy` con prompt determinista; verificar clones y que grants no reaparezcan tras crear nueva política/sesión. |
-| Unit: runtime tools | Root cambiado, symlink/escape, error de canonicalización, contenido obsoleto, sensibilidad reevaluada, herramienta registrada/revocada | Fakes de filesystem/acciones donde posible y fixtures tempfile deterministas; comprobar que no ocurre escritura antes ni después de fallo. |
-| Integration: application loop + runtime | Solo efecto del catálogo ejecuta; prompt requerido en shell/MCP/destructivo; start MCP no da grant de tool-call; aprobación revocada/cancelada/ausente no ejecuta ni reintenta | Tests de flujo con `ApprovalPrompt`, `Tool`, registry y `EventSink` falsos; afirmar explícitamente cero invocaciones de execute. |
-| CLI/config | Precedencia CLI/TOML/default y diferencias interactivo, `run`, `--json`; `--allow` no convierte shell/MCP ni efectos excluidos | Tests existentes de `apps/huginn/tests/cli.rs`, parseo TOML con config aislada y aserciones de error/resultados. |
-| Presentation unit | Coordenadas en cada fila/botón; fuera/no objetivo; geometría invalidada en resize; overlay viejo/ticket viejo; clic no supera confirmación; preview incompleta; keyboard focus/Escape | Driver/pruebas existentes de presentation, `TestBackend`, eventos `Event::Mouse` fabricados; mismas transiciones observables que teclado. |
-| PTY | Captura/restauración de terminal; todos los overlays/menu clickables; estrecho/resize; scroll de preview; cancelación; salida por error | Fixture PTY ya existente y entradas mouse/resize controladas; sin sleeps ni asserts dependientes de timing. |
-| Seguridad/calidad | Límites arquitectónicos, lints, regresiones y contratos | `cargo test -p <paquete Huginn afectado>`, `just huginn-architecture`, fmt/clippy pertinentes; revisión de que no se añadió dependencia innecesaria ni se afirma sandbox. |
+| Policy unit tests | Precedence, trust not inferred, `OnRequest`, profile errors, bounded escalation | Deterministic tests; assert approval does not change the profile. |
+| Trust-registry dependency evaluation | `private-fs` API fit, handle/path guarantees, ownership/ACL/link checks, atomic update, MSRV/edition/target compatibility | Before adoption, build and run focused real-OS probes on macOS, Linux, and Windows through the Huginn config boundary. Verify ancestor-chain behavior and reject unsupported roots; test against workspace Rust 1.81 and Huginn MSRV 1.89. Require security-engineer approval. If any gate fails, do not integrate it and evaluate another safe option. |
+| Registry/config security tests | User registry ownership, protected managed source, canonical keying, invalid/absent distinction, symlink/reparse and ACL/mode rejection | Inject path-security verifier results for deterministic failure cases; verify actual owner/mode/DACL behavior on macOS, Linux, and Windows integration runners. Verify every ancestor, not only the leaf. Managed-config tests remain fail-closed until a complete safe verifier and protected paths are available on each OS. |
+| Composition/HostPolicy tests | Verified inputs reach the same policy in interactive and headless compositions; policy denies/permits/escalates actions before prompt/session grants | Use fake loaders and approval prompts; assert a denied capability cannot be authorized by action allowlists or remembered grants and managed restrictions cannot be bypassed. |
+| Common backend contract | Profile support, unsupported profile, initialization and launch errors | Run the same black-box contract suite against each real backend; assert zero child process on every failure path. |
+| macOS backend integration | Positive and negative filesystem/network enforcement; launch failure | Execute harmless probes inside the real Seatbelt backend on a macOS runner. Test denied operations, not only generated policy text. |
+| Linux backend integration | Positive and negative filesystem/network enforcement; missing/incompatible launcher; supported alternate mechanism if selected | Run on Ubuntu with the production backend path. Assert profile equivalence and zero unsandboxed spawn on setup failure. Test any Landlock route as a separate backend/profile mapping. |
+| Windows backend integration | Positive and negative filesystem/network enforcement; provisioning/backend errors | Run Huginn sandbox tests on Windows CI. Verify effective child restrictions, not only compilation or flags. Include x86_64 as the required runtime gate; add architecture-specific gate if that architecture is claimed for supported Huginn distribution. |
+| Filesystem unit/integration | Operations, roots, symlinks, traversal, stale resource, unverified path | Temporary fixtures and zero-effect assertions. |
+| MCP unit/integration | Four modes, missing/adversarial annotations, override precedence, session remembrance, persistent config update/failure, full-access context | Pure policy matrix plus fake server/config store. Verify scope keys and reload behavior. Do not label as sandbox coverage. |
+| TUI | Mouse/keyboard parity, focus, hit-testing, resize, complete preview, cancel/no-op | Deterministic terminal events and PTY integration; no arbitrary sleeps. Keep menu mouse and approval UX as separate deliverables. |
+| CI/release gates | Three OS runtimes and security/build gates | Required OS matrix jobs on PRs; release depends on all three backend gates succeeding. Existing generic `build-targets` alone is insufficient. |
 
-La documentación no necesita test conductual independiente. No ejecutar pruebas destructivas sobre el workspace del usuario; fixtures temporales y fakes deben contener las mutaciones.
+## Migration / rollout
 
-## Migración / despliegue
+No session-data migration is expected. Add and validate configuration fields before enabling the new behavior; update the example configuration and documentation. Implement and land the three backends as independently reviewable slices behind the common profile contract. During development, an unavailable backend must fail closed and remain clearly reported as incomplete; this is not a releasable substitute for the missing platform backend.
 
-No requiere migración de datos. Los grants continúan volátiles y los historiales/sesiones existentes no se deben reescribir. Si se adopta una opción de configuración nueva, definir default y compatibilidad de TOML antes del release; por la deserialización `deny_unknown_fields` de `Config`, añadir campos TOML de forma deliberada y probar configs existentes. Rollback debe restaurar prompts/política conservadora y no puede revertir efectos ya ejecutados.
+Rollout sequence:
 
-## Decisiones ratificadas y criterios para apply
+1. Finalize common observable profiles, trust/managed-source formats, protected OS locations, and deterministic contract probes. Evaluate `private-fs` for the user registry only: verify workspace/Huginn MSRV compatibility, API/handle guarantees, target support, and real-OS tests, then obtain security-engineer approval before adoption. Separately resolve a complete managed-config verifier and protected locations for all three OSes. Current partial Linux and Windows APIs do not close this gap, and no verified safe macOS ACL path is established.
+2. Implement and verify the Linux, macOS, and Windows backends independently. Do not declare a backend complete from cross-compilation alone.
+3. Add blocking PR CI runtime gates for Linux, macOS, and Windows. CI must exercise Huginn runtime crates on Windows instead of relying on the present exclusion in `.github/workflows/ci.yml:793-801`.
+4. Complete native filesystem and MCP policy/persistence behavior, then the separately scoped TUI interaction and approval UX work.
+5. Release only after all three OS backends pass their enforcement and failure gates, all required checks pass, and the published platform matrix matches verified behavior.
 
-1. **Catálogo**: lectura/listado/búsqueda; `write_file` solo para crear; `edit_file` para modificar archivos ordinarios existentes mediante edición puntual. Reemplazar con `write_file`, borrar, mover, renombrar y otros efectos destructivos no clasificados requieren aprobación.
-2. **Defaults**: el catálogo opera por defecto en TUI, `run` y `--json`. Shell/MCP y cualquier efecto excluido que requiere aprobación falla cerrado si no hay aprobador interactivo.
-3. **Grant/workspace**: decisión técnica cerrada para apply: ligar el root canónico en `SessionPolicy` desde `apps/huginn`; incluirlo en la clave exacta del grant y comprobar que el recurso pertenece al root. No añadir el workspace a contratos core ni habilitar grants de `for_session` sin root confiable. Mantener estado volátil y probar scopes distintos, clones, fuera del root y nueva sesión/reanudación.
-4. **Mouse**: todos los menús interactivos, incluidos selectors/completion de `apps/huginn/src/terminal.rs`. La activación por clic debe seguir la misma transición válida que el teclado; en aprobación debe respetar el gate de revisión y dar feedback si el preview está incompleto.
+If a platform backend fails after release, disable the affected execution capability and reject shell before spawn. Do not redirect execution to an unsandboxed shell. Restore the capability only after the affected OS gate passes again.
 
-Las decisiones de política están ratificadas. `sdd-tasks` puede desglosar la implementación. Si aparece un caso que amplía el catálogo, persiste grants o relaja un límite aprobado, detenerse y pedir autorización antes de apply.
+## Open questions
 
-## Riesgos
+- Does `private-fs` 0.2.1 satisfy the user-trust registry's threat model and API requirements after security-engineer review, and can its edition/MSRV/target constraints be isolated compatibly with workspace MSRV 1.81 and Huginn package MSRV 1.89? Until resolved, it is only a candidate.
+- Which safe, reviewed APIs can securely acquire and verify complete managed-config paths, owner/DACL/ACL, and ancestor chains on macOS, Linux, and Windows? This is unresolved and blocks successful managed-config loading and completion of permission parity; `win-authorization-sys` supplied-handle inspection and Linux `rustix` opens are partial only.
+- Which reviewed native crates or direct OS APIs satisfy Huginn's process, filesystem, and network requirements on each OS while preserving workspace security constraints? This is an implementation/dependency choice; it does not reopen the three-platform scope or release gate.
+- What exact profile dimensions and configuration syntax should Huginn expose, given the current CLI/TOML contract? Define them before implementation and map all three backends to the same observable test fixtures.
 
-- Una clasificación genérica o metadato de herramienta no confiable puede conceder efectos host-side no pretendidos; el fallback debe ser aprobación/rechazo, nunca autonomía.
-- Una ruta «dentro del workspace» no demuestra que shell/MCP/plugins estén confinados. No presentar autorización host-side como sandbox del sistema operativo.
-- TOCTOU entre revalidación y operación puede persistir; fallar si no se puede asegurar identidad del recurso y no reusar decisiones para propuestas nuevas.
-- Persistir o ampliar grants puede cruzar sesión/workspace; mantener estado en memoria y scope exacto salvo decisión explícita y análisis separado.
-- Capturar ratón cambia el estado global del terminal; restaurar modo en todos los caminos y validar terminales/PTY. Hitboxes obsoletas o un clic de aprobación accidental pueden activar efectos.
-- El modo sin prompt no debe convertir una política conservadora en autorización implícita; error de canal/presentación debe impedir ejecución y ser visible.
+## Risks
+
+- Native backends may differ in filesystem, network, symlink, or process semantics. Mitigate with shared black-box profile probes and do not release a platform that fails equivalence.
+- Unix mode checks do not fully describe POSIX ACL policy, and Windows metadata APIs do not by themselves prove DACL protection. Require OS-specific ACL verification and reject unverifiable state; inability to do so blocks trust/managed policy use and final parity on that OS.
+- `private-fs` 0.2.1 has not received security approval, has a higher MSRV and newer edition than the workspace, and excludes same-user attackers and machine/admin-owned roots. Integrating it without the stated review, compatibility checks, and real-OS probes could create an unsupported trust-boundary claim; it is restricted to user trust even if accepted.
+- There is no verified end-to-end safe managed-config verifier across the three OSes. Treating partial handle inspection/open APIs as proof of full path and ancestor protection, or treating unverifiable managed state as absent, could bypass administrator restrictions. Managed config remains unresolved and fail-closed until each OS has a complete reviewed implementation and real-OS evidence.
+- User config currently falls back to the process temporary directory if a home directory cannot be resolved (`cortex_home_dir()`); trust storage must not use that fallback. Registry path resolution must fail closed instead of creating trust under a temporary or unverified root.
+- Current composition passes `None` for managed restrictions and default untrusted state, and `HostPolicy` does not enforce `EffectivePolicy` decisions. Until integration tasks fix both gaps, the policy types are not an effective authorization boundary.
+- The current Windows CI excludes Huginn crates, while some cross-platform validation runs only on pushes. Add blocking PR gates before claiming Windows coverage.
+- A backend can appear functional while failing to impose a policy due to host prerequisites or configuration. Probe enforcement in the real OS runner and assert zero spawn on failure.
+- MCP session remembrance or persistent approval can broaden access if server/tool identity is underspecified. Use narrow stable keys, explicit persistence, configuration reload, and clear failure feedback.
+- The permission work is larger than the earlier three-slice plan. Preserve the separate mouse-menu and approval-dialog deliverables and use chained reviewable slices without treating any slice as the final cross-platform release.

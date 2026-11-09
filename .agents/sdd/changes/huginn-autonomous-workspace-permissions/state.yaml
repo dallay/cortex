@@ -2,4 +2,4 @@ change: huginn-autonomous-workspace-permissions
 current_phase: tasks
 completed: [init, explore, propose, spec, design, tasks]
 next: apply
-updated: "2026-11-08"
+updated: "2026-11-09"

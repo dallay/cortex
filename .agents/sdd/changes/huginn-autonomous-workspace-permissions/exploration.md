@@ -1,68 +1,52 @@
-# Exploración: autonomía y permisos de workspace de Huginn
+# Exploration: Effective parity for autonomous workspace permissions
 
-## Estado actual
+## Executive summary
 
-La dirección aprobada es «Autónomo dentro del workspace»: el trabajo ordinario interno debe avanzar sin solicitar aprobación por cada efecto. Los efectos destructivos, externos, fuera del workspace o sensibles conservan límites explícitos. Además, todos los menús interactivos de la TUI deben admitir selección por clic y el diálogo de aprobación debe mejorar visualmente sin perder soporte de teclado.
+The inspected reference behavior does not mean that every operation inside a workspace is approved automatically or that every command requires approval. Approval policy and sandbox policy are separate: under an on-request policy, a shell command runs under the selected sandbox; a request for capabilities outside that policy can be escalated for approval, and approval does not remove the sandbox for an ordinary operation. Native file operations use host capabilities and permissions; they are not simply shell commands under another name. MCP has a separate policy, with per-server and per-tool controls.
 
-El contrato vigente de ADR-0007 aprueba lecturas/búsquedas dentro del workspace y exige aprobación para escrituras, shell y cada llamada MCP. `HostPolicy` en `crates/huginn/application/src/authorization.rs` es autoridad central; CLI `--allow` otorga nombres de acción por invocación, pero no autoriza shell/MCP/escrituras mediante la vía de grant simple. Ya existe `ApproveForSession`, limitado a `write_file`/`edit_file` nativos registrados por el host, con ruta absoluta canónica, no sensible y coincidencia exacta por sesión + acción + ruta. El grant vive en memoria dentro del `HostPolicy` clonado y no se restaura al reanudar el proceso. Rutas sensibles solo admiten rechazo o aprobación única.
+Huginn should not claim parity until it defines the scope of each boundary. The inspected implementation provides sandboxing on macOS, Linux, and Windows through different mechanisms, and rejects filesystem execution when the executor cannot enforce the requested sandbox. This does not show that Huginn already has an equivalent implementation.
 
-Las herramientas nativas están en `crates/huginn/runtime/src/tools.rs`: lecturas, listados y búsquedas no piden aprobación; mutaciones muestran diff completo, vuelven a validar ruta/contenido antes de escribir y fallan si el contenido cambió; shell solicita aprobación y ejecuta un proceso POSIX con límites de tiempo/salida, pero **no está sandboxed**. Las guardrails son restrictivas, no constituyen autorización ni sandbox. MCP exige aprobación de inicio y de cada llamada; el proceso MCP conserva autoridad del usuario y no está sandboxed (ADR-0006). Hooks de herramientas solo pueden bloquear/anotar (ADR-0016), no conceder permisos.
+## Observed reference behavior
 
-La aprobación se representa en core como `ApprovalRequest`/`ApprovalDecision`; el host limita las decisiones permitidas y la presentación no puede añadirlas. La TUI mantiene input por teclado en `crates/huginn/presentation/src/overlay.rs` y pinta la aprobación en `presentation/src/terminal.rs`. La inspección no encontró manejo de eventos de ratón ni habilitación de captura de ratón en la presentación. El selector actual puede ser estrecho/compacto; los detalles de shell requieren revisión antes de aprobar. La línea interactiva existe también en `apps/huginn/src/terminal.rs`. `main.rs` selecciona y construye las políticas en el límite de host; la configuración de usuario es TOML con overrides CLI (ADR-0009).
+### Profiles, trust, and approval
 
-La comparación local previa de ejemplos de agentes (`tmp/project_examples/agents`) se toma solo como contexto comparativo, no como autoridad de seguridad ni como contrato a copiar. La inspección local confirmó que la decisión del proyecto debe mantener autorización en el host y no inferir aislamiento de un prompt, herramienta, UI o proceso hijo.
+- The configuration API defines `AskForApproval::OnRequest` and separate sandbox modes. Permission policy values and their resolution are handled independently. A permission profile maps to filesystem and network sandbox controls; project trust does not grant unrestricted permission.
+- On-request approval means that the system can escalate an operation that is not allowed by the effective sandbox or policy. It does not mean “confirm every command.” A test establishes `on-request` as the default for the covered case. Do not generalize that default to other profiles or managed environments, which can impose restrictions.
+- Project trust is an explicit state. Trust must not be treated as approval for every effect. The effective configuration continues to govern profile selection, sandboxing, and approval.
 
-Se revisaron `.agents/AGENTS.md`, `.agents/contexts/huginn.md`, arquitectura y ADR-0006/0007/0009/0010/0016. La configuración SDD indica modo OpenSpec. Hay un cambio activo distinto (`huginn-epic-01-microkernel-service-composition`); se leyó su estado, sin modificarlo. No hay especificación principal de permisos Huginn entre las áreas SDD listadas.
+### Shell and native file tools
 
-## Áreas afectadas
+- Shell commands run in a child process through an executor and process sandbox. The filesystem runner prepares the policy and requests a sandbox. If sandbox selection returns `SandboxType::None`, the runner returns an error. The inspected behavior does not support silently falling back to unrestricted shell execution when the required sandbox fails.
+- Linux uses Bubblewrap and has a configurable legacy Landlock path. Missing prerequisites do not establish a permissive fallback. macOS and Windows use separate sandbox paths and centralized selection. This evidence does not establish exact functional equivalence across operating systems, and Huginn must not assume that Linux Landlock/Bubblewrap, the macOS sandbox, and a Windows restricted token are interchangeable.
+- Profiles map to filesystem policies (read/write access, roots, and exceptions) and network policy. Native file operations pass through the executor's filesystem context and policy. That policy can reject unsupported access; it does more than request approval based on the tool name. Do not model all native APIs as one `write_file` operation with a universal approval rule.
+- This evidence does not support requiring approval for every shell command or describing unsandboxed shell as the target behavior for Huginn. It also does not justify removing authorization: sandboxing and approval are independent controls.
 
-- `docs/huginn/adr/0007-read-freely-approve-effects.md` — autoridad, política y expectativas de autonomía actuales; requiere conciliación con la nueva dirección.
-- `docs/huginn/architecture.md`, `docs/huginn/implementation-specification.md`, `docs/huginn/README.md` — describen límites actuales, acciones, configuración y superficies.
-- `crates/huginn/application/src/authorization.rs` — elegibilidad, grants volátiles, duración/identidad de sesión y decisión efectiva.
-- `crates/huginn/core/src/lib.rs` y `crates/huginn/application/src/loop_engine.rs` — contrato de decisiones, recurso y flujo prepare → aprobación → ejecución.
-- `crates/huginn/runtime/src/tools.rs`, `runtime/src/mcp.rs`, `runtime/src/composition.rs` — clasificación de efectos, revalidación, sandbox real y ejecución de herramientas.
-- `apps/huginn/src/main.rs`, `apps/huginn/src/config.rs`, `apps/huginn/src/terminal.rs` — defaults, CLI/configuración y política efectiva en modos TUI, lineal y no interactivo.
-- `crates/huginn/presentation/src/overlay.rs`, `terminal.rs`, `state.rs`, `input.rs` — modelo de overlays, dibujo, hit testing/input de ratón y accesibilidad por teclado.
-- Pruebas: `application/tests` (autorización y loop), `runtime/tests` (herramientas, guardrails, MCP), `apps/huginn/tests/cli.rs` y pruebas PTY, `presentation` (unitarias y drivers de prueba). Añadir cobertura determinista y PTY de permisos, clic, teclado, cancelación y denegación según alcance.
+### MCP: `AppToolApproval` and exceptions
 
-## Enfoques
+- `AppToolApproval` defines four modes: `auto`, `prompt`, `writes`, and `approve`. The effective rules are: `auto` requests approval unless annotations establish read-only behavior or indicate destructive/open-world effects; `prompt` always requests approval; `writes` requests approval unless `read_only_hint=true`; and `approve` does not request approval. In `auto`, missing annotations are treated conservatively as destructive/open-world by default.
+- Overrides can apply per server and tool. Approval decisions can also be remembered and persisted. This differs from Huginn's currently defined volatile grants scoped to a session, action, or path. These behaviors require deliberate design; they must not be assumed to exist in Huginn.
+- Explicit exception: full-access mode skips MCP approval even when the per-tool mode would require a prompt. This exception must remain visible when describing parity. `approve` is also a configurable mode, not an effect of placing a working directory inside a project.
+- MCP annotations are policy metadata, not process isolation. The inspected evidence does not establish that MCP servers inherit the shell sandbox. Huginn should preserve this distinction and must not describe MCP as sandboxed on this basis.
 
-1. **Conceder autonomía por cada efecto seguro ya clasificado** — host autoriza sin prompt solo acciones nativas ordinarias, confinadas al workspace y no sensibles; continúa pidiendo aprobación para acciones fuera de la lista y efectos de riesgo.
-   - Ventajas: se alinea con la dirección del usuario, reduce interrupciones y conserva autoridad central y defaults explícitos.
-   - Desventajas: requiere taxonomía precisa de efectos/recursos y revisión de las condiciones de carrera entre preparación, autorización y ejecución.
-   - Esfuerzo: medio/alto.
-2. **Grant amplio «workspace autónomo» por sesión** — tras habilitación/confirmación inicial, permitir la mayoría de efectos con alcance en workspace.
-   - Ventajas: interacción simple y autonomía amplia.
-   - Desventajas: la ubicación de un proceso shell o una herramienta MCP no limita sus efectos; un grant amplio puede convertir recursos aparentes del workspace en exfiltración o destrucción, y confunde autorización con sandboxing.
-   - Esfuerzo: alto y riesgo de seguridad alto; no recomendado sin definición fuerte de clases excluidas y límites verificables.
-3. **Mantener prompts por acción y mejorar solo el diálogo** — refrescar la UI y agregar clic sin alterar política.
-   - Ventajas: riesgo bajo y alcance de UI acotado.
-   - Desventajas: no resuelve el requisito central de autonomía y deja fricción en operaciones ordinarias.
-   - Esfuerzo: medio; insuficiente.
+## Current Huginn limits and incompatible contracts
 
-## Recomendación
+- `crates/huginn/runtime/src/tools.rs:500-523` describes shell as POSIX with explicit approval and time/output limits, but without sandboxing. Lines `508-523` create the approval request. This differs from sandboxed shell behavior. Approval alone does not resolve that difference.
+- `crates/huginn/runtime/src/mcp.rs:235-257` prepares an approval request for every MCP call. This boundary does not implement the four modes or the per-server/per-tool override scheme. The exceptions and persistence behavior require design; they cannot be assumed.
+- `crates/huginn/application/src/authorization.rs:13-34` implements `HostPolicy`; lines `60-155` and `164-189` constrain decisions and grants. The core defines `ApprovalPolicy` and `PreparedAction` in `crates/huginn/core/src/lib.rs:362-404` and `424-450`. These contracts preserve approval for tool effects, but do not by themselves implement OS sandboxing.
+- Earlier contracts in `.agents/sdd/changes/huginn-autonomous-workspace-permissions/specs/` that define Huginn's autonomous catalog, prohibit autonomy for shell/MCP, require approval for each call, or state that shell is unsandboxed conflict with the later user decision to reproduce the inspected effective behavior. Reconcile them in later SDD phases; do not modify them during this exploration. The approved TUI mouse/keyboard requirements and approval hierarchy/feedback requirements are independent and remain in scope. This exploration does not revoke them.
 
-Usar el enfoque 1: política del host con autorización implícita únicamente para un conjunto cerrado de acciones nativas de bajo riesgo, con workspace canónico y recurso no sensible; conservar denegación segura y aprobación explícita para mutación destructiva, datos sensibles, acciones externas, shell/MCP y cualquier recurso no clasificable. No tratar `shell` como interno seguro solo porque su directorio de trabajo sea el workspace: no está aislado y puede acceder a red, procesos y archivos externos. Tampoco presentar MCP o plugins nativos como sandbox. Concretar en propuesta el catálogo de acciones/recursos, el límite exacto de «ordinario» y cómo manejar el valor ausente/desconocido.
+## Topology and delivery slices
 
-Antes de implementar deben cerrarse estas decisiones:
+The current RPI plan in `.agents/rpi/plan/tasks/huginn-approval-interactions.md:12-19, 34-38` retains three slices: policy/revalidation, mouse interaction, and approval/feedback/documentation. The actual policy and sandbox work, including MCP, expands the policy slice. It requires authority/configuration/profiles, OS-specific sandbox backends, unavailable-sandbox handling, separation of native file effects from shell, and escalated approval integration. Do not assume this fits the previous slice or split policy across UI slices. Keep mouse support across menus as an independent deliverable; do not block it on the sandbox backend.
 
-- **Vida útil del grant:** ¿cada ejecución/turno, sesión conversacional en memoria, proceso completo o persistido al reanudar? La opción segura y compatible con el estado actual es volátil y ligada a sesión + acción + recurso canónico; no restaurar desde historial/SQLite. Si se amplía el grant, definir revocación, expiración y convivencia entre políticas clonadas.
-- **Alcance por efecto/recurso:** definir si `write_file`/`edit_file` ordinarios se vuelven autónomos; separar sobrescritura/creación/borrado, archivos sensibles, fuera del root, symlinks, rutas cambiantes, operaciones de shell y recursos externos. Lista desconocida, error de canonicalización o procedencia no verificable deben requerir aprobación o denegarse, nunca heredar autonomía.
-- **Persistencia/configuración y modos:** decidir si autonomía es default interactivo, opción TOML, override CLI o combinación; preservar defaults conservadores en `run`, `--json` y ausencia de prompt. Una opción explícita no puede hacer que shell/MCP estén sandboxed. Alinear la semántica con `--allow` de invocación sin comodines.
-- **TUI:** inventariar todos los menús/diálogos seleccionables (settings, provider/model, workflows, plugin dialogs, help/approval y completion si es menú) y definir clic primario, filas/botones, scroll, resize y clic fuera. Mantener focus, navegación de teclado, Escape/rechazo y confirmación protegida; clic no debe saltarse revisión completa del diff/command ni armar/aprobar accidentalmente.
-- **Diálogo de aprobación:** acordar jerarquía para acción, recurso, riesgo, preview íntegro, botones/decisiones disponibles, estado de revisión completa, sensibilidad y errores de terminal estrecho; preservar aprobación fresca y fail-closed.
-- **Seguridad de ejecución:** documentar explícitamente que las comprobaciones actuales son límites host-side, no aislamiento del SO. Si el requisito pretendiera permitir shell/MCP automáticamente bajo una falsa suposición de confinamiento, resolver primero necesidad y diseño de sandbox real por plataforma, que no es una consecuencia automática de este cambio.
-- **Verificación:** casos unitarios deterministas para clasificación y grant (acción/recurso equivocado, sensibilidad, sesión distinta, reinicio/reanudación, cancelación, prompt caído, path/symlink escape, contenido obsoleto); integración de loop para ningún efecto no autorizado; pruebas de ratón y teclado de todos los menús; PTY para terminal estrecho, resize, cancelación y conservación del flujo visual. Evitar sleeps/expectativas de timing no deterministas.
+## Recommendation
 
-## Riesgos
+Before implementation, review the proposal, specs, design, and tasks to resolve the applicable profile/default by mode; project trust; approval decisions versus sandbox capabilities; the actual catalog of native operations; MCP modes, exceptions, and persistence; the sandbox strategy for macOS, Linux, and Windows; and fail-closed behavior when enforcement is unavailable. Define slices around verifiable delivery boundaries. Keep the approved mouse and approval-UX slice independent. Do not claim macOS/Linux/Windows parity for Huginn without implementation and evidence for each platform.
 
-- «Dentro del workspace» no implica que el efecto sea seguro: shell/MCP y herramientas nativas confiables pueden actuar fuera de ese árbol.
-- Clasificación insuficiente o metadatos controlados por herramienta/plugin pueden escalar permisos; la autorización debe usar datos/procedencia asignados por host.
-- Un grant persistido o demasiado amplio puede sobrevivir a cambios de workspace, sesión o contexto; definir identidad y revocación antes de ampliar su alcance.
-- TOCTOU y symlinks pueden invalidar la ruta/recurso entre revisión y ejecución; mantener revalidación y fallar con nueva aprobación ante propuestas obsoletas.
-- El clic puede aprobar sin revisión, romper navegación por teclado/foco o generar diferencias entre terminales; validar con PTY y entradas explícitas.
-- Una UI más clara no corrige la falta de sandbox ni sustituye los límites de autorización.
+## Risks
 
-## Preparación para propuesta
-
-Sí, con el alcance recomendado. La propuesta debe explicitar el conjunto cerrado de acciones autónomas, los efectos que siempre conservan aprobación, el carácter no sandboxed de shell/MCP, la vida útil no persistente del grant salvo decisión expresa, y la cobertura de ratón/teclado y visual del diálogo.
+- Keeping the earlier contracts alongside the later decision can produce contradictory behavior: bounded autonomous native operations versus effective parity with the inspected behavior.
+- Treating approval as a substitute for sandboxing could let shell commands with broad access act outside the workspace. The inspected behavior keeps these controls separate.
+- A superficial shared backend could imply isolation that differs from the isolation actually enforced by each operating system.
+- MCP could remain too restrictive if Huginn requires universal confirmation, or become too permissive if it trusts annotations or copies the `approve` exception without the relevant profile context.
+- Sandbox and profile work may exceed the first slice and the RPI budget. Slice replanning must not absorb or drop the already approved mouse UX work.
