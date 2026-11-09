@@ -918,7 +918,113 @@ async fn session_grant_executes_first_and_matching_next_action_without_another_p
 }
 
 #[tokio::test]
+async fn allow_once_authorizes_only_one_prepared_operation_and_keeps_profile_unchanged() {
+    use huginn_application::permission_policy::{
+        ApprovalMode, EffectivePolicy, PolicySettings, ProcessProfile,
+    };
+
+    struct ApproveOnceThenReject(AtomicUsize);
+    #[async_trait]
+    impl ApprovalPrompt for ApproveOnceThenReject {
+        async fn request_decision(
+            &self,
+            _: &ApprovalRequest,
+            allowed: &[ApprovalDecision],
+            _: CancellationToken,
+        ) -> Result<ApprovalDecision> {
+            assert_eq!(
+                allowed,
+                &[ApprovalDecision::Reject, ApprovalDecision::ApproveOnce]
+            );
+            let call = self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(if call == 0 {
+                ApprovalDecision::ApproveOnce
+            } else {
+                ApprovalDecision::Reject
+            })
+        }
+    }
+
+    let executions = Arc::new(AtomicUsize::new(0));
+    let prompt = Arc::new(ApproveOnceThenReject(AtomicUsize::new(0)));
+    let policy = HostPolicy::new(prompt.clone(), Default::default()).with_effective_policy(
+        Arc::new(EffectivePolicy::resolve(
+            PolicySettings {
+                profile: ProcessProfile::Restricted,
+                approval_mode: ApprovalMode::OnRequest,
+            },
+            None,
+            Default::default(),
+        )),
+    );
+    let mut supervisor = composition::build(
+        Arc::new(SessionGrantModel(AtomicUsize::new(0))),
+        Arc::new(SessionGrantRegistry(Arc::new(SessionGrantTool(
+            executions.clone(),
+        )))),
+        Arc::new(Memory::default()),
+        LoopConfig::default(),
+        Arc::new(Instructions),
+    )
+    .await
+    .unwrap();
+    let implementation = supervisor
+        .resolve::<LoopService>(&composition::loop_id())
+        .unwrap();
+    let mut session = Session::new("/workspace".into());
+    let events = Events;
+
+    for prompt_text in ["first operation", "same scoped operation again"] {
+        implementation
+            .0
+            .run(
+                &mut session,
+                prompt_text.into(),
+                &policy,
+                &events,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+    }
+
+    assert_eq!(executions.load(Ordering::SeqCst), 1);
+    assert_eq!(prompt.0.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        policy.effective_policy().profile(),
+        ProcessProfile::Restricted
+    );
+    assert_eq!(
+        session
+            .events
+            .iter()
+            .filter(|event| matches!(event, Event::ApprovalResolved { approved: true, .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        session
+            .events
+            .iter()
+            .filter(|event| matches!(
+                event,
+                Event::ApprovalResolved {
+                    approved: false,
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
+    supervisor.shutdown().await;
+}
+
+#[tokio::test]
 async fn rejected_effect_is_recorded_denied_and_not_executed() {
+    use huginn_application::permission_policy::{
+        ApprovalMode, EffectivePolicy, PolicySettings, ProcessProfile,
+    };
+
     struct RejectSessionGrant;
     #[async_trait]
     impl ApprovalPrompt for RejectSessionGrant {
@@ -933,6 +1039,15 @@ async fn rejected_effect_is_recorded_denied_and_not_executed() {
         }
     }
     let executions = Arc::new(AtomicUsize::new(0));
+    let policy = HostPolicy::new(Arc::new(RejectSessionGrant), Default::default())
+        .with_effective_policy(Arc::new(EffectivePolicy::resolve(
+            PolicySettings {
+                profile: ProcessProfile::Restricted,
+                approval_mode: ApprovalMode::OnRequest,
+            },
+            None,
+            Default::default(),
+        )));
     let store = Arc::new(Memory::default());
     let mut supervisor = composition::build(
         Arc::new(SessionGrantModel(AtomicUsize::new(0))),
@@ -954,7 +1069,7 @@ async fn rejected_effect_is_recorded_denied_and_not_executed() {
         .run(
             &mut session,
             "reject".into(),
-            &HostPolicy::new(Arc::new(RejectSessionGrant), Default::default()),
+            &policy,
             &Events,
             CancellationToken::new(),
         )
@@ -962,6 +1077,10 @@ async fn rejected_effect_is_recorded_denied_and_not_executed() {
         .unwrap();
 
     assert_eq!(executions.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        policy.effective_policy().profile(),
+        ProcessProfile::Restricted
+    );
     assert!(session.events.iter().any(|event| matches!(
         event,
         Event::ApprovalResolved {

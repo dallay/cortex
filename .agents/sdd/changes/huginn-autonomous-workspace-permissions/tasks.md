@@ -29,9 +29,9 @@ Do not claim platform parity without real enforcement evidence on Linux, macOS, 
 - [x] 1.7 RED: Test separate global/user rules and workspace grants, deterministic precedence, user prohibitions, and managed restrictions overriding grants.
 - [x] 1.8 GREEN: Implement distinct policy authorities and precedence in `permission_policy.rs` and `authorization.rs`.
 - [x] 1.9 REFACTOR: Verify policy provenance and that behavioral instructions do not affect host authorization.
-- [ ] 1.10 RED: Test `Allow once` for one operation only, no durable state, and `Deny` for zero execution.
-- [ ] 1.11 GREEN: Implement operation-scoped `Allow once` and denial in application/approval contracts.
-- [ ] 1.12 REFACTOR: Verify neither decision widens scope or changes the sandbox.
+- [x] 1.10 RED: Test `Allow once` for one operation only, no durable state, and `Deny` for zero execution. Characterization test confirms the existing volatile approval contract.
+- [x] 1.11 GREEN: Implement operation-scoped `Allow once` and denial in application/approval contracts. Existing implementation already satisfies the contract; no behavior change was needed.
+- [x] 1.12 REFACTOR: Verify neither decision widens scope or changes the sandbox. Repeat approval prompted again; both decisions preserved the `Restricted` profile.
 - [ ] 1.13 EVALUATE: Assess `private-fs` 0.2.1 only as a user-state candidate: security, API, license, targets, and toolchain compatibility. No adoption without review and real-platform proof; preserve `unsafe_code = deny`. Complete this gate before implementing persistent storage.
 - [ ] 1.14 RED: Test durable grant identity by canonical root/capability/action/resource; matching later writes prompt zero times; mismatched path/action/capability/workspace prompts or denies under policy.
 - [ ] 1.15 GREEN: Only after task 1.13 passes, implement `Allow for this workspace` and a verified user-owned store in `apps/huginn/src/`; accept only exact current-policy matches. Never read project grants.
