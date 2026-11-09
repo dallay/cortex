@@ -9,7 +9,7 @@
 | Decision needed before apply | No; continue the approved feature-branch chain |
 | Chained PRs recommended | Yes |
 | 400-line budget risk | High |
-| Chain strategy | `feature-branch-chain`; current branch `feature/huginn-workspace-autonomy-policy`, base `integration/huginn-autonomous-workspace-permissions` |
+| Chain strategy | `feature-branch-chain`; trunk `main`; parent/base `integration/huginn-autonomous-workspace-permissions`; current branch `feature/huginn-workspace-autonomy-policy`; position 1 |
 | Work-unit balance | Dependency-ordered behavior slices; each includes tests and relevant docs. Keep each slice independently verifiable and rollbackable. |
 
 Decision needed before apply: No
@@ -26,19 +26,19 @@ Do not claim platform parity without real enforcement evidence on Linux, macOS, 
 - [x] 1.4 RED: Add a failing `HostPolicy` regression test proving ordinary out-of-profile native writes under `OnRequest` reach the prompt (including empty escalation configuration); managed denial remains final. Current TUI regression: write action is rejected before UI prompt.
 - [x] 1.5 GREEN: Fix `HostPolicy::approve_for` and policy/action mapping so prompt eligibility is not pre-denied; keep policy resolution outside presentation and preserve the managed-denial precedence.
 - [x] 1.6 REFACTOR: Run policy, composition, HostPolicy, and TUI tests; prove no allowlist/session shortcut or approval changes the selected sandbox.
-- [ ] 1.7 RED: Test separate global/user rules and workspace grants, deterministic precedence, user prohibitions, and managed restrictions overriding grants.
-- [ ] 1.8 GREEN: Implement distinct policy authorities and precedence in `permission_policy.rs` and `authorization.rs`.
-- [ ] 1.9 REFACTOR: Verify policy provenance and that behavioral instructions do not affect host authorization.
+- [x] 1.7 RED: Test separate global/user rules and workspace grants, deterministic precedence, user prohibitions, and managed restrictions overriding grants.
+- [x] 1.8 GREEN: Implement distinct policy authorities and precedence in `permission_policy.rs` and `authorization.rs`.
+- [x] 1.9 REFACTOR: Verify policy provenance and that behavioral instructions do not affect host authorization.
 - [ ] 1.10 RED: Test `Allow once` for one operation only, no durable state, and `Deny` for zero execution.
 - [ ] 1.11 GREEN: Implement operation-scoped `Allow once` and denial in application/approval contracts.
 - [ ] 1.12 REFACTOR: Verify neither decision widens scope or changes the sandbox.
-- [ ] 1.13 RED: Test durable grant identity by canonical root/capability/action/resource; matching later writes prompt zero times; mismatched path/action/capability/workspace prompts or denies under policy.
-- [ ] 1.14 GREEN: Implement `Allow for this workspace` and a user-owned store in `apps/huginn/src/`; accept only exact current-policy matches. Never read project grants.
-- [ ] 1.15 REFACTOR: Verify narrow scope, prompt suppression, and no shell/MCP inheritance.
-- [ ] 1.16 RED: Test grant listing/edit/revocation, immediate revocation, malformed/unavailable storage, and persistence-failure feedback.
-- [ ] 1.17 GREEN: Implement explicit grant management and observable failures; failed persistence never becomes an allow.
-- [ ] 1.18 REFACTOR: Verify edited/revoked state is applied before the next authorization decision.
-- [ ] 1.19 EVALUATE: Assess `private-fs` 0.2.1 only as a user-state candidate: security, API, license, targets, and toolchain compatibility. No adoption without review and real-platform proof; preserve `unsafe_code = deny`.
+- [ ] 1.13 EVALUATE: Assess `private-fs` 0.2.1 only as a user-state candidate: security, API, license, targets, and toolchain compatibility. No adoption without review and real-platform proof; preserve `unsafe_code = deny`. Complete this gate before implementing persistent storage.
+- [ ] 1.14 RED: Test durable grant identity by canonical root/capability/action/resource; matching later writes prompt zero times; mismatched path/action/capability/workspace prompts or denies under policy.
+- [ ] 1.15 GREEN: Only after task 1.13 passes, implement `Allow for this workspace` and a verified user-owned store in `apps/huginn/src/`; accept only exact current-policy matches. Never read project grants.
+- [ ] 1.16 REFACTOR: Verify narrow scope, prompt suppression, and no shell/MCP inheritance.
+- [ ] 1.17 RED: Test grant listing/edit/revocation, immediate revocation, malformed/unavailable storage, and persistence-failure feedback.
+- [ ] 1.18 GREEN: Implement explicit grant management and observable failures; failed persistence never becomes an allow.
+- [ ] 1.19 REFACTOR: Verify edited/revoked state is applied before the next authorization decision.
 - [ ] 1.20 RED: Test exact action/resource revalidation, canonical roots, symlink/stale-content changes, native-boundary enforcement, and unchanged sandbox.
 - [ ] 1.21 GREEN: Enforce the tested sequence in `authorization.rs` and native adapters; grants cannot bypass effect checks.
 - [ ] 1.22 REFACTOR: Rerun boundary tests and confirm changed requests require fresh review or denial.

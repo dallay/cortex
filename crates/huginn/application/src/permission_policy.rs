@@ -67,6 +67,7 @@ impl ProjectTrust {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PolicySource {
+    Global,
     User,
     Managed,
 }
@@ -93,6 +94,63 @@ pub struct ManagedRestrictions {
     pub denied_capabilities: BTreeSet<Capability>,
 }
 
+/// Configurable global rules. These restrictions are independent from user rules
+/// and workspace grants.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct GlobalRules {
+    pub denied_capabilities: BTreeSet<Capability>,
+}
+
+/// Configurable user rules. These rules can restrict policy, but workspace grants
+/// are represented separately and cannot override a prohibition here.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct UserRules {
+    pub denied_capabilities: BTreeSet<Capability>,
+}
+
+/// Exact operation identity supplied by the caller after canonicalization.
+/// This application contract performs no filesystem I/O or path resolution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceGrantIdentity {
+    workspace_root: String,
+    capability: Capability,
+    action: String,
+    resource: String,
+}
+
+impl WorkspaceGrantIdentity {
+    /// Constructs an identity from caller-verified canonical values.
+    pub fn new(
+        canonical_workspace_root: impl Into<String>,
+        capability: Capability,
+        action: impl Into<String>,
+        canonical_resource: impl Into<String>,
+    ) -> Self {
+        Self {
+            workspace_root: canonical_workspace_root.into(),
+            capability,
+            action: action.into(),
+            resource: canonical_resource.into(),
+        }
+    }
+
+    pub const fn capability(&self) -> Capability {
+        self.capability
+    }
+}
+
+/// An explicit grant bound to one exact caller-verified operation identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceGrant {
+    identity: WorkspaceGrantIdentity,
+}
+
+impl WorkspaceGrant {
+    pub const fn explicit_user_choice(identity: WorkspaceGrantIdentity) -> Self {
+        Self { identity }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthorizationOutcome {
     Allowed,
@@ -109,6 +167,8 @@ pub struct EffectivePolicy {
     trust: ProjectTrust,
     profile_source: PolicySource,
     approval_source: PolicySource,
+    global_denied_capabilities: BTreeSet<Capability>,
+    user_denied_capabilities: BTreeSet<Capability>,
     denied_capabilities: BTreeSet<Capability>,
     escalation_capabilities: BTreeSet<Capability>,
 }
@@ -116,6 +176,22 @@ pub struct EffectivePolicy {
 impl EffectivePolicy {
     pub fn resolve(
         user: PolicySettings,
+        managed: Option<ManagedRestrictions>,
+        trust: ProjectTrust,
+    ) -> Self {
+        Self::resolve_with_rules(
+            user,
+            GlobalRules::default(),
+            UserRules::default(),
+            managed,
+            trust,
+        )
+    }
+
+    pub fn resolve_with_rules(
+        user: PolicySettings,
+        global_rules: GlobalRules,
+        user_rules: UserRules,
         managed: Option<ManagedRestrictions>,
         trust: ProjectTrust,
     ) -> Self {
@@ -147,6 +223,8 @@ impl EffectivePolicy {
             trust,
             profile_source,
             approval_source,
+            global_denied_capabilities: global_rules.denied_capabilities,
+            user_denied_capabilities: user_rules.denied_capabilities,
             denied_capabilities: managed
                 .map(|restrictions| restrictions.denied_capabilities)
                 .unwrap_or_default(),
@@ -181,7 +259,7 @@ impl EffectivePolicy {
     }
 
     pub fn decide(&self, capability: Capability, approver_available: bool) -> AuthorizationOutcome {
-        if self.denied_capabilities.contains(&capability) {
+        if self.is_denied(capability) {
             return AuthorizationOutcome::Denied;
         }
         if self.profile_allows(capability) {
@@ -201,6 +279,43 @@ impl EffectivePolicy {
             return AuthorizationOutcome::RequiresApproval;
         }
         AuthorizationOutcome::Denied
+    }
+
+    /// Resolve a previously explicit workspace grant after all policy prohibitions.
+    /// This method grants no authority from behavioral instructions or metadata.
+    pub fn decide_with_workspace_grant(
+        &self,
+        identity: &WorkspaceGrantIdentity,
+        approver_available: bool,
+        workspace_grant: Option<&WorkspaceGrant>,
+    ) -> AuthorizationOutcome {
+        let capability = identity.capability;
+        if self.is_denied(capability) {
+            return AuthorizationOutcome::Denied;
+        }
+        if workspace_grant.is_some_and(|grant| grant.identity == *identity) {
+            return match self.approval_mode {
+                ApprovalMode::OnRequest => AuthorizationOutcome::Allowed,
+                ApprovalMode::Always => self.decide(capability, approver_available),
+            };
+        }
+        self.decide(capability, approver_available)
+    }
+
+    pub fn denial_source(&self, capability: Capability) -> Option<PolicySource> {
+        if self.denied_capabilities.contains(&capability) {
+            Some(PolicySource::Managed)
+        } else if self.global_denied_capabilities.contains(&capability) {
+            Some(PolicySource::Global)
+        } else if self.user_denied_capabilities.contains(&capability) {
+            Some(PolicySource::User)
+        } else {
+            None
+        }
+    }
+
+    fn is_denied(&self, capability: Capability) -> bool {
+        self.denial_source(capability).is_some()
     }
 
     fn profile_allows(&self, capability: Capability) -> bool {
@@ -227,6 +342,19 @@ impl ProcessProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn file_write_identity() -> WorkspaceGrantIdentity {
+        WorkspaceGrantIdentity::new(
+            "/workspace/project",
+            Capability::FileWrite,
+            "native.write_file",
+            "/workspace/project/src/lib.rs",
+        )
+    }
+
+    fn file_write_grant() -> WorkspaceGrant {
+        WorkspaceGrant::explicit_user_choice(file_write_identity())
+    }
 
     #[test]
     fn managed_restrictions_override_user_profile_and_approval_mode() {
@@ -337,6 +465,206 @@ mod tests {
 
         assert_eq!(
             policy.decide(Capability::Shell, true),
+            AuthorizationOutcome::Denied
+        );
+    }
+
+    #[test]
+    fn user_denials_and_managed_denials_take_precedence_over_workspace_grants() {
+        let user_rules = UserRules {
+            denied_capabilities: [Capability::FileWrite].into(),
+        };
+        let user_denied = EffectivePolicy::resolve_with_rules(
+            PolicySettings {
+                profile: ProcessProfile::Restricted,
+                approval_mode: ApprovalMode::OnRequest,
+            },
+            GlobalRules::default(),
+            user_rules,
+            None,
+            ProjectTrust::default(),
+        );
+
+        assert_eq!(
+            user_denied.decide_with_workspace_grant(
+                &file_write_identity(),
+                true,
+                Some(&file_write_grant()),
+            ),
+            AuthorizationOutcome::Denied,
+            "a workspace grant must not weaken a user prohibition"
+        );
+        assert_eq!(
+            user_denied.denial_source(Capability::FileWrite),
+            Some(PolicySource::User)
+        );
+
+        let managed_denied = EffectivePolicy::resolve_with_rules(
+            PolicySettings {
+                profile: ProcessProfile::FullAccess,
+                approval_mode: ApprovalMode::OnRequest,
+            },
+            GlobalRules::default(),
+            UserRules::default(),
+            Some(ManagedRestrictions {
+                denied_capabilities: [Capability::FileWrite].into(),
+                ..ManagedRestrictions::default()
+            }),
+            ProjectTrust::default(),
+        );
+        assert_eq!(
+            managed_denied.decide_with_workspace_grant(
+                &file_write_identity(),
+                true,
+                Some(&file_write_grant()),
+            ),
+            AuthorizationOutcome::Denied,
+            "managed denial must override both user rules and workspace grants"
+        );
+        assert_eq!(
+            managed_denied.denial_source(Capability::FileWrite),
+            Some(PolicySource::Managed)
+        );
+    }
+
+    #[test]
+    fn workspace_grant_is_distinct_from_global_and_user_policy_rules() {
+        let policy = EffectivePolicy::resolve_with_rules(
+            PolicySettings {
+                profile: ProcessProfile::Restricted,
+                approval_mode: ApprovalMode::OnRequest,
+            },
+            GlobalRules::default(),
+            UserRules::default(),
+            None,
+            ProjectTrust::default(),
+        );
+
+        assert_eq!(
+            policy.decide_with_workspace_grant(
+                &file_write_identity(),
+                true,
+                Some(&file_write_grant()),
+            ),
+            AuthorizationOutcome::Allowed
+        );
+        assert_eq!(
+            policy.decide_with_workspace_grant(&file_write_identity(), true, None),
+            AuthorizationOutcome::RequiresApproval,
+            "without a grant the unchanged OnRequest prompt remains eligible"
+        );
+
+        let global_denied = EffectivePolicy::resolve_with_rules(
+            PolicySettings {
+                profile: ProcessProfile::FullAccess,
+                approval_mode: ApprovalMode::OnRequest,
+            },
+            GlobalRules {
+                denied_capabilities: [Capability::FileWrite].into(),
+            },
+            UserRules::default(),
+            None,
+            ProjectTrust::default(),
+        );
+        assert_eq!(
+            global_denied.decide_with_workspace_grant(
+                &file_write_identity(),
+                true,
+                Some(&file_write_grant()),
+            ),
+            AuthorizationOutcome::Denied
+        );
+        assert_eq!(
+            global_denied.denial_source(Capability::FileWrite),
+            Some(PolicySource::Global)
+        );
+    }
+
+    #[test]
+    fn workspace_grant_requires_an_exact_caller_supplied_identity() {
+        let policy = EffectivePolicy::resolve(
+            PolicySettings {
+                profile: ProcessProfile::Restricted,
+                approval_mode: ApprovalMode::OnRequest,
+            },
+            None,
+            ProjectTrust::default(),
+        );
+        let grant = WorkspaceGrant::explicit_user_choice(WorkspaceGrantIdentity::new(
+            "/workspace/project",
+            Capability::FileWrite,
+            "native.write_file",
+            "/workspace/project/src/lib.rs",
+        ));
+
+        let exact = WorkspaceGrantIdentity::new(
+            "/workspace/project",
+            Capability::FileWrite,
+            "native.write_file",
+            "/workspace/project/src/lib.rs",
+        );
+        assert_eq!(
+            policy.decide_with_workspace_grant(&exact, true, Some(&grant)),
+            AuthorizationOutcome::Allowed
+        );
+
+        for mismatch in [
+            WorkspaceGrantIdentity::new(
+                "/workspace/other",
+                Capability::FileWrite,
+                "native.write_file",
+                "/workspace/project/src/lib.rs",
+            ),
+            WorkspaceGrantIdentity::new(
+                "/workspace/project",
+                Capability::FileWrite,
+                "native.edit_file",
+                "/workspace/project/src/lib.rs",
+            ),
+            WorkspaceGrantIdentity::new(
+                "/workspace/project",
+                Capability::FileWrite,
+                "native.write_file",
+                "/workspace/project/src/",
+            ),
+            WorkspaceGrantIdentity::new(
+                "/workspace/project",
+                Capability::Shell,
+                "native.write_file",
+                "/workspace/project/src/lib.rs",
+            ),
+        ] {
+            assert_eq!(
+                policy.decide_with_workspace_grant(&mismatch, true, Some(&grant)),
+                AuthorizationOutcome::RequiresApproval
+            );
+        }
+    }
+
+    #[test]
+    fn workspace_grant_does_not_bypass_always_approval() {
+        let policy = EffectivePolicy::resolve(
+            PolicySettings {
+                profile: ProcessProfile::FullAccess,
+                approval_mode: ApprovalMode::Always,
+            },
+            None,
+            ProjectTrust::default(),
+        );
+        let identity = WorkspaceGrantIdentity::new(
+            "/workspace/project",
+            Capability::FileWrite,
+            "native.write_file",
+            "/workspace/project/src/lib.rs",
+        );
+        let grant = WorkspaceGrant::explicit_user_choice(identity.clone());
+
+        assert_eq!(
+            policy.decide_with_workspace_grant(&identity, true, Some(&grant)),
+            AuthorizationOutcome::RequiresApproval
+        );
+        assert_eq!(
+            policy.decide_with_workspace_grant(&identity, false, Some(&grant)),
             AuthorizationOutcome::Denied
         );
     }
