@@ -482,6 +482,27 @@ impl RouterPort for FallbackRouter {
             .collect()
     }
 
+    fn eligibility_candidates(&self) -> Option<Vec<rook_core::RouterCandidateSnapshot>> {
+        let now = self.clock.now();
+        Some(
+            self.providers
+                .read()
+                .iter()
+                .map(|provider| {
+                    let circuit = self
+                        .circuits
+                        .get(provider.id())
+                        .map(|state| state.clone())
+                        .unwrap_or_default();
+                    rook_core::RouterCandidateSnapshot {
+                        provider: provider.clone(),
+                        circuit_open: circuit.is_open(now) || circuit.half_open_trial_in_flight,
+                    }
+                })
+                .collect(),
+        )
+    }
+
     fn resolve_connection(
         &self,
         connection_id: &shared_kernel::ConnectionId,
@@ -1293,6 +1314,53 @@ mod tests {
             FallbackRouter::weighted_provider_index(&[0.0, 0.0], 0.5),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn eligibility_candidates_include_open_circuit_providers() {
+        let provider = StubProvider::new("provider", &["model"]);
+        let provider_id = provider.id().clone();
+        let router = FallbackRouter::new(vec![provider], RoutingStrategy::Priority);
+        for _ in 0..FAILURE_THRESHOLD {
+            router
+                .on_failure(&provider_id, &CortexError::provider("failure"))
+                .await;
+        }
+
+        assert!(router.resolve_provider(&provider_id).is_none());
+        let candidates = router
+            .eligibility_candidates()
+            .expect("FallbackRouter exposes the raw candidate set");
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].provider.id(), &provider_id);
+        assert!(candidates[0].circuit_open);
+    }
+
+    #[tokio::test]
+    async fn eligibility_candidates_mark_reserved_half_open_trial_unavailable() {
+        let provider = StubProvider::new("provider", &["model"]);
+        let provider_id = provider.id().clone();
+        let clock = Arc::new(TestCircuitClock::new());
+        let router =
+            FallbackRouter::with_clock(vec![provider], RoutingStrategy::Priority, clock.clone());
+        for _ in 0..FAILURE_THRESHOLD {
+            router
+                .on_failure(&provider_id, &CortexError::provider("failure"))
+                .await;
+        }
+        clock.advance(CIRCUIT_COOLDOWN);
+        let _trial = router
+            .try_acquire_trial(&provider_id)
+            .await
+            .expect("the first half-open trial is reserved");
+
+        let candidates = router
+            .eligibility_candidates()
+            .expect("FallbackRouter exposes the raw candidate set");
+
+        assert_eq!(candidates.len(), 1);
+        assert!(candidates[0].circuit_open);
     }
 
     #[test]

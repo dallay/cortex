@@ -305,14 +305,7 @@ impl RouteRequest {
                 record_combo_skip(&mut errors, &provider_id, step_index, reason);
                 continue;
             }
-            let context = ComboStepContext {
-                combo_id,
-                step_index,
-                provider_id: provider_id.clone(),
-                runtime_id,
-                connection_id: connection_id
-                    .or_else(|| ConnectionId::parse_str(provider_id.as_str()).ok()),
-            };
+            let managed_connection_id = connection_id.or_else(|| provider.connection_id().copied());
             let mut provider_req = step_req.clone();
             provider_req.model = step.model.clone();
             let Some(permit) = self.router.try_acquire_trial(&provider_id).await else {
@@ -323,6 +316,46 @@ impl RouteRequest {
                     "half_open_trial_in_progress",
                 );
                 continue;
+            };
+            let runtime_id = if let Some(expected_connection_id) = managed_connection_id {
+                let current_connection = match self
+                    .resolve_connection(provider.as_ref(), &provider_id, None)
+                    .await
+                {
+                    Ok(connection) => connection,
+                    Err(error) => {
+                        drop(permit);
+                        return Err(error);
+                    }
+                };
+                let current_runtime = current_connection.and_then(|current| {
+                    (!current.snapshot_changed
+                        && current.id == expected_connection_id
+                        && (connection_id.is_none()
+                            || current.runtime_id.as_ref() == Some(&step.provider_id)))
+                    .then_some(current.runtime_id)
+                    .flatten()
+                });
+                if current_runtime.is_none() {
+                    drop(permit);
+                    record_combo_skip(
+                        &mut errors,
+                        &provider_id,
+                        step_index,
+                        "adapter_revision_mismatch",
+                    );
+                    continue;
+                }
+                current_runtime
+            } else {
+                runtime_id
+            };
+            let context = ComboStepContext {
+                combo_id,
+                step_index,
+                provider_id: provider_id.clone(),
+                runtime_id,
+                connection_id: managed_connection_id,
             };
             let step_start = tokio::time::Instant::now();
             let deadline = (step_start + Self::COMBO_STEP_TIMEOUT).min(total_deadline);

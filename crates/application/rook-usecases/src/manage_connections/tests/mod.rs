@@ -80,6 +80,24 @@ impl KeyManager for PlainKeyManager {
     }
 }
 
+struct NonceKeyManager(std::sync::atomic::AtomicUsize);
+
+impl KeyManager for NonceKeyManager {
+    fn encrypt(&self, plaintext: &str) -> Result<String, rook_core::CredentialEncryptionError> {
+        let nonce = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(format!("nonce-{nonce}|{plaintext}"))
+    }
+
+    fn decrypt(&self, ciphertext: &str) -> Result<String, rook_core::CredentialEncryptionError> {
+        ciphertext
+            .split_once('|')
+            .map(|(_, plaintext)| plaintext.to_string())
+            .ok_or_else(|| {
+                rook_core::CredentialEncryptionError::Decrypt("invalid test blob".into())
+            })
+    }
+}
+
 struct NoopProviderBuilder;
 
 #[async_trait]
@@ -237,6 +255,7 @@ fn list_returns_populated() {
                     api_format: Some(rook_core::ApiFormat::OpenAI),
                     supported_models: Vec::new(),
                 },
+                adapter_revision: 1,
                 test_status: TestStatus::NeverTested,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -300,6 +319,7 @@ fn get_returns_some_for_existing_id() {
                     api_format: Some(rook_core::ApiFormat::OpenAI),
                     supported_models: Vec::new(),
                 },
+                adapter_revision: 1,
                 test_status: TestStatus::NeverTested,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -685,6 +705,7 @@ fn update_partial_update_changes_only_name() {
                     api_format: Some(rook_core::ApiFormat::OpenAI),
                     supported_models: Vec::new(),
                 },
+                adapter_revision: 1,
                 test_status: TestStatus::NeverTested,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -712,6 +733,278 @@ fn update_partial_update_changes_only_name() {
             assert!(result.is_ok());
             let updated = result.unwrap();
             assert_eq!(updated.name, "new-name");
+            assert_eq!(updated.adapter_revision, 1);
+        });
+}
+
+#[test]
+fn update_increments_adapter_revision_when_provider_configuration_changes() {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("runtime")
+        .block_on(async {
+            let conn = ProviderConnection {
+                id: ConnectionId::new(),
+                provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+                provider_runtime_id: ProviderId::new("openai-primary"),
+                name: "revision-test".to_string(),
+                priority: 1,
+                is_active: true,
+                auth_type: AuthType::ApiKey,
+                credentials: Credentials::ApiKey {
+                    api_key: EncryptedBlob("enc:v1:sk-test".to_string()),
+                },
+                config: config(),
+                adapter_revision: 4,
+                test_status: TestStatus::NeverTested,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            };
+            let repo = Arc::new(PopulatedRepo { conn: conn.clone() });
+            let mc = ManageConnections::new(
+                repo,
+                Arc::new(EmptyRegistry),
+                Arc::new(PlainKeyManager),
+                Arc::new(NoopProviderBuilder),
+            );
+            let mut changed_config = conn.config.clone();
+            changed_config.max_concurrent = 2;
+
+            let updated = mc
+                .update(
+                    &conn.id,
+                    UpdateConnectionRequest {
+                        expected_updated_at: conn.updated_at,
+                        config: Some(changed_config),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect("adapter configuration update succeeds");
+
+            assert_eq!(updated.adapter_revision, 5);
+        });
+}
+
+#[test]
+fn update_of_quota_thresholds_does_not_increment_adapter_revision() {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("runtime")
+        .block_on(async {
+            let conn = ProviderConnection {
+                id: ConnectionId::new(),
+                provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+                provider_runtime_id: ProviderId::new("openai-primary"),
+                name: "quota-revision-test".to_string(),
+                priority: 1,
+                is_active: true,
+                auth_type: AuthType::ApiKey,
+                credentials: Credentials::ApiKey {
+                    api_key: EncryptedBlob("enc:v1:sk-test".to_string()),
+                },
+                config: config(),
+                adapter_revision: 4,
+                test_status: TestStatus::NeverTested,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            };
+            let repo = Arc::new(PopulatedRepo { conn: conn.clone() });
+            let mc = ManageConnections::new(
+                repo,
+                Arc::new(EmptyRegistry),
+                Arc::new(PlainKeyManager),
+                Arc::new(NoopProviderBuilder),
+            );
+            let mut changed_config = conn.config.clone();
+            changed_config.quota_window_thresholds.warning = 0.75;
+
+            let updated = mc
+                .update(
+                    &conn.id,
+                    UpdateConnectionRequest {
+                        expected_updated_at: conn.updated_at,
+                        config: Some(changed_config),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect("quota threshold update succeeds");
+
+            assert_eq!(updated.adapter_revision, 4);
+        });
+}
+
+#[test]
+fn reencrypting_unchanged_credentials_does_not_increment_adapter_revision() {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("runtime")
+        .block_on(async {
+            let conn = ProviderConnection {
+                id: ConnectionId::new(),
+                provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+                provider_runtime_id: ProviderId::new("openai-primary"),
+                name: "same-secret".to_string(),
+                priority: 1,
+                is_active: true,
+                auth_type: AuthType::ApiKey,
+                credentials: Credentials::ApiKey {
+                    api_key: EncryptedBlob("nonce-0|same-secret".to_string()),
+                },
+                config: config(),
+                adapter_revision: 4,
+                test_status: TestStatus::NeverTested,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            };
+            let repo = Arc::new(PopulatedRepo { conn: conn.clone() });
+            let mc = ManageConnections::new(
+                repo,
+                Arc::new(EmptyRegistry),
+                Arc::new(NonceKeyManager(std::sync::atomic::AtomicUsize::new(1))),
+                Arc::new(NoopProviderBuilder),
+            );
+
+            let updated = mc
+                .update(
+                    &conn.id,
+                    UpdateConnectionRequest {
+                        expected_updated_at: conn.updated_at,
+                        credentials: Some(CredentialsInput::ApiKey {
+                            api_key: "  same-secret  ".to_string(),
+                        }),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect("same credential update succeeds");
+
+            let Credentials::ApiKey { api_key } = updated.credentials else {
+                panic!("expected API key credentials");
+            };
+            assert_ne!(api_key.as_str(), "nonce-0|same-secret");
+            assert_eq!(updated.adapter_revision, 4);
+        });
+}
+
+#[test]
+fn rotating_oauth_tokens_does_not_increment_adapter_revision() {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("runtime")
+        .block_on(async {
+            let conn = ProviderConnection {
+                id: ConnectionId::new(),
+                provider: rook_core::descriptor_by_id("gemini").expect("gemini descriptor"),
+                provider_runtime_id: ProviderId::new("google-primary"),
+                name: "oauth-token-rotation".to_string(),
+                priority: 1,
+                is_active: true,
+                auth_type: AuthType::OAuth,
+                credentials: Credentials::OAuth {
+                    email: EncryptedBlob("nonce-0|user@example.com".to_string()),
+                    access_token: EncryptedBlob("nonce-0|old-access".to_string()),
+                    refresh_token: EncryptedBlob("nonce-0|old-refresh".to_string()),
+                    expires_at: Utc::now().timestamp() + 60,
+                    scope: EncryptedBlob("nonce-0|scope".to_string()),
+                    id_token: EncryptedBlob("nonce-0|old-id".to_string()),
+                    project_id: EncryptedBlob("nonce-0|project-123".to_string()),
+                    oauth_client_id: "client-id".to_string(),
+                    oauth_client_secret: None,
+                    oauth_tenant_id: None,
+                },
+                config: config(),
+                adapter_revision: 4,
+                test_status: TestStatus::NeverTested,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            };
+            let repo = Arc::new(PopulatedRepo { conn: conn.clone() });
+            let mc = ManageConnections::new(
+                repo,
+                Arc::new(EmptyRegistry),
+                Arc::new(NonceKeyManager(std::sync::atomic::AtomicUsize::new(1))),
+                Arc::new(NoopProviderBuilder),
+            );
+
+            let updated = mc
+                .update(
+                    &conn.id,
+                    UpdateConnectionRequest {
+                        expected_updated_at: conn.updated_at,
+                        credentials: Some(CredentialsInput::OAuth {
+                            email: " user@example.com ".to_string(),
+                            access_token: "new-access".to_string(),
+                            refresh_token: "new-refresh".to_string(),
+                            expires_at: Utc::now().timestamp() + 3600,
+                            scope: "scope".to_string(),
+                            id_token: "new-id".to_string(),
+                            project_id: " project-123 ".to_string(),
+                            oauth_client_id: " client-id ".to_string(),
+                            oauth_client_secret: None,
+                            oauth_tenant_id: Some("  ".to_string()),
+                        }),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect("OAuth token rotation succeeds");
+
+            assert_eq!(updated.adapter_revision, 4);
+        });
+}
+
+#[test]
+fn replacing_undecryptable_credentials_recovers_the_connection() {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("runtime")
+        .block_on(async {
+            let conn = ProviderConnection {
+                id: ConnectionId::new(),
+                provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+                provider_runtime_id: ProviderId::new("openai-primary"),
+                name: "corrupt-credential".to_string(),
+                priority: 1,
+                is_active: true,
+                auth_type: AuthType::ApiKey,
+                credentials: Credentials::ApiKey {
+                    api_key: EncryptedBlob("corrupt-ciphertext".to_string()),
+                },
+                config: config(),
+                adapter_revision: 4,
+                test_status: TestStatus::Unknown {
+                    last_test_at: Utc::now(),
+                    reason: "credential decryption failed".to_string(),
+                },
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            };
+            let repo = Arc::new(PopulatedRepo { conn: conn.clone() });
+            let mc = ManageConnections::new(
+                repo,
+                Arc::new(EmptyRegistry),
+                Arc::new(FailDecryptKeyManager),
+                Arc::new(NoopProviderBuilder),
+            );
+
+            let updated = mc
+                .update(
+                    &conn.id,
+                    UpdateConnectionRequest {
+                        expected_updated_at: conn.updated_at,
+                        credentials: Some(CredentialsInput::ApiKey {
+                            api_key: "replacement-secret".to_string(),
+                        }),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect("replacement credentials recover the connection");
+
+            assert_eq!(updated.adapter_revision, 5);
+            assert!(matches!(updated.credentials, Credentials::ApiKey { .. }));
         });
 }
 
@@ -744,6 +1037,7 @@ fn update_preserves_credentials_when_not_provided() {
                     api_format: Some(rook_core::ApiFormat::OpenAI),
                     supported_models: Vec::new(),
                 },
+                adapter_revision: 1,
                 test_status: TestStatus::NeverTested,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -806,6 +1100,7 @@ fn update_replaces_credentials() {
                     api_format: Some(rook_core::ApiFormat::OpenAI),
                     supported_models: Vec::new(),
                 },
+                adapter_revision: 1,
                 test_status: TestStatus::NeverTested,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -948,6 +1243,7 @@ fn delete_returns_ok_for_existing_id() {
                     api_format: Some(rook_core::ApiFormat::OpenAI),
                     supported_models: Vec::new(),
                 },
+                adapter_revision: 1,
                 test_status: TestStatus::NeverTested,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -1270,6 +1566,7 @@ fn test_returns_unknown_when_provider_runtime_not_found() {
                     api_format: Some(rook_core::ApiFormat::OpenAI),
                     supported_models: Vec::new(),
                 },
+                adapter_revision: 1,
                 test_status: TestStatus::NeverTested,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -1320,12 +1617,14 @@ fn test_returns_active_when_health_check_succeeds() {
                     api_format: Some(rook_core::ApiFormat::OpenAI),
                     supported_models: Vec::new(),
                 },
+                adapter_revision: 1,
                 test_status: TestStatus::NeverTested,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
             };
             let conn_id = conn.id;
-            let repo = Arc::new(PopulatedRepo { conn });
+            let repo = Arc::new(RepoWithRefreshTracker::default());
+            repo.store.lock().unwrap().push(conn);
             let mock_provider = Arc::new(MockProvider {
                 provider_id: ProviderId::new("openai-primary"),
                 health_status: HealthStatus::Healthy {
@@ -1338,7 +1637,7 @@ fn test_returns_active_when_health_check_succeeds() {
                 provider: mock_provider,
             });
             let mc = ManageConnections::new(
-                repo,
+                repo.clone(),
                 registry,
                 Arc::new(PlainKeyManager),
                 Arc::new(NoopProviderBuilder),
@@ -1350,6 +1649,13 @@ fn test_returns_active_when_health_check_succeeds() {
             assert!(res.valid, "expected valid=true for healthy");
             assert_eq!(res.status, "ok");
             assert_eq!(res.latency_ms, Some(42));
+            let updated = repo
+                .find(&conn_id)
+                .await
+                .unwrap()
+                .expect("connection remains");
+            assert_eq!(updated.adapter_revision, 1);
+            assert!(matches!(updated.test_status, TestStatus::Active { .. }));
         });
 }
 
@@ -1382,6 +1688,7 @@ fn test_returns_unhealthy_when_health_check_fails() {
                     api_format: Some(rook_core::ApiFormat::OpenAI),
                     supported_models: Vec::new(),
                 },
+                adapter_revision: 1,
                 test_status: TestStatus::NeverTested,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -1455,6 +1762,7 @@ fn test_returns_expired_oauth() {
                     api_format: Some(rook_core::ApiFormat::OpenAI),
                     supported_models: Vec::new(),
                 },
+                adapter_revision: 1,
                 test_status: TestStatus::NeverTested,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -1575,6 +1883,7 @@ async fn concurrent_refreshes_publish_matching_snapshots_and_admission_limits() 
             default_model: Some(ModelId::new("first")),
             ..config()
         },
+        adapter_revision: 1,
         test_status: TestStatus::NeverTested,
         created_at: Utc::now(),
         updated_at: Utc::now(),
@@ -1874,6 +2183,7 @@ fn refresh_registry_skips_inactive_connections() {
                     api_format: Some(rook_core::ApiFormat::OpenAI),
                     supported_models: Vec::new(),
                 },
+                adapter_revision: 1,
                 test_status: TestStatus::NeverTested,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -1900,6 +2210,7 @@ fn refresh_registry_skips_inactive_connections() {
                     api_format: Some(rook_core::ApiFormat::OpenAI),
                     supported_models: Vec::new(),
                 },
+                adapter_revision: 1,
                 test_status: TestStatus::NeverTested,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -1968,6 +2279,7 @@ fn refresh_registry_decrypts_and_builds_provider() {
                     api_format: Some(rook_core::ApiFormat::OpenAI),
                     supported_models: Vec::new(),
                 },
+                adapter_revision: 1,
                 test_status: TestStatus::NeverTested,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -2031,6 +2343,7 @@ fn refresh_registry_partial_failure_keeps_valid_providers() {
                     api_format: Some(rook_core::ApiFormat::OpenAI),
                     supported_models: Vec::new(),
                 },
+                adapter_revision: 1,
                 test_status: TestStatus::NeverTested,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -2057,6 +2370,7 @@ fn refresh_registry_partial_failure_keeps_valid_providers() {
                     api_format: Some(rook_core::ApiFormat::OpenAI),
                     supported_models: Vec::new(),
                 },
+                adapter_revision: 1,
                 test_status: TestStatus::NeverTested,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -2132,6 +2446,7 @@ fn refresh_registry_preserves_previous_provider_when_active_connection_fails_val
                     api_format: Some(rook_core::ApiFormat::OpenAI),
                     supported_models: Vec::new(),
                 },
+                adapter_revision: 1,
                 test_status: TestStatus::NeverTested,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -2192,6 +2507,7 @@ fn refresh_registry_preserves_previous_provider_when_active_connection_build_fai
                     api_format: Some(rook_core::ApiFormat::OpenAI),
                     supported_models: Vec::new(),
                 },
+                adapter_revision: 1,
                 test_status: TestStatus::NeverTested,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -2252,6 +2568,7 @@ fn refresh_registry_preserves_previous_provider_when_active_connection_fails_to_
                     api_format: Some(rook_core::ApiFormat::OpenAI),
                     supported_models: Vec::new(),
                 },
+                adapter_revision: 1,
                 test_status: TestStatus::NeverTested,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -2311,6 +2628,7 @@ fn refresh_registry_all_failures_results_in_empty_registry() {
                     api_format: Some(rook_core::ApiFormat::OpenAI),
                     supported_models: Vec::new(),
                 },
+                adapter_revision: 1,
                 test_status: TestStatus::NeverTested,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -2395,6 +2713,7 @@ fn update_calls_refresh_after_write() {
                     api_format: Some(rook_core::ApiFormat::OpenAI),
                     supported_models: Vec::new(),
                 },
+                adapter_revision: 1,
                 test_status: TestStatus::NeverTested,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -2464,6 +2783,7 @@ fn delete_calls_refresh_after_write() {
                     api_format: Some(rook_core::ApiFormat::OpenAI),
                     supported_models: Vec::new(),
                 },
+                adapter_revision: 1,
                 test_status: TestStatus::NeverTested,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -2589,6 +2909,7 @@ fn refresh_registry_skips_stored_metadata_endpoint_before_decrypting() {
                     api_key: EncryptedBlob("encrypted-key".to_string()),
                 },
                 config: connection_config("http://169.254.169.254/latest/meta-data/"),
+                adapter_revision: 1,
                 test_status: TestStatus::NeverTested,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),

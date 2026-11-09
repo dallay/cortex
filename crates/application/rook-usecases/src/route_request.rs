@@ -8,7 +8,7 @@
 //   5. Record audit entry
 //   6. On failure: notify router (circuit breaker), audit failure
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
@@ -17,12 +17,15 @@ use observability::{ObservationStatus, TelemetryTracker};
 use rook_core::{
     evaluate_connection_quota, AuditEntry, AuditPort, CachePort, ComboAliasRepositoryPort,
     ComboRepositoryPort, ComboStep, CompletionRequest, CompletionResponse, CortexError,
-    ModelAliasRepositoryPort, ProviderRepositoryPort, QuotaEligibilityPolicy,
-    QuotaObservationQuery, QuotaObservationRecorderPort, QuotaState, RequestStatus, RouterPort,
-    StreamChunk, TokenUsage, UsageEntry, UsageRecorderPort,
+    ModelAliasRepositoryPort, ProviderConnectionRoutingState, ProviderRepositoryPort,
+    QuotaEligibilityPolicy, QuotaObservationQuery, QuotaObservationRecorderPort, QuotaState,
+    RequestStatus, RouterPort, StreamChunk, TokenUsage, UsageEntry, UsageRecorderPort,
 };
 use shared_kernel::{ComboId, ConnectionId, ModelId, ProviderId, RestrictionViolation};
 
+use crate::eligibility::{
+    evaluate_candidates, AuthState, CandidateFacts, EligibilityResult, RejectionReason, TargetRef,
+};
 use crate::route_selection::is_virtual_model;
 use crate::PricingConfig;
 
@@ -111,7 +114,10 @@ async fn notify_provider_success(router: &dyn RouterPort, provider: &ProviderId)
 
 /// Maximum number of retry attempts when a provider fails
 const MAX_RETRY_ATTEMPTS: usize = 4;
+const MAX_ELIGIBILITY_SNAPSHOT_RETRIES: usize = 1;
+const MAX_PENDING_SPENDING_RELEASES: usize = 32;
 const QUOTA_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
+const ELIGIBILITY_STATE_READ_TIMEOUT: Duration = Duration::from_millis(250);
 
 /// Grouped parameters for success handling to avoid excessive parameter count
 struct SuccessContext {
@@ -163,6 +169,21 @@ struct AttemptCursor {
     local_backpressure: Option<CortexError>,
     provider_attempt_failed: bool,
     provider_attempts: usize,
+    snapshot_rechecks: usize,
+}
+
+struct RoutingEligibility {
+    result: EligibilityResult,
+    connections_by_target: std::collections::HashMap<ProviderId, ProviderConnectionRoutingState>,
+    providers_by_target: std::collections::HashMap<ProviderId, Arc<dyn rook_core::ProviderPort>>,
+}
+
+#[derive(Clone)]
+struct ResolvedConnection {
+    id: ConnectionId,
+    runtime_id: Option<ProviderId>,
+    adapter_revision: i64,
+    snapshot_changed: bool,
 }
 
 /// Immutable inputs shared by every attempt of one failover loop.
@@ -181,7 +202,73 @@ struct EligibleAttempt {
     connection_id: Option<ConnectionId>,
     provider_req: CompletionRequest,
     trial_permit: rook_core::RouterTrialPermit,
+    spending_reservation: PendingSpendingAdmission,
+}
+
+/// A durable budget reservation that must be released unless upstream I/O starts.
+struct PendingSpendingAdmission {
+    guard: Option<Arc<crate::spending_budget::SpendingBudgetGuard>>,
     admission: Option<crate::spending_budget::SpendingAdmission>,
+}
+
+fn pending_spending_release_slots() -> Arc<tokio::sync::Semaphore> {
+    static SLOTS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+    SLOTS
+        .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(MAX_PENDING_SPENDING_RELEASES)))
+        .clone()
+}
+
+impl PendingSpendingAdmission {
+    fn new(
+        guard: Option<Arc<crate::spending_budget::SpendingBudgetGuard>>,
+        admission: Option<crate::spending_budget::SpendingAdmission>,
+    ) -> Self {
+        Self { guard, admission }
+    }
+
+    fn activate(&mut self) -> Option<crate::spending_budget::SpendingAdmission> {
+        self.guard.take();
+        self.admission.take()
+    }
+
+    async fn release(&mut self) {
+        if let (Some(guard), Some(admission)) = (&self.guard, &self.admission) {
+            guard.release(admission).await;
+        }
+        self.guard.take();
+        self.admission.take();
+    }
+}
+
+impl Drop for PendingSpendingAdmission {
+    fn drop(&mut self) {
+        let (Some(guard), Some(admission)) = (&self.guard, &self.admission) else {
+            return;
+        };
+        let permit = match pending_spending_release_slots().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(error) => {
+                tracing::error!(
+                    %error,
+                    "spending reservation cleanup is saturated; reservation remains charged"
+                );
+                return;
+            }
+        };
+        let guard = guard.clone();
+        let admission = admission.clone();
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn(async move {
+                    let _permit = permit;
+                    guard.release(&admission).await;
+                });
+            }
+            Err(error) => {
+                tracing::error!(%error, "cannot release a pending spending reservation outside a Tokio runtime");
+            }
+        }
+    }
 }
 
 /// Outcome of selecting and preparing the next candidate.
@@ -190,6 +277,9 @@ enum AttemptPreparation {
     Ready(Box<EligibleAttempt>),
     /// Candidate must be excluded and the loop must try again.
     Retry(ProviderId),
+    /// Router or connection state changed after the eligibility snapshot; refresh once without
+    /// permanently excluding the stable provider ID.
+    Reevaluate,
     /// No attempt is possible; the request ends with this error.
     Stop(CortexError),
 }
@@ -508,11 +598,13 @@ impl RouteRequest {
         let local_backpressure = None;
         let provider_attempt_failed = false;
         let total_providers = self.router.providers().len();
-        let selection_budget = total_providers.max(1);
+        let selection_budget = total_providers
+            .max(1)
+            .saturating_add(MAX_ELIGIBILITY_SNAPSHOT_RETRIES);
         let max_attempts = if req.restrictions.spending_budget.is_some() {
             1
         } else {
-            MAX_RETRY_ATTEMPTS.min(selection_budget)
+            MAX_RETRY_ATTEMPTS.min(total_providers.max(1))
         };
         let provider_attempts = 0;
 
@@ -550,6 +642,7 @@ impl RouteRequest {
             local_backpressure,
             provider_attempt_failed,
             provider_attempts,
+            snapshot_rechecks: 0,
         };
         let context = AttemptContext {
             req: &req,
@@ -577,20 +670,30 @@ impl RouteRequest {
         context: &AttemptContext<'_>,
         cursor: &mut AttemptCursor,
     ) -> AttemptStep {
-        let attempt = match self.prepare_attempt(context, cursor).await {
+        let mut attempt = match self.prepare_attempt(context, cursor).await {
             AttemptPreparation::Ready(attempt) => attempt,
             AttemptPreparation::Retry(provider_id) => {
                 cursor.excluded.push(provider_id);
+                return AttemptStep::Retry;
+            }
+            AttemptPreparation::Reevaluate => {
+                if cursor.snapshot_rechecks >= MAX_ELIGIBILITY_SNAPSHOT_RETRIES {
+                    return AttemptStep::Done(Box::new(
+                        Err(CortexError::all_providers_exhausted()),
+                    ));
+                }
+                cursor.snapshot_rechecks += 1;
                 return AttemptStep::Retry;
             }
             AttemptPreparation::Stop(error) => return AttemptStep::Done(Box::new(Err(error))),
         };
 
         cursor.provider_attempts += 1;
+        let admission = attempt.spending_reservation.activate();
         let result = attempt.provider.complete(&attempt.provider_req).await;
         let latency_ms = context.start.elapsed().as_millis() as u64;
         self.settle_spending_reservation(
-            &attempt.admission,
+            &admission,
             attempt.provider.as_ref(),
             &attempt.provider_req,
             &result,
@@ -671,9 +774,42 @@ impl RouteRequest {
 
         // Select next available provider (excluding failed ones)
         let _select_span = tracing::debug_span!("router.select_excluding");
+        let eligibility = match self.eligibility_result(context.req).await {
+            Ok(eligibility) => eligibility,
+            Err(error) => {
+                if !cursor.provider_attempt_failed {
+                    if let Some(backpressure) = cursor.local_backpressure.take() {
+                        return AttemptPreparation::Stop(backpressure);
+                    }
+                }
+                return AttemptPreparation::Stop(error);
+            }
+        };
+        if eligibility
+            .as_ref()
+            .is_some_and(|snapshot| !self.eligibility_snapshot_matches_registry(snapshot))
+        {
+            return AttemptPreparation::Reevaluate;
+        }
+        if let Some(error) = self.eligibility_error(
+            context.req,
+            eligibility.as_ref().map(|snapshot| &snapshot.result),
+        ) {
+            if !cursor.provider_attempt_failed {
+                if let Some(backpressure) = cursor.local_backpressure.take() {
+                    return AttemptPreparation::Stop(backpressure);
+                }
+            }
+            return AttemptPreparation::Stop(error);
+        }
+        let selection_excluded = self.selection_exclusions(
+            context.req,
+            &cursor.excluded,
+            eligibility.as_ref().map(|snapshot| &snapshot.result),
+        );
         let provider = match self
             .router
-            .select_excluding(context.req, &cursor.excluded)
+            .select_excluding(context.req, &selection_excluded)
             .await
         {
             Ok(provider) => provider,
@@ -687,29 +823,49 @@ impl RouteRequest {
             }
         };
         let provider_id = provider.id().clone();
-        let connection = if self.provider_repository.is_some() {
-            self.resolve_connection(&provider_id).await
-        } else {
-            None
-        };
-        let connection_id = connection.as_ref().map(|(id, _)| *id);
-
-        // Provider restriction check (after selection, before execution)
+        // Check key authorization before any connection-state lookup so an unavailable
+        // repository does not replace the established 403 classification.
         if let Err(error) = self.check_provider_restriction(context.req, &provider_id) {
             if cursor.local_backpressure.is_some() {
                 return AttemptPreparation::Retry(provider_id);
             }
             return AttemptPreparation::Stop(error);
         }
+        let connection = if eligibility.is_none() {
+            match self
+                .resolve_connection(provider.as_ref(), &provider_id, eligibility.as_ref())
+                .await
+            {
+                Ok(connection) => connection,
+                Err(error) => {
+                    if !cursor.provider_attempt_failed {
+                        if let Some(backpressure) = cursor.local_backpressure.take() {
+                            return AttemptPreparation::Stop(backpressure);
+                        }
+                    }
+                    return AttemptPreparation::Stop(error);
+                }
+            }
+        } else {
+            None
+        };
+        if eligibility.is_none() && provider.connection_id().is_some() && connection.is_none() {
+            return AttemptPreparation::Reevaluate;
+        }
 
-        if self
-            .candidate_must_be_skipped(
-                context.req,
-                provider.as_ref(),
-                &provider_id,
-                connection.as_ref(),
-            )
-            .await
+        if !self.selected_provider_was_assessed(&provider, &provider_id, eligibility.as_ref()) {
+            return AttemptPreparation::Reevaluate;
+        }
+
+        if eligibility.is_none()
+            && self
+                .candidate_must_be_skipped(
+                    context.req,
+                    provider.as_ref(),
+                    &provider_id,
+                    connection.as_ref(),
+                )
+                .await
         {
             return AttemptPreparation::Retry(provider_id);
         }
@@ -735,6 +891,50 @@ impl RouteRequest {
                 return AttemptPreparation::Stop(error);
             }
         };
+        let mut spending_reservation =
+            PendingSpendingAdmission::new(self.spending_guard.clone(), admission);
+
+        // Recheck connection state after budget admission. The reservation guard releases the
+        // durable budget if this read is canceled or rejects the connection before upstream I/O.
+        let current_connection = match self
+            .resolve_connection(provider.as_ref(), &provider_id, eligibility.as_ref())
+            .await
+        {
+            Ok(connection) => connection,
+            Err(error) => {
+                spending_reservation.release().await;
+                drop(trial_permit);
+                if !cursor.provider_attempt_failed {
+                    if let Some(backpressure) = cursor.local_backpressure.take() {
+                        return AttemptPreparation::Stop(backpressure);
+                    }
+                }
+                return AttemptPreparation::Stop(error);
+            }
+        };
+        let selected_snapshot_changed = current_connection
+            .as_ref()
+            .is_some_and(|connection| connection.snapshot_changed);
+        let runtime_mapping_changed = eligibility.is_none()
+            && self.connection_mapping_changed(connection.as_ref(), current_connection.as_ref());
+        if selected_snapshot_changed
+            || (self.connection_is_expected(
+                provider.as_ref(),
+                &provider_id,
+                eligibility.as_ref(),
+                connection.as_ref(),
+            ) && current_connection.is_none())
+            || runtime_mapping_changed
+        {
+            spending_reservation.release().await;
+            drop(trial_permit);
+            return if eligibility.is_some() {
+                AttemptPreparation::Reevaluate
+            } else {
+                AttemptPreparation::Retry(provider_id)
+            };
+        }
+        let connection_id = current_connection.as_ref().map(|connection| connection.id);
 
         AttemptPreparation::Ready(Box::new(EligibleAttempt {
             provider,
@@ -742,8 +942,359 @@ impl RouteRequest {
             connection_id,
             provider_req,
             trial_permit,
-            admission,
+            spending_reservation,
         }))
+    }
+
+    /// Evaluate every provider and disabled connection before the selector runs.
+    /// Routers that do not expose a complete candidate snapshot keep the legacy path.
+    async fn eligibility_result(
+        &self,
+        req: &CompletionRequest,
+    ) -> Result<Option<RoutingEligibility>, CortexError> {
+        let Some(router_candidates) = self.router.eligibility_candidates() else {
+            return Ok(None);
+        };
+        let mut target_set = std::collections::HashSet::new();
+        for candidate in &router_candidates {
+            target_set.insert(candidate.provider.id().clone());
+            if let Some(connection_id) = candidate.provider.connection_id() {
+                target_set.insert(ProviderId::new(connection_id.to_string()));
+            }
+            if target_set.len() > rook_core::MAX_PROVIDER_ROUTING_STATE_TARGET_IDS {
+                tracing::error!(
+                    target_count = target_set.len(),
+                    max_targets = rook_core::MAX_PROVIDER_ROUTING_STATE_TARGET_IDS,
+                    "routing-state target limit exceeded; refusing selection"
+                );
+                if let Some(error) = self.provider_allowlist_denial(req, &router_candidates) {
+                    return Err(error);
+                }
+                return Err(CortexError::all_providers_exhausted());
+            }
+        }
+        let target_ids: Vec<_> = target_set.into_iter().collect();
+        let connections = match self.provider_repository.as_ref() {
+            Some(repository) => match tokio::time::timeout(
+                ELIGIBILITY_STATE_READ_TIMEOUT,
+                repository.list_routing_state_for_candidates(&target_ids),
+            )
+            .await
+            {
+                Ok(Ok(connections)) => connections,
+                Ok(Err(error)) => {
+                    tracing::error!(%error, "provider routing state unavailable; refusing selection");
+                    if let Some(error) = self.provider_allowlist_denial(req, &router_candidates) {
+                        return Err(error);
+                    }
+                    return Err(CortexError::all_providers_exhausted());
+                }
+                Err(_) => {
+                    tracing::error!(
+                        timeout_ms = ELIGIBILITY_STATE_READ_TIMEOUT.as_millis(),
+                        "provider routing state read timed out; refusing selection"
+                    );
+                    if let Some(error) = self.provider_allowlist_denial(req, &router_candidates) {
+                        return Err(error);
+                    }
+                    return Err(CortexError::all_providers_exhausted());
+                }
+            },
+            None => Vec::new(),
+        };
+        let mut connections = connections;
+        connections.sort_by(|left, right| {
+            left.priority
+                .cmp(&right.priority)
+                .then_with(|| left.id.0.cmp(&right.id.0))
+        });
+        let connections_by_id: std::collections::HashMap<_, _> = connections
+            .iter()
+            .map(|connection| (connection.id, connection.clone()))
+            .collect();
+        let mut connections_by_runtime = std::collections::HashMap::new();
+        for connection in connections.iter().filter(|connection| connection.is_active) {
+            connections_by_runtime
+                .entry(connection.provider_runtime_id.clone())
+                .or_insert_with(|| connection.clone());
+        }
+        let required = rook_core::RequiredCapabilities::from_request(req);
+        let mut seen_targets = std::collections::HashSet::new();
+        let mut facts = Vec::with_capacity(router_candidates.len());
+        let mut connection_states_by_target = std::collections::HashMap::new();
+        let mut providers_by_target = std::collections::HashMap::new();
+
+        for candidate in router_candidates {
+            let provider = candidate.provider;
+            let target = provider.id().clone();
+            if !seen_targets.insert(target.clone()) {
+                continue;
+            }
+            let connection_id = provider.connection_id().copied();
+            let connection = match connection_id {
+                Some(connection_id) => connections_by_id.get(&connection_id),
+                None if ConnectionId::parse_str(target.as_str()).is_ok() => None,
+                None => connections_by_runtime.get(&target),
+            }
+            .cloned();
+            let connection_enabled = match (connection_id, connection.as_ref()) {
+                (Some(_), None) => false,
+                (Some(_), Some(connection)) => {
+                    connection.is_active
+                        && provider.connection_revision() == Some(connection.adapter_revision)
+                }
+                (None, Some(connection)) => connection.is_active,
+                (None, None) => true,
+            };
+            let auth = if provider.is_available() {
+                AuthState::Valid
+            } else if connection
+                .as_ref()
+                .is_some_and(|connection| connection.auth_expired)
+            {
+                AuthState::Expired
+            } else {
+                AuthState::Missing
+            };
+            providers_by_target.insert(target.clone(), provider.clone());
+            connection_states_by_target.insert(target.clone(), connection);
+            facts.push(CandidateFacts {
+                target: TargetRef(target.clone()),
+                enabled: connection_enabled,
+                auth,
+                model_supported: provider.supports_model(&req.model),
+                capabilities_supported: required
+                    .check(&provider.model_capabilities(&req.model))
+                    .is_ok(),
+                circuit_open: candidate.circuit_open,
+                quota_exhausted: false,
+                key_model_allowed: req.restrictions.allowed_models.is_empty()
+                    || req.restrictions.allowed_models.contains(&req.model),
+                key_provider_allowed: req.restrictions.allowed_providers.is_empty()
+                    || req.restrictions.allowed_providers.contains(&target),
+            });
+        }
+
+        let candidate_connections: Vec<_> = facts
+            .iter()
+            .filter(|candidate| candidate.requires_quota_check())
+            .filter_map(|candidate| {
+                connection_states_by_target
+                    .get(&candidate.target.0)
+                    .and_then(Option::as_ref)
+            })
+            .filter(|connection| connection.is_active)
+            .collect();
+        let exhausted_connections = self.exhausted_connection_ids(&candidate_connections).await;
+        for candidate in &mut facts {
+            if !candidate.requires_quota_check() {
+                continue;
+            }
+            if let Some(connection) = connection_states_by_target
+                .get(&candidate.target.0)
+                .and_then(Option::as_ref)
+            {
+                candidate.quota_exhausted = exhausted_connections.contains(&connection.id);
+            }
+        }
+
+        // Connection and quota reads can cross a circuit cooldown boundary. Use a fresh circuit
+        // snapshot before rejecting candidates; trial acquisition still rechecks just before I/O.
+        if let Some(current_candidates) = self.router.eligibility_candidates() {
+            let current_circuits: std::collections::HashMap<_, _> = current_candidates
+                .into_iter()
+                .map(|candidate| (candidate.provider.id().clone(), candidate.circuit_open))
+                .collect();
+            for candidate in &mut facts {
+                if let Some(circuit_open) = current_circuits.get(&candidate.target.0) {
+                    candidate.circuit_open = *circuit_open;
+                }
+            }
+        }
+
+        let connections_by_target = connection_states_by_target
+            .into_iter()
+            .filter_map(|(target, connection)| connection.map(|connection| (target, connection)))
+            .collect();
+        Ok(Some(RoutingEligibility {
+            result: evaluate_candidates(facts),
+            connections_by_target,
+            providers_by_target,
+        }))
+    }
+
+    /// Read quota series per connection under one deadline; unavailable or capped evidence stays eligible.
+    async fn exhausted_connection_ids(
+        &self,
+        connections: &[&ProviderConnectionRoutingState],
+    ) -> std::collections::HashSet<ConnectionId> {
+        let mut exhausted = std::collections::HashSet::new();
+        let Some(reader) = self.quota_reader.as_ref() else {
+            return exhausted;
+        };
+        if connections.is_empty() {
+            return exhausted;
+        }
+
+        let mut queried_connections = std::collections::HashSet::new();
+        let read_connections = async {
+            for connection in connections {
+                if !queried_connections.insert(connection.id) {
+                    continue;
+                }
+                let query = QuotaObservationQuery {
+                    connection_ids: vec![connection.id],
+                    provider: Some(connection.provider_runtime_id.clone()),
+                    limit: QuotaObservationQuery::MAX_LIMIT,
+                    ..QuotaObservationQuery::default()
+                };
+                let observations = match reader.latest_observations(&query).await {
+                    Ok(observations) => observations,
+                    Err(error) => {
+                        tracing::warn!(
+                            %connection.id,
+                            %error,
+                            "failed to read quota observations; keeping connection eligible"
+                        );
+                        continue;
+                    }
+                };
+                let now = Utc::now();
+                if observations.len() >= QuotaObservationQuery::MAX_LIMIT {
+                    tracing::warn!(
+                        %connection.id,
+                        series_limit = QuotaObservationQuery::MAX_LIMIT,
+                        "quota series limit reached; keeping connection eligible with unknown quota"
+                    );
+                    continue;
+                }
+                let quota = evaluate_connection_quota(
+                    &observations,
+                    &connection.id,
+                    Some(&connection.provider_runtime_id),
+                    now,
+                    &self.quota_policy,
+                );
+                if quota.is_exhausted() {
+                    exhausted.insert(connection.id);
+                }
+            }
+        };
+        if tokio::time::timeout(QUOTA_READ_TIMEOUT, read_connections)
+            .await
+            .is_err()
+        {
+            tracing::warn!(
+                timeout_ms = QUOTA_READ_TIMEOUT.as_millis(),
+                exhausted_count = exhausted.len(),
+                "quota eligibility deadline reached; unread connections remain eligible"
+            );
+        }
+        exhausted
+    }
+
+    /// Exclude key-disallowed targets when at least one registered target is allowed.
+    /// If no target is allowed, leave selection unchanged so the existing 403 check reports the
+    /// same authorization error as before.
+    fn selection_exclusions(
+        &self,
+        req: &CompletionRequest,
+        excluded: &[ProviderId],
+        eligibility: Option<&EligibilityResult>,
+    ) -> Vec<ProviderId> {
+        let already_excluded: std::collections::HashSet<_> = excluded.iter().cloned().collect();
+        let mut selection_excluded = excluded.to_vec();
+        let rejected_targets: Vec<ProviderId> = match eligibility {
+            Some(result) => {
+                let eligible_targets: std::collections::HashSet<_> = result
+                    .eligible
+                    .iter()
+                    .map(|target| target.0.clone())
+                    .collect();
+                let mut rejected_targets: std::collections::HashSet<_> = result
+                    .rejected
+                    .iter()
+                    .map(|rejection| rejection.target.0.clone())
+                    .collect();
+                rejected_targets.extend(
+                    self.router
+                        .providers()
+                        .into_iter()
+                        .filter(|target| !eligible_targets.contains(target)),
+                );
+                rejected_targets.into_iter().collect()
+            }
+            None => {
+                let allowed = &req.restrictions.allowed_providers;
+                if allowed.is_empty() {
+                    return selection_excluded;
+                }
+                let candidates = self.router.providers();
+                if !candidates
+                    .iter()
+                    .any(|candidate| allowed.contains(candidate))
+                {
+                    return selection_excluded;
+                }
+                candidates
+                    .into_iter()
+                    .filter(|candidate| !allowed.contains(candidate))
+                    .collect()
+            }
+        };
+        for target in rejected_targets {
+            if !already_excluded.contains(&target) {
+                selection_excluded.push(target);
+            }
+        }
+        selection_excluded
+    }
+
+    fn eligibility_error(
+        &self,
+        req: &CompletionRequest,
+        eligibility: Option<&EligibilityResult>,
+    ) -> Option<CortexError> {
+        let eligibility = eligibility?;
+        if !eligibility.eligible.is_empty() || eligibility.rejected.is_empty() {
+            return None;
+        }
+
+        if eligibility
+            .rejected
+            .iter()
+            .all(|rejection| rejection.reason == RejectionReason::KeyModelNotAllowed)
+        {
+            return Some(RestrictionViolation::ModelNotAllowed(req.model.clone()).into());
+        }
+        if eligibility
+            .rejected
+            .iter()
+            .all(|rejection| rejection.reason == RejectionReason::KeyProviderNotAllowed)
+        {
+            return Some(
+                RestrictionViolation::ProviderNotAllowed(eligibility.rejected[0].target.0.clone())
+                    .into(),
+            );
+        }
+        Some(CortexError::all_providers_exhausted())
+    }
+
+    fn provider_allowlist_denial(
+        &self,
+        req: &CompletionRequest,
+        candidates: &[rook_core::RouterCandidateSnapshot],
+    ) -> Option<CortexError> {
+        let allowed = &req.restrictions.allowed_providers;
+        let first = candidates.first()?;
+        if allowed.is_empty()
+            || candidates
+                .iter()
+                .any(|candidate| allowed.contains(candidate.provider.id()))
+        {
+            return None;
+        }
+        Some(RestrictionViolation::ProviderNotAllowed(first.provider.id().clone()).into())
     }
 
     /// Capability and upstream-quota preflight; true when this candidate must be skipped.
@@ -752,7 +1303,7 @@ impl RouteRequest {
         req: &CompletionRequest,
         provider: &dyn rook_core::ProviderPort,
         provider_id: &ProviderId,
-        connection: Option<&(ConnectionId, Option<ProviderId>)>,
+        connection: Option<&ResolvedConnection>,
     ) -> bool {
         // Skip providers that cannot satisfy the capabilities the request requires.
         // The check runs after authorization and before any upstream I/O.
@@ -764,21 +1315,21 @@ impl RouteRequest {
         }
 
         // Skip connections with fresh, authoritative exhaustion evidence.
-        let Some((connection_id, runtime_id)) = connection else {
+        let Some(connection) = connection else {
             return false;
         };
         if self.quota_reader.is_none() {
             return false;
         }
         let state = self
-            .connection_quota_state(connection_id, runtime_id.as_ref())
+            .connection_quota_state(&connection.id, connection.runtime_id.as_ref())
             .await;
         if !state.is_exhausted() {
             return false;
         }
         tracing::info!(
             provider = %provider_id,
-            %connection_id,
+            connection_id = %connection.id,
             skip_reason = %quota_skip_reason(&state),
             "skipping connection with exhausted upstream quota"
         );
@@ -1078,11 +1629,38 @@ impl RouteRequest {
         let mut provider_attempts = 0;
         let mut excluded = Vec::new();
         let mut local_backpressure = None;
+        let mut snapshot_rechecks = 0;
         for _ in 0..selection_budget {
             if provider_attempts >= max_attempts {
                 break;
             }
-            let provider = match self.router.select_excluding(req, &excluded).await {
+            let eligibility = match self.eligibility_result(req).await {
+                Ok(eligibility) => eligibility,
+                Err(error) => return Err(local_backpressure.unwrap_or(error)),
+            };
+            if eligibility
+                .as_ref()
+                .is_some_and(|snapshot| !self.eligibility_snapshot_matches_registry(snapshot))
+            {
+                if snapshot_rechecks >= MAX_ELIGIBILITY_SNAPSHOT_RETRIES {
+                    return Err(
+                        local_backpressure.unwrap_or_else(CortexError::all_providers_exhausted)
+                    );
+                }
+                snapshot_rechecks += 1;
+                continue;
+            }
+            if let Some(error) =
+                self.eligibility_error(req, eligibility.as_ref().map(|snapshot| &snapshot.result))
+            {
+                return Err(local_backpressure.unwrap_or(error));
+            }
+            let selection_excluded = self.selection_exclusions(
+                req,
+                &excluded,
+                eligibility.as_ref().map(|snapshot| &snapshot.result),
+            );
+            let provider = match self.router.select_excluding(req, &selection_excluded).await {
                 Ok(provider) => provider,
                 Err(error) => {
                     return Err(local_backpressure.unwrap_or(error));
@@ -1098,31 +1676,58 @@ impl RouteRequest {
                 }
                 return Err(RestrictionViolation::ProviderNotAllowed(provider_id.clone()).into());
             }
-            if rook_core::RequiredCapabilities::from_request(req)
-                .check(&provider.model_capabilities(&req.model))
-                .is_err()
-            {
-                excluded.push(provider_id);
+            if !self.selected_provider_was_assessed(&provider, &provider_id, eligibility.as_ref()) {
+                if snapshot_rechecks >= MAX_ELIGIBILITY_SNAPSHOT_RETRIES {
+                    return Err(
+                        local_backpressure.unwrap_or_else(CortexError::all_providers_exhausted)
+                    );
+                }
+                snapshot_rechecks += 1;
                 continue;
             }
             // Skip connections with fresh, authoritative exhaustion
             // evidence before the stream starts and exposes SSE bytes.
-            let connection = if self.provider_repository.is_some() {
-                self.resolve_connection(&provider_id).await
+            let connection = if eligibility.is_none() {
+                match self
+                    .resolve_connection(provider.as_ref(), &provider_id, eligibility.as_ref())
+                    .await
+                {
+                    Ok(connection) => connection,
+                    Err(error) => return Err(local_backpressure.unwrap_or(error)),
+                }
             } else {
                 None
             };
-            let connection_id = connection.as_ref().map(|(id, _)| *id);
-            if self.quota_reader.is_some() {
-                if let Some((connection_id, runtime_id)) = connection.as_ref() {
+            if eligibility.is_none()
+                && self.connection_is_expected(
+                    provider.as_ref(),
+                    &provider_id,
+                    None,
+                    connection.as_ref(),
+                )
+                && connection.is_none()
+            {
+                excluded.push(provider_id);
+                continue;
+            }
+            if eligibility.is_none()
+                && rook_core::RequiredCapabilities::from_request(req)
+                    .check(&provider.model_capabilities(&req.model))
+                    .is_err()
+            {
+                excluded.push(provider_id);
+                continue;
+            }
+            if eligibility.is_none() && self.quota_reader.is_some() {
+                if let Some(connection) = connection.as_ref() {
                     let state = self
-                        .connection_quota_state(connection_id, runtime_id.as_ref())
+                        .connection_quota_state(&connection.id, connection.runtime_id.as_ref())
                         .await;
                     if state.is_exhausted() {
                         let reason = quota_skip_reason(&state);
                         tracing::info!(
                             provider = %provider_id,
-                            %connection_id,
+                            connection_id = %connection.id,
                             skip_reason = %reason,
                             "skipping connection with exhausted upstream quota"
                         );
@@ -1136,7 +1741,7 @@ impl RouteRequest {
                 excluded.push(provider_id);
                 continue;
             };
-            let admission = match self
+            let budget_admission = match self
                 .admit_spending_budget(provider.as_ref(), &provider_req, req)
                 .await
             {
@@ -1146,6 +1751,49 @@ impl RouteRequest {
                     return Err(error);
                 }
             };
+            let mut spending_reservation =
+                PendingSpendingAdmission::new(self.spending_guard.clone(), budget_admission);
+            let current_connection = match self
+                .resolve_connection(provider.as_ref(), &provider_id, eligibility.as_ref())
+                .await
+            {
+                Ok(connection) => connection,
+                Err(error) => {
+                    spending_reservation.release().await;
+                    drop(trial_permit);
+                    return Err(local_backpressure.unwrap_or(error));
+                }
+            };
+            let selected_snapshot_changed = current_connection
+                .as_ref()
+                .is_some_and(|connection| connection.snapshot_changed);
+            let runtime_mapping_changed = eligibility.is_none()
+                && self
+                    .connection_mapping_changed(connection.as_ref(), current_connection.as_ref());
+            if selected_snapshot_changed
+                || (self.connection_is_expected(
+                    provider.as_ref(),
+                    &provider_id,
+                    eligibility.as_ref(),
+                    connection.as_ref(),
+                ) && current_connection.is_none())
+                || runtime_mapping_changed
+            {
+                spending_reservation.release().await;
+                drop(trial_permit);
+                if eligibility.is_none() {
+                    excluded.push(provider_id);
+                } else if snapshot_rechecks >= MAX_ELIGIBILITY_SNAPSHOT_RETRIES {
+                    return Err(
+                        local_backpressure.unwrap_or_else(CortexError::all_providers_exhausted)
+                    );
+                } else {
+                    snapshot_rechecks += 1;
+                }
+                continue;
+            }
+            let connection_id = current_connection.as_ref().map(|connection| connection.id);
+            let admission = spending_reservation.activate();
             provider_attempts += 1;
             match classify_attempt_result(AttemptResult::Provider(
                 provider.stream(&provider_req).await,
@@ -1240,11 +1888,13 @@ impl RouteRequest {
         // stream, so it is safe to try another provider before any SSE bytes
         // are exposed to the caller. Bound attempts by registered providers.
         let total_providers = self.router.providers().len();
-        let selection_budget = total_providers.max(1);
+        let provider_attempt_budget = total_providers.max(1);
+        let selection_budget =
+            provider_attempt_budget.saturating_add(MAX_ELIGIBILITY_SNAPSHOT_RETRIES);
         let max_attempts = if req.restrictions.spending_budget.is_some() {
             1
         } else {
-            selection_budget.min(MAX_RETRY_ATTEMPTS)
+            provider_attempt_budget.min(MAX_RETRY_ATTEMPTS)
         };
         let selection = self
             .select_stream_provider(&req, selection_budget, max_attempts)
@@ -1516,7 +2166,10 @@ impl RouteRequest {
                         authorized = false;
                         break;
                     };
-                    let Ok(Some(connection)) = repository.find(id).await else {
+                    let Ok(Some(connection)) = self
+                        .read_connection_routing_state(repository.as_ref(), *id)
+                        .await
+                    else {
                         authorized = false;
                         break;
                     };
@@ -1784,15 +2437,8 @@ impl RouteRequest {
             record_combo_skip(errors, &audit_provider_id, step_index, reason);
             return Ok(None);
         }
-
-        let step_context = ComboStepContext {
-            combo_id,
-            step_index,
-            provider_id: audit_provider_id.clone(),
-            connection_id: exact_connection_id
-                .or_else(|| ConnectionId::parse_str(audit_provider_id.as_str()).ok()),
-            runtime_id,
-        };
+        let managed_connection_id =
+            exact_connection_id.or_else(|| provider.connection_id().copied());
 
         // 3c. Execute with per-step timeout
         let mut provider_req = step_req.clone();
@@ -1808,6 +2454,47 @@ impl RouteRequest {
                 "half_open_trial_in_progress",
             );
             return Ok(None);
+        };
+
+        let runtime_id = if let Some(connection_id) = managed_connection_id {
+            let current_connection = match self
+                .resolve_connection(provider.as_ref(), &audit_provider_id, None)
+                .await
+            {
+                Ok(connection) => connection,
+                Err(error) => {
+                    drop(trial_permit);
+                    return Err(error);
+                }
+            };
+            let current_runtime = current_connection.and_then(|current| {
+                (!current.snapshot_changed
+                    && current.id == connection_id
+                    && (exact_connection_id.is_none()
+                        || current.runtime_id.as_ref() == Some(provider_id)))
+                .then_some(current.runtime_id)
+                .flatten()
+            });
+            if current_runtime.is_none() {
+                drop(trial_permit);
+                record_combo_skip(
+                    errors,
+                    &audit_provider_id,
+                    step_index,
+                    "adapter_revision_mismatch",
+                );
+                return Ok(None);
+            }
+            current_runtime
+        } else {
+            runtime_id
+        };
+        let step_context = ComboStepContext {
+            combo_id,
+            step_index,
+            provider_id: audit_provider_id.clone(),
+            connection_id: managed_connection_id,
+            runtime_id,
         };
 
         Ok(Some(ComboPreparedStep {
@@ -2020,8 +2707,16 @@ impl RouteRequest {
         let Some(connection_id) = step.connection_id.as_ref() else {
             return Ok(());
         };
-        let Ok(Some(connection)) = repository.find(connection_id).await else {
-            return Ok(());
+        let connection = match self
+            .read_connection_routing_state(repository, *connection_id)
+            .await
+        {
+            Ok(Some(connection)) => connection,
+            Ok(None) => return Ok(()),
+            Err(error) => {
+                tracing::error!(%connection_id, %error, "combo authorization state unavailable; refusing request");
+                return Err(CortexError::all_providers_exhausted());
+            }
         };
         if !connection.is_active || connection.provider_runtime_id != step.provider_id {
             return Ok(());
@@ -2032,6 +2727,11 @@ impl RouteRequest {
             return Ok(());
         };
         if provider.id() != &adapter_id {
+            return Ok(());
+        }
+        if provider.connection_id() != Some(connection_id)
+            || provider.connection_revision() != Some(connection.adapter_revision)
+        {
             return Ok(());
         }
         match classify_connection_adapter(provider.as_ref(), &adapter_id, &step.model, allowed) {
@@ -2069,15 +2769,21 @@ impl RouteRequest {
             );
             return Ok(None);
         };
-        let connection = match repository.find(connection_id).await {
+        let connection = match self
+            .read_connection_routing_state(repository.as_ref(), *connection_id)
+            .await
+        {
             Ok(Some(connection)) => connection,
             Ok(None) => {
                 record_combo_skip(errors, runtime_id, step_index, "connection_not_found");
                 return Ok(None);
             }
             Err(error) => {
-                tracing::warn!(step_index = step_index + 1, %connection_id, error = %error, skip_reason = "connection_lookup_failed", "skipping combo step");
-                errors.push((runtime_id.clone(), "connection_lookup_failed".to_string()));
+                tracing::warn!(step_index = step_index + 1, %connection_id, error = %error, skip_reason = "connection_state_unavailable", "skipping combo step");
+                errors.push((
+                    runtime_id.clone(),
+                    "connection_state_unavailable".to_string(),
+                ));
                 return Ok(None);
             }
         };
@@ -2097,6 +2803,19 @@ impl RouteRequest {
         };
         if provider.id() != &adapter_id {
             record_combo_skip(errors, &adapter_id, step_index, "adapter_identity_mismatch");
+            return Ok(None);
+        }
+        if provider.connection_id() != Some(connection_id) {
+            record_combo_skip(
+                errors,
+                &adapter_id,
+                step_index,
+                "adapter_connection_mismatch",
+            );
+            return Ok(None);
+        }
+        if provider.connection_revision() != Some(connection.adapter_revision) {
+            record_combo_skip(errors, &adapter_id, step_index, "adapter_revision_mismatch");
             return Ok(None);
         }
         let allowed = &req.restrictions.allowed_providers;
@@ -2293,34 +3012,196 @@ impl RouteRequest {
         }
     }
 
+    fn connection_is_expected(
+        &self,
+        provider: &dyn rook_core::ProviderPort,
+        provider_id: &ProviderId,
+        eligibility: Option<&RoutingEligibility>,
+        previously_resolved: Option<&ResolvedConnection>,
+    ) -> bool {
+        provider.connection_id().is_some()
+            || previously_resolved.is_some()
+            || eligibility
+                .is_some_and(|snapshot| snapshot.connections_by_target.contains_key(provider_id))
+    }
+
+    fn selected_provider_was_assessed(
+        &self,
+        provider: &Arc<dyn rook_core::ProviderPort>,
+        provider_id: &ProviderId,
+        eligibility: Option<&RoutingEligibility>,
+    ) -> bool {
+        let Some(snapshot) = eligibility else {
+            return true;
+        };
+        snapshot
+            .result
+            .eligible
+            .iter()
+            .any(|target| target.0 == *provider_id)
+            && snapshot
+                .providers_by_target
+                .get(provider_id)
+                .is_some_and(|assessed| Arc::ptr_eq(assessed, provider))
+    }
+
+    fn eligibility_snapshot_matches_registry(&self, snapshot: &RoutingEligibility) -> bool {
+        let Some(candidates) = self.router.eligibility_candidates() else {
+            return false;
+        };
+        let current: std::collections::HashMap<_, _> = candidates
+            .into_iter()
+            .map(|candidate| (candidate.provider.id().clone(), candidate.provider))
+            .collect();
+        current.len() == snapshot.providers_by_target.len()
+            && snapshot
+                .providers_by_target
+                .iter()
+                .all(|(provider_id, assessed)| {
+                    current
+                        .get(provider_id)
+                        .is_some_and(|registered| Arc::ptr_eq(assessed, registered))
+                })
+    }
+
+    fn connection_mapping_changed(
+        &self,
+        previous: Option<&ResolvedConnection>,
+        current: Option<&ResolvedConnection>,
+    ) -> bool {
+        match (previous, current) {
+            (None, None) => false,
+            (Some(previous), Some(current)) => {
+                previous.id != current.id || previous.adapter_revision != current.adapter_revision
+            }
+            _ => true,
+        }
+    }
+
+    async fn read_routing_state_for_candidate(
+        &self,
+        repository: &dyn ProviderRepositoryPort,
+        target: ProviderId,
+    ) -> Result<Vec<ProviderConnectionRoutingState>, CortexError> {
+        match tokio::time::timeout(
+            ELIGIBILITY_STATE_READ_TIMEOUT,
+            repository.list_routing_state_for_candidates(std::slice::from_ref(&target)),
+        )
+        .await
+        {
+            Ok(Ok(states)) => Ok(states),
+            Ok(Err(error)) => {
+                tracing::error!(%target, %error, "provider routing state unavailable; refusing selection");
+                Err(CortexError::all_providers_exhausted())
+            }
+            Err(_) => {
+                tracing::error!(
+                    %target,
+                    timeout_ms = ELIGIBILITY_STATE_READ_TIMEOUT.as_millis(),
+                    "provider routing state read timed out; refusing selection"
+                );
+                Err(CortexError::all_providers_exhausted())
+            }
+        }
+    }
+
+    async fn read_connection_routing_state(
+        &self,
+        repository: &dyn ProviderRepositoryPort,
+        connection_id: ConnectionId,
+    ) -> Result<Option<ProviderConnectionRoutingState>, CortexError> {
+        let target = ProviderId::new(connection_id.to_string());
+        let routing_state = self
+            .read_routing_state_for_candidate(repository, target)
+            .await?;
+        Ok(routing_state
+            .into_iter()
+            .find(|state| state.id == connection_id))
+    }
+
     async fn resolve_connection(
         &self,
+        provider: &dyn rook_core::ProviderPort,
         provider_id: &ProviderId,
-    ) -> Option<(ConnectionId, Option<ProviderId>)> {
-        let repository = self.provider_repository.as_ref()?;
+        eligibility: Option<&RoutingEligibility>,
+    ) -> Result<Option<ResolvedConnection>, CortexError> {
+        let Some(repository) = self.provider_repository.as_ref() else {
+            return if provider.connection_id().is_some() {
+                Err(CortexError::all_providers_exhausted())
+            } else {
+                Ok(None)
+            };
+        };
 
-        // Connection adapters use the connection UUID as their ProviderId.
-        // Return the runtime ID from the same record to avoid a second lookup.
-        if let Ok(connection_id) = ConnectionId::parse_str(provider_id.as_str()) {
-            match repository.find(&connection_id).await {
-                Ok(Some(connection)) => {
-                    return Some((connection_id, Some(connection.provider_runtime_id)));
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    tracing::warn!(%connection_id, error = %error, "failed to resolve provider connection by id");
-                }
-            }
+        if let Some(connection_id) = provider.connection_id().copied() {
+            let state = self
+                .read_connection_routing_state(repository.as_ref(), connection_id)
+                .await?;
+            let expected_revision = provider.connection_revision();
+            let snapshot_revision = eligibility
+                .and_then(|snapshot| snapshot.connections_by_target.get(provider_id))
+                .map(|state| state.adapter_revision);
+            let Some(state) = state.filter(|state| state.is_active) else {
+                return Ok(None);
+            };
+            let snapshot_changed = expected_revision != Some(state.adapter_revision)
+                || snapshot_revision.is_some_and(|revision| revision != state.adapter_revision);
+            return Ok(Some(ResolvedConnection {
+                id: connection_id,
+                runtime_id: Some(state.provider_runtime_id),
+                adapter_revision: state.adapter_revision,
+                snapshot_changed,
+            }));
         }
 
-        match repository.find_connection_id_by_runtime(provider_id).await {
-            Ok(Some(connection_id)) => Some((connection_id, Some(provider_id.clone()))),
-            Ok(None) => None,
-            Err(error) => {
-                tracing::warn!(provider = %provider_id, error = %error, "failed to resolve provider connection id");
+        // A UUID-shaped ID is not proof that a static provider belongs to a connection.
+        // Runtime IDs remain supported for providers that use the runtime ID directly.
+        if ConnectionId::parse_str(provider_id.as_str()).is_ok() {
+            return Ok(None);
+        }
+        let runtime_matches = self
+            .read_routing_state_for_candidate(repository.as_ref(), provider_id.clone())
+            .await?;
+        let current = runtime_matches
+            .into_iter()
+            .find(|state| state.is_active && state.provider_runtime_id == *provider_id);
+        let expected = eligibility
+            .and_then(|snapshot| snapshot.connections_by_target.get(provider_id))
+            .map(|state| (state.id, state.adapter_revision));
+        let current_identity = current
+            .as_ref()
+            .map(|state| (state.id, state.adapter_revision));
+        if eligibility.is_some() && current_identity != expected {
+            let expected_state = if let Some((expected_connection_id, _)) = expected {
+                let expected_state = self
+                    .read_connection_routing_state(repository.as_ref(), expected_connection_id)
+                    .await?;
+                if expected_state.as_ref().is_none_or(|state| !state.is_active) {
+                    tracing::warn!(
+                        %provider_id,
+                        %expected_connection_id,
+                        "previously matched runtime connection is inactive or missing; refusing selection"
+                    );
+                    return Err(CortexError::all_providers_exhausted());
+                }
+                expected_state
+            } else {
                 None
-            }
+            };
+            tracing::warn!(%provider_id, "provider runtime mapping changed after eligibility; requesting a fresh snapshot");
+            return Ok(current.or(expected_state).map(|state| ResolvedConnection {
+                id: state.id,
+                runtime_id: Some(state.provider_runtime_id),
+                adapter_revision: state.adapter_revision,
+                snapshot_changed: true,
+            }));
         }
+        Ok(current.map(|state| ResolvedConnection {
+            id: state.id,
+            runtime_id: Some(state.provider_runtime_id),
+            adapter_revision: state.adapter_revision,
+            snapshot_changed: false,
+        }))
     }
 
     /// Evaluate the quota state of a connection from upstream evidence.
@@ -2340,6 +3221,7 @@ impl RouteRequest {
         let query = QuotaObservationQuery {
             connection_ids: vec![*connection_id],
             provider: runtime_id.cloned(),
+            limit: QuotaObservationQuery::MAX_LIMIT,
             ..QuotaObservationQuery::default()
         };
 
@@ -2367,6 +3249,15 @@ impl RouteRequest {
                 return QuotaState::Unknown;
             }
         };
+
+        if observations.len() >= QuotaObservationQuery::MAX_LIMIT {
+            tracing::warn!(
+                %connection_id,
+                series_limit = QuotaObservationQuery::MAX_LIMIT,
+                "quota series limit reached; keeping connection eligible with unknown quota"
+            );
+            return QuotaState::Unknown;
+        }
 
         evaluate_connection_quota(
             &observations,
