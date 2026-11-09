@@ -23,9 +23,9 @@ Do not claim platform parity without real enforcement evidence on Linux, macOS, 
 - [x] 1.1 RED: Add application tests for typed policy settings, profile outcomes, managed restrictions, trust provenance, and bounded escalation; the initial tests exposed missing policy types and an unsafe `Always` path.
 - [x] 1.2 GREEN: Add typed effective-policy resolution and restrictive defaults in `crates/huginn/application/src/permission_policy.rs` and `apps/huginn/src/config.rs`.
 - [x] 1.3 GREEN: Pass immutable policy through interactive/headless composition in `apps/huginn/src/main.rs`.
-- [ ] 1.4 RED: Add a failing `HostPolicy` regression test proving ordinary out-of-profile native writes under `OnRequest` reach the prompt (including empty escalation configuration); managed denial remains final. Current TUI regression: write action is rejected before UI prompt.
-- [ ] 1.5 GREEN: Fix `HostPolicy::approve_for` and policy/action mapping so prompt eligibility is not pre-denied; keep policy resolution outside presentation and preserve the managed-denial precedence.
-- [ ] 1.6 REFACTOR: Run policy, composition, HostPolicy, and TUI tests; prove no allowlist/session shortcut or approval changes the selected sandbox.
+- [x] 1.4 RED: Add a failing `HostPolicy` regression test proving ordinary out-of-profile native writes under `OnRequest` reach the prompt (including empty escalation configuration); managed denial remains final. Current TUI regression: write action is rejected before UI prompt.
+- [x] 1.5 GREEN: Fix `HostPolicy::approve_for` and policy/action mapping so prompt eligibility is not pre-denied; keep policy resolution outside presentation and preserve the managed-denial precedence.
+- [x] 1.6 REFACTOR: Run policy, composition, HostPolicy, and TUI tests; prove no allowlist/session shortcut or approval changes the selected sandbox.
 - [ ] 1.7 RED: Test separate global/user rules and workspace grants, deterministic precedence, user prohibitions, and managed restrictions overriding grants.
 - [ ] 1.8 GREEN: Implement distinct policy authorities and precedence in `permission_policy.rs` and `authorization.rs`.
 - [ ] 1.9 REFACTOR: Verify policy provenance and that behavioral instructions do not affect host authorization.

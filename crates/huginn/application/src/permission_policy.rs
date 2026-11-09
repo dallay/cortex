@@ -195,7 +195,8 @@ impl EffectivePolicy {
         }
         if self.approval_mode == ApprovalMode::OnRequest
             && approver_available
-            && self.escalation_capabilities.contains(&capability)
+            && (self.escalation_capabilities.is_empty()
+                || self.escalation_capabilities.contains(&capability))
         {
             return AuthorizationOutcome::RequiresApproval;
         }
@@ -296,6 +297,27 @@ mod tests {
             AuthorizationOutcome::Denied
         );
         assert_eq!(policy.profile(), ProcessProfile::Workspace);
+    }
+
+    #[test]
+    fn on_request_makes_out_of_profile_effects_prompt_eligible_without_optional_escalations() {
+        let policy = EffectivePolicy::resolve(
+            PolicySettings {
+                profile: ProcessProfile::Restricted,
+                approval_mode: ApprovalMode::OnRequest,
+            },
+            None,
+            ProjectTrust::default(),
+        );
+
+        assert_eq!(
+            policy.decide(Capability::FileWrite, true),
+            AuthorizationOutcome::RequiresApproval
+        );
+        assert_eq!(
+            policy.decide(Capability::FileWrite, false),
+            AuthorizationOutcome::Denied
+        );
     }
 
     #[test]

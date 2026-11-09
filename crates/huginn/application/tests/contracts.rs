@@ -121,6 +121,128 @@ async fn legacy_action_grants_cannot_authorize_file_mutations() {
     assert_eq!(prompt.grants.load(Ordering::SeqCst), 0);
 }
 
+#[tokio::test]
+async fn on_request_prompts_for_out_of_profile_native_write_without_escalation_list() {
+    use huginn_application::permission_policy::{
+        ApprovalMode, EffectivePolicy, PolicySettings, ProcessProfile, ProjectTrust,
+    };
+    use huginn_core::ApprovalProvenance;
+    use std::collections::BTreeSet;
+
+    struct RecordingPrompt {
+        requests: AtomicUsize,
+    }
+    #[async_trait]
+    impl ApprovalPrompt for RecordingPrompt {
+        async fn request_decision(
+            &self,
+            _: &ApprovalRequest,
+            allowed_decisions: &[ApprovalDecision],
+            _: CancellationToken,
+        ) -> Result<ApprovalDecision> {
+            self.requests.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(
+                allowed_decisions,
+                &[ApprovalDecision::Reject, ApprovalDecision::ApproveOnce]
+            );
+            Ok(ApprovalDecision::ApproveOnce)
+        }
+    }
+
+    let prompt = Arc::new(RecordingPrompt {
+        requests: AtomicUsize::new(0),
+    });
+    let policy = EffectivePolicy::resolve(
+        PolicySettings {
+            profile: ProcessProfile::Restricted,
+            approval_mode: ApprovalMode::OnRequest,
+        },
+        None,
+        ProjectTrust::default(),
+    );
+    let host =
+        HostPolicy::new(prompt.clone(), BTreeSet::new()).with_effective_policy(Arc::new(policy));
+    let request = ApprovalRequest {
+        id: "outside-profile-write".into(),
+        action: "native.write_file".into(),
+        preview: "write one file".into(),
+        resource: Some(huginn_core::ApprovalResource {
+            canonical_path: std::env::temp_dir().join("huginn-outside-profile.txt"),
+            sensitive: false,
+        }),
+        provenance: Some(ApprovalProvenance::NativeFileBuiltin),
+    };
+
+    assert_eq!(
+        host.approve(&request, CancellationToken::new())
+            .await
+            .unwrap(),
+        ApprovalDecision::ApproveOnce
+    );
+    assert_eq!(prompt.requests.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        host.effective_policy().profile(),
+        ProcessProfile::Restricted,
+        "approval must not change the selected profile"
+    );
+}
+
+#[tokio::test]
+async fn managed_denial_of_native_write_is_final_before_host_prompt() {
+    use huginn_application::permission_policy::{
+        ApprovalMode, EffectivePolicy, ManagedRestrictions, PolicySettings, ProcessProfile,
+        ProjectTrust,
+    };
+    use huginn_core::ApprovalProvenance;
+    struct RecordingPrompt(AtomicUsize);
+    #[async_trait]
+    impl ApprovalPrompt for RecordingPrompt {
+        async fn request_decision(
+            &self,
+            _: &ApprovalRequest,
+            _: &[ApprovalDecision],
+            _: CancellationToken,
+        ) -> Result<ApprovalDecision> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(ApprovalDecision::ApproveOnce)
+        }
+    }
+
+    let prompt = Arc::new(RecordingPrompt(AtomicUsize::new(0)));
+    let policy = EffectivePolicy::resolve(
+        PolicySettings {
+            profile: ProcessProfile::Restricted,
+            approval_mode: ApprovalMode::OnRequest,
+        },
+        Some(ManagedRestrictions {
+            denied_capabilities: [huginn_application::permission_policy::Capability::FileWrite]
+                .into(),
+            ..ManagedRestrictions::default()
+        }),
+        ProjectTrust::default(),
+    );
+    let host = HostPolicy::new(prompt.clone(), ["native.write_file".to_owned()].into())
+        .with_effective_policy(Arc::new(policy));
+    let request = ApprovalRequest {
+        id: "managed-denied-write".into(),
+        action: "native.write_file".into(),
+        preview: "write one file".into(),
+        resource: Some(huginn_core::ApprovalResource {
+            canonical_path: std::env::temp_dir().join("huginn-managed-denied.txt"),
+            sensitive: false,
+        }),
+        provenance: Some(ApprovalProvenance::NativeFileBuiltin),
+    };
+
+    assert_eq!(
+        host.approve(&request, CancellationToken::new())
+            .await
+            .unwrap(),
+        ApprovalDecision::Reject
+    );
+    assert_eq!(prompt.0.load(Ordering::SeqCst), 0);
+}
+
 struct SessionGrantPrompt;
 #[async_trait]
 impl ApprovalPrompt for SessionGrantPrompt {

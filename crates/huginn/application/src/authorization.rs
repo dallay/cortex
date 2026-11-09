@@ -1,5 +1,5 @@
 //! Trusted host policy. Presentation plugins can collect decisions but never see grants.
-use crate::permission_policy::{EffectivePolicy, PolicySettings};
+use crate::permission_policy::{AuthorizationOutcome, Capability, EffectivePolicy, PolicySettings};
 use async_trait::async_trait;
 use huginn_core::{
     AgentError, ApprovalDecision, ApprovalPolicy, ApprovalPrompt, ApprovalProvenance,
@@ -65,6 +65,15 @@ impl<P: ApprovalPrompt + ?Sized> HostPolicy<P> {
     ) -> Result<ApprovalDecision> {
         if cancel.is_cancelled() || !self.prompt.is_available() {
             return Err(AgentError::Cancelled);
+        }
+        let capability = match request.action.as_str() {
+            "native.write_file" | "native.edit_file" => Some(Capability::FileWrite),
+            _ => None,
+        };
+        if capability.is_some_and(|capability| {
+            self.effective_policy.decide(capability, true) == AuthorizationOutcome::Denied
+        }) {
+            return Ok(ApprovalDecision::Reject);
         }
         let eligible = matches!(
             request.action.as_str(),
