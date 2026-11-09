@@ -1,52 +1,78 @@
-# Exploration: Effective parity for autonomous workspace permissions
+# Exploration: Autonomous workspace permissions
 
 ## Executive summary
 
-The inspected reference behavior does not mean that every operation inside a workspace is approved automatically or that every command requires approval. Approval policy and sandbox policy are separate: under an on-request policy, a shell command runs under the selected sandbox; a request for capabilities outside that policy can be escalated for approval, and approval does not remove the sandbox for an ordinary operation. Native file operations use host capabilities and permissions; they are not simply shell commands under another name. MCP has a separate policy, with per-server and per-tool controls.
+The required approval contract is explicit: `Allow once`, `Allow for this workspace`, and `Deny`. A workspace grant must be persisted in a user-owned source and keyed by the canonical workspace root plus a narrow capability/action. Once granted, covered writes must not prompt again. User/global rules and administrator rules remain separate; administrator rules may restrict and override grants but cannot expand them. Project files cannot create trusted permission state. Permission approval does not provide sandboxing, and grants remain bounded by capability and resource.
 
-Huginn should not claim parity until it defines the scope of each boundary. The inspected implementation provides sandboxing on macOS, Linux, and Windows through different mechanisms, and rejects filesystem execution when the executor cannot enforce the requested sandbox. This does not show that Huginn already has an equivalent implementation.
+Current Huginn does not implement that contract. `HostPolicy` stores only volatile, session-scoped grants, while the effective policy can deny an action before presenting a prompt. The current default is `Restricted` with no configured escalation capabilities. The existing integration test that waits for `Reject` must be reconciled with this fail-closed authorization path; seeing `Reject` in a modal is not evidence that a denied capability should prompt.
 
-## Observed reference behavior
+## Current implementation evidence
 
-### Profiles, trust, and approval
+### Authorization and prompt flow
 
-- The configuration API defines `AskForApproval::OnRequest` and separate sandbox modes. Permission policy values and their resolution are handled independently. A permission profile maps to filesystem and network sandbox controls; project trust does not grant unrestricted permission.
-- On-request approval means that the system can escalate an operation that is not allowed by the effective sandbox or policy. It does not mean “confirm every command.” A test establishes `on-request` as the default for the covered case. Do not generalize that default to other profiles or managed environments, which can impose restrictions.
-- Project trust is an explicit state. Trust must not be treated as approval for every effect. The effective configuration continues to govern profile selection, sandboxing, and approval.
+- `crates/huginn/application/src/permission_policy.rs` defines `Restricted`, `Workspace`, and `FullAccess` profiles and `OnRequest` and `Always` approval modes. `EffectivePolicy::resolve` initializes `escalation_capabilities` as an empty set. `Restricted` allows only `FileRead`; `Workspace` allows `FileRead` and `FileWrite`.
+- `EffectivePolicy::decide` returns `Denied` for a capability outside the selected profile unless `OnRequest`, an approver is available, and the capability is explicitly present in the escalation set. Managed denied capabilities take precedence over profiles and escalations.
+- `crates/huginn/application/src/authorization.rs` maps `native.write_file` and `native.edit_file` to `FileWrite`. `HostPolicy::approve_for` evaluates the effective policy before constructing or calling the prompt. `AuthorizationOutcome::Denied` immediately returns `ApprovalDecision::Reject`; therefore the prompt receives no request and cannot offer `Allow once` or a persistent workspace choice. An allowlist does not bypass this check.
+- Under the default `Restricted` profile and empty escalation set, a write is therefore rejected before a prompt. This is a deliberate consequence of the current policy implementation, not a TUI rendering issue.
+- When a prompt is reachable, `HostPolicy` currently offers `Reject`, `ApproveOnce`, and, only for eligible native file writes with a non-sensitive absolute canonical path and a session ID, `ApproveForSession`. The remembered key is `(session_id, action, canonical_path)` in an in-memory `HashSet`. It is neither persistent nor workspace-scoped, and does not satisfy the requested contract.
+- `apps/huginn/src/config.rs` exposes only profile and approval-mode values in `[permissions]`. Defaults are `Restricted` and `OnRequest`; `Config::effective_policy` currently resolves with no managed restrictions and default untrusted project trust. No user-owned persistent workspace-grant store or administrator policy source is present in this configuration path.
+- The application composition in `apps/huginn/src/main.rs` installs `HostPolicy` with the resolved effective policy in both line and TUI paths. The test at `apps/huginn/tests/tui.rs:422-499` waits for the write approval modal, expects `Reject` to be selected by default, and presses Escape to deny. This test documents safe default selection for a displayed prompt, but it does not prove that a `Restricted` write ought to prompt. It appears inconsistent with the current `Restricted` + empty-escalation policy path, which rejects before `request_decision`; verify or update this integration contract in later phases rather than assuming either behavior from the test alone.
+- The TUI presents `Reject`, `Approve once`, and `Allow (session)` in `crates/huginn/presentation/src/terminal.rs`. The persistent choice will require a distinct decision contract and UI label; it must not be implemented by relabeling the existing session grant.
 
-### Shell and native file tools
+### Required permission semantics and scope boundaries
 
-- Shell commands run in a child process through an executor and process sandbox. The filesystem runner prepares the policy and requests a sandbox. If sandbox selection returns `SandboxType::None`, the runner returns an error. The inspected behavior does not support silently falling back to unrestricted shell execution when the required sandbox fails.
-- Linux uses Bubblewrap and has a configurable legacy Landlock path. Missing prerequisites do not establish a permissive fallback. macOS and Windows use separate sandbox paths and centralized selection. This evidence does not establish exact functional equivalence across operating systems, and Huginn must not assume that Linux Landlock/Bubblewrap, the macOS sandbox, and a Windows restricted token are interchangeable.
-- Profiles map to filesystem policies (read/write access, roots, and exceptions) and network policy. Native file operations pass through the executor's filesystem context and policy. That policy can reject unsupported access; it does more than request approval based on the tool name. Do not model all native APIs as one `write_file` operation with a universal approval rule.
-- This evidence does not support requiring approval for every shell command or describing unsandboxed shell as the target behavior for Huginn. It also does not justify removing authorization: sandboxing and approval are independent controls.
+- Provide exactly the requested user choices: `Allow once`, `Allow for this workspace`, and `Deny`. A persistent grant belongs in user-owned configuration/state, keyed by the canonical workspace root and the narrow capability/action it covers. Do not key it only by session, a broad profile, or a project-controlled file.
+- After an eligible persistent workspace write grant, do not prompt again for writes covered by that grant. A grant must not silently include other actions, resources, workspaces, shell execution, or MCP calls.
+- Keep configurable user/global rules distinct from administrator rules. Resolve administrator restrictions so they can restrict and override user grants. Do not let a user grant, project trust, or project-controlled file override an administrator denial.
+- Do not add YOLO, Exit, full-access, or other permissive modes as part of this scope. The existing `FullAccess` profile is a code fact, not authorization to include or expand such a mode in this change.
+- Behavioral instructions such as “do not list environment variables” are not host capability authorization. They are outside this change. Host authorization must continue to enforce actual capability/resource boundaries regardless of instruction text.
+- Approval authorizes a bounded operation; it does not sandbox the process. Preserve existing native filesystem path/symlink checks and platform sandbox behavior. Project files, model output, tool metadata, and MCP content must not self-grant or persist trusted permissions.
 
-### MCP: `AppToolApproval` and exceptions
+### Sandbox, platform, and MCP evidence retained
 
-- `AppToolApproval` defines four modes: `auto`, `prompt`, `writes`, and `approve`. The effective rules are: `auto` requests approval unless annotations establish read-only behavior or indicate destructive/open-world effects; `prompt` always requests approval; `writes` requests approval unless `read_only_hint=true`; and `approve` does not request approval. In `auto`, missing annotations are treated conservatively as destructive/open-world by default.
-- Overrides can apply per server and tool. Approval decisions can also be remembered and persisted. This differs from Huginn's currently defined volatile grants scoped to a session, action, or path. These behaviors require deliberate design; they must not be assumed to exist in Huginn.
-- Explicit exception: full-access mode skips MCP approval even when the per-tool mode would require a prompt. This exception must remain visible when describing parity. `approve` is also a configurable mode, not an effect of placing a working directory inside a project.
-- MCP annotations are policy metadata, not process isolation. The inspected evidence does not establish that MCP servers inherit the shell sandbox. Huginn should preserve this distinction and must not describe MCP as sandboxed on this basis.
+- Huginn's instructions state that approval of shell or MCP does not sandbox the process and that native workspace path and symlink boundaries must be preserved. Authorization and execution isolation remain separate controls.
+- The previously inspected executor and platform code establish separate sandbox implementations for macOS, Linux, and Windows. Linux has Bubblewrap and a configurable legacy Landlock path; macOS and Windows use separate enforcement paths. Filesystem execution fails if the requested sandbox cannot be selected. This supports retaining the cross-platform requirement, but not claiming equivalent enforcement without per-platform verification.
+- Native file operations use executor filesystem context and policy; they are not interchangeable with shell or MCP operations.
+- MCP currently has its own approval path. `crates/huginn/runtime/src/mcp.rs` prepares approval for each invocation; this does not establish process sandbox inheritance. Keep MCP policy distinct from native filesystem workspace grants unless a later specification explicitly defines a narrowly scoped MCP grant.
 
-## Current Huginn limits and incompatible contracts
+## Affected areas
 
-- `crates/huginn/runtime/src/tools.rs:500-523` describes shell as POSIX with explicit approval and time/output limits, but without sandboxing. Lines `508-523` create the approval request. This differs from sandboxed shell behavior. Approval alone does not resolve that difference.
-- `crates/huginn/runtime/src/mcp.rs:235-257` prepares an approval request for every MCP call. This boundary does not implement the four modes or the per-server/per-tool override scheme. The exceptions and persistence behavior require design; they cannot be assumed.
-- `crates/huginn/application/src/authorization.rs:13-34` implements `HostPolicy`; lines `60-155` and `164-189` constrain decisions and grants. The core defines `ApprovalPolicy` and `PreparedAction` in `crates/huginn/core/src/lib.rs:362-404` and `424-450`. These contracts preserve approval for tool effects, but do not by themselves implement OS sandboxing.
-- Earlier contracts in `.agents/sdd/changes/huginn-autonomous-workspace-permissions/specs/` that define Huginn's autonomous catalog, prohibit autonomy for shell/MCP, require approval for each call, or state that shell is unsandboxed conflict with the later user decision to reproduce the inspected effective behavior. Reconcile them in later SDD phases; do not modify them during this exploration. The approved TUI mouse/keyboard requirements and approval hierarchy/feedback requirements are independent and remain in scope. This exploration does not revoke them.
+- `crates/huginn/application/src/authorization.rs` — current pre-prompt denial, decision choices, and in-memory session grant key.
+- `crates/huginn/application/src/permission_policy.rs` — default profiles, escalation set, and managed-denial precedence.
+- `apps/huginn/src/config.rs` — current user permission configuration and missing administrator/persistent grant loading.
+- `apps/huginn/src/main.rs` — composition of the policy in line and TUI modes.
+- `crates/huginn/presentation/src/terminal.rs` and approval state — current labels and decision selection contract.
+- `apps/huginn/tests/tui.rs` — expected prompt and default-denial behavior that must be checked against effective policy.
+- Runtime filesystem and sandbox adapters on macOS, Linux, and Windows — preserve bounded resource checks and independent isolation during authorization changes.
+- `crates/huginn/runtime/src/mcp.rs` — separate authorization boundary; do not accidentally apply file grants to MCP.
 
-## Topology and delivery slices
+## Approaches
 
-The current RPI plan in `.agents/rpi/plan/tasks/huginn-approval-interactions.md:12-19, 34-38` retains three slices: policy/revalidation, mouse interaction, and approval/feedback/documentation. The actual policy and sandbox work, including MCP, expands the policy slice. It requires authority/configuration/profiles, OS-specific sandbox backends, unavailable-sandbox handling, separation of native file effects from shell, and escalated approval integration. Do not assume this fits the previous slice or split policy across UI slices. Keep mouse support across menus as an independent deliverable; do not block it on the sandbox backend.
+1. **Add a user-owned workspace-grant store alongside effective policy (recommended)** — retain profile and administrator-policy resolution, and consult a separately persisted grant keyed by canonical workspace root plus action/capability and bounded resource. Resolve administrator restrictions before honoring the grant. Offer the persistent choice only when the operation is eligible and the effective policy permits asking.
+   - Pros: Matches the clarified semantics; separates global configuration, workspace decisions, and administrator restrictions; avoids project-controlled trust state.
+   - Cons: Requires safe persistence, canonical workspace identity, migration/validation, and explicit policy-versus-grant precedence.
+   - Effort: Medium to High.
+
+2. **Expand the existing session grant into a persistent workspace grant** — replace the session key and in-memory store with a persistent user-owned store and workspace-root key.
+   - Pros: Reuses the current prompt and native-file eligibility concept.
+   - Cons: Risk of carrying forward session-specific assumptions; requires broader capability/resource validation and managed-rule precedence before persistence and reuse.
+   - Effort: Medium.
 
 ## Recommendation
 
-Before implementation, review the proposal, specs, design, and tasks to resolve the applicable profile/default by mode; project trust; approval decisions versus sandbox capabilities; the actual catalog of native operations; MCP modes, exceptions, and persistence; the sandbox strategy for macOS, Linux, and Windows; and fail-closed behavior when enforcement is unavailable. Define slices around verifiable delivery boundaries. Keep the approved mouse and approval-UX slice independent. Do not claim macOS/Linux/Windows parity for Huginn without implementation and evidence for each platform.
+Prefer a separate user-owned workspace-grant store integrated with the effective authorization decision, rather than treating remembered approvals as profile settings or extending the session set without a distinct policy boundary. First resolve how the new `Allow for this workspace` choice interacts with `Restricted`: the current policy rejects writes before prompting unless a finite escalation is configured. Preserve fail-closed behavior for administrator denials and unavailable prompts. Canonicalize and bind the grant to the exact workspace and narrow action/resource; revalidate at use time. Keep shell/MCP, behavior instructions, and sandbox enforcement out of the grant unless separately specified. Reconcile the TUI integration test with this decision before implementation.
 
 ## Risks
 
-- Keeping the earlier contracts alongside the later decision can produce contradictory behavior: bounded autonomous native operations versus effective parity with the inspected behavior.
-- Treating approval as a substitute for sandboxing could let shell commands with broad access act outside the workspace. The inspected behavior keeps these controls separate.
-- A superficial shared backend could imply isolation that differs from the isolation actually enforced by each operating system.
-- MCP could remain too restrictive if Huginn requires universal confirmation, or become too permissive if it trusts annotations or copies the `approve` exception without the relevant profile context.
-- Sandbox and profile work may exceed the first slice and the RPI budget. Slice replanning must not absorb or drop the already approved mouse UX work.
+- A broad or non-canonical key could cause a workspace grant to authorize writes in another workspace or to an unintended resource.
+- Persisting grants in project-controlled files would permit self-granting; the store must remain user-owned.
+- A grant lookup before administrator restrictions could bypass managed denials.
+- The current default policy and the TUI test's expected prompt are inconsistent; implementation based on only one side could leave a misleading or failing test.
+- Storing grants as global profile configuration could broaden permission beyond the selected workspace.
+- Approval could be mistaken for isolation and allow out-of-bound process access unless the existing sandbox and native filesystem checks remain independent.
+- Cross-platform sandbox mechanisms differ. Functional equivalence requires separate evidence for macOS, Linux, and Windows.
+- Applying a native file grant to MCP, shell, or behavior instructions would widen the approved scope.
+
+## Ready for proposal
+
+Yes, after the proposal records the clarified three-choice UX, persistent user-owned workspace key, administrator-over-user precedence, the `Restricted`/escalation prompt question, and the test mismatch. The proposal must exclude permissive modes and behavior-rule authorization, and must preserve sandbox/resource boundaries and distinct MCP treatment.

@@ -2,80 +2,84 @@
 
 ## Intent
 
-Replace conflicting permission rules with an effective, least-privilege model for autonomous workspace operations. Authorization and process sandboxing must remain separate controls: approval may authorize a bounded escalation, but it must not disable or broaden the sandbox. The confirmed platform goal is functional parity across macOS, Linux, and Windows, supported by verified enforcement on each platform rather than by a shared interface alone.
+Provide Huginn with least-privilege, user-controlled authorization for host effects, including a predictable approval flow for workspace file writes. A user must be able to deny an effect, allow it once, or persistently allow it for the current workspace within a narrow capability/action/resource scope. After a user persistently grants matching workspace file writes, later matching writes in that workspace must not prompt again.
 
-The change also defines granular MCP approval, fail-closed behavior at every uncertain permission boundary, and preserves mouse interaction in TUI menus and the approval experience as independent user-facing requirements.
+The change must keep authorization separate from process sandboxing and agent behavioral instructions. It must also preserve native filesystem boundaries, administrator control, granular MCP authorization, three-OS parity goals, and accessible mouse and approval interactions. Current code does not yet provide the requested persistent workspace grant or the required verified policy sources.
 
 ## Scope
 
 ### In Scope
 
-- Resolve effective approval policy, profiles, project trust, and managed restrictions with explicit authority provenance. Project trust MUST come only from a user-owned registry keyed by the canonical project root; files inside a project MUST NOT be able to grant trust to that project.
-- Load managed restrictions only from protected system configuration. Managed configuration may restrict effective policy but MUST NOT grant additional authority. Invalid or unverifiable managed configuration MUST fail closed.
-- Keep authorization and sandbox enforcement distinct. Run shell operations under the selected OS sandbox; allow only bounded escalation, and reject execution if the required sandbox cannot be enforced.
-- Apply effective filesystem capabilities, roots, and exceptions to native file operations, with validation and revalidation at the effect boundary.
-- Provide granular MCP policy by server and tool, including `auto`, `prompt`, `writes`, and `approve` modes, conservative handling of missing or incomplete annotations, explicit override precedence, and any documented full-access exception. Do not represent MCP annotations or approvals as process isolation.
-- Implement and verify the required sandbox capabilities on macOS, Linux, and Windows before claiming parity. Keep shell execution unavailable on any platform where enforcement is missing, unsupported, or unsuccessful.
-- Fail closed on invalid or unverifiable trust-registry and managed-configuration state, invalid configuration, unknown profiles or classifications, unverifiable resources, unavailable approval, stale requests, and sandbox failures. Return an observable outcome without executing the effect.
-- Preserve mouse and keyboard interaction across selectable TUI menus, including correct hit testing, focus, and resize behavior. Preserve a reviewable approval experience with clear action, resource, risk, preview, and safe denial or cancellation states.
-- Update relevant specifications, design, implementation tasks, documentation, and deterministic tests for policy, platform enforcement, MCP, and TUI behavior.
+- Provide three effect decisions: deny, allow once, and allow persistently for the current workspace. A persistent grant MUST be limited to the canonical workspace root and the narrow capability, action, and resource it covers. Matching authorized writes in that workspace MUST NOT prompt again.
+- Store persistent workspace grants only in a user-owned configuration or registry keyed by canonical root. Project-controlled files MUST NOT create, alter, or persist trusted permission state.
+- Support configurable global/user policy rules and administrator rules as separate authorities. Administrator rules MUST only restrict and MUST override user grants when they conflict. Invalid or unverifiable administrator rules MUST fail closed.
+- Preserve least privilege and `OnRequest` approval behavior. Define how a denied-by-profile effect can become eligible for a prompt without weakening administrator restrictions or silently expanding a grant.
+- Keep authorization independent from sandbox selection and enforcement. Approval MUST NOT disable or broaden a sandbox. Preserve native filesystem path, symlink, capability, and resource checks at each effect boundary.
+- Keep shell authorization and MCP authorization granular and separate. Do not let native file grants authorize shell or MCP effects; define MCP decisions at the server/tool/action/resource scope where supported.
+- Preserve behavioral instructions as distinct from host capability authorization. Instructions such as “do not list environment variables” guide agent behavior but MUST NOT grant or replace host permissions; this change addresses host capability permissions only.
+- Preserve and verify sandbox enforcement across macOS, Linux, and Windows. Do not claim platform parity based only on shared interfaces, compilation, stubs, or fail-closed behavior.
+- Preserve mouse and keyboard interaction in TUI menus and approval flows. Approval UX MUST clearly show the requested action and resource, provide safe denial/cancellation, and make the three decisions understandable and reviewable.
+- Reconcile existing tests with effective policy behavior. In particular, distinguish a safe default choice in a displayed prompt from whether the current `Restricted` policy should reach that prompt.
 
 ### Out of Scope
 
-- Unsandboxed shell fallback, implicit approval, unrestricted grants based only on trust or workspace location, or using shell isolation as a substitute for native filesystem authorization.
-- Claims that MCP servers inherit shell isolation without separately verified enforcement.
-- Declaring platform parity from a common abstraction, compile checks, stubs, or fail-closed behavior alone.
-- Removing or folding the TUI mouse and approval UX work into backend-only changes.
+- YOLO, Exit, full-access, or other permissive authorization modes. Do not expand or expose the existing `FullAccess` profile as part of this change.
+- Persisting grants in project-controlled files, broad workspace trust, or grants that implicitly include other workspaces, resources, actions, shell execution, or MCP calls.
+- Treating behavioral instructions as authorization or process isolation.
+- Unsandboxed execution fallback or any claim that approval itself provides sandboxing.
 
 ## Approach
 
-Resolve an immutable effective policy from user configuration, a user-owned project-trust registry keyed by canonical project root, and protected system configuration. Project files and workspace location cannot establish trust. Managed restrictions can only reduce the user's effective permissions; reject invalid or unverifiable managed configuration and fail closed. Keep these authority sources explicit in policy provenance. Keep the authorization decision (allow, deny, or request a bounded approval) separate from the process profile and its enforcement. For shell, validate the requested profile against a platform-specific sandbox backend before process creation; approval must not change that profile. For native file operations, enforce filesystem capabilities and verified roots independently of shell sandboxing. Resolve MCP policy per call using server/tool overrides and conservative metadata handling, without implying server isolation. Verify equivalent observable restrictions on macOS, Linux, and Windows, and retain mouse/keyboard TUI interaction and approval UX as independently testable deliverables.
+Resolve effective authorization from distinct configurable global/user rules, user-owned canonical-root workspace grants, and administrator restrictions. Enforce administrator restrictions before honoring a grant. Treat missing, invalid, or unverifiable authority data as a denial. Keep grant identity bounded to the canonical workspace root and explicit capability/action/resource, and revalidate the requested effect against current policy and native filesystem boundaries before execution.
 
-Deliver and verify real sandbox enforcement separately on macOS, Linux, and Windows. A platform may be reported as supported only after tests on that platform demonstrate the declared restrictions. Missing or failed enforcement must prevent process creation. Replan implementation slices around effective policy, the three platform backends, native filesystem authorization, MCP policy, TUI mouse support, approval UX, and platform evidence/documentation. Keep mouse support and approval UX independently testable and releasable where practical.
+Use `OnRequest` to present the three user decisions only when policy permits an approval request. A successful persistent workspace decision is stored outside the project and suppresses later prompts only for matching operations. Maintain a separate authorization path for granular MCP effects. Keep process sandbox choice and enforcement independent from all approval decisions, and verify the declared restrictions on each target OS.
+
+Implementation is blocked until a safe user-owned grant registry and a machine-managed source for administrator rules have been proven trustworthy and verifiable across macOS, Linux, and Windows. The current implementation has only session-scoped in-memory approvals, resolves `Restricted` writes to denial before prompting unless explicitly escalated, and has no user-owned persistent workspace-grant store or administrator policy source in the examined configuration path. Do not present the requested behavior or cross-platform verification as existing functionality.
 
 ## Affected Areas
 
 | Area | Impact | Description |
 |------|--------|-------------|
-| `.agents/sdd/changes/huginn-autonomous-workspace-permissions/` | Modified | Reconcile specifications, design, and tasks with the confirmed cross-platform goal and separated controls. |
-| Huginn application policy and configuration | Modified | Resolve effective profiles, approval policy, trust provenance, managed restrictions, and bounded escalation. |
-| Huginn project trust and managed configuration | Modified | Store project trust in a user-owned registry keyed by canonical project root; read managed restrictions from protected system configuration and permit them only to restrict effective policy. |
-| Huginn runtime shell and filesystem tools | Modified | Enforce OS sandboxing before process creation and apply independent native filesystem authorization. |
-| Huginn runtime MCP integration | Modified | Apply granular per-server and per-tool approval modes and explicit precedence. |
-| Huginn presentation and TUI | Modified | Preserve mouse and keyboard interaction in menus and improve review, approval, denial, and cancellation feedback. |
-| Huginn tests and documentation | Modified | Verify behavior independently on macOS, Linux, and Windows; document only capabilities supported by evidence. |
+| `crates/huginn/application/src/authorization.rs` | Modified | Replace session-only approval semantics with bounded one-time and persistent workspace decisions; enforce current policy before effects. |
+| `crates/huginn/application/src/permission_policy.rs` | Modified | Resolve user/global policy separately from administrator restrictions and establish explicit precedence and prompt eligibility. |
+| `apps/huginn/src/config.rs` and `apps/huginn/src/main.rs` | Modified | Load and compose user rules, the user-owned grant registry, and administrator rules without trusting project-controlled state. |
+| `crates/huginn/presentation/src/terminal.rs` and approval state | Modified | Present deny, allow once, and allow for this workspace; preserve mouse/keyboard operation and safe review/cancel states. |
+| Huginn native filesystem and sandbox adapters | Modified | Preserve effect-level path/resource checks and independently enforce platform sandbox boundaries. |
+| `crates/huginn/runtime/src/mcp.rs` | Modified | Maintain separate, granular MCP authorization without inheriting native workspace grants. |
+| `apps/huginn/tests/tui.rs` and Huginn policy/runtime tests | Modified | Verify decisions, no-repeat matching writes, authority precedence, boundary failures, UI behavior, and platform restrictions. |
 
 ## Risks
 
 | Risk | Likelihood | Mitigation |
 |------|------------|------------|
-| A backend cannot enforce the required profile on one or more target platforms. | High | Require real-platform enforcement evidence; fail closed and do not claim parity where evidence is absent. |
-| Approval is mistaken for a sandbox change, allowing an escalation to broaden unrelated access. | High | Keep authorization outcomes and process profiles separate; test that approval never removes sandbox restrictions. |
-| Project-controlled data or an unverified registry path grants project trust, or managed configuration grants authority. | High | Accept trust only from the user-owned canonical-root registry; accept managed policy only from protected system configuration, enforce restriction-only semantics, and fail closed when either source is invalid or unverifiable. |
-| Missing or misleading MCP annotations result in unsafe automatic execution or excessive prompts. | Medium | Use the specified mode semantics, conservative treatment of unknown metadata, explicit overrides, and observable decisions. |
-| Native file tools remain outside shell isolation and bypass filesystem policy. | High | Enforce capabilities and verified roots at each native effect boundary and test adversarial paths and stale state. |
-| Cross-platform security work exceeds one reviewable delivery unit or hides regressions in TUI behavior. | High | Use dependency-ordered, independently verifiable slices; retain separate mouse and approval UX work. |
+| A grant key or canonical-root check covers a different workspace or resource than intended. | High | Bind grants to canonical root and explicit capability/action/resource; revalidate at each effect boundary and test path/symlink edge cases. |
+| A project-controlled file or unsafe registry grants permissions. | High | Keep grants in user-owned state, reject project-sourced grant data, and block implementation until registry ownership and integrity are proven across all target OSes. |
+| Administrator rules are bypassed by user grants or are accepted from an unverifiable source. | High | Enforce restrictions after user rules/grants in precedence, fail closed, and block implementation pending verified machine-managed source design on all target OSes. |
+| `Restricted` denies writes before the approval UI can present the requested choices. | High | Specify prompt eligibility and any bounded escalation explicitly; keep administrator denials final and reconcile the existing TUI test with policy behavior. |
+| Approval is mistaken for sandboxing or a native file grant leaks into shell/MCP. | High | Keep authorization, sandbox enforcement, native filesystem permissions, and MCP decisions as separate controls with boundary tests. |
+| Sandbox enforcement differs across operating systems. | High | Require real platform evidence before claiming parity; fail closed where enforcement or required authority verification is unavailable. |
+| Approval choices are unclear or mouse interaction regresses. | Medium | Test keyboard and mouse flows, decision labels, focus/hit testing, resource details, and denial/cancellation states. |
 
 ## Rollback Plan
 
-Revert affected slices independently. If a platform backend cannot enforce the selected policy, disable shell execution on that platform and return an observable error; do not restore an unsandboxed fallback. If policy or MCP behavior regresses, restore the restrictive decision path and remove grants that exceed the effective policy. Preserve the TUI mouse and approval UX requirements during backend rollback. Rollback cannot reverse effects that already occurred.
+Revert affected policy, persistence, and presentation slices independently. If registry ownership, administrator source verification, or a platform enforcement check fails, disable persistent grants or the affected capability/platform and return an observable denial; do not fall back to project state, session-only behavior presented as persistent, or unsandboxed execution. Remove grants that exceed the effective policy. Rollback cannot reverse effects that already occurred.
 
 ## Dependencies
 
-- Select and review suitable sandbox backends for macOS, Linux, and Windows, including their enforceable capabilities and host requirements.
-- Define effective profile, override, managed-restriction, and trust-provenance resolution before implementing enforcement, including canonical project-root identity, registry ownership, protected managed configuration, and restriction-only semantics.
-- Reconcile the existing specifications, design, and task breakdown with the confirmed platform goal and independently deliverable TUI work.
-- Provide platform-capable environments for real enforcement tests; missing evidence blocks a support or parity claim.
+- Prove a safe user-owned workspace-grant registry and canonical-root identity on macOS, Linux, and Windows.
+- Prove a machine-managed administrator-rule source and its ownership, integrity, and restriction-only semantics on all three operating systems.
+- Resolve the `Restricted`/`OnRequest` prompt-eligibility contract without weakening least privilege or administrator restrictions.
+- Provide platform-capable environments for tests that demonstrate real sandbox and filesystem restrictions.
+- Reconcile current specifications, design, task breakdown, and UI test expectations with this proposal before implementation.
 
 ## Success Criteria
 
-- [ ] Authorization and sandboxing are represented and enforced as separate controls; approval does not disable or broaden the sandbox.
-- [ ] Project trust is sourced only from a user-owned registry keyed by canonical project root; project files cannot grant trust.
-- [ ] Managed restrictions come only from protected system configuration, can only restrict effective policy, and fail closed when invalid or unverifiable.
-- [ ] Shell execution is sandboxed on macOS, Linux, and Windows, with platform-specific tests demonstrating the declared enforcement before parity is claimed.
-- [ ] Missing or unsuccessful enforcement prevents process creation and returns an observable failure.
-- [ ] Native filesystem operations enforce the effective capabilities and verified roots independently of shell execution.
-- [ ] MCP implements the four approval modes with explicit server/tool precedence and conservative handling of unknown annotations, without claiming isolation.
-- [ ] Unavailable approval, invalid policy, unverifiable resources, and stale requests fail closed.
-- [ ] TUI menus preserve mouse and keyboard interaction, and approval UX preserves complete review, clear feedback, and safe denial or cancellation.
-- [ ] Documentation and specifications state platform support only where real enforcement evidence exists.
+- [ ] Each eligible effect offers deny, allow once, or allow persistently for the current workspace, with the persistent decision bounded to canonical root and narrow capability/action/resource.
+- [ ] After a persistent workspace write grant, subsequent matching writes in that workspace do not prompt again; non-matching writes and other workspaces remain unauthorized unless separately approved.
+- [ ] Persistent grants exist only in verified user-owned state; project-controlled files cannot grant or modify permissions.
+- [ ] Configurable global/user rules and administrator rules remain distinct; administrator rules only restrict and override conflicting grants.
+- [ ] Registry and administrator-rule source integrity and verification are demonstrated on macOS, Linux, and Windows before implementation is considered unblocked.
+- [ ] `OnRequest`, least privilege, and fail-closed behavior remain intact; no permissive mode is introduced.
+- [ ] Approval does not alter sandbox selection, and native filesystem boundaries remain independently enforced on all three operating systems before parity is claimed.
+- [ ] MCP remains granular and separate from native workspace grants; behavioral instructions do not act as host permissions.
+- [ ] Mouse and keyboard approval flows are usable, reviewable, and tested, including safe denial and cancellation.
