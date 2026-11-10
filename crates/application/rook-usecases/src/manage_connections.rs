@@ -907,6 +907,7 @@ impl ManageConnections {
             auth_type: request.auth_type,
             credentials,
             config,
+            adapter_revision: 1,
             test_status: TestStatus::NeverTested,
             created_at: now,
             updated_at: now,
@@ -930,6 +931,13 @@ impl ManageConnections {
 
         let auth_type = request.auth_type.unwrap_or(existing.auth_type);
         let credentials_changed = request.credentials.is_some() || auth_type != existing.auth_type;
+        let adapter_credentials_changed = if auth_type != existing.auth_type {
+            true
+        } else if let Some(submitted) = request.credentials.as_ref() {
+            !self.adapter_credentials_unchanged(submitted, &existing.credentials)
+        } else {
+            false
+        };
         let credentials = match request.credentials {
             Some(credentials) => {
                 let encrypted = self.encrypt_credentials(&credentials)?;
@@ -960,6 +968,23 @@ impl ManageConnections {
         validate_provider_config(provider, &config, &policy, is_active)?;
         validate_provider_auth_type(provider, auth_type)?;
 
+        let adapter_revision = if adapter_configuration_changed(
+            &existing,
+            provider,
+            &provider_runtime_id,
+            auth_type,
+            adapter_credentials_changed,
+            &config,
+        ) {
+            existing.adapter_revision.checked_add(1).ok_or_else(|| {
+                ManageConnectionsError::Repository(RepositoryError::Database(
+                    "provider adapter revision overflow".to_string(),
+                ))
+            })?
+        } else {
+            existing.adapter_revision
+        };
+
         let updated = ProviderConnection {
             id: existing.id,
             provider,
@@ -970,6 +995,7 @@ impl ManageConnections {
             auth_type,
             credentials,
             config,
+            adapter_revision,
             test_status: if credentials_changed {
                 TestStatus::NeverTested
             } else {
@@ -1085,6 +1111,7 @@ impl ManageConnections {
             auth_type: req.auth_type,
             credentials: encrypted,
             config: req.config,
+            adapter_revision: 1,
             test_status: TestStatus::NeverTested,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -1172,6 +1199,59 @@ impl ManageConnections {
                         .map(str::to_string),
                 })
             }
+        }
+    }
+
+    fn adapter_credentials_unchanged(
+        &self,
+        input: &CredentialsInput,
+        current: &Credentials,
+    ) -> bool {
+        match (input, current) {
+            (CredentialsInput::ApiKey { api_key }, Credentials::ApiKey { api_key: stored }) => self
+                .key_manager
+                .decrypt(stored.as_str())
+                .is_ok_and(|stored| api_key.trim() == stored),
+            (
+                CredentialsInput::OAuth {
+                    project_id,
+                    oauth_client_id,
+                    oauth_client_secret,
+                    oauth_tenant_id,
+                    ..
+                },
+                Credentials::OAuth {
+                    project_id: stored_project,
+                    oauth_client_id: stored_client_id,
+                    oauth_client_secret: stored_secret_blob,
+                    oauth_tenant_id: stored_tenant,
+                    ..
+                },
+            ) => {
+                let Ok(stored_project) = self.key_manager.decrypt(stored_project.as_str()) else {
+                    return false;
+                };
+                let stored_secret = match stored_secret_blob {
+                    Some(secret) => match self.key_manager.decrypt(secret.as_str()) {
+                        Ok(secret) => Some(secret),
+                        Err(_) => return false,
+                    },
+                    None => None,
+                };
+                let normalized_secret = oauth_client_secret
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|secret| !secret.is_empty());
+                let normalized_tenant = oauth_tenant_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|tenant| !tenant.is_empty());
+                project_id.trim() == stored_project
+                    && oauth_client_id.trim() == *stored_client_id
+                    && normalized_secret == stored_secret.as_deref()
+                    && normalized_tenant == stored_tenant.as_deref()
+            }
+            _ => false,
         }
     }
 
@@ -1296,8 +1376,11 @@ impl ManageConnections {
                         self.admission_state_for_connection(conn.id, conn.config.max_concurrent);
                     admission_updates.push((admission.clone(), conn.config.max_concurrent));
                     providers.push(Arc::new(
-                        crate::provider_concurrency::ConcurrencyLimitedProvider::with_admission(
-                            provider, admission,
+                        crate::provider_concurrency::ConcurrencyLimitedProvider::with_connection_id(
+                            provider,
+                            admission,
+                            conn.id,
+                            conn.adapter_revision,
                         ),
                     ) as Arc<dyn ProviderPort>);
                 }
@@ -1591,6 +1674,25 @@ impl TestConnectionResult {
             },
         }
     }
+}
+
+fn adapter_configuration_changed(
+    existing: &ProviderConnection,
+    provider: &'static ProviderDescriptor,
+    provider_runtime_id: &ProviderId,
+    auth_type: AuthType,
+    credentials_changed: bool,
+    config: &ConnectionConfig,
+) -> bool {
+    existing.provider.id != provider.id
+        || existing.provider_runtime_id != *provider_runtime_id
+        || existing.auth_type != auth_type
+        || credentials_changed
+        || existing.config.max_concurrent != config.max_concurrent
+        || existing.config.default_model != config.default_model
+        || existing.config.base_url != config.base_url
+        || existing.config.supported_models != config.supported_models
+        || existing.config.api_format != config.api_format
 }
 
 fn test_status_from_health(health: HealthStatus) -> TestStatus {

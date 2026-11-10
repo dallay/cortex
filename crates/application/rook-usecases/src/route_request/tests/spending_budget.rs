@@ -23,6 +23,7 @@ type EventLog = Arc<Mutex<Vec<BudgetEvent>>>;
 
 struct RecordingLedger {
     events: EventLog,
+    release_notify: Arc<tokio::sync::Notify>,
     reserve_outcome:
         Mutex<Option<Result<SpendingReservationOutcome, SpendingBudgetReservationError>>>,
 }
@@ -31,6 +32,7 @@ impl RecordingLedger {
     fn new(events: EventLog) -> Self {
         Self {
             events,
+            release_notify: Arc::new(tokio::sync::Notify::new()),
             reserve_outcome: Mutex::new(None),
         }
     }
@@ -41,6 +43,7 @@ impl RecordingLedger {
     ) -> Self {
         Self {
             events,
+            release_notify: Arc::new(tokio::sync::Notify::new()),
             reserve_outcome: Mutex::new(Some(outcome)),
         }
     }
@@ -78,6 +81,7 @@ impl SpendingBudgetLedgerPort for RecordingLedger {
         _request_id: &RequestId,
     ) -> Result<(), SpendingBudgetReservationError> {
         self.events.lock().unwrap().push(BudgetEvent::Release);
+        self.release_notify.notify_one();
         Ok(())
     }
 }
@@ -263,6 +267,98 @@ async fn budgeted_request_reserves_before_upstream_and_settles_afterwards() {
             BudgetEvent::Settle(Some(120_000)),
         ],
         "the reservation must exist before upstream I/O and the final cost must be settled"
+    );
+}
+
+#[tokio::test]
+async fn budget_reservation_is_released_if_managed_connection_is_disabled_before_upstream() {
+    let events: EventLog = Arc::new(Mutex::new(Vec::new()));
+    let connection_id = ConnectionId::new();
+    let provider = super::connection_bound_provider(
+        Arc::new(
+            BoundedProvider::new(&connection_id.to_string(), events.clone()).with_bound(500_000),
+        ),
+        connection_id,
+    );
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![provider],
+        crate::RoutingStrategy::Priority,
+    ));
+    let repository: Arc<dyn ProviderRepositoryPort> =
+        Arc::new(super::InactiveAfterFirstRoutingReadRepository {
+            connection: super::test_connection(
+                connection_id,
+                ProviderId::new("budgeted-managed-runtime"),
+                true,
+            ),
+            reads: std::sync::atomic::AtomicUsize::new(0),
+            pending_after_first: None,
+            adapter_revision_after_first: None,
+        });
+    let ledger = Arc::new(RecordingLedger::new(events.clone()));
+    let usecase = super::usecase_with_router_and_provider_repository(router, repository)
+        .with_spending_budget_ledger(ledger);
+
+    let error = usecase
+        .execute(budgeted_request())
+        .await
+        .expect_err("disabled connection must not receive the request");
+
+    assert!(error.to_string().contains("all providers exhausted"));
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec![BudgetEvent::Reserve, BudgetEvent::Release],
+        "a reservation must be released when no upstream I/O occurred"
+    );
+}
+
+#[tokio::test]
+async fn cancellation_during_managed_connection_recheck_releases_budget_reservation() {
+    let events: EventLog = Arc::new(Mutex::new(Vec::new()));
+    let connection_id = ConnectionId::new();
+    let runtime_id = ProviderId::new("pending-managed-runtime");
+    let provider = super::connection_bound_provider(
+        Arc::new(
+            BoundedProvider::new(&connection_id.to_string(), events.clone()).with_bound(500_000),
+        ),
+        connection_id,
+    );
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![provider],
+        crate::RoutingStrategy::Priority,
+    ));
+    let recheck_started = Arc::new(tokio::sync::Notify::new());
+    let repository: Arc<dyn ProviderRepositoryPort> =
+        Arc::new(super::InactiveAfterFirstRoutingReadRepository {
+            connection: super::test_connection(connection_id, runtime_id, true),
+            reads: std::sync::atomic::AtomicUsize::new(0),
+            pending_after_first: Some(recheck_started.clone()),
+            adapter_revision_after_first: None,
+        });
+    let ledger = Arc::new(RecordingLedger::new(events.clone()));
+    let release_notify = ledger.release_notify.clone();
+    let usecase = super::usecase_with_router_and_provider_repository(router, repository)
+        .with_spending_budget_ledger(ledger);
+    let task = tokio::spawn(async move { usecase.execute(budgeted_request()).await });
+
+    recheck_started.notified().await;
+    assert_eq!(*events.lock().unwrap(), vec![BudgetEvent::Reserve]);
+    task.abort();
+    let _ = task.await;
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if events.lock().unwrap().contains(&BudgetEvent::Release) {
+                break;
+            }
+            release_notify.notified().await;
+        }
+    })
+    .await
+    .expect("dropping the preflight must schedule reservation release");
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec![BudgetEvent::Reserve, BudgetEvent::Release]
     );
 }
 

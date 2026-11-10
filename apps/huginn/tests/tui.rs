@@ -491,6 +491,9 @@ fn skills_templates_denial_and_cancellation_release_the_tui_and_resume_cleanly()
     pty.send("\x03");
     // The modal closes; the transcript keeps the tool line, so wait on the hint.
     pty.wait_until_screen_not_contains("›Reject");
+    // Modal closure can precede turn synchronization. Do not submit while the
+    // cancelled turn is still busy, or this draft becomes orphaned steering.
+    pty.wait_for(TUI_READY_FOOTER);
     pty.send("\x1b[200~after cancel\x1b[201~\r");
     pty.wait_for("Offline mock: after cancel");
     pty.send("/quit\r");

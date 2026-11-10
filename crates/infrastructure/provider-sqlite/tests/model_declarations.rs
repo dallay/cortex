@@ -33,6 +33,7 @@ fn connection() -> ProviderConnection {
             ],
             api_format: Some(ApiFormat::OpenAI),
         },
+        adapter_revision: 1,
         test_status: TestStatus::Active {
             last_test_at: timestamp,
             latency_ms: 42,

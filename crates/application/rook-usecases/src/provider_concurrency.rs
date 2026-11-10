@@ -6,7 +6,7 @@ use rook_core::{
     ApiFormat, BoxStream, CompletionRequest, CompletionResponse, HealthStatus, ModelId,
     ProviderPort, StreamChunk,
 };
-use shared_kernel::{CortexError, CortexResult, ProviderId};
+use shared_kernel::{ConnectionId, CortexError, CortexResult, ProviderId};
 
 struct AdmissionCounts {
     in_flight: usize,
@@ -65,6 +65,8 @@ impl Drop for AdmissionPermit {
 pub(crate) struct ConcurrencyLimitedProvider {
     inner: Arc<dyn ProviderPort>,
     admission: Arc<AdmissionState>,
+    connection_id: Option<ConnectionId>,
+    connection_revision: Option<i64>,
 }
 
 impl ConcurrencyLimitedProvider {
@@ -73,11 +75,31 @@ impl ConcurrencyLimitedProvider {
         Self::with_admission(inner, Arc::new(AdmissionState::new(max_concurrent)))
     }
 
+    #[cfg(test)]
     pub(crate) fn with_admission(
         inner: Arc<dyn ProviderPort>,
         admission: Arc<AdmissionState>,
     ) -> Self {
-        Self { inner, admission }
+        Self {
+            inner,
+            admission,
+            connection_id: None,
+            connection_revision: None,
+        }
+    }
+
+    pub(crate) fn with_connection_id(
+        inner: Arc<dyn ProviderPort>,
+        admission: Arc<AdmissionState>,
+        connection_id: ConnectionId,
+        connection_revision: i64,
+    ) -> Self {
+        Self {
+            inner,
+            admission,
+            connection_id: Some(connection_id),
+            connection_revision: Some(connection_revision),
+        }
     }
 
     fn try_admit(&self) -> CortexResult<AdmissionPermit> {
@@ -89,6 +111,15 @@ impl ConcurrencyLimitedProvider {
 impl ProviderPort for ConcurrencyLimitedProvider {
     fn id(&self) -> &ProviderId {
         self.inner.id()
+    }
+    fn connection_id(&self) -> Option<&ConnectionId> {
+        self.connection_id
+            .as_ref()
+            .or_else(|| self.inner.connection_id())
+    }
+    fn connection_revision(&self) -> Option<i64> {
+        self.connection_revision
+            .or_else(|| self.inner.connection_revision())
     }
     fn supported_models(&self) -> &[ModelId] {
         self.inner.supported_models()

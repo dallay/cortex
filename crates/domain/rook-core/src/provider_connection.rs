@@ -93,9 +93,23 @@ pub struct ProviderConnection {
     pub auth_type: AuthType,
     pub credentials: Credentials,
     pub config: ConnectionConfig,
+    /// Monotonic revision for fields that change the registered adapter.
+    pub adapter_revision: i64,
     pub test_status: TestStatus,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// Credential-free connection facts required by the routing eligibility stage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderConnectionRoutingState {
+    pub id: ConnectionId,
+    pub provider_runtime_id: ProviderId,
+    pub adapter_revision: i64,
+    pub priority: u8,
+    pub created_at: DateTime<Utc>,
+    pub is_active: bool,
+    pub auth_expired: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -44,6 +44,29 @@ impl rook_core::ProviderRepositoryPort for InMemoryRepo {
         Ok(self.connections.lock().expect("repo lock").clone())
     }
 
+    async fn list_routing_state(
+        &self,
+    ) -> Result<Vec<rook_core::ProviderConnectionRoutingState>, RepositoryError> {
+        Ok(self
+            .connections
+            .lock()
+            .expect("repo lock")
+            .iter()
+            .map(|connection| rook_core::ProviderConnectionRoutingState {
+                id: connection.id,
+                provider_runtime_id: connection.provider_runtime_id.clone(),
+                adapter_revision: connection.adapter_revision,
+                priority: connection.priority,
+                created_at: connection.created_at,
+                is_active: connection.is_active,
+                auth_expired: matches!(
+                    &connection.test_status,
+                    rook_core::TestStatus::Expired { .. }
+                ),
+            })
+            .collect())
+    }
+
     async fn find(&self, id: &ConnectionId) -> Result<Option<ProviderConnection>, RepositoryError> {
         Ok(self
             .connections
@@ -665,13 +688,18 @@ async fn updating_active_connection_refreshes_provider_seen_by_persistent_router
         .create(create)
         .await
         .expect("inactive connection is created");
-    let mc = ManageConnections::new(repo, router.clone(), Arc::new(PlainKeyManager), builder)
-        .with_endpoint_policy(EndpointPolicyConfig {
-            grants: vec![EndpointGrant {
-                connection_id: connection.id.to_string(),
-                allowed_origins: vec!["https://upstream-a.example".into()],
-            }],
-        });
+    let mc = ManageConnections::new(
+        repo.clone(),
+        router.clone(),
+        Arc::new(PlainKeyManager),
+        builder,
+    )
+    .with_endpoint_policy(EndpointPolicyConfig {
+        grants: vec![EndpointGrant {
+            connection_id: connection.id.to_string(),
+            allowed_origins: vec!["https://upstream-a.example".into()],
+        }],
+    });
     let connection = mc
         .update(
             &connection.id,
@@ -694,7 +722,7 @@ async fn updating_active_connection_refreshes_provider_seen_by_persistent_router
         Arc::new(common::NoOpCache),
         Arc::new(common::NoOpAudit),
         None,
-        None,
+        Some(repo.clone()),
         None,
         Arc::new(PricingConfig::default()),
         Arc::new(common::NoOpAliasRepository),

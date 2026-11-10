@@ -735,6 +735,7 @@ fn api_key_connection(
             api_format: Some(rook_core::ApiFormat::OpenAI),
             supported_models: Vec::new(),
         },
+        adapter_revision: 1,
         test_status: rook_core::TestStatus::NeverTested,
         created_at: now,
         updated_at: now,

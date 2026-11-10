@@ -419,7 +419,12 @@ jobs:
 
   semgrep-pr:
     name: Security / Semgrep (SAST)
-    runs-on: ubuntu-latest
+    # La imagen ubuntu-26.04 usa Python 3.14 y rompe el semgrep==1.126.0 fijado:
+    # el CLI aborta al importar protobuf/opentelemetry y el control de rutas
+    # falla con JSONDecodeError por stdout vacio. Se fija la imagen en la que
+    # el gate paso por ultima vez; actualizar el pin de semgrep requiere
+    # revisar las expectativas del control "disabled" del script.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs: changes
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.docker == 'true' || needs.changes.outputs.github == 'true'
@@ -431,7 +436,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Semgrep CLI
-        run: pip install semgrep==1.126.0
+        # setuptools<81 mantiene pkg_resources, que el semgrep fijado exige al
+        # importar. Debe coincidir con el pin de la recipe just ci-semgrep.
+        run: pip install semgrep==1.126.0 'setuptools<81'
       - name: Check exact path exceptions and scanner controls
         env:
           SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
