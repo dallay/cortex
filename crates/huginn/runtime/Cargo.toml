@@ -37,17 +37,19 @@ bytes = "1"
 libc = "0.2"
 rusqlite.workspace = true
 uuid.workspace = true
-rmcp = { version = "=3.8.0", default-features = false, features = ["client", "transport-child-process"] }
+rmcp = { version = "=3.9.0", default-features = false, features = ["client", "transport-child-process"] }
 similar = "3"
 fs2 = "0.4"
 process-wrap = { version = "10", features = ["tokio1", "process-group", "kill-on-drop"] }
 wasmtime = { version = "=50.0.1", optional = true, default-features = false, features = ["anyhow", "async", "component-model", "cranelift", "runtime", "std"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-keyring = { version = "=3.6.3", default-features = false, features = ["apple-native"] }
+keyring-core = "=1.0.1"
+apple-native-keyring-store = { version = "=1.0.2", features = ["keychain"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-keyring = { version = "=3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust", "vendored"] }
+keyring-core = "=1.0.1"
+zbus-secret-service-keyring-store = { version = "=1.0.1", features = ["crypto-rust"] }
 
 [[test]]
 name = "tls_transport"
@@ -69,7 +71,7 @@ axum.workspace = true
 tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring", "tls12"] }
 rcgen = "=0.14.10"
 muninn-mcp = { path = "../../muninn/mcp" }
-rmcp = { version = "=3.8.0", default-features = false, features = ["client", "transport-async-rw"] }
+rmcp = { version = "=3.9.0", default-features = false, features = ["client", "transport-async-rw"] }
 
 [lints]
 workspace = true

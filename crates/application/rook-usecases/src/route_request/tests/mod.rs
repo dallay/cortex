@@ -5,12 +5,12 @@ use async_trait::async_trait;
 use chrono::Utc;
 use futures::{stream, StreamExt};
 use rook_core::{
-    ApiKeyId, CacheStats, Combo, ComboAlias, ComboAliasRepositoryError, ComboAliasRepositoryPort,
-    ComboRepositoryError, ComboStep, ComboStrategy, CostBreakdown, HealthStatus, Message,
-    ModelAlias, ModelAliasRepositoryError, ModelId, Pagination, ProviderId, ProviderPort,
-    ProviderRepositoryPort, QuotaObservation, QuotaObservationRecorderPort, RequestMetadata, Role,
-    SignatureEntry, StreamChunk, TokenCacheStats, TokenUsage, UsageEntry, UsageFilters,
-    UsageRecorderPort, UsageSummary,
+    ApiFormat, ApiKeyId, CacheStats, Combo, ComboAlias, ComboAliasRepositoryError,
+    ComboAliasRepositoryPort, ComboRepositoryError, ComboStep, ComboStrategy, CostBreakdown,
+    HealthStatus, Message, ModelAlias, ModelAliasRepositoryError, ModelId, Pagination, ProviderId,
+    ProviderPort, ProviderRepositoryPort, QuotaObservation, QuotaObservationRecorderPort,
+    RequestMetadata, Role, SignatureEntry, StreamChunk, TokenCacheStats, TokenUsage, UsageEntry,
+    UsageFilters, UsageRecorderPort, UsageSummary,
 };
 use shared_kernel::{CacheKey, ConnectionId, CortexResult, RequestId};
 use std::collections::HashMap;
@@ -58,6 +58,7 @@ fn classifies_success_local_backpressure_upstream_failure_and_timeout() {
 
 mod default_combo;
 mod output_validation;
+mod preflight_guards;
 mod progressive_combo;
 mod spending_budget;
 
@@ -160,6 +161,48 @@ impl ProviderPort for TestProvider {
                 }),
             }),
         ])))
+    }
+}
+
+struct UnavailableProvider {
+    inner: Arc<dyn ProviderPort>,
+}
+
+#[async_trait]
+impl ProviderPort for UnavailableProvider {
+    fn id(&self) -> &ProviderId {
+        self.inner.id()
+    }
+
+    fn supported_models(&self) -> &[ModelId] {
+        self.inner.supported_models()
+    }
+
+    fn model_capabilities(&self, model: &ModelId) -> rook_core::ModelCapabilities {
+        self.inner.model_capabilities(model)
+    }
+
+    fn api_format(&self) -> ApiFormat {
+        self.inner.api_format()
+    }
+
+    fn is_available(&self) -> bool {
+        false
+    }
+
+    async fn health_check(&self) -> HealthStatus {
+        self.inner.health_check().await
+    }
+
+    async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
+        self.inner.complete(req).await
+    }
+
+    async fn stream(
+        &self,
+        req: &CompletionRequest,
+    ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
+        self.inner.stream(req).await
     }
 }
 
@@ -285,7 +328,6 @@ fn make_usecase_with_provider(provider: Arc<dyn ProviderPort>) -> RouteRequest {
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -360,7 +402,6 @@ async fn local_backpressure_survives_router_exhaustion_after_exclusion() {
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -422,6 +463,41 @@ fn usecase_with_router(router: Arc<dyn RouterPort>) -> RouteRequest {
     )
 }
 
+fn usecase_with_router_and_provider_repository(
+    router: Arc<dyn RouterPort>,
+    provider_repository: Arc<dyn ProviderRepositoryPort>,
+) -> RouteRequest {
+    RouteRequest::new(
+        router,
+        Arc::new(TestCache {
+            get_calls: Mutex::new(0),
+            set_calls: Mutex::new(0),
+        }),
+        Arc::new(TestAudit {
+            entries: Mutex::new(Vec::new()),
+        }),
+        None,
+        Some(provider_repository),
+        None,
+        Arc::new(crate::PricingConfig::default()),
+        Arc::new(TestAliasRepository),
+        test_alias_config(),
+        None,
+    )
+}
+
+async fn evaluate_eligibility(
+    usecase: &RouteRequest,
+    req: &CompletionRequest,
+) -> crate::EligibilityResult {
+    usecase
+        .eligibility_result(req)
+        .await
+        .expect("connection eligibility state is available")
+        .expect("FallbackRouter supplies the candidate snapshot")
+        .result
+}
+
 fn usecase_with_router_and_audit(
     router: Arc<dyn RouterPort>,
     audit: Arc<dyn AuditPort>,
@@ -437,7 +513,6 @@ fn usecase_with_router_and_audit(
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -450,6 +525,20 @@ fn ordinary_provider(id: &str) -> Arc<dyn ProviderPort> {
         complete_error: None,
         stream_error: None,
     })
+}
+
+fn connection_bound_provider(
+    provider: Arc<dyn ProviderPort>,
+    connection_id: ConnectionId,
+) -> Arc<dyn ProviderPort> {
+    Arc::new(
+        crate::provider_concurrency::ConcurrencyLimitedProvider::with_connection_id(
+            provider,
+            Arc::new(crate::provider_concurrency::AdmissionState::new(8)),
+            connection_id,
+            1,
+        ),
+    )
 }
 
 fn counting_stream_provider(id: &str) -> Arc<CountingStreamProvider> {
@@ -627,7 +716,6 @@ async fn execute_preserves_local_backpressure_when_fallback_is_disallowed() {
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -671,7 +759,6 @@ async fn execute_stream_preserves_local_backpressure_when_fallback_is_disallowed
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -710,7 +797,7 @@ async fn execute_combo_returns_local_backpressure_when_all_admission_is_busy() {
     req.metadata.cacheable = false;
 
     let error = usecase
-        .execute_combo(&combo, req, ApiFormat::OpenAI)
+        .execute_combo(&combo, req)
         .await
         .expect_err("busy combo provider rejects admission");
     holder.abort();
@@ -855,6 +942,25 @@ impl ProviderRepositoryPort for TestProviderRepository {
         Ok(vec![])
     }
 
+    async fn list_routing_state(
+        &self,
+    ) -> Result<Vec<rook_core::ProviderConnectionRoutingState>, rook_core::RepositoryError> {
+        Ok(self
+            .connection_id
+            .map(|id| {
+                vec![rook_core::ProviderConnectionRoutingState {
+                    id,
+                    provider_runtime_id: ProviderId::new("test-provider"),
+                    adapter_revision: 1,
+                    priority: 1,
+                    created_at: Utc::now(),
+                    is_active: true,
+                    auth_expired: false,
+                }]
+            })
+            .unwrap_or_default())
+    }
+
     async fn find(
         &self,
         _id: &ConnectionId,
@@ -943,12 +1049,30 @@ fn test_alias_config() -> ModelAliasesConfig {
     }
 }
 
-struct FailingProviderRepository;
+struct FailingProviderRepository {
+    fail_routing_state: bool,
+    pending_routing_state: bool,
+}
 
 #[async_trait]
 impl ProviderRepositoryPort for FailingProviderRepository {
     async fn list(&self) -> Result<Vec<rook_core::ProviderConnection>, rook_core::RepositoryError> {
         Ok(vec![])
+    }
+
+    async fn list_routing_state(
+        &self,
+    ) -> Result<Vec<rook_core::ProviderConnectionRoutingState>, rook_core::RepositoryError> {
+        if self.pending_routing_state {
+            return std::future::pending().await;
+        }
+        if self.fail_routing_state {
+            Err(rook_core::RepositoryError::Database(
+                "routing state unavailable".to_string(),
+            ))
+        } else {
+            Ok(Vec::new())
+        }
     }
 
     async fn find(
@@ -984,28 +1108,6 @@ impl ProviderRepositoryPort for FailingProviderRepository {
 
     async fn delete(&self, _id: &ConnectionId) -> Result<(), rook_core::RepositoryError> {
         Ok(())
-    }
-}
-
-struct TestFormatTranslator;
-
-impl FormatTranslatorPort for TestFormatTranslator {
-    fn translate_request(
-        &self,
-        _from: ApiFormat,
-        _to: ApiFormat,
-        req: CompletionRequest,
-    ) -> CortexResult<CompletionRequest> {
-        Ok(req)
-    }
-
-    fn translate_response(
-        &self,
-        _from: ApiFormat,
-        _to: ApiFormat,
-        resp: CompletionResponse,
-    ) -> CortexResult<CompletionResponse> {
-        Ok(resp)
     }
 }
 
@@ -1175,10 +1277,9 @@ async fn execute_stream_bypasses_cache_and_audits_final_usage() {
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
-        None, // telemetry
+        None,
     );
 
     let mut stream = usecase
@@ -1228,10 +1329,9 @@ fn make_usecase() -> RouteRequest {
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
-        None, // telemetry
+        None,
     )
 }
 
@@ -1332,7 +1432,6 @@ async fn execute_with_format_resolves_alias_before_combo_dispatch() {
             alias_lookup_called: alias_lookup_called.clone(),
         })),
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(AliasLookupSpy {
             called: alias_lookup_called.clone(),
         }),
@@ -1348,7 +1447,7 @@ async fn execute_with_format_resolves_alias_before_combo_dispatch() {
 
     // The combo is intentionally absent; reaching its lookup proves the
     // alias lookup happened first. The expected not-found is incidental.
-    let result = usecase.execute_with_format(req, ApiFormat::OpenAI).await;
+    let result = usecase.execute(req).await;
 
     assert!(result.is_err());
     assert!(alias_lookup_called.load(std::sync::atomic::Ordering::SeqCst));
@@ -1372,13 +1471,15 @@ async fn route_request_runs_with_nullable_usage_recorder_and_warns_through_conne
             entries: Mutex::new(Vec::new()),
         }),
         None,
-        Some(Arc::new(FailingProviderRepository)),
+        Some(Arc::new(FailingProviderRepository {
+            fail_routing_state: false,
+            pending_routing_state: false,
+        })),
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
-        None, // telemetry
+        None,
     );
 
     let result = usecase.execute(request()).await;
@@ -1386,6 +1487,129 @@ async fn route_request_runs_with_nullable_usage_recorder_and_warns_through_conne
     assert!(
         result.is_ok(),
         "lookup failure should not fail routing: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn routing_fails_closed_when_connection_state_is_unavailable() {
+    let seen_models = Arc::new(Mutex::new(Vec::new()));
+    let provider = Arc::new(SpyProvider {
+        id: ProviderId::new("managed-target"),
+        model: TEST_MODEL.clone(),
+        seen_models: seen_models.clone(),
+    });
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![provider],
+        crate::RoutingStrategy::Priority,
+    ));
+    let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(FailingProviderRepository {
+        fail_routing_state: true,
+        pending_routing_state: false,
+    });
+    let usecase = usecase_with_router_and_provider_repository(router, repository);
+
+    let result = usecase.execute(request()).await;
+
+    assert!(
+        result.is_err(),
+        "routing must stop without connection state"
+    );
+    assert!(
+        seen_models.lock().unwrap().is_empty(),
+        "no upstream call is allowed"
+    );
+}
+
+#[tokio::test]
+async fn key_provider_denial_stays_forbidden_when_connection_state_is_unavailable() {
+    let seen_models = Arc::new(Mutex::new(Vec::new()));
+    let provider = Arc::new(SpyProvider {
+        id: ProviderId::new("blocked-target"),
+        model: TEST_MODEL.clone(),
+        seen_models: seen_models.clone(),
+    });
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![provider],
+        crate::RoutingStrategy::Priority,
+    ));
+    let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(FailingProviderRepository {
+        fail_routing_state: true,
+        pending_routing_state: false,
+    });
+    let usecase = usecase_with_router_and_provider_repository(router, repository);
+    let mut req = request();
+    req.restrictions.allowed_providers = vec![ProviderId::new("allowed-target")];
+
+    let error = usecase
+        .execute(req)
+        .await
+        .expect_err("key-disallowed provider must keep the existing 403 result");
+
+    assert!(error.is_forbidden());
+    assert!(seen_models.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn legacy_router_keeps_provider_allowlist_denial_before_state_lookup() {
+    let seen_models = Arc::new(Mutex::new(Vec::new()));
+    let provider: Arc<dyn ProviderPort> = Arc::new(SpyProvider {
+        id: ProviderId::new("blocked-target"),
+        model: TEST_MODEL.clone(),
+        seen_models: seen_models.clone(),
+    });
+    let router: Arc<dyn RouterPort> = Arc::new(OrderedRouter {
+        providers: vec![provider],
+        connection_providers: HashMap::new(),
+    });
+    let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(FailingProviderRepository {
+        fail_routing_state: true,
+        pending_routing_state: false,
+    });
+    let usecase = usecase_with_router_and_provider_repository(router, repository);
+    let mut req = request();
+    req.restrictions.allowed_providers = vec![ProviderId::new("allowed-target")];
+
+    let error = usecase
+        .execute(req)
+        .await
+        .expect_err("provider allowlist denial must retain its 403 classification");
+
+    assert!(error.is_forbidden());
+    assert!(seen_models.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn routing_state_read_timeout_fails_closed_before_upstream() {
+    let seen_models = Arc::new(Mutex::new(Vec::new()));
+    let provider = Arc::new(SpyProvider {
+        id: ProviderId::new("managed-target"),
+        model: TEST_MODEL.clone(),
+        seen_models: seen_models.clone(),
+    });
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![provider],
+        crate::RoutingStrategy::Priority,
+    ));
+    let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(FailingProviderRepository {
+        fail_routing_state: false,
+        pending_routing_state: true,
+    });
+    let usecase = usecase_with_router_and_provider_repository(router, repository);
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        usecase.execute(request()),
+    )
+    .await
+    .expect("the connection-state read must have a deadline");
+
+    assert!(
+        result.is_err(),
+        "routing must fail closed after the read deadline"
+    );
+    assert!(
+        seen_models.lock().unwrap().is_empty(),
+        "no upstream call is allowed"
     );
 }
 
@@ -1432,10 +1656,9 @@ async fn non_stream_usage_records_success_with_latency_as_ttft_and_cost_metadata
         })),
         None,
         Arc::new(pricing),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
-        None, // telemetry
+        None,
     );
     let mut req = request();
     req.metadata.api_key_id = Some(ApiKeyId::new("key_123"));
@@ -1492,7 +1715,6 @@ async fn non_stream_success_preserves_unknown_connection_in_audit_and_usage() {
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -1535,10 +1757,9 @@ async fn non_stream_usage_records_failure_with_nullable_tokens_and_ttft() {
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
-        None, // telemetry
+        None,
     );
     let req = request();
 
@@ -1583,10 +1804,9 @@ async fn non_stream_usage_recording_failure_does_not_fail_successful_client_resp
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
-        None, // telemetry
+        None,
     );
 
     let result = usecase.execute(request()).await;
@@ -1622,10 +1842,9 @@ async fn non_stream_usage_missing_pricing_records_null_cost_not_zero() {
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
-        None, // telemetry
+        None,
     );
 
     let result = usecase.execute(request()).await;
@@ -1669,7 +1888,10 @@ async fn execute_succeeds_when_allowed_models_is_empty() {
 
 #[tokio::test]
 async fn execute_is_forbidden_when_provider_not_in_allowed_list() {
-    let usecase = make_usecase();
+    let usecase = usecase_with_router(Arc::new(crate::FallbackRouter::new(
+        vec![ordinary_provider("test-provider")],
+        crate::RoutingStrategy::Priority,
+    )));
     let mut req = request();
     // test-provider is the provider selected; restrict to a different one
     req.restrictions.allowed_providers = vec![ProviderId::new("anthropic")];
@@ -1678,6 +1900,638 @@ async fn execute_is_forbidden_when_provider_not_in_allowed_list() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(err.is_forbidden(), "expected forbidden, got: {err}");
+}
+
+#[tokio::test]
+async fn execute_filters_key_disallowed_provider_before_selection() {
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![ordinary_provider("blocked"), ordinary_provider("allowed")],
+        crate::RoutingStrategy::Priority,
+    ));
+    let usecase = usecase_with_router(router);
+    let mut req = request();
+    req.restrictions.allowed_providers = vec![ProviderId::new("allowed")];
+
+    let response = usecase
+        .execute(req)
+        .await
+        .expect("an allowed provider must be selected when one is eligible");
+
+    assert_eq!(response.provider, ProviderId::new("allowed"));
+}
+
+#[tokio::test]
+async fn weighted_selection_cannot_reintroduce_key_disallowed_provider() {
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![ordinary_provider("blocked"), ordinary_provider("allowed")],
+        crate::RoutingStrategy::WeightedRandom(vec![1.0, 0.0]),
+    ));
+    let usecase = usecase_with_router(router);
+    let mut req = request();
+    req.restrictions.allowed_providers = vec![ProviderId::new("allowed")];
+
+    let response = usecase
+        .execute(req)
+        .await
+        .expect("the high-weight rejected target must remain excluded");
+
+    assert_eq!(response.provider, ProviderId::new("allowed"));
+}
+
+#[tokio::test]
+async fn selection_excludes_providers_added_after_eligibility_snapshot() {
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![ordinary_provider("observed")],
+        crate::RoutingStrategy::Priority,
+    ));
+    let usecase = usecase_with_router(router.clone());
+    let req = request();
+    let eligibility = evaluate_eligibility(&usecase, &req).await;
+    rook_core::ProviderRegistryPort::replace_all(
+        router.as_ref(),
+        vec![ordinary_provider("added-after-snapshot")],
+    )
+    .expect("replace registry");
+
+    let excluded = usecase.selection_exclusions(&req, &[], Some(&eligibility));
+    let selected = router.select_excluding(&req, &excluded).await;
+
+    assert!(excluded.contains(&ProviderId::new("added-after-snapshot")));
+    assert!(
+        selected.is_err(),
+        "an unassessed provider must not be selected"
+    );
+}
+
+#[tokio::test]
+async fn eligibility_fails_closed_before_state_query_above_4000_targets() {
+    let providers: Vec<_> = (0..=4_000)
+        .map(|index| ordinary_provider(&format!("provider-{index}")))
+        .collect();
+    let router = Arc::new(crate::FallbackRouter::new(
+        providers,
+        crate::RoutingStrategy::Priority,
+    ));
+    let connection_id = ConnectionId::new();
+    let repository = Arc::new(InactiveAfterFirstRoutingReadRepository {
+        connection: test_connection(connection_id, ProviderId::new("unused-runtime"), true),
+        reads: std::sync::atomic::AtomicUsize::new(0),
+        pending_after_first: None,
+        adapter_revision_after_first: None,
+    });
+    let usecase = usecase_with_router_and_provider_repository(router, repository.clone());
+
+    let result = usecase.eligibility_result(&request()).await;
+
+    assert!(matches!(result, Err(error) if error.to_string().contains("all providers exhausted")));
+    assert_eq!(
+        repository.reads.load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+
+    let mut disallowed = request();
+    disallowed.restrictions.allowed_providers = vec![ProviderId::new("not-registered")];
+    let error = match usecase.eligibility_result(&disallowed).await {
+        Ok(_) => panic!("all-disallowed candidates keep the key's forbidden result"),
+        Err(error) => error,
+    };
+    assert!(error.is_forbidden());
+    assert_eq!(
+        repository.reads.load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+}
+
+struct RegistryRefreshDuringSelectionRouter {
+    inner: Arc<crate::FallbackRouter>,
+    replacement: Vec<Arc<dyn ProviderPort>>,
+    refreshed: std::sync::atomic::AtomicBool,
+}
+
+#[async_trait]
+impl RouterPort for RegistryRefreshDuringSelectionRouter {
+    async fn select(&self, req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>> {
+        self.select_excluding(req, &[]).await
+    }
+
+    async fn select_excluding(
+        &self,
+        req: &CompletionRequest,
+        excluded: &[ProviderId],
+    ) -> CortexResult<Arc<dyn ProviderPort>> {
+        if !self
+            .refreshed
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            rook_core::ProviderRegistryPort::replace_all(
+                self.inner.as_ref(),
+                self.replacement.clone(),
+            )
+            .expect("registry refresh succeeds");
+        }
+        self.inner.select_excluding(req, excluded).await
+    }
+
+    async fn on_failure(&self, provider: &ProviderId, error: &CortexError) {
+        self.inner.on_failure(provider, error).await;
+    }
+
+    fn providers(&self) -> Vec<ProviderId> {
+        self.inner.providers()
+    }
+
+    fn eligibility_candidates(&self) -> Option<Vec<rook_core::RouterCandidateSnapshot>> {
+        self.inner.eligibility_candidates()
+    }
+}
+
+struct RegistryRefreshAfterEligibilitySnapshotRouter {
+    inner: Arc<crate::FallbackRouter>,
+    replacement: Vec<Arc<dyn ProviderPort>>,
+    refreshed: std::sync::atomic::AtomicBool,
+}
+
+#[async_trait]
+impl RouterPort for RegistryRefreshAfterEligibilitySnapshotRouter {
+    async fn select(&self, req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>> {
+        self.inner.select(req).await
+    }
+
+    async fn select_excluding(
+        &self,
+        req: &CompletionRequest,
+        excluded: &[ProviderId],
+    ) -> CortexResult<Arc<dyn ProviderPort>> {
+        self.inner.select_excluding(req, excluded).await
+    }
+
+    async fn on_failure(&self, provider: &ProviderId, error: &CortexError) {
+        self.inner.on_failure(provider, error).await;
+    }
+
+    fn providers(&self) -> Vec<ProviderId> {
+        self.inner.providers()
+    }
+
+    fn eligibility_candidates(&self) -> Option<Vec<rook_core::RouterCandidateSnapshot>> {
+        let snapshot = self.inner.eligibility_candidates();
+        if !self
+            .refreshed
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            rook_core::ProviderRegistryPort::replace_all(
+                self.inner.as_ref(),
+                self.replacement.clone(),
+            )
+            .expect("registry refresh succeeds");
+        }
+        snapshot
+    }
+}
+
+#[tokio::test]
+async fn refreshed_same_id_provider_is_reassessed_before_all_rejected_error() {
+    let target = ProviderId::new("same-provider-id");
+    let rejected_calls = Arc::new(Mutex::new(Vec::new()));
+    let rejected: Arc<dyn ProviderPort> = Arc::new(SpyProvider {
+        id: target.clone(),
+        model: ModelId::new("other-model"),
+        seen_models: rejected_calls.clone(),
+    });
+    let eligible_calls = Arc::new(Mutex::new(Vec::new()));
+    let replacement: Arc<dyn ProviderPort> = Arc::new(SpyProvider {
+        id: target.clone(),
+        model: TEST_MODEL.clone(),
+        seen_models: eligible_calls.clone(),
+    });
+    let router = Arc::new(RegistryRefreshAfterEligibilitySnapshotRouter {
+        inner: Arc::new(crate::FallbackRouter::new(
+            vec![rejected],
+            crate::RoutingStrategy::Priority,
+        )),
+        replacement: vec![replacement],
+        refreshed: std::sync::atomic::AtomicBool::new(false),
+    });
+    let usecase = usecase_with_router(router);
+    let mut req = request();
+    req.metadata.cacheable = false;
+
+    let response = usecase
+        .execute(req)
+        .await
+        .expect("the current provider snapshot should be reevaluated");
+
+    assert_eq!(response.provider, target);
+    assert!(rejected_calls.lock().unwrap().is_empty());
+    assert_eq!(
+        eligible_calls.lock().unwrap().as_slice(),
+        [TEST_MODEL.to_string()]
+    );
+}
+
+/// Upper bound on candidate snapshot reads during a churned request.
+///
+/// The routing stage evaluates a snapshot, validates it against the registry,
+/// and allows one re-evaluation before it fails closed. Each evaluation reads
+/// the candidate list a small number of times, so the bound scales with that
+/// fixed retry budget instead of pinning one exact call pattern.
+const MAX_CHURN_CANDIDATE_READS: usize = 12;
+
+#[tokio::test]
+async fn eligibility_registry_churn_is_rechecked_at_most_once() {
+    let target = ProviderId::new("churning-provider");
+    let first_calls = Arc::new(Mutex::new(Vec::new()));
+    let second_calls = Arc::new(Mutex::new(Vec::new()));
+    let first: Arc<dyn ProviderPort> = Arc::new(SpyProvider {
+        id: target.clone(),
+        model: TEST_MODEL.clone(),
+        seen_models: first_calls.clone(),
+    });
+    let second: Arc<dyn ProviderPort> = Arc::new(SpyProvider {
+        id: target,
+        model: TEST_MODEL.clone(),
+        seen_models: second_calls.clone(),
+    });
+    let router = Arc::new(RegistryChurnDuringEligibilityRouter {
+        inner: Arc::new(crate::FallbackRouter::new(
+            vec![first.clone()],
+            crate::RoutingStrategy::Priority,
+        )),
+        providers: [first, second],
+        candidate_reads: std::sync::atomic::AtomicUsize::new(0),
+        exposed_providers: Mutex::new(Vec::new()),
+    });
+    let usecase = usecase_with_router(router.clone());
+    let mut req = request();
+    req.metadata.cacheable = false;
+
+    let error = usecase
+        .execute(req)
+        .await
+        .expect_err("repeated registry churn must fail closed after one refresh");
+
+    assert!(error.to_string().contains("all providers exhausted"));
+    assert!(first_calls.lock().unwrap().is_empty());
+    assert!(second_calls.lock().unwrap().is_empty());
+    assert!(
+        router
+            .candidate_reads
+            .load(std::sync::atomic::Ordering::SeqCst)
+            <= MAX_CHURN_CANDIDATE_READS,
+        "churn must stop after one refresh instead of retrying without a bound: reads={}",
+        router
+            .candidate_reads
+            .load(std::sync::atomic::Ordering::SeqCst)
+    );
+    assert!(
+        router.exposed_providers.lock().unwrap().len() >= 2,
+        "the registry must actually churn for this test to cover the refresh path"
+    );
+
+    let stream_router = Arc::new(RegistryChurnDuringEligibilityRouter {
+        inner: Arc::new(crate::FallbackRouter::new(
+            vec![router.providers[0].clone()],
+            crate::RoutingStrategy::Priority,
+        )),
+        providers: router.providers.clone(),
+        candidate_reads: std::sync::atomic::AtomicUsize::new(0),
+        exposed_providers: Mutex::new(Vec::new()),
+    });
+    let stream_usecase = usecase_with_router(stream_router.clone());
+    let mut stream_req = request();
+    stream_req.stream = true;
+    stream_req.metadata.cacheable = false;
+
+    let error = match stream_usecase.execute_stream(stream_req).await {
+        Ok(_) => panic!("stream selection must stop after one snapshot refresh"),
+        Err(error) => error,
+    };
+
+    assert!(error.to_string().contains("all providers exhausted"));
+    assert!(first_calls.lock().unwrap().is_empty());
+    assert!(second_calls.lock().unwrap().is_empty());
+    assert!(
+        stream_router
+            .candidate_reads
+            .load(std::sync::atomic::Ordering::SeqCst)
+            <= MAX_CHURN_CANDIDATE_READS,
+        "stream selection must also stop after one snapshot re-evaluation"
+    );
+    assert!(
+        stream_router.exposed_providers.lock().unwrap().len() >= 2,
+        "the registry must actually churn for this test to cover the refresh path"
+    );
+}
+
+struct RegistryChurnDuringEligibilityRouter {
+    inner: Arc<crate::FallbackRouter>,
+    providers: [Arc<dyn ProviderPort>; 2],
+    candidate_reads: std::sync::atomic::AtomicUsize,
+    exposed_providers: Mutex<Vec<ProviderId>>,
+}
+
+#[async_trait]
+impl RouterPort for RegistryChurnDuringEligibilityRouter {
+    async fn select(&self, req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>> {
+        self.inner.select(req).await
+    }
+
+    async fn select_excluding(
+        &self,
+        req: &CompletionRequest,
+        excluded: &[ProviderId],
+    ) -> CortexResult<Arc<dyn ProviderPort>> {
+        self.inner.select_excluding(req, excluded).await
+    }
+
+    async fn on_failure(&self, provider: &ProviderId, error: &CortexError) {
+        self.inner.on_failure(provider, error).await;
+    }
+
+    fn providers(&self) -> Vec<ProviderId> {
+        self.inner.providers()
+    }
+
+    fn eligibility_candidates(&self) -> Option<Vec<rook_core::RouterCandidateSnapshot>> {
+        let snapshot = self.inner.eligibility_candidates();
+        let index = self
+            .candidate_reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let provider = self.providers[index % 2].clone();
+        self.exposed_providers
+            .lock()
+            .unwrap()
+            .push(provider.id().clone());
+        rook_core::ProviderRegistryPort::replace_all(self.inner.as_ref(), vec![provider])
+            .expect("registry refresh succeeds");
+        snapshot
+    }
+}
+
+#[tokio::test]
+async fn provider_added_during_selection_is_checked_before_upstream_io() {
+    let new_connection_id = ConnectionId::new();
+    let new_runtime_id = ProviderId::new("late-provider-runtime");
+    let original_calls = Arc::new(Mutex::new(Vec::new()));
+    let late_calls = Arc::new(Mutex::new(Vec::new()));
+    let original: Arc<dyn ProviderPort> = Arc::new(SpyProvider {
+        id: ProviderId::new("original-provider"),
+        model: TEST_MODEL.clone(),
+        seen_models: original_calls.clone(),
+    });
+    let placeholder: Arc<dyn ProviderPort> = Arc::new(SpyProvider {
+        id: ProviderId::new("unsupported-placeholder"),
+        model: ModelId::new("other-model"),
+        seen_models: Arc::new(Mutex::new(Vec::new())),
+    });
+    let late_provider = connection_bound_provider(
+        Arc::new(SpyProvider {
+            id: ProviderId::new(new_connection_id.to_string()),
+            model: TEST_MODEL.clone(),
+            seen_models: late_calls.clone(),
+        }),
+        new_connection_id,
+    );
+    let router = Arc::new(RegistryRefreshDuringSelectionRouter {
+        inner: Arc::new(crate::FallbackRouter::new(
+            vec![original.clone(), placeholder],
+            crate::RoutingStrategy::Priority,
+        )),
+        replacement: vec![late_provider, original.clone()],
+        refreshed: std::sync::atomic::AtomicBool::new(false),
+    });
+    let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(QuotaAwareProviderRepository {
+        connections: HashMap::from([(
+            new_connection_id,
+            test_connection(new_connection_id, new_runtime_id.clone(), true),
+        )]),
+        runtime_connections: HashMap::new(),
+    });
+    let now = Utc::now();
+    let quota_reader: Arc<dyn QuotaObservationRecorderPort> =
+        Arc::new(FakeQuotaStore::new(vec![quota_observation(
+            new_connection_id,
+            new_runtime_id,
+            0.0,
+            now,
+            Some(now + chrono::Duration::seconds(60)),
+        )]));
+    let usecase = usecase_with_router_and_provider_repository(router, repository)
+        .with_quota_observation_reader(quota_reader);
+    let mut req = request();
+    req.metadata.cacheable = false;
+
+    let response = usecase
+        .execute(req)
+        .await
+        .expect("the original eligible provider should serve the request");
+
+    assert_eq!(response.provider, ProviderId::new("original-provider"));
+    assert_eq!(
+        original_calls.lock().unwrap().as_slice(),
+        [TEST_MODEL.to_string()]
+    );
+    assert!(late_calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn provider_replaced_with_managed_adapter_after_snapshot_is_not_called() {
+    let connection_id = ConnectionId::new();
+    let runtime_id = ProviderId::new("replacement-runtime");
+    let target = ProviderId::new(connection_id.to_string());
+    let replaced_calls = Arc::new(Mutex::new(Vec::new()));
+    let placeholder: Arc<dyn ProviderPort> = Arc::new(SpyProvider {
+        id: ProviderId::new("unsupported-placeholder"),
+        model: ModelId::new("other-model"),
+        seen_models: Arc::new(Mutex::new(Vec::new())),
+    });
+    let original: Arc<dyn ProviderPort> = Arc::new(SpyProvider {
+        id: target.clone(),
+        model: TEST_MODEL.clone(),
+        seen_models: replaced_calls.clone(),
+    });
+    let managed_calls = Arc::new(Mutex::new(Vec::new()));
+    let replacement = connection_bound_provider(
+        Arc::new(SpyProvider {
+            id: target.clone(),
+            model: TEST_MODEL.clone(),
+            seen_models: managed_calls.clone(),
+        }),
+        connection_id,
+    );
+    let router = Arc::new(RegistryRefreshDuringSelectionRouter {
+        inner: Arc::new(crate::FallbackRouter::new(
+            vec![original, placeholder.clone()],
+            crate::RoutingStrategy::Priority,
+        )),
+        replacement: vec![replacement, placeholder],
+        refreshed: std::sync::atomic::AtomicBool::new(false),
+    });
+    let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(QuotaAwareProviderRepository {
+        connections: HashMap::from([(
+            connection_id,
+            test_connection(connection_id, runtime_id.clone(), true),
+        )]),
+        runtime_connections: HashMap::new(),
+    });
+    let now = Utc::now();
+    let quota_reader: Arc<dyn QuotaObservationRecorderPort> =
+        Arc::new(FakeQuotaStore::new(vec![quota_observation(
+            connection_id,
+            runtime_id,
+            0.0,
+            now,
+            Some(now + chrono::Duration::seconds(60)),
+        )]));
+    let usecase = usecase_with_router_and_provider_repository(router, repository)
+        .with_quota_observation_reader(quota_reader);
+    let mut req = request();
+    req.metadata.cacheable = false;
+
+    let error = usecase
+        .execute(req)
+        .await
+        .expect_err("replacement adapter must be evaluated before it receives traffic");
+
+    assert!(error.to_string().contains("all providers exhausted"));
+    assert!(replaced_calls.lock().unwrap().is_empty());
+    assert!(managed_calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn eligible_replacement_adapter_is_reassessed_without_permanent_exclusion() {
+    let connection_id = ConnectionId::new();
+    let runtime_id = ProviderId::new("eligible-replacement-runtime");
+    let target = ProviderId::new(connection_id.to_string());
+    let placeholder = Arc::new(SpyProvider {
+        id: ProviderId::new("unsupported-placeholder"),
+        model: ModelId::new("other-model"),
+        seen_models: Arc::new(Mutex::new(Vec::new())),
+    }) as Arc<dyn ProviderPort>;
+    let original = ordinary_provider(target.as_str());
+    let replacement_calls = Arc::new(Mutex::new(Vec::new()));
+    let replacement = connection_bound_provider(
+        Arc::new(SpyProvider {
+            id: target.clone(),
+            model: TEST_MODEL.clone(),
+            seen_models: replacement_calls.clone(),
+        }),
+        connection_id,
+    );
+    let router = Arc::new(RegistryRefreshDuringSelectionRouter {
+        inner: Arc::new(crate::FallbackRouter::new(
+            vec![original, placeholder.clone()],
+            crate::RoutingStrategy::Priority,
+        )),
+        replacement: vec![replacement, placeholder],
+        refreshed: std::sync::atomic::AtomicBool::new(false),
+    });
+    let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(QuotaAwareProviderRepository {
+        connections: HashMap::from([(
+            connection_id,
+            test_connection(connection_id, runtime_id, true),
+        )]),
+        runtime_connections: HashMap::new(),
+    });
+    let usecase = usecase_with_router_and_provider_repository(router, repository);
+    let mut req = request();
+    req.metadata.cacheable = false;
+
+    let response = usecase
+        .execute(req)
+        .await
+        .expect("a refreshed adapter should be reassessed and remain eligible");
+
+    assert_eq!(response.provider, target);
+    assert_eq!(
+        replacement_calls.lock().unwrap().as_slice(),
+        [TEST_MODEL.to_string()]
+    );
+}
+
+#[tokio::test]
+async fn eligibility_stage_reports_key_allowlist_reasons() {
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![ordinary_provider("one"), ordinary_provider("two")],
+        crate::RoutingStrategy::Priority,
+    ));
+    let usecase = usecase_with_router(router);
+    let mut req = request();
+    req.restrictions.allowed_models = vec![ModelId::new("not-requested")];
+
+    let model_result = evaluate_eligibility(&usecase, &req).await;
+
+    assert!(model_result.eligible.is_empty());
+    assert_eq!(model_result.rejected.len(), 2);
+    assert!(model_result
+        .rejected
+        .iter()
+        .all(|rejection| rejection.reason == crate::RejectionReason::KeyModelNotAllowed));
+
+    req.restrictions.allowed_models.clear();
+    req.restrictions.allowed_providers = vec![ProviderId::new("not-registered")];
+    let provider_result = evaluate_eligibility(&usecase, &req).await;
+
+    assert!(provider_result.eligible.is_empty());
+    assert_eq!(provider_result.rejected.len(), 2);
+    assert!(provider_result
+        .rejected
+        .iter()
+        .all(|rejection| { rejection.reason == crate::RejectionReason::KeyProviderNotAllowed }));
+}
+
+#[tokio::test]
+async fn eligibility_does_not_read_quota_for_key_disallowed_connections() {
+    let blocked_connection = ConnectionId::new();
+    let allowed_connection = ConnectionId::new();
+    let blocked_runtime = ProviderId::new("blocked-runtime");
+    let allowed_runtime = ProviderId::new("allowed-runtime");
+    let blocked_target = ProviderId::new(blocked_connection.to_string());
+    let allowed_target = ProviderId::new(allowed_connection.to_string());
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![
+            connection_bound_provider(
+                ordinary_provider(blocked_target.as_str()),
+                blocked_connection,
+            ),
+            connection_bound_provider(
+                ordinary_provider(allowed_target.as_str()),
+                allowed_connection,
+            ),
+        ],
+        crate::RoutingStrategy::Priority,
+    ));
+    let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(QuotaAwareProviderRepository {
+        connections: HashMap::from([
+            (
+                blocked_connection,
+                test_connection(blocked_connection, blocked_runtime, true),
+            ),
+            (
+                allowed_connection,
+                test_connection(allowed_connection, allowed_runtime, true),
+            ),
+        ]),
+        runtime_connections: HashMap::new(),
+    });
+    let quota_store = Arc::new(FakeQuotaStore::new(Vec::new()));
+    let quota_reader: Arc<dyn QuotaObservationRecorderPort> = quota_store.clone();
+    let usecase = usecase_with_router_and_provider_repository(router, repository)
+        .with_quota_observation_reader(quota_reader);
+    let mut req = request();
+    req.restrictions.allowed_providers = vec![allowed_target.clone()];
+
+    let result = evaluate_eligibility(&usecase, &req).await;
+
+    assert_eq!(result.eligible, vec![crate::TargetRef(allowed_target)]);
+    assert_eq!(result.rejected.len(), 1);
+    assert_eq!(
+        result.rejected[0].reason,
+        crate::RejectionReason::KeyProviderNotAllowed
+    );
+    let queries = quota_store.queries.lock().unwrap();
+    assert_eq!(queries.len(), 1);
+    assert_eq!(queries[0].connection_ids, vec![allowed_connection]);
 }
 
 #[tokio::test]
@@ -1703,13 +2557,573 @@ async fn execute_stream_is_forbidden_when_model_not_allowed() {
 
 #[tokio::test]
 async fn execute_stream_is_forbidden_when_provider_not_allowed() {
-    let usecase = make_usecase();
+    let usecase = usecase_with_router(Arc::new(crate::FallbackRouter::new(
+        vec![ordinary_provider("test-provider")],
+        crate::RoutingStrategy::Priority,
+    )));
     let mut req = request();
     req.restrictions.allowed_providers = vec![ProviderId::new("openai")];
 
     let result = usecase.execute_stream(req).await;
     assert!(result.is_err());
     assert!(result.err().unwrap().is_forbidden());
+}
+
+#[tokio::test]
+async fn execute_stream_filters_key_disallowed_provider_before_selection() {
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![ordinary_provider("blocked"), ordinary_provider("allowed")],
+        crate::RoutingStrategy::Priority,
+    ));
+    let usecase = usecase_with_router(router);
+    let mut req = request();
+    req.stream = true;
+    req.restrictions.allowed_providers = vec![ProviderId::new("allowed")];
+
+    let result = usecase.execute_stream(req).await;
+
+    assert!(
+        result.is_ok(),
+        "an allowed provider must serve the stream: {:?}",
+        result.err()
+    );
+}
+
+#[tokio::test]
+async fn eligibility_stage_reports_open_circuit_and_eligible_targets() {
+    let open_provider = ordinary_provider("open-circuit");
+    let open_provider_id = open_provider.id().clone();
+    let eligible_provider = ordinary_provider("eligible");
+    let eligible_provider_id = eligible_provider.id().clone();
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![open_provider, eligible_provider],
+        crate::RoutingStrategy::Priority,
+    ));
+    for _ in 0..3 {
+        router
+            .on_failure(&open_provider_id, &CortexError::provider("failure"))
+            .await;
+    }
+    let usecase = usecase_with_router(router);
+
+    let result = evaluate_eligibility(&usecase, &request()).await;
+
+    assert_eq!(
+        result.eligible,
+        vec![crate::TargetRef(eligible_provider_id)]
+    );
+    assert_eq!(
+        result.rejected,
+        vec![crate::Rejection {
+            target: crate::TargetRef(open_provider_id),
+            reason: crate::RejectionReason::CircuitOpen,
+        }]
+    );
+}
+
+#[tokio::test]
+async fn eligibility_rechecks_circuit_after_connection_state_read() {
+    let connection_id = ConnectionId::new();
+    let runtime_id = ProviderId::new("cooldown-runtime");
+    let target = ProviderId::new(connection_id.to_string());
+    let clock = Arc::new(EligibilityTestClock(Mutex::new(std::time::Instant::now())));
+    let provider = connection_bound_provider(ordinary_provider(target.as_str()), connection_id);
+    let router = Arc::new(crate::FallbackRouter::with_clock(
+        vec![provider],
+        crate::RoutingStrategy::Priority,
+        clock.clone(),
+    ));
+    for _ in 0..3 {
+        router
+            .on_failure(&target, &CortexError::provider("failure"))
+            .await;
+    }
+    let connection = test_connection(connection_id, runtime_id.clone(), true);
+    let repository: Arc<dyn ProviderRepositoryPort> =
+        Arc::new(EligibilityAdvancingRoutingStateRepository {
+            states: vec![rook_core::ProviderConnectionRoutingState {
+                id: connection.id,
+                provider_runtime_id: connection.provider_runtime_id,
+                adapter_revision: 1,
+                priority: connection.priority,
+                created_at: connection.created_at,
+                is_active: connection.is_active,
+                auth_expired: false,
+            }],
+            clock: clock.clone(),
+        });
+    let usecase = usecase_with_router_and_provider_repository(router, repository);
+
+    let result = evaluate_eligibility(&usecase, &request()).await;
+
+    assert_eq!(result.eligible, vec![crate::TargetRef(target)]);
+    assert!(result.rejected.is_empty());
+}
+
+#[tokio::test]
+async fn eligibility_stage_reports_disabled_missing_and_expired_auth() {
+    let refreshable_expired_id = ConnectionId::new();
+    let unavailable_expired_id = ConnectionId::new();
+    let disabled_id = ConnectionId::new();
+    let refreshable_expired_provider = connection_bound_provider(
+        ordinary_provider(&refreshable_expired_id.to_string()),
+        refreshable_expired_id,
+    );
+    let refreshable_expired_provider_id = refreshable_expired_provider.id().clone();
+    let unavailable_expired_provider = connection_bound_provider(
+        Arc::new(UnavailableProvider {
+            inner: ordinary_provider(&unavailable_expired_id.to_string()),
+        }),
+        unavailable_expired_id,
+    );
+    let missing_provider: Arc<dyn ProviderPort> = Arc::new(UnavailableProvider {
+        inner: ordinary_provider("missing-auth"),
+    });
+    let disabled_provider =
+        connection_bound_provider(ordinary_provider(&disabled_id.to_string()), disabled_id);
+    let eligible_provider = ordinary_provider("eligible-auth");
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![
+            refreshable_expired_provider,
+            unavailable_expired_provider,
+            missing_provider,
+            disabled_provider,
+            eligible_provider.clone(),
+        ],
+        crate::RoutingStrategy::Priority,
+    ));
+
+    let mut refreshable_expired_connection = test_connection(
+        refreshable_expired_id,
+        ProviderId::new("refreshable-expired-runtime"),
+        true,
+    );
+    refreshable_expired_connection.test_status = rook_core::TestStatus::Expired {
+        last_test_at: Utc::now(),
+        expires_at: Utc::now().timestamp() - 1,
+    };
+    let mut unavailable_expired_connection = test_connection(
+        unavailable_expired_id,
+        ProviderId::new("unavailable-expired-runtime"),
+        true,
+    );
+    unavailable_expired_connection.test_status = rook_core::TestStatus::Expired {
+        last_test_at: Utc::now(),
+        expires_at: Utc::now().timestamp() - 1,
+    };
+    let disabled_connection =
+        test_connection(disabled_id, ProviderId::new("disabled-runtime"), false);
+    let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(MapProviderRepository {
+        connections: HashMap::from([
+            (refreshable_expired_id, refreshable_expired_connection),
+            (unavailable_expired_id, unavailable_expired_connection),
+            (disabled_id, disabled_connection),
+        ]),
+    });
+    let usecase = usecase_with_router_and_provider_repository(router, repository);
+
+    let result = evaluate_eligibility(&usecase, &request()).await;
+
+    assert_eq!(
+        result.eligible,
+        vec![
+            crate::TargetRef(refreshable_expired_provider_id),
+            crate::TargetRef(eligible_provider.id().clone()),
+        ]
+    );
+    assert_eq!(result.rejected.len(), 3);
+    assert!(result.rejected.contains(&crate::Rejection {
+        target: crate::TargetRef(ProviderId::new(unavailable_expired_id.to_string())),
+        reason: crate::RejectionReason::AuthExpired,
+    }));
+    assert!(result.rejected.contains(&crate::Rejection {
+        target: crate::TargetRef(ProviderId::new("missing-auth")),
+        reason: crate::RejectionReason::AuthMissing,
+    }));
+    assert!(result.rejected.contains(&crate::Rejection {
+        target: crate::TargetRef(ProviderId::new(disabled_id.to_string())),
+        reason: crate::RejectionReason::ConnectionDisabled,
+    }));
+}
+
+#[tokio::test]
+async fn eligibility_rejects_managed_adapter_with_stale_configuration_revision() {
+    let connection_id = ConnectionId::new();
+    let runtime_id = ProviderId::new("revisioned-runtime");
+    let target = ProviderId::new(connection_id.to_string());
+    let provider = connection_bound_provider(ordinary_provider(target.as_str()), connection_id);
+    let mut connection = test_connection(connection_id, runtime_id, true);
+    connection.adapter_revision = 2;
+    let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(MapProviderRepository {
+        connections: HashMap::from([(connection_id, connection)]),
+    });
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![provider],
+        crate::RoutingStrategy::Priority,
+    ));
+    let usecase = usecase_with_router_and_provider_repository(router, repository);
+
+    let result = evaluate_eligibility(&usecase, &request()).await;
+
+    assert!(result.eligible.is_empty());
+    assert_eq!(
+        result.rejected,
+        vec![crate::Rejection {
+            target: crate::TargetRef(target),
+            reason: crate::RejectionReason::ConnectionDisabled,
+        }]
+    );
+}
+
+#[tokio::test]
+async fn eligibility_rejects_missing_state_only_for_connection_bound_targets() {
+    let missing_connection_id = ConnectionId::new();
+    let managed_target = ProviderId::new(missing_connection_id.to_string());
+    let managed_provider: Arc<dyn ProviderPort> = Arc::new(
+        crate::provider_concurrency::ConcurrencyLimitedProvider::with_connection_id(
+            ordinary_provider(managed_target.as_str()),
+            Arc::new(crate::provider_concurrency::AdmissionState::new(1)),
+            missing_connection_id,
+            1,
+        ),
+    );
+    let static_target = ProviderId::new(ConnectionId::new().to_string());
+    let static_provider = ordinary_provider(static_target.as_str());
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![managed_provider, static_provider],
+        crate::RoutingStrategy::Priority,
+    ));
+    let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(MapProviderRepository {
+        connections: HashMap::new(),
+    });
+    let usecase = usecase_with_router_and_provider_repository(router, repository);
+
+    let result = evaluate_eligibility(&usecase, &request()).await;
+
+    assert_eq!(result.eligible, vec![crate::TargetRef(static_target)]);
+    assert_eq!(
+        result.rejected,
+        vec![crate::Rejection {
+            target: crate::TargetRef(managed_target),
+            reason: crate::RejectionReason::ConnectionDisabled,
+        }]
+    );
+}
+
+#[tokio::test]
+async fn unmanaged_uuid_provider_is_not_attributed_to_a_connection_with_the_same_id() {
+    let connection_id = ConnectionId::new();
+    let target = ProviderId::new(connection_id.to_string());
+    let provider = ordinary_provider(target.as_str());
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![provider],
+        crate::RoutingStrategy::Priority,
+    ));
+    let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(MapProviderRepository {
+        connections: HashMap::from([(
+            connection_id,
+            test_connection(connection_id, ProviderId::new("managed-runtime"), true),
+        )]),
+    });
+    let audit = Arc::new(TestAudit {
+        entries: Mutex::new(Vec::new()),
+    });
+    let usecase = RouteRequest::new(
+        router,
+        Arc::new(TestCache {
+            get_calls: Mutex::new(0),
+            set_calls: Mutex::new(0),
+        }),
+        audit.clone(),
+        None,
+        Some(repository),
+        None,
+        Arc::new(crate::PricingConfig::default()),
+        Arc::new(TestAliasRepository),
+        test_alias_config(),
+        None,
+    );
+    let mut req = request();
+    req.metadata.cacheable = false;
+
+    usecase
+        .execute(req)
+        .await
+        .expect("static provider succeeds");
+
+    let entries = audit.entries.lock().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].provider, target);
+    assert_eq!(entries[0].connection_id, None);
+}
+
+#[tokio::test]
+async fn unmanaged_uuid_provider_is_not_bound_by_runtime_id_collision() {
+    let target = ProviderId::new(ConnectionId::new().to_string());
+    let connection_id = ConnectionId::new();
+    let provider = ordinary_provider(target.as_str());
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![provider],
+        crate::RoutingStrategy::Priority,
+    ));
+    let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(MapProviderRepository {
+        connections: HashMap::from([(
+            connection_id,
+            test_connection(connection_id, target.clone(), true),
+        )]),
+    });
+    let now = Utc::now();
+    let quota_reader: Arc<dyn QuotaObservationRecorderPort> =
+        Arc::new(FakeQuotaStore::new(vec![quota_observation(
+            connection_id,
+            target.clone(),
+            0.0,
+            now,
+            Some(now + chrono::Duration::seconds(60)),
+        )]));
+    let audit = Arc::new(TestAudit {
+        entries: Mutex::new(Vec::new()),
+    });
+    let usecase = RouteRequest::new(
+        router,
+        Arc::new(TestCache {
+            get_calls: Mutex::new(0),
+            set_calls: Mutex::new(0),
+        }),
+        audit.clone(),
+        None,
+        Some(repository),
+        None,
+        Arc::new(crate::PricingConfig::default()),
+        Arc::new(TestAliasRepository),
+        test_alias_config(),
+        None,
+    )
+    .with_quota_observation_reader(quota_reader);
+    let mut req = request();
+    req.metadata.cacheable = false;
+
+    usecase
+        .execute(req)
+        .await
+        .expect("an unmanaged UUID provider is not bound to a runtime-id match");
+
+    let entries = audit.entries.lock().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].provider, target);
+    assert_eq!(entries[0].connection_id, None);
+}
+
+#[tokio::test]
+async fn managed_provider_disabled_after_eligibility_read_is_not_called() {
+    let connection_id = ConnectionId::new();
+    let runtime_id = ProviderId::new("changing-runtime");
+    let connection = test_connection(connection_id, runtime_id, true);
+    let repository: Arc<dyn ProviderRepositoryPort> =
+        Arc::new(InactiveAfterFirstRoutingReadRepository {
+            connection,
+            reads: std::sync::atomic::AtomicUsize::new(0),
+            pending_after_first: None,
+            adapter_revision_after_first: None,
+        });
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let provider = connection_bound_provider(
+        Arc::new(SpyProvider {
+            id: ProviderId::new(connection_id.to_string()),
+            model: TEST_MODEL.clone(),
+            seen_models: calls.clone(),
+        }),
+        connection_id,
+    );
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![provider],
+        crate::RoutingStrategy::Priority,
+    ));
+    let usecase = usecase_with_router_and_provider_repository(router, repository);
+    let mut req = request();
+    req.metadata.cacheable = false;
+
+    let error = usecase
+        .execute(req)
+        .await
+        .expect_err("newly disabled connection must not reach the provider");
+
+    assert!(error.to_string().contains("all providers exhausted"));
+    assert!(calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn managed_provider_revision_change_after_eligibility_is_not_called() {
+    let connection_id = ConnectionId::new();
+    let runtime_id = ProviderId::new("changing-revision-runtime");
+    let repository: Arc<dyn ProviderRepositoryPort> =
+        Arc::new(InactiveAfterFirstRoutingReadRepository {
+            connection: test_connection(connection_id, runtime_id, true),
+            reads: std::sync::atomic::AtomicUsize::new(0),
+            pending_after_first: None,
+            adapter_revision_after_first: Some(2),
+        });
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let provider = connection_bound_provider(
+        Arc::new(SpyProvider {
+            id: ProviderId::new(connection_id.to_string()),
+            model: TEST_MODEL.clone(),
+            seen_models: calls.clone(),
+        }),
+        connection_id,
+    );
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![provider],
+        crate::RoutingStrategy::Priority,
+    ));
+    let usecase = usecase_with_router_and_provider_repository(router, repository);
+    let mut req = request();
+    req.metadata.cacheable = false;
+
+    let error = usecase
+        .execute(req)
+        .await
+        .expect_err("stale provider configuration must not reach upstream");
+
+    assert!(error.to_string().contains("all providers exhausted"));
+    assert!(calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn runtime_matched_provider_disabled_after_eligibility_read_is_not_called() {
+    let connection_id = ConnectionId::new();
+    let runtime_id = ProviderId::new("runtime-matched-provider");
+    let repository: Arc<dyn ProviderRepositoryPort> =
+        Arc::new(InactiveAfterFirstRoutingReadRepository {
+            connection: test_connection(connection_id, runtime_id.clone(), true),
+            reads: std::sync::atomic::AtomicUsize::new(0),
+            pending_after_first: None,
+            adapter_revision_after_first: None,
+        });
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let provider: Arc<dyn ProviderPort> = Arc::new(SpyProvider {
+        id: runtime_id.clone(),
+        model: TEST_MODEL.clone(),
+        seen_models: calls.clone(),
+    });
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![provider],
+        crate::RoutingStrategy::Priority,
+    ));
+    let usecase = usecase_with_router_and_provider_repository(router, repository);
+    let mut req = request();
+    req.metadata.cacheable = false;
+
+    let error = usecase
+        .execute(req)
+        .await
+        .expect_err("runtime-matched disabled connection must not receive the request");
+
+    assert!(error.to_string().contains("all providers exhausted"));
+    assert!(calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn runtime_matched_provider_revision_change_triggers_one_fresh_eligibility_pass() {
+    let connection_id = ConnectionId::new();
+    let runtime_id = ProviderId::new("changing-runtime-revision");
+    let repository: Arc<dyn ProviderRepositoryPort> =
+        Arc::new(InactiveAfterFirstRoutingReadRepository {
+            connection: test_connection(connection_id, runtime_id.clone(), true),
+            reads: std::sync::atomic::AtomicUsize::new(0),
+            pending_after_first: None,
+            adapter_revision_after_first: Some(2),
+        });
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let provider: Arc<dyn ProviderPort> = Arc::new(SpyProvider {
+        id: runtime_id.clone(),
+        model: TEST_MODEL.clone(),
+        seen_models: calls.clone(),
+    });
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![provider],
+        crate::RoutingStrategy::Priority,
+    ));
+    let usecase = usecase_with_router_and_provider_repository(router, repository);
+    let mut req = request();
+    req.metadata.cacheable = false;
+
+    let response = usecase
+        .execute(req)
+        .await
+        .expect("runtime-matched state change is reassessed before routing");
+
+    assert_eq!(response.provider, runtime_id);
+    assert_eq!(calls.lock().unwrap().as_slice(), [TEST_MODEL.to_string()]);
+}
+
+#[tokio::test]
+async fn legacy_router_rechecks_runtime_matched_connection_before_upstream() {
+    let connection_id = ConnectionId::new();
+    let runtime_id = ProviderId::new("legacy-runtime-provider");
+    let repository: Arc<dyn ProviderRepositoryPort> =
+        Arc::new(InactiveAfterFirstRoutingReadRepository {
+            connection: test_connection(connection_id, runtime_id.clone(), true),
+            reads: std::sync::atomic::AtomicUsize::new(0),
+            pending_after_first: None,
+            adapter_revision_after_first: None,
+        });
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let provider: Arc<dyn ProviderPort> = Arc::new(SpyProvider {
+        id: runtime_id,
+        model: TEST_MODEL.clone(),
+        seen_models: calls.clone(),
+    });
+    let router: Arc<dyn RouterPort> = Arc::new(OrderedRouter {
+        providers: vec![provider],
+        connection_providers: HashMap::new(),
+    });
+    let usecase = usecase_with_router_and_provider_repository(router, repository);
+    let mut req = request();
+    req.metadata.cacheable = false;
+
+    let error = usecase
+        .execute(req)
+        .await
+        .expect_err("disabled runtime-matched connection must not receive the request");
+
+    assert!(error.to_string().contains("all providers exhausted"));
+    assert!(calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn legacy_stream_router_rechecks_runtime_matched_connection_before_upstream() {
+    let connection_id = ConnectionId::new();
+    let runtime_id = ProviderId::new("legacy-stream-runtime-provider");
+    let repository: Arc<dyn ProviderRepositoryPort> =
+        Arc::new(InactiveAfterFirstRoutingReadRepository {
+            connection: test_connection(connection_id, runtime_id.clone(), true),
+            reads: std::sync::atomic::AtomicUsize::new(0),
+            pending_after_first: None,
+            adapter_revision_after_first: None,
+        });
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let provider: Arc<dyn ProviderPort> = Arc::new(SpyProvider {
+        id: runtime_id,
+        model: TEST_MODEL.clone(),
+        seen_models: calls.clone(),
+    });
+    let router: Arc<dyn RouterPort> = Arc::new(OrderedRouter {
+        providers: vec![provider],
+        connection_providers: HashMap::new(),
+    });
+    let usecase = usecase_with_router_and_provider_repository(router, repository);
+    let mut req = request();
+    req.stream = true;
+    req.metadata.cacheable = false;
+
+    let error = match usecase.execute_stream(req).await {
+        Ok(_) => panic!("disabled runtime-matched connection must not start a stream"),
+        Err(error) => error,
+    };
+
+    assert!(error.to_string().contains("all providers exhausted"));
+    assert!(calls.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -1754,10 +3168,9 @@ async fn streaming_usage_records_ttft_from_first_chunk_and_final_usage_on_succes
         })),
         None,
         Arc::new(pricing),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
-        None, // telemetry
+        None,
     );
     let mut req = request();
     req.metadata.api_key_id = Some(ApiKeyId::new("key_streaming"));
@@ -1865,10 +3278,9 @@ async fn streaming_usage_records_failure_with_nullable_tokens_and_rate_limited_s
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
-        None, // telemetry
+        None,
     );
 
     let mut stream = usecase
@@ -1917,10 +3329,9 @@ async fn streaming_usage_recording_failure_emits_warn_and_increments_metric_with
         None,
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
-        None, // telemetry
+        None,
     );
 
     let stream = usecase
@@ -1967,7 +3378,7 @@ async fn budgeted_request_without_verifiable_provider_bound_is_rejected_before_p
     };
 
     let error = usecase
-        .execute_with_format(req, ApiFormat::OpenAI)
+        .execute(req)
         .await
         .expect_err("no provider exposes an enforceable preflight cost bound");
 
@@ -2113,10 +3524,314 @@ struct MapProviderRepository {
     connections: HashMap<ConnectionId, rook_core::ProviderConnection>,
 }
 
+struct RevisionChangingProviderRepository {
+    connection: rook_core::ProviderConnection,
+}
+
+#[async_trait]
+impl ProviderRepositoryPort for RevisionChangingProviderRepository {
+    async fn list(&self) -> Result<Vec<rook_core::ProviderConnection>, rook_core::RepositoryError> {
+        Ok(vec![self.connection.clone()])
+    }
+
+    async fn list_routing_state(
+        &self,
+    ) -> Result<Vec<rook_core::ProviderConnectionRoutingState>, rook_core::RepositoryError> {
+        Ok(vec![rook_core::ProviderConnectionRoutingState {
+            id: self.connection.id,
+            provider_runtime_id: self.connection.provider_runtime_id.clone(),
+            adapter_revision: self.connection.adapter_revision + 1,
+            priority: self.connection.priority,
+            created_at: self.connection.created_at,
+            is_active: self.connection.is_active,
+            auth_expired: false,
+        }])
+    }
+
+    async fn find(
+        &self,
+        id: &ConnectionId,
+    ) -> Result<Option<rook_core::ProviderConnection>, rook_core::RepositoryError> {
+        Ok((*id == self.connection.id).then(|| self.connection.clone()))
+    }
+
+    async fn create(
+        &self,
+        _connection: &rook_core::ProviderConnection,
+    ) -> Result<(), rook_core::RepositoryError> {
+        unreachable!("test repository is read-only")
+    }
+
+    async fn update(
+        &self,
+        _connection: &rook_core::ProviderConnection,
+        _expected_updated_at: chrono::DateTime<Utc>,
+    ) -> Result<(), rook_core::RepositoryError> {
+        unreachable!("test repository is read-only")
+    }
+
+    async fn delete(&self, _id: &ConnectionId) -> Result<(), rook_core::RepositoryError> {
+        unreachable!("test repository is read-only")
+    }
+}
+
+struct FailsOneRoutingStateReadRepository {
+    connections: HashMap<ConnectionId, rook_core::ProviderConnection>,
+    fail_connection_id: ConnectionId,
+}
+
+struct FailsSecondRoutingStateReadRepository {
+    connections: HashMap<ConnectionId, rook_core::ProviderConnection>,
+    fail_connection_id: ConnectionId,
+    reads: std::sync::atomic::AtomicUsize,
+    timeout: bool,
+    /// When set, every connection fails the routing-state re-read instead of
+    /// only `fail_connection_id`. The first read always succeeds so the
+    /// failure lands on the post-permission re-read.
+    fail_every_connection: bool,
+}
+
+#[async_trait]
+impl ProviderRepositoryPort for FailsSecondRoutingStateReadRepository {
+    async fn list(&self) -> Result<Vec<rook_core::ProviderConnection>, rook_core::RepositoryError> {
+        Ok(self.connections.values().cloned().collect())
+    }
+
+    async fn list_routing_state_for_candidates(
+        &self,
+        targets: &[ProviderId],
+    ) -> Result<Vec<rook_core::ProviderConnectionRoutingState>, rook_core::RepositoryError> {
+        let is_failing_target = self.fail_every_connection
+            || targets
+                .iter()
+                .any(|target| target.as_str() == self.fail_connection_id.to_string());
+        if is_failing_target && self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 0 {
+            if self.timeout {
+                return std::future::pending().await;
+            }
+            return Err(rook_core::RepositoryError::Database(
+                "routing-state reread test failure".to_string(),
+            ));
+        }
+
+        Ok(self
+            .connections
+            .values()
+            .filter(|connection| {
+                targets
+                    .iter()
+                    .any(|target| target.as_str() == connection.id.to_string())
+            })
+            .map(|connection| rook_core::ProviderConnectionRoutingState {
+                id: connection.id,
+                provider_runtime_id: connection.provider_runtime_id.clone(),
+                adapter_revision: connection.adapter_revision,
+                priority: connection.priority,
+                created_at: connection.created_at,
+                is_active: connection.is_active,
+                auth_expired: matches!(
+                    &connection.test_status,
+                    rook_core::TestStatus::Expired { .. }
+                ),
+            })
+            .collect())
+    }
+
+    async fn find(
+        &self,
+        id: &ConnectionId,
+    ) -> Result<Option<rook_core::ProviderConnection>, rook_core::RepositoryError> {
+        Ok(self.connections.get(id).cloned())
+    }
+
+    async fn create(
+        &self,
+        _connection: &rook_core::ProviderConnection,
+    ) -> Result<(), rook_core::RepositoryError> {
+        unreachable!("test repository is read-only")
+    }
+
+    async fn update(
+        &self,
+        _connection: &rook_core::ProviderConnection,
+        _expected_updated_at: chrono::DateTime<Utc>,
+    ) -> Result<(), rook_core::RepositoryError> {
+        unreachable!("test repository is read-only")
+    }
+
+    async fn delete(&self, _id: &ConnectionId) -> Result<(), rook_core::RepositoryError> {
+        unreachable!("test repository is read-only")
+    }
+}
+
+#[async_trait]
+impl ProviderRepositoryPort for FailsOneRoutingStateReadRepository {
+    async fn list(&self) -> Result<Vec<rook_core::ProviderConnection>, rook_core::RepositoryError> {
+        Ok(self.connections.values().cloned().collect())
+    }
+
+    async fn list_routing_state_for_candidates(
+        &self,
+        targets: &[ProviderId],
+    ) -> Result<Vec<rook_core::ProviderConnectionRoutingState>, rook_core::RepositoryError> {
+        if targets
+            .iter()
+            .any(|target| target.as_str() == self.fail_connection_id.to_string())
+        {
+            return Err(rook_core::RepositoryError::Database(
+                "routing-state test failure".to_string(),
+            ));
+        }
+        Ok(self
+            .connections
+            .values()
+            .filter(|connection| {
+                targets
+                    .iter()
+                    .any(|target| target.as_str() == connection.id.to_string())
+            })
+            .map(|connection| rook_core::ProviderConnectionRoutingState {
+                id: connection.id,
+                provider_runtime_id: connection.provider_runtime_id.clone(),
+                adapter_revision: connection.adapter_revision,
+                priority: connection.priority,
+                created_at: connection.created_at,
+                is_active: connection.is_active,
+                auth_expired: matches!(
+                    &connection.test_status,
+                    rook_core::TestStatus::Expired { .. }
+                ),
+            })
+            .collect())
+    }
+
+    async fn find(
+        &self,
+        id: &ConnectionId,
+    ) -> Result<Option<rook_core::ProviderConnection>, rook_core::RepositoryError> {
+        Ok(self.connections.get(id).cloned())
+    }
+
+    async fn create(
+        &self,
+        _connection: &rook_core::ProviderConnection,
+    ) -> Result<(), rook_core::RepositoryError> {
+        unreachable!("test repository is read-only")
+    }
+
+    async fn update(
+        &self,
+        _connection: &rook_core::ProviderConnection,
+        _expected_updated_at: chrono::DateTime<Utc>,
+    ) -> Result<(), rook_core::RepositoryError> {
+        unreachable!("test repository is read-only")
+    }
+
+    async fn delete(&self, _id: &ConnectionId) -> Result<(), rook_core::RepositoryError> {
+        unreachable!("test repository is read-only")
+    }
+}
+
+struct InactiveAfterFirstRoutingReadRepository {
+    connection: rook_core::ProviderConnection,
+    reads: std::sync::atomic::AtomicUsize,
+    pending_after_first: Option<Arc<tokio::sync::Notify>>,
+    adapter_revision_after_first: Option<i64>,
+}
+
+#[async_trait]
+impl ProviderRepositoryPort for InactiveAfterFirstRoutingReadRepository {
+    async fn list(&self) -> Result<Vec<rook_core::ProviderConnection>, rook_core::RepositoryError> {
+        Ok(vec![self.connection.clone()])
+    }
+
+    async fn list_routing_state(
+        &self,
+    ) -> Result<Vec<rook_core::ProviderConnectionRoutingState>, rook_core::RepositoryError> {
+        let read_index = self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if read_index > 0 {
+            if let Some(started) = &self.pending_after_first {
+                started.notify_one();
+                return std::future::pending().await;
+            }
+        }
+        let is_active = read_index == 0 || self.adapter_revision_after_first.is_some();
+        let adapter_revision = if read_index == 0 {
+            self.connection.adapter_revision
+        } else {
+            self.adapter_revision_after_first
+                .unwrap_or(self.connection.adapter_revision)
+        };
+        Ok(vec![rook_core::ProviderConnectionRoutingState {
+            id: self.connection.id,
+            provider_runtime_id: self.connection.provider_runtime_id.clone(),
+            adapter_revision,
+            priority: self.connection.priority,
+            created_at: self.connection.created_at,
+            is_active,
+            auth_expired: false,
+        }])
+    }
+
+    async fn find(
+        &self,
+        id: &ConnectionId,
+    ) -> Result<Option<rook_core::ProviderConnection>, rook_core::RepositoryError> {
+        Ok((*id == self.connection.id).then(|| self.connection.clone()))
+    }
+
+    async fn find_connection_id_by_runtime(
+        &self,
+        provider: &ProviderId,
+    ) -> Result<Option<ConnectionId>, rook_core::RepositoryError> {
+        Ok((provider == &self.connection.provider_runtime_id).then_some(self.connection.id))
+    }
+
+    async fn create(
+        &self,
+        _connection: &rook_core::ProviderConnection,
+    ) -> Result<(), rook_core::RepositoryError> {
+        unreachable!("test repository is read-only")
+    }
+
+    async fn update(
+        &self,
+        _connection: &rook_core::ProviderConnection,
+        _expected_updated_at: chrono::DateTime<Utc>,
+    ) -> Result<(), rook_core::RepositoryError> {
+        unreachable!("test repository is read-only")
+    }
+
+    async fn delete(&self, _id: &ConnectionId) -> Result<(), rook_core::RepositoryError> {
+        unreachable!("test repository is read-only")
+    }
+}
+
 #[async_trait]
 impl ProviderRepositoryPort for MapProviderRepository {
     async fn list(&self) -> Result<Vec<rook_core::ProviderConnection>, rook_core::RepositoryError> {
         Ok(self.connections.values().cloned().collect())
+    }
+
+    async fn list_routing_state(
+        &self,
+    ) -> Result<Vec<rook_core::ProviderConnectionRoutingState>, rook_core::RepositoryError> {
+        Ok(self
+            .connections
+            .values()
+            .map(|connection| rook_core::ProviderConnectionRoutingState {
+                id: connection.id,
+                provider_runtime_id: connection.provider_runtime_id.clone(),
+                adapter_revision: connection.adapter_revision,
+                priority: connection.priority,
+                created_at: connection.created_at,
+                is_active: connection.is_active,
+                auth_expired: matches!(
+                    &connection.test_status,
+                    rook_core::TestStatus::Expired { .. }
+                ),
+            })
+            .collect())
     }
 
     async fn find(
@@ -2246,7 +3961,16 @@ impl RouterPort for OrderedRouter {
     }
 
     fn resolve_connection(&self, connection_id: &ConnectionId) -> Option<Arc<dyn ProviderPort>> {
-        self.connection_providers.get(connection_id).cloned()
+        self.connection_providers
+            .get(connection_id)
+            .cloned()
+            .map(|provider| {
+                if provider.connection_id() == Some(connection_id) {
+                    provider
+                } else {
+                    connection_bound_provider(provider, *connection_id)
+                }
+            })
     }
 }
 
@@ -2327,7 +4051,6 @@ fn combo_harness_with_repositories_and_quota(
         provider_repository,
         Some(Arc::new(MapComboRepository { combos })),
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -2365,14 +4088,13 @@ fn test_connection(
     is_active: bool,
 ) -> rook_core::ProviderConnection {
     use rook_core::{
-        AuthType, ConnectionConfig, Credentials, EncryptedBlob, ProviderKind,
-        QuotaWindowThresholds, TestStatus,
+        AuthType, ConnectionConfig, Credentials, EncryptedBlob, QuotaWindowThresholds, TestStatus,
     };
 
     let now = chrono::Utc::now();
     rook_core::ProviderConnection {
         id,
-        provider_kind: ProviderKind::OpenAI,
+        provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
         provider_runtime_id: runtime_id,
         name: "combo-test".to_string(),
         priority: 1,
@@ -2392,6 +4114,7 @@ fn test_connection(
             api_format: Some(rook_core::ApiFormat::OpenAI),
             supported_models: Vec::new(),
         },
+        adapter_revision: 1,
         test_status: TestStatus::NeverTested,
         created_at: now,
         updated_at: now,
@@ -2513,7 +4236,7 @@ async fn combo_success_closes_real_router_circuit() {
 
     harness
         .usecase
-        .execute_combo(&combo, req, ApiFormat::OpenAI)
+        .execute_combo(&combo, req)
         .await
         .expect("half-open combo succeeds");
     let circuit = &router.circuit_states()[0].1;
@@ -2552,11 +4275,7 @@ async fn combo_upstream_failure_updates_real_router_circuit() {
     req.stream = false;
     req.metadata.cacheable = false;
 
-    assert!(harness
-        .usecase
-        .execute_combo(&combo, req, ApiFormat::OpenAI)
-        .await
-        .is_err());
+    assert!(harness.usecase.execute_combo(&combo, req).await.is_err());
     assert_eq!(router.circuit_states()[0].1.failures, 1);
 }
 
@@ -2593,12 +4312,7 @@ async fn combo_timeout_updates_real_router_circuit_and_records_failed_audit_step
     req.model = ModelId::new("rook/coding");
     req.stream = false;
     req.metadata.cacheable = false;
-    let task = tokio::spawn(async move {
-        harness
-            .usecase
-            .execute_combo(&combo, req, ApiFormat::OpenAI)
-            .await
-    });
+    let task = tokio::spawn(async move { harness.usecase.execute_combo(&combo, req).await });
 
     started_rx.await.expect("combo provider call started");
     assert!(!task.is_finished());
@@ -2666,7 +4380,6 @@ async fn combo_cancellation_while_audit_is_blocked_updates_circuit_first() {
         None,
         Some(Arc::new(MapComboRepository { combos })),
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -2677,8 +4390,7 @@ async fn combo_cancellation_while_audit_is_blocked_updates_circuit_first() {
     req.model = ModelId::new("rook/coding");
     req.stream = false;
     req.metadata.cacheable = false;
-    let task =
-        tokio::spawn(async move { usecase.execute_combo(&combo, req, ApiFormat::OpenAI).await });
+    let task = tokio::spawn(async move { usecase.execute_combo(&combo, req).await });
     entered.await;
     assert_eq!(failures.load(std::sync::atomic::Ordering::SeqCst), 1);
     task.abort();
@@ -2735,7 +4447,6 @@ async fn combo_step_with_connection_id_uses_exact_provider_not_router_selection(
         .execute_combo(
             &combo,
             combo_req("gpt-4o", rook_core::ApiKeyRestrictions::default()),
-            ApiFormat::OpenAI,
         )
         .await;
 
@@ -2758,12 +4469,14 @@ async fn combo_step_with_connection_id_uses_exact_provider_not_router_selection(
 /// In-memory quota store used by the eligibility tests.
 struct FakeQuotaStore {
     observations: Mutex<Vec<QuotaObservation>>,
+    queries: Mutex<Vec<QuotaObservationQuery>>,
 }
 
 impl FakeQuotaStore {
     fn new(observations: Vec<QuotaObservation>) -> Self {
         Self {
             observations: Mutex::new(observations),
+            queries: Mutex::new(Vec::new()),
         }
     }
 }
@@ -2789,6 +4502,163 @@ impl QuotaObservationRecorderPort for FakeQuotaStore {
             .cloned()
             .collect())
     }
+
+    async fn latest_observations(
+        &self,
+        query: &QuotaObservationQuery,
+    ) -> CortexResult<Vec<QuotaObservation>> {
+        self.queries.lock().unwrap().push(query.clone());
+        let observations = self.list_observations(query.provider.clone()).await?;
+        Ok(rook_core::reduce_latest_observations(observations, query))
+    }
+}
+
+struct EligibilityTestClock(Mutex<std::time::Instant>);
+
+impl EligibilityTestClock {
+    fn advance(&self, duration: std::time::Duration) {
+        *self.0.lock().unwrap() += duration;
+    }
+}
+
+impl crate::router_impl::CircuitClock for EligibilityTestClock {
+    fn now(&self) -> std::time::Instant {
+        *self.0.lock().unwrap()
+    }
+}
+
+struct EligibilityAdvancingRoutingStateRepository {
+    states: Vec<rook_core::ProviderConnectionRoutingState>,
+    clock: Arc<EligibilityTestClock>,
+}
+
+#[async_trait]
+impl ProviderRepositoryPort for EligibilityAdvancingRoutingStateRepository {
+    async fn list(&self) -> Result<Vec<rook_core::ProviderConnection>, rook_core::RepositoryError> {
+        unreachable!("eligibility uses the credential-free routing-state view")
+    }
+
+    async fn list_routing_state(
+        &self,
+    ) -> Result<Vec<rook_core::ProviderConnectionRoutingState>, rook_core::RepositoryError> {
+        self.clock.advance(std::time::Duration::from_secs(31));
+        Ok(self.states.clone())
+    }
+
+    async fn find(
+        &self,
+        _id: &ConnectionId,
+    ) -> Result<Option<rook_core::ProviderConnection>, rook_core::RepositoryError> {
+        Ok(None)
+    }
+
+    async fn create(
+        &self,
+        _conn: &rook_core::ProviderConnection,
+    ) -> Result<(), rook_core::RepositoryError> {
+        Ok(())
+    }
+
+    async fn update(
+        &self,
+        _conn: &rook_core::ProviderConnection,
+        _expected_updated_at: chrono::DateTime<Utc>,
+    ) -> Result<(), rook_core::RepositoryError> {
+        Ok(())
+    }
+
+    async fn delete(&self, _id: &ConnectionId) -> Result<(), rook_core::RepositoryError> {
+        Ok(())
+    }
+}
+
+struct ConcurrentQuotaStore {
+    queries: Mutex<Vec<QuotaObservationQuery>>,
+    active: std::sync::atomic::AtomicUsize,
+    peak: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait]
+impl QuotaObservationRecorderPort for ConcurrentQuotaStore {
+    async fn record_observation(&self, _: QuotaObservation) -> CortexResult<()> {
+        Ok(())
+    }
+
+    async fn list_observations(
+        &self,
+        _: Option<ProviderId>,
+    ) -> CortexResult<Vec<QuotaObservation>> {
+        Ok(Vec::new())
+    }
+
+    async fn latest_observations(
+        &self,
+        query: &QuotaObservationQuery,
+    ) -> CortexResult<Vec<QuotaObservation>> {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.queries.lock().unwrap().push(query.clone());
+        let active = self.active.fetch_add(1, SeqCst) + 1;
+        self.peak.fetch_max(active, SeqCst);
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        self.active.fetch_sub(1, SeqCst);
+        Ok(vec![quota_observation(
+            query.connection_ids[0],
+            query.provider.clone().unwrap(),
+            0.0,
+            Utc::now(),
+            Some(Utc::now() + chrono::Duration::seconds(60)),
+        )])
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn eligibility_quota_reads_are_concurrent_bounded_and_deduplicated() {
+    let states: Vec<_> = (0..QUOTA_READ_CONCURRENCY * 2 + 1)
+        .map(|index| rook_core::ProviderConnectionRoutingState {
+            id: ConnectionId::new(),
+            provider_runtime_id: ProviderId::new(format!("quota-{index}")),
+            adapter_revision: 1,
+            priority: 1,
+            created_at: Utc::now(),
+            is_active: true,
+            auth_expired: false,
+        })
+        .collect();
+    let reader = Arc::new(ConcurrentQuotaStore {
+        queries: Mutex::new(Vec::new()),
+        active: std::sync::atomic::AtomicUsize::new(0),
+        peak: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let usecase = usecase_with_router(Arc::new(crate::FallbackRouter::new(
+        vec![ordinary_provider("quota-target")],
+        crate::RoutingStrategy::Priority,
+    )))
+    .with_quota_observation_reader(reader.clone());
+    let connections: Vec<_> = states.iter().chain(states.iter()).collect();
+
+    let exhausted = usecase.exhausted_connection_ids(&connections).await;
+
+    assert_eq!(exhausted, states.iter().map(|state| state.id).collect());
+    let queries = reader.queries.lock().unwrap();
+    assert_eq!(queries.len(), states.len());
+    for state in &states {
+        let matching: Vec<_> = queries
+            .iter()
+            .filter(|query| query.connection_ids == vec![state.id])
+            .collect();
+        assert_eq!(matching.len(), 1);
+        assert_eq!(
+            matching[0].provider.as_ref(),
+            Some(&state.provider_runtime_id)
+        );
+        assert_eq!(matching[0].limit, QuotaObservationQuery::MAX_LIMIT);
+    }
+    let peak = reader.peak.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(peak > 1, "quota reads must overlap");
+    assert!(
+        peak <= QUOTA_READ_CONCURRENCY,
+        "quota reads must be bounded"
+    );
 }
 
 struct PendingQuotaStore;
@@ -2824,6 +4694,27 @@ struct QuotaAwareProviderRepository {
 impl ProviderRepositoryPort for QuotaAwareProviderRepository {
     async fn list(&self) -> Result<Vec<rook_core::ProviderConnection>, rook_core::RepositoryError> {
         Ok(self.connections.values().cloned().collect())
+    }
+
+    async fn list_routing_state(
+        &self,
+    ) -> Result<Vec<rook_core::ProviderConnectionRoutingState>, rook_core::RepositoryError> {
+        Ok(self
+            .connections
+            .values()
+            .map(|connection| rook_core::ProviderConnectionRoutingState {
+                id: connection.id,
+                provider_runtime_id: connection.provider_runtime_id.clone(),
+                adapter_revision: connection.adapter_revision,
+                priority: connection.priority,
+                created_at: connection.created_at,
+                is_active: connection.is_active,
+                auth_expired: matches!(
+                    &connection.test_status,
+                    rook_core::TestStatus::Expired { .. }
+                ),
+            })
+            .collect())
     }
 
     async fn find(
@@ -2894,7 +4785,6 @@ async fn quota_read_timeout_keeps_connection_eligible() {
         Some(repository),
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -2924,21 +4814,27 @@ async fn uuid_provider_id_resolves_exact_connection_for_standard_and_streaming_r
     let exhausted_provider = ProviderId::new(exhausted_connection.to_string());
     let healthy_provider = ProviderId::new(healthy_connection.to_string());
 
-    let router: Arc<dyn RouterPort> = Arc::new(OrderedRouter {
-        providers: vec![
-            Arc::new(SpyProvider {
-                id: exhausted_provider.clone(),
-                model: TEST_MODEL.clone(),
-                seen_models: exhausted_calls.clone(),
-            }),
-            Arc::new(SpyProvider {
-                id: healthy_provider.clone(),
-                model: TEST_MODEL.clone(),
-                seen_models: healthy_calls.clone(),
-            }),
+    let router: Arc<dyn RouterPort> = Arc::new(crate::FallbackRouter::new(
+        vec![
+            connection_bound_provider(
+                Arc::new(SpyProvider {
+                    id: exhausted_provider.clone(),
+                    model: TEST_MODEL.clone(),
+                    seen_models: exhausted_calls.clone(),
+                }),
+                exhausted_connection,
+            ),
+            connection_bound_provider(
+                Arc::new(SpyProvider {
+                    id: healthy_provider.clone(),
+                    model: TEST_MODEL.clone(),
+                    seen_models: healthy_calls.clone(),
+                }),
+                healthy_connection,
+            ),
         ],
-        connection_providers: HashMap::new(),
-    });
+        crate::RoutingStrategy::Priority,
+    ));
 
     let provider_repository: Arc<dyn ProviderRepositoryPort> =
         Arc::new(QuotaAwareProviderRepository {
@@ -2978,7 +4874,6 @@ async fn uuid_provider_id_resolves_exact_connection_for_standard_and_streaming_r
         Some(provider_repository),
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -2987,7 +4882,7 @@ async fn uuid_provider_id_resolves_exact_connection_for_standard_and_streaming_r
 
     let mut req = request();
     req.stream = false;
-    let result = usecase.execute_with_format(req, ApiFormat::OpenAI).await;
+    let result = usecase.execute(req).await;
 
     assert!(
         result.is_ok(),
@@ -3014,21 +4909,27 @@ async fn streaming_request_resolves_uuid_provider_id_before_quota_check() {
     let healthy_calls = Arc::new(Mutex::new(Vec::new()));
     let exhausted_provider = ProviderId::new(exhausted_connection.to_string());
     let healthy_provider = ProviderId::new(healthy_connection.to_string());
-    let router: Arc<dyn RouterPort> = Arc::new(OrderedRouter {
-        providers: vec![
-            Arc::new(SpyProvider {
-                id: exhausted_provider.clone(),
-                model: TEST_MODEL.clone(),
-                seen_models: exhausted_calls.clone(),
-            }),
-            Arc::new(SpyProvider {
-                id: healthy_provider.clone(),
-                model: TEST_MODEL.clone(),
-                seen_models: healthy_calls.clone(),
-            }),
+    let router: Arc<dyn RouterPort> = Arc::new(crate::FallbackRouter::new(
+        vec![
+            connection_bound_provider(
+                Arc::new(SpyProvider {
+                    id: exhausted_provider.clone(),
+                    model: TEST_MODEL.clone(),
+                    seen_models: exhausted_calls.clone(),
+                }),
+                exhausted_connection,
+            ),
+            connection_bound_provider(
+                Arc::new(SpyProvider {
+                    id: healthy_provider.clone(),
+                    model: TEST_MODEL.clone(),
+                    seen_models: healthy_calls.clone(),
+                }),
+                healthy_connection,
+            ),
         ],
-        connection_providers: HashMap::new(),
-    });
+        crate::RoutingStrategy::Priority,
+    ));
     let provider_repository: Arc<dyn ProviderRepositoryPort> =
         Arc::new(QuotaAwareProviderRepository {
             connections: HashMap::from([
@@ -3065,7 +4966,6 @@ async fn streaming_request_resolves_uuid_provider_id_before_quota_check() {
         Some(provider_repository),
         None,
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -3075,7 +4975,7 @@ async fn streaming_request_resolves_uuid_provider_id_before_quota_check() {
     let mut req = request();
     req.stream = true;
     let mut stream = usecase
-        .execute_stream_with_format(req, ApiFormat::OpenAI)
+        .execute_stream(req)
         .await
         .expect("healthy provider should start streaming");
     while stream.next().await.is_some() {}
@@ -3103,7 +5003,7 @@ fn quota_observation(
     reset_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> QuotaObservation {
     QuotaObservation {
-        provider_kind: rook_core::ProviderKind::OpenAI,
+        provider_id: "openai".to_string(),
         provider: runtime_id,
         connection_id: Some(connection_id),
         metric: "requests".to_string(),
@@ -3116,6 +5016,238 @@ fn quota_observation(
         reset_after_milliseconds: None,
         observed_at,
     }
+}
+
+#[tokio::test]
+async fn eligibility_stage_reports_exhausted_quota_before_selection() {
+    let exhausted_connection = ConnectionId::new();
+    let healthy_connection = ConnectionId::new();
+    let exhausted_runtime = ProviderId::new("exhausted-runtime");
+    let healthy_runtime = ProviderId::new("healthy-runtime");
+    let exhausted_target = exhausted_runtime.clone();
+    let healthy_target = ProviderId::new(healthy_connection.to_string());
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![
+            ordinary_provider(exhausted_target.as_str()),
+            connection_bound_provider(
+                ordinary_provider(healthy_target.as_str()),
+                healthy_connection,
+            ),
+        ],
+        crate::RoutingStrategy::Priority,
+    ));
+    let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(QuotaAwareProviderRepository {
+        connections: HashMap::from([
+            (
+                exhausted_connection,
+                test_connection(exhausted_connection, exhausted_runtime.clone(), true),
+            ),
+            (
+                healthy_connection,
+                test_connection(healthy_connection, healthy_runtime, true),
+            ),
+        ]),
+        runtime_connections: HashMap::new(),
+    });
+    let now = Utc::now();
+    let quota_reader: Arc<dyn QuotaObservationRecorderPort> =
+        Arc::new(FakeQuotaStore::new(vec![quota_observation(
+            exhausted_connection,
+            exhausted_runtime,
+            0.0,
+            now,
+            Some(now + chrono::Duration::seconds(60)),
+        )]));
+    let usecase = usecase_with_router_and_provider_repository(router, repository)
+        .with_quota_observation_reader(quota_reader);
+
+    let result = evaluate_eligibility(&usecase, &request()).await;
+
+    assert_eq!(result.eligible, vec![crate::TargetRef(healthy_target)]);
+    assert_eq!(
+        result.rejected,
+        vec![crate::Rejection {
+            target: crate::TargetRef(exhausted_target),
+            reason: crate::RejectionReason::QuotaExhausted,
+        }]
+    );
+}
+
+#[tokio::test]
+async fn eligibility_quota_series_limit_is_scoped_per_connection() {
+    let filler_connection = ConnectionId::new();
+    let exhausted_connection = ConnectionId::new();
+    let filler_runtime = ProviderId::new("filler-runtime");
+    let exhausted_runtime = ProviderId::new("exhausted-runtime");
+    let filler_target = ProviderId::new(filler_connection.to_string());
+    let exhausted_target = ProviderId::new(exhausted_connection.to_string());
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![
+            connection_bound_provider(ordinary_provider(filler_target.as_str()), filler_connection),
+            connection_bound_provider(
+                ordinary_provider(exhausted_target.as_str()),
+                exhausted_connection,
+            ),
+        ],
+        crate::RoutingStrategy::Priority,
+    ));
+    let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(QuotaAwareProviderRepository {
+        connections: HashMap::from([
+            (
+                filler_connection,
+                test_connection(filler_connection, filler_runtime.clone(), true),
+            ),
+            (
+                exhausted_connection,
+                test_connection(exhausted_connection, exhausted_runtime.clone(), true),
+            ),
+        ]),
+        runtime_connections: HashMap::new(),
+    });
+    let now = Utc::now();
+    let mut observations = Vec::with_capacity(QuotaObservationQuery::MAX_LIMIT + 1);
+    for index in 0..QuotaObservationQuery::MAX_LIMIT {
+        let mut observation = quota_observation(
+            filler_connection,
+            filler_runtime.clone(),
+            1.0,
+            now - chrono::Duration::seconds((index as i64) % 100),
+            Some(now + chrono::Duration::seconds(60)),
+        );
+        observation.scope = Some(format!("scope-{index}"));
+        observations.push(observation);
+    }
+    observations.push(quota_observation(
+        exhausted_connection,
+        exhausted_runtime,
+        0.0,
+        now - chrono::Duration::seconds(299),
+        Some(now + chrono::Duration::seconds(60)),
+    ));
+    let quota_reader: Arc<dyn QuotaObservationRecorderPort> =
+        Arc::new(FakeQuotaStore::new(observations));
+    let usecase = usecase_with_router_and_provider_repository(router, repository)
+        .with_quota_observation_reader(quota_reader);
+
+    let result = evaluate_eligibility(&usecase, &request()).await;
+
+    assert_eq!(result.eligible, vec![crate::TargetRef(filler_target)]);
+    assert_eq!(
+        result.rejected,
+        vec![crate::Rejection {
+            target: crate::TargetRef(exhausted_target),
+            reason: crate::RejectionReason::QuotaExhausted,
+        }]
+    );
+}
+
+#[tokio::test]
+async fn capped_legacy_quota_read_is_unknown_not_exhausted() {
+    let connection_id = ConnectionId::new();
+    let runtime_id = ProviderId::new("legacy-capped-quota-runtime");
+    let now = Utc::now();
+    let observations = (0..QuotaObservationQuery::MAX_LIMIT)
+        .map(|index| {
+            let mut observation = quota_observation(
+                connection_id,
+                runtime_id.clone(),
+                1.0,
+                now - chrono::Duration::seconds(index as i64),
+                Some(now + chrono::Duration::seconds(60)),
+            );
+            observation.scope = Some(format!("scope-{index}"));
+            observation
+        })
+        .collect();
+    let reader = Arc::new(FakeQuotaStore::new(observations));
+    let usecase = usecase_with_router(Arc::new(crate::FallbackRouter::new(
+        vec![ordinary_provider("quota-target")],
+        crate::RoutingStrategy::Priority,
+    )))
+    .with_quota_observation_reader(reader);
+
+    let state = usecase
+        .connection_quota_state(&connection_id, Some(&runtime_id))
+        .await;
+
+    assert!(matches!(state, QuotaState::Unknown));
+}
+
+#[tokio::test]
+async fn capped_quota_series_remains_unknown_and_eligible_even_with_exhaustion_samples() {
+    let connection_id = ConnectionId::new();
+    let runtime_id = ProviderId::new("capped-exhausted-runtime");
+    let target = ProviderId::new(connection_id.to_string());
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![connection_bound_provider(
+            ordinary_provider(target.as_str()),
+            connection_id,
+        )],
+        crate::RoutingStrategy::Priority,
+    ));
+    let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(QuotaAwareProviderRepository {
+        connections: HashMap::from([(
+            connection_id,
+            test_connection(connection_id, runtime_id.clone(), true),
+        )]),
+        runtime_connections: HashMap::new(),
+    });
+    let now = Utc::now();
+    let observations = (0..QuotaObservationQuery::MAX_LIMIT)
+        .map(|index| {
+            let mut observation = quota_observation(
+                connection_id,
+                runtime_id.clone(),
+                1.0,
+                now - chrono::Duration::seconds(index as i64),
+                Some(now + chrono::Duration::seconds(60)),
+            );
+            observation.scope = Some(format!("scope-{index}"));
+            observation
+        })
+        .collect();
+    let quota_reader: Arc<dyn QuotaObservationRecorderPort> =
+        Arc::new(FakeQuotaStore::new(observations));
+    let usecase = usecase_with_router_and_provider_repository(router, repository)
+        .with_quota_observation_reader(quota_reader);
+
+    let result = evaluate_eligibility(&usecase, &request()).await;
+
+    assert_eq!(result.eligible, vec![crate::TargetRef(target)]);
+    assert!(result.rejected.is_empty());
+}
+
+#[tokio::test]
+async fn eligibility_stage_quota_timeout_keeps_candidate_eligible() {
+    let connection_id = ConnectionId::new();
+    let runtime_id = ProviderId::new("pending-quota-runtime");
+    let target = ProviderId::new(connection_id.to_string());
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![connection_bound_provider(
+            ordinary_provider(target.as_str()),
+            connection_id,
+        )],
+        crate::RoutingStrategy::Priority,
+    ));
+    let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(QuotaAwareProviderRepository {
+        connections: HashMap::from([(
+            connection_id,
+            test_connection(connection_id, runtime_id, true),
+        )]),
+        runtime_connections: HashMap::new(),
+    });
+    let usecase = usecase_with_router_and_provider_repository(router, repository)
+        .with_quota_observation_reader(Arc::new(PendingQuotaStore));
+
+    let result = tokio::time::timeout(
+        QUOTA_READ_TIMEOUT + std::time::Duration::from_secs(1),
+        evaluate_eligibility(&usecase, &request()),
+    )
+    .await
+    .expect("the batch quota read must have a deadline");
+
+    assert_eq!(result.eligible, vec![crate::TargetRef(target)]);
+    assert!(result.rejected.is_empty());
 }
 
 /// Two connection-bound combo steps plus a quota store.
@@ -3217,6 +5349,396 @@ fn quota_combo_setup(
     }
 }
 
+/// Combo under test, the per-provider call recorders, the router, and the
+/// repository whose routing-state re-read fails.
+type ComboStateRereadSetup = (
+    Combo,
+    Arc<Mutex<Vec<String>>>,
+    Arc<Mutex<Vec<String>>>,
+    Arc<dyn RouterPort>,
+    Arc<dyn ProviderRepositoryPort>,
+);
+
+/// Streaming harness for the same combo, plus the per-provider call recorders.
+type ComboStreamStateRereadSetup = (
+    RouteRequest,
+    Combo,
+    Arc<Mutex<Vec<String>>>,
+    Arc<Mutex<Vec<String>>>,
+);
+
+fn combo_state_reread_setup(timeout: bool, fail_every_connection: bool) -> ComboStateRereadSetup {
+    let first_connection = ConnectionId::new();
+    let second_connection = ConnectionId::new();
+    let runtime_id = ProviderId::new("combo-reread-runtime");
+    let first_calls = Arc::new(Mutex::new(Vec::new()));
+    let second_calls = Arc::new(Mutex::new(Vec::new()));
+    let first_provider = connection_bound_provider(
+        Arc::new(SpyProvider {
+            id: ProviderId::new(first_connection.to_string()),
+            model: ModelId::new("gpt-test"),
+            seen_models: first_calls.clone(),
+        }),
+        first_connection,
+    );
+    let second_provider = connection_bound_provider(
+        Arc::new(SpyProvider {
+            id: ProviderId::new(second_connection.to_string()),
+            model: ModelId::new("gpt-test"),
+            seen_models: second_calls.clone(),
+        }),
+        second_connection,
+    );
+    let router: Arc<dyn RouterPort> = Arc::new(OrderedRouter {
+        providers: Vec::new(),
+        connection_providers: HashMap::from([
+            (first_connection, first_provider),
+            (second_connection, second_provider),
+        ]),
+    });
+    let repository: Arc<dyn ProviderRepositoryPort> =
+        Arc::new(FailsSecondRoutingStateReadRepository {
+            connections: HashMap::from([
+                (
+                    first_connection,
+                    test_connection(first_connection, runtime_id.clone(), true),
+                ),
+                (
+                    second_connection,
+                    test_connection(second_connection, runtime_id.clone(), true),
+                ),
+            ]),
+            fail_connection_id: first_connection,
+            reads: std::sync::atomic::AtomicUsize::new(0),
+            timeout,
+            fail_every_connection,
+        });
+    let combo = Combo::new(
+        "combo-state-reread".to_string(),
+        ComboStrategy::Priority,
+        vec![
+            ComboStep {
+                provider_id: runtime_id.clone(),
+                model: ModelId::new("gpt-test"),
+                connection_id: Some(first_connection),
+                priority: 1,
+            },
+            ComboStep {
+                provider_id: runtime_id,
+                model: ModelId::new("gpt-test"),
+                connection_id: Some(second_connection),
+                priority: 2,
+            },
+        ],
+    );
+    (combo, first_calls, second_calls, router, repository)
+}
+
+#[tokio::test]
+async fn combo_state_reread_error_skips_step_and_falls_back() {
+    let (combo, first_calls, second_calls, router, repository) =
+        combo_state_reread_setup(false, false);
+    let harness = combo_harness_with_repositories(
+        combo.clone(),
+        vec![],
+        router,
+        Arc::new(Mutex::new(Vec::new())),
+        Some(repository),
+    );
+
+    let result = harness
+        .usecase
+        .execute_combo(
+            &combo,
+            combo_req("gpt-test", rook_core::ApiKeyRestrictions::default()),
+        )
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "the next verified step must serve the request: {result:?}"
+    );
+    assert!(
+        first_calls.lock().unwrap().is_empty(),
+        "the unreadable connection must not reach upstream"
+    );
+    assert_eq!(second_calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn combo_state_reread_timeout_skips_step_and_falls_back() {
+    let (combo, first_calls, second_calls, router, repository) =
+        combo_state_reread_setup(true, false);
+    let harness = combo_harness_with_repositories(
+        combo.clone(),
+        vec![],
+        router,
+        Arc::new(Mutex::new(Vec::new())),
+        Some(repository),
+    );
+
+    let result = harness
+        .usecase
+        .execute_combo(
+            &combo,
+            combo_req("gpt-test", rook_core::ApiKeyRestrictions::default()),
+        )
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "the next verified step must serve the request: {result:?}"
+    );
+    assert!(
+        first_calls.lock().unwrap().is_empty(),
+        "the timed-out connection must not reach upstream"
+    );
+    assert_eq!(second_calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn combo_state_reread_failure_records_connection_state_unavailable_reason() {
+    let (combo, first_calls, second_calls, router, repository) =
+        combo_state_reread_setup(false, true);
+    let harness = combo_harness_with_repositories(
+        combo.clone(),
+        vec![],
+        router,
+        Arc::new(Mutex::new(Vec::new())),
+        Some(repository),
+    );
+
+    let error = harness
+        .usecase
+        .execute_combo(
+            &combo,
+            combo_req("gpt-test", rook_core::ApiKeyRestrictions::default()),
+        )
+        .await
+        .expect_err("every step must be skipped when the routing-state re-read fails");
+
+    let reasons = error
+        .combo_skip_reasons()
+        .expect("the exhausted combo must expose the recorded skip reasons");
+    assert!(
+        reasons
+            .iter()
+            .any(|(_, reason)| reason == "connection_state_unavailable"),
+        "the failed re-read must record the connection_state_unavailable skip reason: {reasons:?}"
+    );
+    assert!(
+        first_calls.lock().unwrap().is_empty(),
+        "the unreadable connection must not reach upstream"
+    );
+    assert!(
+        second_calls.lock().unwrap().is_empty(),
+        "every skipped connection must not reach upstream"
+    );
+}
+
+fn combo_stream_state_reread_setup(
+    timeout: bool,
+    fail_every_connection: bool,
+) -> ComboStreamStateRereadSetup {
+    let (combo, first_calls, second_calls, router, repository) =
+        combo_state_reread_setup(timeout, fail_every_connection);
+    let combo_id = combo.id;
+    let aliases = HashMap::from([(
+        "rook/state-reread".to_string(),
+        ComboAlias::new(ModelId::new("rook/state-reread"), combo_id),
+    )]);
+    let usecase = RouteRequest::new(
+        router,
+        Arc::new(TestCache {
+            get_calls: Mutex::new(0),
+            set_calls: Mutex::new(0),
+        }),
+        Arc::new(TestAudit {
+            entries: Mutex::new(Vec::new()),
+        }),
+        None,
+        Some(repository),
+        Some(Arc::new(MapComboRepository {
+            combos: HashMap::from([(combo_id, combo.clone())]),
+        })),
+        Arc::new(crate::PricingConfig::default()),
+        Arc::new(TestAliasRepository),
+        test_alias_config(),
+        None,
+    )
+    .with_combo_alias_repository(Arc::new(MapComboAliasRepository { aliases }));
+    (usecase, combo, first_calls, second_calls)
+}
+
+#[tokio::test]
+async fn combo_stream_state_reread_error_skips_step_and_falls_back() {
+    let (usecase, _combo, first_calls, second_calls) =
+        combo_stream_state_reread_setup(false, false);
+    let stream = usecase
+        .execute_stream(stream_req("rook/state-reread"))
+        .await
+        .expect("the next verified stream step must start");
+    let chunks = stream.collect::<Vec<_>>().await;
+
+    assert!(!chunks.is_empty());
+    assert!(chunks.iter().all(Result::is_ok));
+    assert!(first_calls.lock().unwrap().is_empty());
+    assert_eq!(second_calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn combo_stream_state_reread_timeout_skips_step_and_falls_back() {
+    let (usecase, _combo, first_calls, second_calls) = combo_stream_state_reread_setup(true, false);
+    let stream = usecase
+        .execute_stream(stream_req("rook/state-reread"))
+        .await
+        .expect("the next verified stream step must start");
+    let chunks = stream.collect::<Vec<_>>().await;
+
+    assert!(!chunks.is_empty());
+    assert!(chunks.iter().all(Result::is_ok));
+    assert!(first_calls.lock().unwrap().is_empty());
+    assert_eq!(second_calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn combo_stream_state_reread_failure_records_connection_state_unavailable_reason() {
+    let (usecase, _combo, first_calls, second_calls) = combo_stream_state_reread_setup(false, true);
+
+    let error = match usecase
+        .execute_stream(stream_req("rook/state-reread"))
+        .await
+    {
+        Ok(_) => panic!("every stream step must be skipped when the routing-state re-read fails"),
+        Err(error) => error,
+    };
+
+    let reasons = error
+        .combo_skip_reasons()
+        .expect("the exhausted combo must expose the recorded skip reasons");
+    assert!(
+        reasons
+            .iter()
+            .any(|(_, reason)| reason == "connection_state_unavailable"),
+        "the failed re-read must record the connection_state_unavailable skip reason: {reasons:?}"
+    );
+    assert!(
+        first_calls.lock().unwrap().is_empty(),
+        "the unreadable connection must not reach upstream"
+    );
+    assert!(
+        second_calls.lock().unwrap().is_empty(),
+        "every skipped connection must not reach upstream"
+    );
+}
+
+#[tokio::test]
+async fn combo_skips_managed_adapter_with_stale_configuration_revision() {
+    let connection_id = ConnectionId::new();
+    let runtime_id = ProviderId::new("stale-combo-runtime");
+    let adapter_id = ProviderId::new(connection_id.to_string());
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let provider = connection_bound_provider(
+        Arc::new(SpyProvider {
+            id: adapter_id,
+            model: ModelId::new("gpt-test"),
+            seen_models: calls.clone(),
+        }),
+        connection_id,
+    );
+    let router: Arc<dyn RouterPort> = Arc::new(crate::FallbackRouter::new(
+        vec![provider],
+        crate::RoutingStrategy::Priority,
+    ));
+    let mut connection = test_connection(connection_id, runtime_id.clone(), true);
+    connection.adapter_revision = 2;
+    let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(MapProviderRepository {
+        connections: HashMap::from([(connection_id, connection)]),
+    });
+    let combo = Combo::new(
+        "stale-adapter-revision".to_string(),
+        ComboStrategy::Priority,
+        vec![ComboStep {
+            provider_id: runtime_id,
+            model: ModelId::new("gpt-test"),
+            connection_id: Some(connection_id),
+            priority: 1,
+        }],
+    );
+    let h = combo_harness_with_repositories(
+        combo.clone(),
+        vec![],
+        router,
+        calls.clone(),
+        Some(repository),
+    );
+
+    let error = h
+        .usecase
+        .execute_combo(
+            &combo,
+            combo_req("gpt-test", rook_core::ApiKeyRestrictions::default()),
+        )
+        .await
+        .expect_err("combo must not call a stale adapter");
+
+    assert!(error.to_string().contains("all providers exhausted"));
+    assert!(calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn combo_rechecks_adapter_revision_after_connection_lookup() {
+    let connection_id = ConnectionId::new();
+    let runtime_id = ProviderId::new("changing-combo-runtime");
+    let adapter_id = ProviderId::new(connection_id.to_string());
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let provider = connection_bound_provider(
+        Arc::new(SpyProvider {
+            id: adapter_id,
+            model: ModelId::new("gpt-test"),
+            seen_models: calls.clone(),
+        }),
+        connection_id,
+    );
+    let router: Arc<dyn RouterPort> = Arc::new(crate::FallbackRouter::new(
+        vec![provider],
+        crate::RoutingStrategy::Priority,
+    ));
+    let repository: Arc<dyn ProviderRepositoryPort> =
+        Arc::new(RevisionChangingProviderRepository {
+            connection: test_connection(connection_id, runtime_id.clone(), true),
+        });
+    let combo = Combo::new(
+        "combo-revision-race".to_string(),
+        ComboStrategy::Priority,
+        vec![ComboStep {
+            provider_id: runtime_id,
+            model: ModelId::new("gpt-test"),
+            connection_id: Some(connection_id),
+            priority: 1,
+        }],
+    );
+    let harness = combo_harness_with_repositories(
+        combo.clone(),
+        vec![],
+        router,
+        calls.clone(),
+        Some(repository),
+    );
+
+    let error = harness
+        .usecase
+        .execute_combo(
+            &combo,
+            combo_req("gpt-test", rook_core::ApiKeyRestrictions::default()),
+        )
+        .await
+        .expect_err("combo must reject a revision change before upstream I/O");
+
+    assert!(error.to_string().contains("all providers exhausted"));
+    assert!(calls.lock().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn combo_skips_connection_with_fresh_exhausted_quota() {
     let QuotaComboSetup {
@@ -3242,7 +5764,6 @@ async fn combo_skips_connection_with_fresh_exhausted_quota() {
         .execute_combo(
             &combo,
             combo_req("gpt-test", rook_core::ApiKeyRestrictions::default()),
-            ApiFormat::OpenAI,
         )
         .await;
 
@@ -3286,7 +5807,6 @@ async fn combo_keeps_connection_without_quota_evidence() {
         .execute_combo(
             &combo,
             combo_req("gpt-test", rook_core::ApiKeyRestrictions::default()),
-            ApiFormat::OpenAI,
         )
         .await;
 
@@ -3324,7 +5844,6 @@ async fn combo_keeps_connection_with_stale_quota_evidence() {
         .execute_combo(
             &combo,
             combo_req("gpt-test", rook_core::ApiKeyRestrictions::default()),
-            ApiFormat::OpenAI,
         )
         .await;
 
@@ -3362,7 +5881,6 @@ async fn combo_reconsiders_connection_after_the_reset_instant_passed() {
         .execute_combo(
             &combo,
             combo_req("gpt-test", rook_core::ApiKeyRestrictions::default()),
-            ApiFormat::OpenAI,
         )
         .await;
 
@@ -3432,7 +5950,6 @@ async fn combo_reports_the_quota_skip_reason_when_every_connection_is_exhausted(
         .execute_combo(
             &combo,
             combo_req("gpt-test", rook_core::ApiKeyRestrictions::default()),
-            ApiFormat::OpenAI,
         )
         .await
         .expect_err("an exhausted connection must fail the combo");
@@ -3535,13 +6052,103 @@ async fn unauthorized_later_connection_step_is_rejected_before_any_upstream_io()
                     spending_budget: None,
                 },
             ),
-            ApiFormat::OpenAI,
         )
         .await;
 
     assert!(matches!(result, Err(error) if error.is_forbidden()));
     assert!(first_calls.lock().unwrap().is_empty());
     assert!(unauthorized_calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn combo_fails_closed_before_upstream_when_authorization_state_is_unavailable() {
+    let first_connection = ConnectionId::new();
+    let later_connection = ConnectionId::new();
+    let runtime_id = ProviderId::new("combo-state-runtime");
+    let first_adapter = ProviderId::new(first_connection.to_string());
+    let later_adapter = ProviderId::new(later_connection.to_string());
+    let first_calls = Arc::new(Mutex::new(Vec::new()));
+    let later_calls = Arc::new(Mutex::new(Vec::new()));
+    let combo = Combo::new(
+        "combo-state-unavailable".to_string(),
+        ComboStrategy::Priority,
+        vec![
+            ComboStep {
+                provider_id: runtime_id.clone(),
+                model: ModelId::new("gpt-test"),
+                connection_id: Some(first_connection),
+                priority: 1,
+            },
+            ComboStep {
+                provider_id: runtime_id.clone(),
+                model: ModelId::new("gpt-test"),
+                connection_id: Some(later_connection),
+                priority: 2,
+            },
+        ],
+    );
+    let router: Arc<dyn RouterPort> = Arc::new(OrderedRouter {
+        providers: Vec::new(),
+        connection_providers: HashMap::from([
+            (
+                first_connection,
+                Arc::new(SpyProvider {
+                    id: first_adapter.clone(),
+                    model: ModelId::new("gpt-test"),
+                    seen_models: first_calls.clone(),
+                }) as Arc<dyn ProviderPort>,
+            ),
+            (
+                later_connection,
+                Arc::new(SpyProvider {
+                    id: later_adapter.clone(),
+                    model: ModelId::new("gpt-test"),
+                    seen_models: later_calls.clone(),
+                }) as Arc<dyn ProviderPort>,
+            ),
+        ]),
+    });
+    let repository: Arc<dyn ProviderRepositoryPort> =
+        Arc::new(FailsOneRoutingStateReadRepository {
+            connections: HashMap::from([
+                (
+                    first_connection,
+                    test_connection(first_connection, runtime_id.clone(), true),
+                ),
+                (
+                    later_connection,
+                    test_connection(later_connection, runtime_id, true),
+                ),
+            ]),
+            fail_connection_id: later_connection,
+        });
+    let harness = combo_harness_with_repositories(
+        combo.clone(),
+        vec![],
+        router,
+        Arc::new(Mutex::new(Vec::new())),
+        Some(repository),
+    );
+
+    let error = harness
+        .usecase
+        .execute_combo(
+            &combo,
+            combo_req(
+                "gpt-test",
+                rook_core::ApiKeyRestrictions {
+                    allowed_models: Vec::new(),
+                    allowed_providers: vec![first_adapter, later_adapter],
+                    spending_budget: None,
+                },
+            ),
+        )
+        .await
+        .expect_err("unavailable authorization state must stop the combo preflight");
+
+    assert!(error.to_string().contains("all providers exhausted"));
+    assert!(first_calls.lock().unwrap().is_empty());
+    assert!(later_calls.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -3592,7 +6199,7 @@ async fn connection_bound_step_rejects_another_account_before_upstream_io() {
 
     let error = h
         .usecase
-        .execute_combo(&combo, combo_req("gpt-4o", restrictions), ApiFormat::OpenAI)
+        .execute_combo(&combo, combo_req("gpt-4o", restrictions))
         .await
         .expect_err("different account must be forbidden");
 
@@ -3685,7 +6292,6 @@ async fn connection_bound_step_falls_back_to_the_next_step_on_rate_limit() {
                     spending_budget: None,
                 },
             ),
-            ApiFormat::OpenAI,
         )
         .await
         .expect("the second step must run after the 429");
@@ -3779,7 +6385,6 @@ async fn unusable_and_disallowed_connection_step_is_skipped_in_both_paths() {
                     spending_budget: None,
                 },
             ),
-            ApiFormat::OpenAI,
         )
         .await
         .expect_err("an unusable step cannot satisfy the request");
@@ -3851,7 +6456,6 @@ async fn combo_audit_and_usage_record_the_effective_connection() {
                     spending_budget: None,
                 },
             ),
-            ApiFormat::OpenAI,
         )
         .await
         .expect("combo execution succeeds");
@@ -3921,7 +6525,6 @@ async fn legacy_step_keeps_its_adapter_id_without_connection_lookup() {
                     spending_budget: None,
                 },
             ),
-            ApiFormat::OpenAI,
         )
         .await
         .expect("legacy step must still execute");
@@ -4113,7 +6716,6 @@ fn stream_harness(
         None,
         Some(Arc::new(MapComboRepository { combos })),
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -4144,6 +6746,70 @@ fn stream_req(model: &str) -> CompletionRequest {
 }
 
 #[tokio::test]
+async fn combo_stream_rechecks_adapter_revision_before_starting_upstream() {
+    let connection_id = ConnectionId::new();
+    let runtime_id = ProviderId::new("changing-stream-combo-runtime");
+    let adapter_id = ProviderId::new(connection_id.to_string());
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let provider: Arc<dyn ProviderPort> = Arc::new(SpyProvider {
+        id: adapter_id,
+        model: ModelId::new("gpt-test"),
+        seen_models: calls.clone(),
+    });
+    let router: Arc<dyn RouterPort> = Arc::new(OrderedRouter {
+        providers: Vec::new(),
+        connection_providers: HashMap::from([(connection_id, provider)]),
+    });
+    let repository: Arc<dyn ProviderRepositoryPort> =
+        Arc::new(RevisionChangingProviderRepository {
+            connection: test_connection(connection_id, runtime_id.clone(), true),
+        });
+    let combo = Combo::new(
+        "stream-combo-revision-race".to_string(),
+        ComboStrategy::Priority,
+        vec![ComboStep {
+            provider_id: runtime_id,
+            model: ModelId::new("gpt-test"),
+            connection_id: Some(connection_id),
+            priority: 1,
+        }],
+    );
+    let combo_id = combo.id;
+    let combos = HashMap::from([(combo_id, combo)]);
+    let alias = ModelId::new("rook/stream-revision");
+    let aliases = HashMap::from([(alias.to_string(), ComboAlias::new(alias.clone(), combo_id))]);
+    let usecase = RouteRequest::new(
+        router,
+        Arc::new(TestCache {
+            get_calls: Mutex::new(0),
+            set_calls: Mutex::new(0),
+        }),
+        Arc::new(TestAudit {
+            entries: Mutex::new(Vec::new()),
+        }),
+        None,
+        Some(repository),
+        Some(Arc::new(MapComboRepository { combos })),
+        Arc::new(crate::PricingConfig::default()),
+        Arc::new(TestAliasRepository),
+        test_alias_config(),
+        None,
+    )
+    .with_combo_alias_repository(Arc::new(MapComboAliasRepository { aliases }));
+
+    let error = match usecase
+        .execute_stream(stream_req("rook/stream-revision"))
+        .await
+    {
+        Ok(_) => panic!("combo stream must reject a stale adapter revision"),
+        Err(error) => error,
+    };
+
+    assert!(error.to_string().contains("all providers exhausted"));
+    assert!(calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn combo_stream_emits_content_then_final_chunk() {
     let combo = harness_combo();
     let combo_id = combo.id;
@@ -4156,7 +6822,7 @@ async fn combo_stream_emits_content_then_final_chunk() {
     );
     let usecase = stream_harness(combos, aliases, vec![ok_provider("openai")]);
     let stream = usecase
-        .execute_stream_with_format(stream_req("rook/coding"), ApiFormat::OpenAI)
+        .execute_stream(stream_req("rook/coding"))
         .await
         .expect("combo stream starts");
     let chunks: Vec<_> = stream.collect::<Vec<_>>().await;
@@ -4301,14 +6967,13 @@ async fn combo_stream_carries_tool_calls_then_tool_use_finish() {
         None,
         Some(Arc::new(MapComboRepository { combos })),
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
     )
     .with_combo_alias_repository(Arc::new(MapComboAliasRepository { aliases }));
     let stream = usecase
-        .execute_stream_with_format(stream_req("rook/tools"), ApiFormat::OpenAI)
+        .execute_stream(stream_req("rook/tools"))
         .await
         .expect("tool combo stream starts");
     let chunks: Vec<_> = stream.collect::<Vec<_>>().await;
@@ -4358,7 +7023,7 @@ async fn combo_stream_falls_back_before_first_event() {
         vec![failing_provider("openai"), ok_provider("fallback")],
     );
     let stream = usecase
-        .execute_stream_with_format(stream_req("rook/fb"), ApiFormat::OpenAI)
+        .execute_stream(stream_req("rook/fb"))
         .await
         .expect("fallback combo stream starts");
     let chunks: Vec<_> = stream.collect::<Vec<_>>().await;
@@ -4374,7 +7039,7 @@ async fn combo_stream_falls_back_before_first_event() {
 async fn combo_stream_unknown_alias_is_not_found_before_headers() {
     let usecase = stream_harness(HashMap::new(), HashMap::new(), vec![ok_provider("openai")]);
     let err = usecase
-        .execute_stream_with_format(stream_req("rook/nope"), ApiFormat::OpenAI)
+        .execute_stream(stream_req("rook/nope"))
         .await
         .err()
         .expect("unknown alias must fail before committing headers");
@@ -4510,7 +7175,6 @@ async fn virtual_combo_selects_with_step_physical_model() {
         None,
         Some(Arc::new(MapComboRepository { combos })),
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(TestAliasRepository),
         test_alias_config(),
         None,
@@ -4692,7 +7356,6 @@ fn hijack_stream_harness(rook_consulted: Arc<std::sync::atomic::AtomicBool>) -> 
         None,
         Some(Arc::new(MapComboRepository { combos })),
         Arc::new(crate::PricingConfig::default()),
-        Arc::new(TestFormatTranslator),
         Arc::new(HijackAliasRepo { rook_consulted }),
         ModelAliasesConfig {
             enabled: true,
@@ -4711,7 +7374,7 @@ async fn streaming_virtual_model_never_enters_model_alias_resolution() {
     // must NOT rewrite rook/*: it must take the virtual-combo path and
     // keep the requested model.
     let stream = usecase
-        .execute_stream_with_format(stream_req("rook/coding"), ApiFormat::OpenAI)
+        .execute_stream(stream_req("rook/coding"))
         .await
         .expect("virtual combo stream starts");
     let chunks: Vec<_> = stream.collect::<Vec<_>>().await;
@@ -4737,7 +7400,7 @@ async fn streaming_normal_alias_still_resolves() {
     // Non-virtual alias `coding -> gpt-4o` must still resolve on the
     // streaming path (echo provider surfaces the rewritten model).
     let stream = usecase
-        .execute_stream_with_format(stream_req("coding"), ApiFormat::OpenAI)
+        .execute_stream(stream_req("coding"))
         .await
         .expect("stream starts");
     let chunks: Vec<_> = stream.collect::<Vec<_>>().await;

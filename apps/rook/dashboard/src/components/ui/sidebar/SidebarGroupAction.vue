@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {PrimitiveProps} from "reka-ui";
 import {Primitive} from "reka-ui";
 import type {HTMLAttributes} from "vue";
@@ -13,8 +13,6 @@ const props = defineProps<
 
 <template>
   <Primitive
-    data-slot="sidebar-group-action"
-    data-sidebar="group-action"
     :as="as"
     :as-child="asChild"
     :class="cn(
@@ -23,7 +21,9 @@ const props = defineProps<
       'group-data-[collapsible=icon]:hidden',
       props.class,
     )"
+    data-sidebar="group-action"
+    data-slot="sidebar-group-action"
   >
-    <slot />
+    <slot/>
   </Primitive>
 </template>

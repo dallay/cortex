@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {cn} from "@/lib/utils";
 import type {WithClassAsProps} from "./interface";
 import {useCarousel} from "./useCarousel";
@@ -17,8 +17,8 @@ const {orientation, carouselRef} = useCarousel();
 <template>
   <div
     ref="carouselRef"
-    data-slot="carousel-content"
     class="overflow-hidden"
+    data-slot="carousel-content"
   >
     <div
       :class="
@@ -29,7 +29,7 @@ const {orientation, carouselRef} = useCarousel();
         )"
       v-bind="$attrs"
     >
-      <slot />
+      <slot/>
     </div>
   </div>
 </template>

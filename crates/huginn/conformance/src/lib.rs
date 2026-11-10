@@ -164,6 +164,8 @@ impl Tool for WriteTool {
                 id: call.id.clone(),
                 action: "native.write".into(),
                 preview: "write one file".into(),
+                resource: None,
+                provenance: None,
             }),
             payload: serde_json::json!({}),
         })
@@ -256,9 +258,17 @@ struct Approve {
 }
 #[async_trait]
 impl ApprovalPolicy for Approve {
-    async fn approve(&self, _: &ApprovalRequest, _: CancellationToken) -> Result<bool> {
+    async fn approve(
+        &self,
+        _: &ApprovalRequest,
+        _: CancellationToken,
+    ) -> Result<huginn_core::ApprovalDecision> {
         self.counts.prompts.fetch_add(1, Ordering::SeqCst);
-        Ok(self.allow)
+        Ok(if self.allow {
+            huginn_core::ApprovalDecision::ApproveOnce
+        } else {
+            huginn_core::ApprovalDecision::Reject
+        })
     }
 }
 
@@ -1607,7 +1617,14 @@ async fn compaction_keeps_turn_boundary(
 /// A loop that must fail this suite: it executes effects without asking the host and
 /// replays a call whose outcome is unknown.
 pub mod broken {
-    use super::*;
+    use super::{
+        agent_loop_id, model_id, sessions_id, AgentLoop, ApprovalPolicy, Arc, CancellationToken,
+        Event, EventSink, HashMap, LoopService, Manifest, Message, ModelDelta, ModelProvider,
+        ModelRequest, ModelService, Mutex, Plugin, PluginContext, Result, Role, ServiceSlotHandle,
+        Session, SessionStore, SessionsService, StepId, ToolCall, ToolContext, ToolRegistry,
+    };
+    use async_trait::async_trait;
+    use futures::StreamExt;
 
     /// Runs one turn against the collaborators a fixture resolved.
     ///

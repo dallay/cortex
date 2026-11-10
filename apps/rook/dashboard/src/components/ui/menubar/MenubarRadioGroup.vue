@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {MenubarRadioGroupEmits, MenubarRadioGroupProps} from "reka-ui";
 import {MenubarRadioGroup, useForwardPropsEmits} from "reka-ui";
 
@@ -13,6 +13,6 @@ const forwarded = useForwardPropsEmits(props, emits);
     data-slot="menubar-radio-group"
     v-bind="forwarded"
   >
-    <slot />
+    <slot/>
   </MenubarRadioGroup>
 </template>

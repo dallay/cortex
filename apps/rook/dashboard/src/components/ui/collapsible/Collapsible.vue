@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {CollapsibleRootEmits, CollapsibleRootProps} from "reka-ui";
 import {CollapsibleRoot, useForwardPropsEmits} from "reka-ui";
 
@@ -14,6 +14,6 @@ const forwarded = useForwardPropsEmits(props, emits);
     data-slot="collapsible"
     v-bind="forwarded"
   >
-    <slot v-bind="slotProps" />
+    <slot v-bind="slotProps"/>
   </CollapsibleRoot>
 </template>

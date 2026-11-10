@@ -240,10 +240,10 @@ graph TD
 
 | Method           | OpenAI | Anthropic | Ollama | Groq | Gemini |
 |------------------|--------|-----------|--------|------|--------|
-| `complete()`     | ✅      | ✅         | ✅      | ✅    | ✅      |
+| `complete()`     | ✅     | ✅        | ✅     | ✅   | ✅     |
 | `stream()`       | stub   | stub      | stub   | stub | stub   |
-| `health_check()` | ✅      | ✅         | ✅      | ✅    | ✅      |
-| `is_available()` | ✅      | ✅         | ✅      | ✅    | ✅      |
+| `health_check()` | ✅     | ✅        | ✅     | ✅   | ✅     |
+| `is_available()` | ✅     | ✅        | ✅     | ✅   | ✅     |
 
 ---
 

@@ -2,7 +2,7 @@ name: 🏷️ PR Labeler
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [ opened, synchronize, reopened ]
 
 permissions:
   contents: read
@@ -11,7 +11,7 @@ permissions:
 jobs:
   label:
     name: 🏷️ Label PR
-    uses: dallay/common-actions/.github/workflows/pr-labeler.yml@2914eb9522e67957a0b266f10132704d27389e80 # v2.9.0
+    uses: dallay/common-actions/.github/workflows/pr-labeler.yml@8dd14d86a6bf1a4673aba902e3c3e27993b0e583 # v2.9.1
     with:
       sync-labels: true
       configuration-path: '.github/labeler.yml'

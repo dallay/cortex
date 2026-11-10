@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {CircleDot, Pencil, Plus, Trash2, X} from "@lucide/vue";
 import {computed, onMounted, ref, watch} from "vue";
 import {useI18n} from "vue-i18n";
@@ -236,16 +236,16 @@ onMounted(loadAll);
 <template>
   <div class="space-y-6">
     <PageHeader
-      :title="t('nav.combos')"
       :description="t('combos.description')"
+      :title="t('nav.combos')"
     >
       <Button
+        :disabled="!hasProviders"
         data-testid="combos-create"
         type="button"
-        :disabled="!hasProviders"
         @click="startCreate"
       >
-        <Plus class="mr-2 h-4 w-4" />
+        <Plus class="mr-2 h-4 w-4"/>
         {{ t("combos.create") }}
       </Button>
     </PageHeader>
@@ -257,9 +257,9 @@ onMounted(loadAll);
     <ErrorBanner v-if="error && !showForm" :message="error">
       <Button
         data-testid="combos-retry"
+        size="sm"
         type="button"
         variant="outline"
-        size="sm"
         @click="loadAll"
       >
         {{ t("combos.retry") }}
@@ -273,17 +273,17 @@ onMounted(loadAll);
 
     <EmptyState
       v-else-if="combos.length === 0 && !showForm"
-      :title="t('combos.empty')"
       :description="t('combos.emptyDescription')"
       :icon="CircleDot"
+      :title="t('combos.empty')"
     />
 
     <div v-else class="space-y-4">
       <article
         v-for="combo in combos"
         :key="combo.id"
-        data-testid="combo-card"
         class="rounded-lg border bg-card p-4"
+        data-testid="combo-card"
       >
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div class="space-y-1">
@@ -295,22 +295,22 @@ onMounted(loadAll);
           <div class="flex gap-2">
             <Button
               :data-testid="`combo-edit-${combo.id}`"
+              size="sm"
               type="button"
               variant="outline"
-              size="sm"
               @click="startEdit(combo)"
             >
-              <Pencil class="mr-1 h-3.5 w-3.5" />
+              <Pencil class="mr-1 h-3.5 w-3.5"/>
               {{ t("common.edit") }}
             </Button>
             <Button
               :data-testid="`combo-delete-${combo.id}`"
+              size="sm"
               type="button"
               variant="destructive"
-              size="sm"
               @click="confirmDelete(combo)"
             >
-              <Trash2 class="mr-1 h-3.5 w-3.5" />
+              <Trash2 class="mr-1 h-3.5 w-3.5"/>
               {{ t("common.delete") }}
             </Button>
           </div>
@@ -333,8 +333,8 @@ onMounted(loadAll);
         </ol>
 
         <section
-          class="mt-4 space-y-3 border-t pt-4"
           :aria-label="t('combos.aliases')"
+          class="mt-4 space-y-3 border-t pt-4"
         >
           <h3 class="text-sm font-semibold">{{ t("combos.aliases") }}</h3>
 
@@ -358,14 +358,14 @@ onMounted(loadAll);
             >
               <code>{{ item.alias }}</code>
               <Button
+                :aria-label="`${t('combos.aliasDelete')}: ${item.alias}`"
                 :data-testid="`combo-alias-delete-${combo.id}-${item.alias.replace('/', '-')}`"
+                size="sm"
                 type="button"
                 variant="ghost"
-                size="sm"
-                :aria-label="`${t('combos.aliasDelete')}: ${item.alias}`"
                 @click="confirmDeleteAlias(combo, item.alias)"
               >
-                <Trash2 class="mr-1 h-3.5 w-3.5" />
+                <Trash2 class="mr-1 h-3.5 w-3.5"/>
                 {{ t("combos.aliasDelete") }}
               </Button>
             </li>
@@ -377,7 +377,7 @@ onMounted(loadAll);
             @submit.prevent="addComboAlias(combo)"
           >
             <div class="flex-1">
-              <label class="sr-only" :for="`combo-alias-input-${combo.id}`">
+              <label :for="`combo-alias-input-${combo.id}`" class="sr-only">
                 {{ t("combos.aliasPlaceholder") }}
               </label>
               <Input
@@ -397,11 +397,11 @@ onMounted(loadAll);
             </div>
             <Button
               :data-testid="`combo-alias-add-${combo.id}`"
+              size="sm"
               type="submit"
               variant="outline"
-              size="sm"
             >
-              <Plus class="mr-1 h-3.5 w-3.5" />
+              <Plus class="mr-1 h-3.5 w-3.5"/>
               {{ t("combos.aliasAdd") }}
             </Button>
           </form>
@@ -411,8 +411,8 @@ onMounted(loadAll);
 
     <form
       v-if="showForm"
-      data-testid="combo-form"
       class="space-y-5 rounded-lg border bg-card p-4"
+      data-testid="combo-form"
       @submit.prevent="submit"
     >
       <div class="flex items-center justify-between">
@@ -421,12 +421,12 @@ onMounted(loadAll);
         </h2>
         <Button
           data-testid="combo-cancel"
+          size="sm"
           type="button"
           variant="ghost"
-          size="sm"
           @click="resetForm"
         >
-          <X class="mr-1 h-4 w-4" />
+          <X class="mr-1 h-4 w-4"/>
           {{ t("common.cancel") }}
         </Button>
       </div>
@@ -437,16 +437,16 @@ onMounted(loadAll);
         </label>
         <Input
           id="combo-name"
-          data-testid="combo-name"
-          :model-value="draft.name"
           :maxlength="COMBO_NAME_MAX_LENGTH"
+          :model-value="draft.name"
           :placeholder="t('combos.namePlaceholder')"
+          data-testid="combo-name"
           @update:model-value="(value) => (draft.name = String(value))"
         />
         <p
           v-if="nameIssue"
-          data-testid="combo-name-error"
           class="text-sm text-destructive"
+          data-testid="combo-name-error"
         >
           {{ issueMessage(nameIssue) }}
         </p>
@@ -468,8 +468,8 @@ onMounted(loadAll);
         >
           <div class="space-y-1">
             <label
-              class="text-xs font-medium"
               :for="`combo-step-provider-${index}`"
+              class="text-xs font-medium"
             >
               {{ t("combos.provider") }}
             </label>
@@ -494,16 +494,16 @@ onMounted(loadAll);
 
           <div class="space-y-1">
             <label
-              class="text-xs font-medium"
               :for="`combo-step-model-${index}`"
+              class="text-xs font-medium"
             >
               {{ t("combos.model") }}
             </label>
             <NativeSelect
               :id="`combo-step-model-${index}`"
               :data-testid="`combo-step-model-${index}`"
-              :model-value="step.model"
               :disabled="modelsFor(step.providerId).length === 0"
+              :model-value="step.model"
               @update:model-value="(value) => (step.model = String(value))"
             >
               <NativeSelectOption value="">
@@ -521,34 +521,34 @@ onMounted(loadAll);
 
           <div class="space-y-1">
             <label
-              class="text-xs font-medium"
               :for="`combo-step-priority-${index}`"
+              class="text-xs font-medium"
             >
               {{ t("combos.priority") }}
             </label>
             <Input
               :id="`combo-step-priority-${index}`"
               :data-testid="`combo-step-priority-${index}`"
-              type="number"
-              min="1"
-              max="255"
-              step="1"
               :model-value="step.priority"
+              max="255"
+              min="1"
+              step="1"
+              type="number"
               @update:model-value="(value) => onPriorityChange(index, value)"
             />
           </div>
 
           <div class="flex items-end">
             <Button
+              :aria-label="t('combos.removeStep')"
               :data-testid="`combo-step-remove-${index}`"
+              :disabled="draft.steps.length === 1"
+              size="icon"
               type="button"
               variant="ghost"
-              size="icon"
-              :disabled="draft.steps.length === 1"
-              :aria-label="t('combos.removeStep')"
               @click="removeStep(index)"
             >
-              <Trash2 class="h-4 w-4" />
+              <Trash2 class="h-4 w-4"/>
             </Button>
           </div>
 
@@ -562,28 +562,28 @@ onMounted(loadAll);
         </div>
 
         <Button
+          :disabled="!canAddStep"
           data-testid="combo-step-add"
+          size="sm"
           type="button"
           variant="outline"
-          size="sm"
-          :disabled="!canAddStep"
           @click="addStep"
         >
-          <Plus class="mr-1 h-3.5 w-3.5" />
+          <Plus class="mr-1 h-3.5 w-3.5"/>
           {{ t("combos.addStep") }}
         </Button>
       </fieldset>
 
-      <ErrorBanner v-if="submitError" :message="submitError" />
+      <ErrorBanner v-if="submitError" :message="submitError"/>
 
       <div class="flex justify-end gap-2">
         <Button type="button" variant="outline" @click="resetForm">
           {{ t("common.cancel") }}
         </Button>
         <Button
+          :disabled="saving"
           data-testid="combo-submit"
           type="submit"
-          :disabled="saving"
         >
           {{ saving ? t("common.loading") : t("combos.save") }}
         </Button>

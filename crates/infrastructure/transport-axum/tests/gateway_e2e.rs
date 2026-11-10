@@ -1,6 +1,6 @@
 // gateway_e2e — deterministic end-to-end through the REAL gateway stack.
 //
-// REAL: axum router, RouteRequest, FallbackRouter, DomainPivotTranslator,
+// REAL: axum router, RouteRequest, FallbackRouter,
 // OpenAIProvider + AnthropicProvider against wiremock upstreams,
 // AuthenticateClientApi against a revocable fake repo.
 // FAKED (deterministic, in-process): combo + combo-alias repos, cache, audit.
@@ -19,11 +19,11 @@ use axum::http::{Method, Request, StatusCode};
 use providers_anthropic::{AnthropicProvider, AnthropicProviderConfig};
 use providers_openai::{OpenAIProvider, OpenAIProviderConfig};
 use rook_core::{
-    ApiFormat, ApiKeyId, ApiKeyRepositoryError, ApiKeyRepositoryPort, ApiKeyScope, ApiKeySubject,
-    ApiKeyTier, AuditEntry, AuditPort, CachePort, CacheStats, Combo, ComboAlias,
-    ComboAliasRepositoryError, ComboAliasRepositoryPort, ComboRepositoryError, ComboRepositoryPort,
-    ComboStep, ComboStrategy, CompletionRequest, CompletionResponse, CortexResult, ModelAlias,
-    ModelAliasRepositoryError, ModelAliasRepositoryPort, NewSession, NewUser, PasswordHash,
+    ApiKeyId, ApiKeyRepositoryError, ApiKeyRepositoryPort, ApiKeyScope, ApiKeySubject, ApiKeyTier,
+    AuditEntry, AuditPort, CachePort, CacheStats, Combo, ComboAlias, ComboAliasRepositoryError,
+    ComboAliasRepositoryPort, ComboRepositoryError, ComboRepositoryPort, ComboStep, ComboStrategy,
+    CompletionRequest, CompletionResponse, CortexResult, ModelAlias, ModelAliasRepositoryError,
+    ModelAliasRepositoryPort, ModelCatalogPort, NewSession, NewUser, PasswordHash,
     PasswordHashError, PasswordHasher, ProviderPort, RouterPort, Session, SessionId,
     SessionRepositoryError, SessionRepositoryPort, SignatureEntry, TokenCacheStats, User, UserId,
     UserRepositoryError, UserRepositoryPort,
@@ -36,7 +36,6 @@ use shared_kernel::{CacheKey, ComboId, ModelId, ProviderId};
 use tokio::sync::RwLock;
 use tower::ServiceExt;
 use transport_axum::authz::AuthzConfig;
-use transport_axum::format_registry::{DomainPivotTranslator, FormatRegistry};
 
 #[path = "gateway_e2e/responses.rs"]
 mod responses;
@@ -543,7 +542,7 @@ async fn build_gateway_planned(
     openai: UpstreamMock,
     anthropic: UpstreamMock,
 ) -> Gateway {
-    build_gateway_with_router(allowed_models, openai, anthropic, None).await
+    build_gateway_with_router_and_nan(allowed_models, openai, anthropic, None, false).await
 }
 
 async fn build_gateway_with_router(
@@ -552,10 +551,37 @@ async fn build_gateway_with_router(
     anthropic: UpstreamMock,
     router: Option<Arc<dyn RouterPort>>,
 ) -> Gateway {
+    build_gateway_with_router_and_nan(allowed_models, openai, anthropic, router, false).await
+}
+
+async fn build_gateway_with_nan() -> Gateway {
+    build_gateway_with_router_and_nan(
+        vec![],
+        UpstreamMock::Json(openai_ok_body()),
+        UpstreamMock::Json(serde_json::json!({
+            "id": "msg_nan", "type": "message", "role": "assistant",
+            "content": [{"type": "text", "text": "unused"}],
+            "model": "claude-e2e", "stop_reason": "end_turn", "stop_sequence": null,
+            "usage": {"input_tokens": 1, "output_tokens": 1}
+        })),
+        None,
+        true,
+    )
+    .await
+}
+
+async fn build_gateway_with_router_and_nan(
+    allowed_models: Vec<&str>,
+    openai: UpstreamMock,
+    anthropic: UpstreamMock,
+    router: Option<Arc<dyn RouterPort>>,
+    include_nan: bool,
+) -> Gateway {
     let upstreams = start_upstreams_planned(openai, anthropic).await;
 
     let openai_provider: Arc<dyn ProviderPort> = Arc::new(
         OpenAIProvider::new(OpenAIProviderConfig {
+            provider_id: "openai",
             id: ProviderId::new("openai-e2e"),
             api_key: "upstream".to_string(),
             base_url: upstreams.openai.uri(),
@@ -567,19 +593,67 @@ async fn build_gateway_with_router(
     let anthropic_provider: Arc<dyn ProviderPort> =
         AnthropicProvider::new(AnthropicProviderConfig {
             id: ProviderId::new("anthropic-e2e"),
+            provider_id: "anthropic",
             api_key: "upstream".to_string(),
             base_url: upstreams.anthropic.uri(),
             models: vec![ModelId::new("claude-e2e")],
             timeout_secs: 10,
         })
         .unwrap();
-    let fallback_router = Arc::new(FallbackRouter::new(
-        vec![
-            declared_fixture(openai_provider),
-            declared_fixture(anthropic_provider),
-        ],
-        RoutingStrategy::Priority,
-    ));
+    let mut providers = vec![
+        declared_fixture(openai_provider),
+        declared_fixture(anthropic_provider),
+    ];
+    let model_catalog: Arc<dyn ModelCatalogPort> = if include_nan {
+        let descriptor = rook_core::descriptor_by_id("nan").expect("NaN descriptor");
+        let models = match descriptor.models {
+            rook_core::ModelSource::Static(models) => models
+                .iter()
+                .map(|model| ModelId::new(*model))
+                .collect::<Vec<_>>(),
+            other => panic!("NaN must declare static models, got {other:?}"),
+        };
+        let catalog = Arc::new(models_catalog::StaticModelCatalog::new());
+        let mut metadata = HashMap::new();
+        for model in &models {
+            metadata.insert(
+                model.clone(),
+                catalog.resolve(descriptor, None, model.as_str()).await,
+            );
+        }
+        let adapter = Arc::new(
+            OpenAIProvider::new(OpenAIProviderConfig {
+                provider_id: descriptor.id,
+                id: ProviderId::new(descriptor.id),
+                api_key: "upstream".to_string(),
+                base_url: upstreams.openai.uri(),
+                models,
+                timeout_secs: 10,
+            })
+            .expect("NaN descriptor should use the OpenAI-compatible adapter"),
+        );
+        let caps = descriptor.capability_ceiling;
+        let mut ceiling = rook_core::ModelCapabilities::default();
+        ceiling.apply(
+            &rook_core::CapabilityOverrides {
+                tools: (caps.tools != rook_core::CapabilityState::Unknown).then_some(caps.tools),
+                vision: (caps.vision != rook_core::CapabilityState::Unknown).then_some(caps.vision),
+                reasoning: (caps.reasoning != rook_core::CapabilityState::Unknown)
+                    .then_some(caps.reasoning),
+                streaming: (caps.streaming != rook_core::CapabilityState::Unknown)
+                    .then_some(caps.streaming),
+                context_tokens: caps.context_tokens,
+            },
+            "adapter",
+        );
+        providers.push(Arc::new(
+            rook_usecases::catalogued_provider::CataloguedProvider::new(adapter, metadata, ceiling),
+        ));
+        catalog
+    } else {
+        Arc::new(FakeCatalog)
+    };
+    let fallback_router = Arc::new(FallbackRouter::new(providers, RoutingStrategy::Priority));
 
     let mut combos = HashMap::new();
     let combo = Combo::new(
@@ -647,17 +721,6 @@ async fn build_gateway_with_router(
     );
     combos.insert(anthropic_first.id, anthropic_first);
 
-    let mut registry = FormatRegistry::new();
-    registry.register(
-        ApiFormat::OpenAI,
-        ApiFormat::Anthropic,
-        DomainPivotTranslator,
-    );
-    registry.register(
-        ApiFormat::Anthropic,
-        ApiFormat::OpenAI,
-        DomainPivotTranslator,
-    );
     let accounting = Arc::new(responses_accounting::Records::default());
     let route_request = RouteRequest::new(
         router.unwrap_or_else(|| fallback_router.clone() as Arc<dyn RouterPort>),
@@ -669,7 +732,6 @@ async fn build_gateway_with_router(
             combos: Mutex::new(combos),
         })),
         Arc::new(serde_json::from_value(serde_json::json!({"openai-e2e":{"gpt-4o":{"prompt_per_million":1.0,"completion_per_million":2.0}},"anthropic-e2e":{"claude-e2e":{"prompt_per_million":1.0,"completion_per_million":2.0,"cache_read_per_million":0.5,"cache_creation_per_million":1.5}}})).unwrap()),
-        Arc::new(registry),
         Arc::new(NoopAliasRepo),
         rook_usecases::route_request::ModelAliasesConfig {
             enabled: false,
@@ -677,10 +739,10 @@ async fn build_gateway_with_router(
         },
         None,
     )
-    .with_combo_alias_repository(Arc::new(MapComboAliasRepo {
-        aliases: Mutex::new(aliases),
-    }))
-    .with_spending_budget_ledger(Arc::new(HarnessLedger));
+        .with_combo_alias_repository(Arc::new(MapComboAliasRepo {
+            aliases: Mutex::new(aliases),
+        }))
+        .with_spending_budget_ledger(Arc::new(HarnessLedger));
 
     let user_repo: Arc<dyn UserRepositoryPort> = Arc::new(FakeUserRepo);
     let hasher: Arc<dyn PasswordHasher> = Arc::new(FakeHasher);
@@ -716,7 +778,7 @@ async fn build_gateway_with_router(
         Logout::new(sessions.clone()),
         Arc::new(RwLock::new(None)),
         sessions,
-        Arc::new(FakeCatalog),
+        model_catalog,
         fallback_router.clone(),
     ));
     let app = transport_axum::router(
@@ -870,11 +932,11 @@ fn sse_json(body: &str) -> Vec<serde_json::Value> {
 
 fn fragmented_combo_sse() -> String {
     concat!(
-        "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_real\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"key\\\":\"}}]},\"finish_reason\":null}]}\n\n",
-        "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"value\\\"}\"}}]},\"finish_reason\":null}]}\n\n",
-        "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
-        "data: {\"model\":\"gpt-4o\",\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":7,\"total_tokens\":10}}\n\n",
-        "data: [DONE]\n\n"
+    "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_real\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"key\\\":\"}}]},\"finish_reason\":null}]}\n\n",
+    "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"value\\\"}\"}}]},\"finish_reason\":null}]}\n\n",
+    "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+    "data: {\"model\":\"gpt-4o\",\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":7,\"total_tokens\":10}}\n\n",
+    "data: [DONE]\n\n"
     ).into()
 }
 
@@ -1083,9 +1145,9 @@ async fn combo_stream_encoder_error_after_finish_does_not_emit_deferred_success(
 #[tokio::test]
 async fn combo_stream_reasoning_and_text_reach_anthropic_as_distinct_blocks() {
     let gw = build_gateway_planned(vec![], UpstreamMock::Sse(concat!(
-        "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"reasoning_content\":\"first thought\"},\"finish_reason\":null}]}\n\n",
-        "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"reasoning_content\":\" then\",\"content\":\"answer\"},\"finish_reason\":\"stop\"}]}\n\n",
-        "data: [DONE]\n\n").into()), UpstreamMock::Fail500).await;
+    "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"reasoning_content\":\"first thought\"},\"finish_reason\":null}]}\n\n",
+    "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"reasoning_content\":\" then\",\"content\":\"answer\"},\"finish_reason\":\"stop\"}]}\n\n",
+    "data: [DONE]\n\n").into()), UpstreamMock::Fail500).await;
     let (_, _, body) = post_sse(gw.app, "/v1/messages", anthropic_body("rook/openai", true)).await;
     let frames = sse_json(&body);
     let thinking: Vec<_> = frames
@@ -1182,8 +1244,8 @@ async fn combo_stream_native_tools_close_and_trailing_usage_reach_anthropic() {
 async fn combo_stream_late_error_is_terminal_in_both_protocols_without_fallback() {
     for anthropic in [false, true] {
         let gw = build_gateway_planned(vec![], UpstreamMock::Sse(concat!(
-            "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n",
-            "data: {invalid json}\n\n").into()), UpstreamMock::Fail500).await;
+        "data: {\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n",
+        "data: {invalid json}\n\n").into()), UpstreamMock::Fail500).await;
         let (uri, request) = if anthropic {
             ("/v1/messages", anthropic_body("rook/e2e", true))
         } else {
@@ -1213,11 +1275,11 @@ async fn combo_stream_late_error_is_terminal_in_both_protocols_without_fallback(
 #[tokio::test]
 async fn combo_stream_first_item_error_falls_back_before_headers() {
     let gw = build_gateway_planned(vec![], UpstreamMock::Sse("data: {invalid json}\n\n".into()),
-        UpstreamMock::Sse(concat!(
-            "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":0,\"cache_read_input_tokens\":1}}}\n\n",
-            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"fallback\"}}\n\n",
-            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n",
-            "data: {\"type\":\"message_stop\"}\n\n").into())).await;
+                                   UpstreamMock::Sse(concat!(
+                                   "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":0,\"cache_read_input_tokens\":1}}}\n\n",
+                                   "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"fallback\"}}\n\n",
+                                   "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n",
+                                   "data: {\"type\":\"message_stop\"}\n\n").into())).await;
     let (status, _, body) = post_sse(
         gw.app,
         "/v1/chat/completions",
@@ -1297,7 +1359,7 @@ async fn openai_streaming_sse() {
         ),
         UpstreamMock::Json(fallback_reply_body()),
     )
-    .await;
+        .await;
     let (status, content_type, body) = post_sse(
         gw.app.clone(),
         "/v1/chat/completions",
@@ -1325,7 +1387,7 @@ async fn anthropic_streaming_sse() {
                 .to_string(),
         ),
     )
-    .await;
+        .await;
     let (status, content_type, body) = post_sse(
         gw.app.clone(),
         "/v1/messages",
@@ -1451,6 +1513,65 @@ async fn revoked_key_unauthorized_401() {
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{json}");
+}
+
+#[tokio::test]
+async fn nan_completion_routes_to_catalogued_provider_and_v1_models_exposes_catalog_metadata() {
+    let gw = build_gateway_with_nan().await;
+    let (status, models) = get_json(gw.app.clone(), "/v1/models").await;
+    assert_eq!(status, StatusCode::OK, "{models}");
+    assert_eq!(models["object"], "list");
+
+    let entries = models["data"].as_array().expect("model list");
+    for model in [
+        "deepseek-v4-flash",
+        "glm5.3",
+        "glm5.3-flash",
+        "qwen3.8-flash",
+        "qwen3.6",
+        "mimo-v2.6-flash",
+        "gemma4",
+    ] {
+        let entry = entries
+            .iter()
+            .find(|entry| entry["id"] == format!("nan/{model}"))
+            .unwrap_or_else(|| panic!("/v1/models must include nan/{model}: {entries:?}"));
+        assert_eq!(entry["owned_by"], "nan");
+        assert_eq!(entry["rook"]["capabilities"]["tools"]["state"], "supported");
+        assert_eq!(entry["rook"]["capabilities"]["tools"]["source"], "bundled");
+        assert_eq!(
+            entry["rook"]["capabilities"]["streaming"]["state"],
+            "supported"
+        );
+        assert_eq!(
+            entry["rook"]["capabilities"]["streaming"]["source"],
+            "bundled"
+        );
+        assert_eq!(
+            entry["rook"]["capabilities"]["context_tokens"]["value"],
+            131072
+        );
+        assert_eq!(
+            entry["rook"]["capabilities"]["context_tokens"]["source"],
+            "bundled"
+        );
+    }
+
+    let (status, completion) = post_json(
+        gw.app.clone(),
+        "/v1/chat/completions",
+        openai_body("deepseek-v4-flash", false),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{completion}");
+    assert_eq!(completion["choices"][0]["message"]["content"], "mock reply");
+
+    let requests = gw.upstreams.openai.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].headers["authorization"], "Bearer upstream");
+    let request_body: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(request_body["model"], "deepseek-v4-flash");
 }
 
 #[tokio::test]

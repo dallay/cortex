@@ -52,6 +52,7 @@ fn request(model: &str) -> CompletionRequest {
 fn provider(id: &str, api_key: &str, base_url: String, models: &[&str]) -> OpenAIProvider {
     OpenAIProvider::new_with_endpoint_policy(
         OpenAIProviderConfig {
+            provider_id: "openai",
             id: ProviderId::new(id),
             api_key: api_key.to_string(),
             base_url: base_url.clone(),
@@ -172,10 +173,10 @@ async fn tool_definitions_and_tool_choice_reach_the_upstream() {
 async fn streaming_reaches_the_upstream_and_returns_chunks() {
     let server = wiremock::MockServer::start().await;
     let sse = concat!(
-        "data: {\"id\":\"chatcmpl-3\",\"model\":\"physical-model-a\",\"choices\":[{\"delta\":{\"content\":\"ho\"},\"index\":0}]}\n\n",
-        "data: {\"id\":\"chatcmpl-3\",\"model\":\"physical-model-a\",\"choices\":[{\"delta\":{\"content\":\"la\"},\"index\":0}]}\n\n",
-        "data: {\"id\":\"chatcmpl-3\",\"model\":\"physical-model-a\",\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5}}\n\n",
-        "data: [DONE]\n\n"
+    "data: {\"id\":\"chatcmpl-3\",\"model\":\"physical-model-a\",\"choices\":[{\"delta\":{\"content\":\"ho\"},\"index\":0}]}\n\n",
+    "data: {\"id\":\"chatcmpl-3\",\"model\":\"physical-model-a\",\"choices\":[{\"delta\":{\"content\":\"la\"},\"index\":0}]}\n\n",
+    "data: {\"id\":\"chatcmpl-3\",\"model\":\"physical-model-a\",\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5}}\n\n",
+    "data: [DONE]\n\n"
     );
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/chat/completions"))

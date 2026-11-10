@@ -890,7 +890,13 @@ async fn approval_preempts_secret_workflow_and_rejects_all_ordinary_requests() {
                     id: "one".into(),
                     action: "write".into(),
                     preview: "exact preview".into(),
+                    resource: None,
+                    provenance: None,
                 },
+                &[
+                    huginn_core::ApprovalDecision::Reject,
+                    huginn_core::ApprovalDecision::ApproveOnce,
+                ],
                 CancellationToken::new(),
             )
             .await
@@ -925,9 +931,15 @@ async fn approval_preempts_secret_workflow_and_rejects_all_ordinary_requests() {
     assert_eq!(h.ui.lock().overlays.snapshot(), approval);
     assert!(!task.is_finished());
     h.ui.resolve_modal(false);
-    assert!(!task.await.unwrap().unwrap());
+    assert_eq!(
+        task.await.unwrap().unwrap(),
+        huginn_core::ApprovalDecision::Reject
+    );
     assert!(h.ui.lock().overlays.snapshot().is_none());
-    assert!(h.ui.lock().conversation.is_empty());
+    assert_eq!(
+        h.ui.lock().conversation.last().map(String::as_str),
+        Some("Rejected · write · request one")
+    );
     assert_eq!(h.calls.load(Ordering::SeqCst), 0);
 }
 

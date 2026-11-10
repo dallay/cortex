@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {HTMLAttributes} from "vue";
 import {cn} from "@/lib/utils";
 
@@ -8,9 +8,9 @@ const props = defineProps<{
 </script>
 
 <template>
-  <div data-slot="table-container" class="relative w-full overflow-auto">
-    <table data-slot="table" :class="cn('w-full caption-bottom text-sm', props.class)">
-      <slot />
+  <div class="relative w-full overflow-auto" data-slot="table-container">
+    <table :class="cn('w-full caption-bottom text-sm', props.class)" data-slot="table">
+      <slot/>
     </table>
   </div>
 </template>

@@ -1,3 +1,9 @@
+> **`provider_id` spelling contract.** The bundled catalog keys declarations by
+> canonical provider descriptor id (`openai`, `ollama-cloud`, `azure-openai`).
+> The legacy serde spellings (`ollamacloud`, `azureopenai`) are still accepted
+> on read through the descriptor alias map, but new entries must use the
+> canonical id, and unknown ids are rejected at load time.
+
 # Model catalog and eligibility
 
 Rook separates three facts: the presence of an identifier, the model's
@@ -6,14 +12,16 @@ of a model does not prove it supports tools, images, or streaming.
 
 ## Declarations
 
-The catalog included in `models-catalog/src/models.json` retains the
-previous identifiers. It contains no capability guarantees: their initial
-states are `unknown`. Administrative declarations in `rook.toml`
-allow registering verified capabilities:
+The catalog included in `models-catalog/src/models.json` retains Tier-1 models
+and their documented capabilities (context window, vision, tools, reasoning,
+and streaming). Any capability not documented stays `unknown`.
+
+Administrative declarations in `rook.toml` allow registering verified
+capabilities or overriding catalogued ones:
 
 ```toml
 [[model_catalog]]
-provider_kind = "openai"
+provider_id = "openai"
 model_id = "verified-deployment"
 
 [model_catalog.capabilities]
@@ -24,7 +32,7 @@ reasoning = "unknown"
 context_tokens = 8192
 
 [[model_catalog]]
-provider_kind = "openai"
+provider_id = "openai"
 model_id = "verified-deployment"
 connection_id = "c56a4180-65aa-42ec-a945-5fd21dec0538"
 
@@ -36,11 +44,13 @@ The identifiers and the limit in the example are illustrative, not guarantees fo
 a real provider. The administrator must verify the model and the endpoint before
 declaring `supported`. Declarations do not contain credentials.
 
-Resolution applies each field in this priority order:
+The model catalog pre-merges all sources once at construction into a single
+indexed view (`StaticModelCatalog`). Resolution applies each field with the
+following priority order evaluated at construction:
 
-1. Declaration of the exact connection and model.
-2. Declaration of the provider type and model.
-3. Declaration included in the catalog.
+1. Declaration of the exact connection and model (`connection_configuration`).
+2. Declaration of the provider type and model (`provider_configuration`).
+3. Declaration included in the catalog (`bundled`).
 4. `unknown`.
 
 An omitted field inherits the previous value. An explicit `unknown` state

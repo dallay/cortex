@@ -1,7 +1,6 @@
 use rook_core::{
     ApiFormat, AuthType, ConnectionConfig, ConnectionId, Credentials, EncryptedBlob,
-    ModelCatalogEntry, ModelId, ProviderConnection, ProviderKind, QuotaWindowThresholds,
-    TestStatus,
+    ModelCatalogEntry, ModelId, ProviderConnection, QuotaWindowThresholds, TestStatus,
 };
 use rook_usecases::manage_connections::{CreateConnectionRequest, UpdateConnectionRequest};
 use serde_json::{json, Value};
@@ -31,7 +30,8 @@ fn connection(id: &str, models: &[&str]) -> ProviderConnection {
     let timestamp = "2026-01-01T00:00:00Z".parse().unwrap();
     ProviderConnection {
         id: ConnectionId::parse_str(id).unwrap(),
-        provider_kind: ProviderKind::OpenAiCompatible,
+        provider: rook_core::descriptor_by_id("openai-compatible")
+            .expect("openai-compatible descriptor"),
         provider_runtime_id: ProviderId::new("shared-runtime-name"),
         name: "compatible".into(),
         priority: 5,
@@ -51,6 +51,7 @@ fn connection(id: &str, models: &[&str]) -> ProviderConnection {
             supported_models: models.iter().map(|model| ModelId::new(*model)).collect(),
             api_format: Some(ApiFormat::OpenAI),
         },
+        adapter_revision: 1,
         test_status: TestStatus::NeverTested,
         created_at: timestamp,
         updated_at: timestamp,
@@ -61,7 +62,7 @@ fn connection(id: &str, models: &[&str]) -> ProviderConnection {
 fn create_and_update_dtos_preserve_physical_models_and_explicit_format() {
     let create: CreateProviderRequest = serde_json::from_value(request_json()).unwrap();
     let domain = CreateConnectionRequest::try_from(&create).unwrap();
-    assert_eq!(domain.provider_kind, ProviderKind::OpenAiCompatible);
+    assert_eq!(domain.provider.id, "openai-compatible");
     assert_eq!(
         domain.config.supported_models,
         vec![
@@ -178,12 +179,24 @@ fn connection_response_exposes_declarations_and_never_encrypted_credentials() {
 #[test]
 fn response_format_uses_provider_default_only_when_not_explicitly_declared() {
     for (kind, configured, expected) in [
-        (ProviderKind::Anthropic, None, "anthropic"),
-        (ProviderKind::OpenAiCompatible, None, "openai"),
-        (ProviderKind::Anthropic, Some(ApiFormat::OpenAI), "openai"),
+        (
+            rook_core::descriptor_by_id("anthropic").expect("anthropic descriptor"),
+            None,
+            "anthropic",
+        ),
+        (
+            rook_core::descriptor_by_id("openai-compatible").expect("openai-compatible descriptor"),
+            None,
+            "openai",
+        ),
+        (
+            rook_core::descriptor_by_id("anthropic").expect("anthropic descriptor"),
+            Some(ApiFormat::OpenAI),
+            "openai",
+        ),
     ] {
         let mut original = connection("c56a4180-65aa-42ec-a945-5fd21dec0538", &["model"]);
-        original.provider_kind = kind;
+        original.provider = kind;
         original.config.api_format = configured;
         let response = ProviderConnectionResponse::from(&original);
         assert_eq!(response.config.api_format, expected);
@@ -202,7 +215,7 @@ fn compatible_models_are_connection_specific_sorted_by_id_and_ignore_the_static_
     );
     let catalog = [ModelCatalogEntry {
         model_id: "must-not-appear".into(),
-        provider_kind: ProviderKind::OpenAiCompatible,
+        provider_id: "openai-compatible".to_string(),
     }];
     let groups = compute_models_by_provider(&[second.clone(), first.clone()], &catalog);
     assert_eq!(groups.len(), 2);
@@ -221,7 +234,7 @@ fn inactive_or_undeclared_compatible_connections_do_not_expose_models() {
     undeclared.config.default_model = Some(ModelId::new("must-not-be-used-as-a-declaration"));
     let catalog = [ModelCatalogEntry {
         model_id: "catalog-fallback-must-not-appear".into(),
-        provider_kind: ProviderKind::OpenAiCompatible,
+        provider_id: "openai-compatible".to_string(),
     }];
     assert!(compute_models_by_provider(&[inactive, undeclared], &catalog).is_empty());
 }

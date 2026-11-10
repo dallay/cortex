@@ -8,7 +8,7 @@ use huginn_core::{
     kernel::{Manifest, Plugin, PluginContext, ServiceId},
     providers::{
         AuthenticationMethod, ModelCatalog, ProviderCatalog, ProviderCatalogService,
-        ProviderDescriptor, ProviderRegistration,
+        ProviderDescriptor, ProviderOnboarding, ProviderRegistration,
     },
     Result,
 };
@@ -83,19 +83,19 @@ fn register_ui(
     ] {
         let management = management.clone();
         ui.register_command(ctx, format!("builtin.providers.ui.{}", &name[1..]), name.into(),
-                CommandMetadata { description: description.into(), ..CommandMetadata::default() },
-                Arc::new(move |args| {
-                    if !args.is_empty() {
-                        return Ok(notice("Use the host form, not command arguments. Never type credentials in commands."));
-                    }
-                    let management = management.clone();
-                    Ok(CommandResult::Workflow(Workflow::new("Providers", "Loading…", vec![], Arc::new(move |_, _| {
-                        let management = management.clone();
-                        Box::pin(async move {
-                            if name == "/login" { management.login() } else { management.connections(name).await }
-                        })
-                    }))?.with_overlay_kind(command_surface(name))?))
-                }))?;
+                            CommandMetadata { description: description.into(), ..CommandMetadata::default() },
+                            Arc::new(move |args| {
+                                if !args.is_empty() {
+                                    return Ok(notice("Use the host form, not command arguments. Never type credentials in commands."));
+                                }
+                                let management = management.clone();
+                                Ok(CommandResult::Workflow(Workflow::new("Providers", "Loading…", vec![], Arc::new(move |_, _| {
+                                    let management = management.clone();
+                                    Box::pin(async move {
+                                        if name == "/login" { management.login() } else { management.connections(name).await }
+                                    })
+                                }))?.with_overlay_kind(command_surface(name))?))
+                            }))?;
     }
     Ok(())
 }
@@ -134,7 +134,7 @@ fn connection_problem(settings: &ConnectionSettings, discover: bool) -> Option<S
                 EndpointProblem::RemoteHttp => "HTTP is only allowed for a literal loopback address such as 127.0.0.1. Use HTTPS for any other host.",
                 EndpointProblem::LoopbackHttpDisabled => "Local HTTP is disabled. Set Allow HTTP on literal loopback only to Yes, then submit again.",
             }
-            .into(),
+                .into(),
         );
     }
     if !discover
@@ -197,6 +197,15 @@ fn index(input: &FormInput, id: &str) -> usize {
 fn value(input: &mut FormInput, id: &str) -> String {
     input.public.remove(id).unwrap_or_default()
 }
+/// The values a submitted connection form was built from.
+struct ConnectionForm {
+    registration: ProviderRegistration,
+    descriptor: ProviderDescriptor,
+    requires_secret: bool,
+    previous: Option<ConnectionRecord>,
+    onboarding: ProviderOnboarding,
+}
+
 impl Management {
     fn authentication_diagnostics(&self) -> String {
         self.catalog
@@ -340,18 +349,21 @@ impl Management {
                 "Unsupported authentication — Step 2 of 4",
                 format!("{}: OAuth: unsupported. No implemented API-key or no-authentication method is available. Esc returns; Ctrl+C cancels. No connection was created.", descriptor.display_name),
                 vec![choice("action", "Action", vec!["Back to provider catalog".into()])],
-                { let owner = self.clone(); Arc::new(move |_, _| {
-                    // The explicit action returns to the catalog as the first
-                    // step. Without this the host would inherit the current
-                    // history and stack another catalog on it.
-                    let result = owner.login().map(|result| match result {
-                        CommandResult::Workflow(workflow) => {
-                            CommandResult::Workflow(workflow.without_history())
-                        }
-                        other => other,
-                    });
-                    Box::pin(async move { result })
-                }) },
+                {
+                    let owner = self.clone();
+                    Arc::new(move |_, _| {
+                        // The explicit action returns to the catalog as the first
+                        // step. Without this the host would inherit the current
+                        // history and stack another catalog on it.
+                        let result = owner.login().map(|result| match result {
+                            CommandResult::Workflow(workflow) => {
+                                CommandResult::Workflow(workflow.without_history())
+                            }
+                            other => other,
+                        });
+                        Box::pin(async move { result })
+                    })
+                },
             )?.with_overlay_kind(OverlayKind::Login)?));
         }
         let owner = self.clone();
@@ -399,18 +411,46 @@ impl Management {
         previous: Option<ConnectionRecord>,
     ) -> Result<CommandResult> {
         let onboarding = self.catalog.onboarding(&registration)?;
+        let fields =
+            Self::connection_fields(&descriptor, previous.as_ref(), &onboarding, requires_secret);
+        let management = self.clone();
+        let title = if previous.is_some() {
+            "Update connection (rotates authorization)"
+        } else {
+            "Connection settings — Step 3 of 4"
+        };
+        Ok(CommandResult::Workflow(Workflow::new(title,
+                                                 "Public settings and secrets are separate. Leave Model ID empty to discover models. Cloud uses its fixed official endpoint. Esc goes back and clears secrets; Ctrl+C cancels. After saving select with /model.", fields,
+                                                 Arc::new(move |input, cancel| {
+                                                     let management = management.clone();
+                                                     let form = ConnectionForm {
+                                                         registration: registration.clone(),
+                                                         descriptor: descriptor.clone(),
+                                                         requires_secret,
+                                                         previous: previous.clone(),
+                                                         onboarding: onboarding.clone(),
+                                                     };
+                                                     Box::pin(async move { management.submit_connection_form(form, input, cancel).await })
+                                                 }))?.with_overlay_kind(OverlayKind::Login)?))
+    }
+
+    /// The form fields of the connection workflow, in the order the host renders them.
+    fn connection_fields(
+        descriptor: &ProviderDescriptor,
+        previous: Option<&ConnectionRecord>,
+        onboarding: &ProviderOnboarding,
+        requires_secret: bool,
+    ) -> Vec<Field> {
         let mut fields = vec![field(
             "endpoint",
             "Endpoint (TLS or explicitly allowed literal loopback)",
             FieldKind::Text,
             previous
-                .as_ref()
                 .and_then(|r| r.settings.endpoint.clone())
                 .or_else(|| onboarding.default_endpoint.clone())
                 .unwrap_or_default(),
         )];
         let default_model = previous
-            .as_ref()
             .map(|r| r.settings.model.clone())
             .unwrap_or_default();
         if descriptor.models.is_empty() {
@@ -438,12 +478,8 @@ impl Management {
             "Allow HTTP on literal loopback only",
             vec!["No".into(), "Yes, explicitly allow local HTTP".into()],
         ));
-        fields.last_mut().unwrap().initial = usize::from(
-            previous
-                .as_ref()
-                .is_some_and(|r| r.settings.allow_loopback_http),
-        )
-        .to_string();
+        fields.last_mut().unwrap().initial =
+            usize::from(previous.is_some_and(|r| r.settings.allow_loopback_http)).to_string();
         if requires_secret {
             fields.push(choice(
                 "storage",
@@ -453,86 +489,156 @@ impl Management {
                     "Ephemeral — lost on restart".into(),
                 ],
             ));
-            fields.last_mut().unwrap().initial = usize::from(
-                previous
-                    .as_ref()
-                    .is_some_and(|r| r.mode == SecretMode::Ephemeral),
-            )
-            .to_string();
+            fields.last_mut().unwrap().initial =
+                usize::from(previous.is_some_and(|r| r.mode == SecretMode::Ephemeral)).to_string();
             fields.push(field("credential", "API key", FieldKind::Secret, ""));
         }
-        let management = self.clone();
-        let title = if previous.is_some() {
-            "Update connection (rotates authorization)"
-        } else {
-            "Connection settings — Step 3 of 4"
-        };
-        Ok(CommandResult::Workflow(Workflow::new(title,
-            "Public settings and secrets are separate. Leave Model ID empty to discover models. Cloud uses its fixed official endpoint. Esc goes back and clears secrets; Ctrl+C cancels. After saving select with /model.", fields,
-            Arc::new(move |mut input, cancel| {
-                let management = management.clone();
-                let descriptor = descriptor.clone();
-                let previous = previous.clone();
-                let onboarding = onboarding.clone();
-                let registration = registration.clone();
-                Box::pin(async move {
-                    let model = if descriptor.models.is_empty() { value(&mut input, "model") } else {
-                        descriptor.models.get(index(&input, "model")).map(|m| m.id.clone()).unwrap_or_default()
-                    };
-                    let allow_loopback_http = index(&input, "http") == 1;
-                    let mode = if requires_secret && index(&input, "storage") == 1 { SecretMode::Ephemeral } else { SecretMode::Secure };
-                    let endpoint = value(&mut input, "endpoint");
-                    if !onboarding.allow_endpoint_edit && !same_endpoint(&endpoint, onboarding.default_endpoint.as_deref()) {
-                        return Ok(form_error("This provider requires its official HTTPS endpoint. No request was sent."));
-                    }
-                    let discover = model.is_empty();
-                    let settings = ConnectionSettings { provider: descriptor.id, endpoint: (!endpoint.is_empty()).then_some(endpoint), model: if discover { "discovery-placeholder".into() } else { model }, requires_secret, allow_loopback_http };
-                    let secret = input.secrets.remove("credential");
-                    if requires_secret && secret.is_none() && previous.is_none() { return Ok(form_error("An API key is required for this connection.")); }
-                    let material = ConnectionMaterial { settings, secret };
-                    if previous.is_some() && discover { return Ok(form_error("A model ID is required when updating. Use /login to discover models for a new connection.")); }
-                    // The same precise diagnosis applies to new and updated connections.
-                    if let Some(problem) = connection_problem(&material.settings, discover) {
-                        return Ok(form_error(problem));
-                    }
-                    // Updating preserves the existing credential-store semantics. Discovery is
-                    // for new connections; an update may reuse a key we must not resolve here.
-                    if (previous.is_some() || !descriptor.models.is_empty()) && !discover {
-                        return management.save_form(registration, previous.map(|r| r.id), material, mode, cancel).await;
-                    }
-                    match management.catalog.discover_models(&registration, &material, cancel.clone()).await {
-                        Ok(ModelCatalog::Available(models)) if models.is_empty() => Ok(form_error("No models available. Install a local model or check the Cloud account, then submit again.")),
-                        Ok(ModelCatalog::Available(models)) if !discover => {
-                            if !models.iter().any(|m| m.id == material.settings.model) { return Ok(form_error("Model is not available from this provider. Leave Model ID empty to discover models.")); }
-                            management.save_form(registration, None, material, mode, cancel).await
-                        }
-                        Ok(ModelCatalog::Available(models)) => {
-                            let labels: Vec<_> = models.into_iter().map(|m| m.id).collect();
-                            if labels.len() > 256 { return Ok(form_error("Too many models for the picker. Enter a model ID.")); }
-                            let pending = Arc::new(Mutex::new(Some(material)));
-                            Ok(CommandResult::Workflow(Workflow::new(
-                                "Connection model", "Choose a discovered model. After saving, use /model to select it for chat.",
-                                vec![choice("model", "Model", labels.clone())],
-                                Arc::new(move |input, cancel| {
-                                    let material = pending.lock().ok().and_then(|mut p| p.take());
-                                    let selected = labels.get(index(&input, "model")).cloned();
-                                    let management = management.clone(); let registration = registration.clone();
-                                    Box::pin(async move {
-                                        let (Some(mut material), Some(model)) = (material, selected) else { return Ok(form_error("This connection was not saved and its API key was already used. Reopen /login and enter the API key again.")); };
-                                        material.settings.model = model;
-                                        management.save_form(registration, None, material, mode, cancel).await
-                                    })
-                                }),
-                            )?.with_overlay_kind(OverlayKind::ModelPicker)?))
-                        }
-                        Ok(ModelCatalog::Unsupported) if !discover => management.save_form(registration, None, material, mode, cancel).await,
-                        Ok(ModelCatalog::Unsupported) => Ok(form_error("Model discovery is unsupported. Enter a model ID manually.")),
-                        Ok(ModelCatalog::Unavailable) => Ok(form_error("Cannot reach the provider or authenticate. Check the endpoint, service and API key, then submit again.")),
-                        Ok(ModelCatalog::Invalid) | Err(_) => Ok(form_error("Provider discovery failed. Check the provider configuration and reopen /login.")),
-                    }
-                })
-            }))?.with_overlay_kind(OverlayKind::Login)?))
+        fields
     }
+
+    /// Turns the submitted connection form into a saved connection, discovering models when the
+    /// form left the model empty.
+    async fn submit_connection_form(
+        self,
+        form: ConnectionForm,
+        mut input: FormInput,
+        cancel: huginn_core::CancellationToken,
+    ) -> Result<CommandResult> {
+        let ConnectionForm {
+            registration,
+            descriptor,
+            requires_secret,
+            previous,
+            onboarding,
+        } = form;
+        let model = if descriptor.models.is_empty() {
+            value(&mut input, "model")
+        } else {
+            descriptor
+                .models
+                .get(index(&input, "model"))
+                .map(|m| m.id.clone())
+                .unwrap_or_default()
+        };
+        let allow_loopback_http = index(&input, "http") == 1;
+        let mode = if requires_secret && index(&input, "storage") == 1 {
+            SecretMode::Ephemeral
+        } else {
+            SecretMode::Secure
+        };
+        let endpoint = value(&mut input, "endpoint");
+        if !onboarding.allow_endpoint_edit
+            && !same_endpoint(&endpoint, onboarding.default_endpoint.as_deref())
+        {
+            return Ok(form_error(
+                "This provider requires its official HTTPS endpoint. No request was sent.",
+            ));
+        }
+        let discover = model.is_empty();
+        let settings = ConnectionSettings {
+            provider: descriptor.id,
+            endpoint: (!endpoint.is_empty()).then_some(endpoint),
+            model: if discover {
+                "discovery-placeholder".into()
+            } else {
+                model
+            },
+            requires_secret,
+            allow_loopback_http,
+        };
+        let secret = input.secrets.remove("credential");
+        if requires_secret && secret.is_none() && previous.is_none() {
+            return Ok(form_error("An API key is required for this connection."));
+        }
+        let material = ConnectionMaterial { settings, secret };
+        if previous.is_some() && discover {
+            return Ok(form_error(
+                "A model ID is required when updating. Use /login to discover models for a new connection.",
+            ));
+        }
+        // The same precise diagnosis applies to new and updated connections.
+        if let Some(problem) = connection_problem(&material.settings, discover) {
+            return Ok(form_error(problem));
+        }
+        // Updating preserves the existing credential-store semantics. Discovery is
+        // for new connections; an update may reuse a key we must not resolve here.
+        if (previous.is_some() || !descriptor.models.is_empty()) && !discover {
+            return self
+                .save_form(registration, previous.map(|r| r.id), material, mode, cancel)
+                .await;
+        }
+        self.discover_connection_models(registration, material, discover, mode, cancel)
+            .await
+    }
+
+    /// Discovers the provider's models and either saves the connection or offers the picker.
+    async fn discover_connection_models(
+        self,
+        registration: ProviderRegistration,
+        material: ConnectionMaterial,
+        discover: bool,
+        mode: SecretMode,
+        cancel: huginn_core::CancellationToken,
+    ) -> Result<CommandResult> {
+        match self
+            .catalog
+            .discover_models(&registration, &material, cancel.clone())
+            .await
+        {
+            Ok(ModelCatalog::Available(models)) if models.is_empty() => Ok(form_error(
+                "No models available. Install a local model or check the Cloud account, then submit again.",
+            )),
+            Ok(ModelCatalog::Available(models)) if !discover => {
+                if !models.iter().any(|m| m.id == material.settings.model) {
+                    return Ok(form_error(
+                        "Model is not available from this provider. Leave Model ID empty to discover models.",
+                    ));
+                }
+                self.save_form(registration, None, material, mode, cancel)
+                    .await
+            }
+            Ok(ModelCatalog::Available(models)) => {
+                let labels: Vec<_> = models.into_iter().map(|m| m.id).collect();
+                if labels.len() > 256 {
+                    return Ok(form_error("Too many models for the picker. Enter a model ID."));
+                }
+                let pending = Arc::new(Mutex::new(Some(material)));
+                Ok(CommandResult::Workflow(Workflow::new(
+                    "Connection model",
+                    "Choose a discovered model. After saving, use /model to select it for chat.",
+                    vec![choice("model", "Model", labels.clone())],
+                    Arc::new(move |input, cancel| {
+                        let material = pending.lock().ok().and_then(|mut p| p.take());
+                        let selected = labels.get(index(&input, "model")).cloned();
+                        let management = self.clone();
+                        let registration = registration.clone();
+                        Box::pin(async move {
+                            let (Some(mut material), Some(model)) = (material, selected) else {
+                                return Ok(form_error("This connection was not saved and its API key was already used. Reopen /login and enter the API key again."));
+                            };
+                            material.settings.model = model;
+                            management.save_form(registration, None, material, mode, cancel).await
+                        })
+                    }),
+                )?
+                    .with_overlay_kind(OverlayKind::ModelPicker)?))
+            }
+            Ok(ModelCatalog::Unsupported) if !discover => {
+                self.save_form(registration, None, material, mode, cancel)
+                    .await
+            }
+            Ok(ModelCatalog::Unsupported) => {
+                Ok(form_error("Model discovery is unsupported. Enter a model ID manually."))
+            }
+            Ok(ModelCatalog::Unavailable) => Ok(form_error(
+                "Cannot reach the provider or authenticate. Check the endpoint, service and API key, then submit again.",
+            )),
+            Ok(ModelCatalog::Invalid) | Err(_) => Ok(form_error(
+                "Provider discovery failed. Check the provider configuration and reopen /login.",
+            )),
+        }
+    }
+
     async fn save_form(
         &self,
         registration: ProviderRegistration,
@@ -573,11 +679,13 @@ impl Management {
             vec![choice("action", "Next", vec!["Select model (/model)".into(), "Manage connections".into(), "Close".into()])],
             Arc::new(move |input, _| {
                 let owner = owner.clone();
-                Box::pin(async move { match index(&input, "action") {
-                    0 => owner.connections("/model").await,
-                    1 => owner.connections("/providers").await,
-                    _ => Ok(CommandResult::Dismiss),
-                } })
+                Box::pin(async move {
+                    match index(&input, "action") {
+                        0 => owner.connections("/model").await,
+                        1 => owner.connections("/providers").await,
+                        _ => Ok(CommandResult::Dismiss),
+                    }
+                })
             }),
         )?.without_history().with_overlay_kind(OverlayKind::Login)?))
     }
@@ -644,41 +752,44 @@ impl Management {
             String::new()
         };
         Ok(CommandResult::Workflow(Workflow::new("Providers", format!("Selection affects the NEXT turn, not the model pinned in an active turn. Revocation blocks subsequent inference even in that turn. Local cancellation does not prove remote revocation.{diagnostics}"), fields,
-            Arc::new(move |input, _| {
-                let management = management.clone();
-                let record = records.get(index(&input, "connection")).cloned();
-                Box::pin(async move {
-                    let Some(record) = record else { return Ok(failure(ConnectionError::InvalidSelection)); };
-                    if command == "/logout" {
-                        if index(&input, "confirm") != 1 { return Ok(notice("Connection kept.")); }
-                        return Ok(match management.connections.revoke(record.id).await {
-                            Ok(()) => notice("Connection revoked locally. Next inference is blocked, including in a pinned turn. Remote completion remains unknown."),
-                            Err(error) => failure(error),
-                        });
-                    }
-                    if command == "/providers" {
-                        match index(&input, "action") {
-                            1 => {
-                                let Some((registration, descriptor)) = management.catalog.adapters().into_iter().find(|(_, d)| d.id == record.settings.provider) else { return Ok(failure(ConnectionError::AdapterUnavailable)); };
-                                return management.connection_form(registration, descriptor, record.settings.requires_secret, Some(record));
-                            }
-                            2 => return management.revoke_form(record),
-                            _ => {}
-                        }
-                    }
-                    management.model_form(record)
-                })
-            }))?.with_overlay_kind(command_surface(command))?))
+                                                 Arc::new(move |input, _| {
+                                                     let management = management.clone();
+                                                     let record = records.get(index(&input, "connection")).cloned();
+                                                     Box::pin(async move {
+                                                         let Some(record) = record else { return Ok(failure(ConnectionError::InvalidSelection)); };
+                                                         if command == "/logout" {
+                                                             if index(&input, "confirm") != 1 { return Ok(notice("Connection kept.")); }
+                                                             return Ok(match management.connections.revoke(record.id).await {
+                                                                 Ok(()) => notice("Connection revoked locally. Next inference is blocked, including in a pinned turn. Remote completion remains unknown."),
+                                                                 Err(error) => failure(error),
+                                                             });
+                                                         }
+                                                         if command == "/providers" {
+                                                             match index(&input, "action") {
+                                                                 1 => {
+                                                                     let Some((registration, descriptor)) = management.catalog.adapters().into_iter().find(|(_, d)| d.id == record.settings.provider) else { return Ok(failure(ConnectionError::AdapterUnavailable)); };
+                                                                     return management.connection_form(registration, descriptor, record.settings.requires_secret, Some(record));
+                                                                 }
+                                                                 2 => return management.revoke_form(record),
+                                                                 _ => {}
+                                                             }
+                                                         }
+                                                         management.model_form(record)
+                                                     })
+                                                 }))?.with_overlay_kind(command_surface(command))?))
     }
     fn revoke_form(&self, record: ConnectionRecord) -> Result<CommandResult> {
         let management = self.clone();
         Ok(CommandResult::Workflow(Workflow::new("Disconnect", "Revoke local authorization and delete stored credentials. This does not revoke a remote API key.",
-            vec![choice("confirm", "Confirm", vec!["Keep connection".into(), "Disconnect".into()])], Arc::new(move |input, _| {
+                                                 vec![choice("confirm", "Confirm", vec!["Keep connection".into(), "Disconnect".into()])], Arc::new(move |input, _| {
                 let management = management.clone();
                 let id = record.id;
                 Box::pin(async move {
                     if index(&input, "confirm") != 1 { return Ok(notice("Connection kept.")); }
-                    Ok(match management.connections.revoke(id).await { Ok(()) => notice("Connection revoked locally. Remote completion remains unknown."), Err(error) => failure(error) })
+                    Ok(match management.connections.revoke(id).await {
+                        Ok(()) => notice("Connection revoked locally. Remote completion remains unknown."),
+                        Err(error) => failure(error)
+                    })
                 })
             }))?.with_overlay_kind(OverlayKind::Confirm)?))
     }

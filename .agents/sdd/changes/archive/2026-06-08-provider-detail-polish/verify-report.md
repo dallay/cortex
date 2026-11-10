@@ -117,7 +117,7 @@ Key test suites verified:
 
 ### SUGGESTION (nice to have)
 
-1. **`gemini.svg` lacks `currentColor`** — The file copied from OmniRoute doesn't use `currentColor` for theming, unlike the other 4 authored SVGs. Acceptable per design §6 (OmniRoute assets as-is), but worth noting for future consistency.
+1. **`gemini.svg` lacks `currentColor`** — The file copied from the reference gateway doesn't use `currentColor` for theming, unlike the other 4 authored SVGs. Acceptable per design §6 (reference-gateway assets as-is), but worth noting for future consistency.
 
 ---
 

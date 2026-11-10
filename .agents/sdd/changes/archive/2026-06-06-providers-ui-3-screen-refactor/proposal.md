@@ -87,7 +87,7 @@ This refactor is a **UI restructure only**. The existing backend capability `pro
 
 - ❌ Bulk actions (select all, enable/disable/delete multi) — future PR.
 - ❌ Distribute Proxies (auto-rebalance priority/weight) — future PR.
-- ❌ Static catalog of 228 providers (OmniRoute parity) — future PR.
+- ❌ Static catalog of 228 providers (reference-gateway parity) — future PR.
 - ❌ OAuth flow implementation for OAuth-supporting providers (Gemini, etc.) — dialog supports the form shape only; no OAuth redirect yet.
 - ❌ Per-provider quota implementation (real API integration) — placeholder page only; follow-up issue.
 - ❌ Provider logos/brand icons — use lucide icons only.

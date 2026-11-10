@@ -7,7 +7,7 @@
 use chrono::Utc;
 use rook_core::{
     AuthType, ConnectionConfig, ConnectionId, Credentials, EncryptedBlob, ProviderConnection,
-    ProviderKind, QuotaWindowThresholds, TestStatus,
+    QuotaWindowThresholds, TestStatus,
 };
 use shared_kernel::ProviderId;
 
@@ -17,7 +17,7 @@ use rook_core::ModelCatalogEntry;
 fn make_connection(
     id: &str,
     name: &str,
-    kind: ProviderKind,
+    kind: &'static rook_core::ProviderDescriptor,
     runtime_id: &str,
     is_active: bool,
 ) -> ProviderConnection {
@@ -32,7 +32,7 @@ fn make_connection(
     .unwrap_or_else(|_| uuid::Uuid::new_v4());
     ProviderConnection {
         id: ConnectionId(id_uuid),
-        provider_kind: kind,
+        provider: kind,
         provider_runtime_id: ProviderId::new(runtime_id),
         name: name.to_string(),
         priority: 1,
@@ -52,6 +52,7 @@ fn make_connection(
             api_format: Some(rook_core::ApiFormat::OpenAI),
             supported_models: Vec::new(),
         },
+        adapter_revision: 1,
         test_status: TestStatus::NeverTested,
         created_at: Utc::now(),
         updated_at: Utc::now(),
@@ -62,15 +63,15 @@ fn catalog_with_openai_and_anthropic() -> Vec<ModelCatalogEntry> {
     vec![
         ModelCatalogEntry {
             model_id: "gpt-4o".to_string(),
-            provider_kind: ProviderKind::OpenAI,
+            provider_id: "openai".to_string(),
         },
         ModelCatalogEntry {
             model_id: "gpt-4-turbo".to_string(),
-            provider_kind: ProviderKind::OpenAI,
+            provider_id: "openai".to_string(),
         },
         ModelCatalogEntry {
             model_id: "claude-3-5-sonnet-latest".to_string(),
-            provider_kind: ProviderKind::Anthropic,
+            provider_id: "anthropic".to_string(),
         },
     ]
 }
@@ -86,7 +87,7 @@ fn empty_catalog_yields_empty_response() {
     let conns = vec![make_connection(
         "c1",
         "OpenAI Primary",
-        ProviderKind::OpenAI,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
         "openai-primary",
         true,
     )];
@@ -102,7 +103,7 @@ fn inactive_connection_is_filtered_out() {
     let conns = vec![make_connection(
         "c1",
         "OpenAI Primary",
-        ProviderKind::OpenAI,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
         "openai-primary",
         false,
     )];
@@ -115,7 +116,7 @@ fn active_connection_with_catalog_match_is_returned() {
     let conns = vec![make_connection(
         "c1",
         "OpenAI Primary",
-        ProviderKind::OpenAI,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
         "openai-primary",
         true,
     )];
@@ -135,7 +136,7 @@ fn azure_openai_connection_exposes_configured_deployment_without_static_catalog(
     let mut connection = make_connection(
         "c2",
         "Azure production",
-        ProviderKind::AzureOpenAI,
+        rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor"),
         "azure-prod",
         true,
     );
@@ -153,7 +154,7 @@ fn active_connection_with_no_catalog_match_is_filtered_out() {
     let conns = vec![make_connection(
         "c1",
         "Ollama Local",
-        ProviderKind::Ollama,
+        rook_core::descriptor_by_id("ollama").expect("ollama descriptor"),
         "ollama-local",
         true,
     )];
@@ -170,21 +171,21 @@ fn mixed_active_and_inactive_connections() {
     let c1 = make_connection(
         "c1",
         "OpenAI Primary",
-        ProviderKind::OpenAI,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
         "openai-primary",
         true,
     );
     let c2 = make_connection(
         "c2",
         "Anthropic Primary",
-        ProviderKind::Anthropic,
+        rook_core::descriptor_by_id("anthropic").expect("anthropic descriptor"),
         "anthropic-primary",
         false, // inactive
     );
     let c3 = make_connection(
         "c3",
         "Anthropic Backup",
-        ProviderKind::Anthropic,
+        rook_core::descriptor_by_id("anthropic").expect("anthropic descriptor"),
         "anthropic-backup",
         true,
     );
@@ -204,21 +205,21 @@ fn response_is_sorted_by_provider_id_for_determinism() {
     let c3 = make_connection(
         "c3",
         "Anthropic Backup",
-        ProviderKind::Anthropic,
+        rook_core::descriptor_by_id("anthropic").expect("anthropic descriptor"),
         "anthropic-backup",
         true,
     );
     let c1 = make_connection(
         "c1",
         "OpenAI Primary",
-        ProviderKind::OpenAI,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
         "openai-primary",
         true,
     );
     let c2 = make_connection(
         "c2",
         "Anthropic Primary",
-        ProviderKind::Anthropic,
+        rook_core::descriptor_by_id("anthropic").expect("anthropic descriptor"),
         "anthropic-primary",
         true,
     );

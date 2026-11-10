@@ -1,5 +1,5 @@
 use chrono::Utc;
-use rook_core::{AuthType, ProviderKind, TestStatus};
+use rook_core::{AuthType, TestStatus};
 use rook_usecases::manage_connections::CreateConnectionRequest;
 use shared_kernel::ProviderId;
 use transport_axum::provider_dto::*;
@@ -66,7 +66,7 @@ fn test_test_credentials_request_conversion() {
     let req = credentials_request();
 
     let domain = req.try_into_domain().unwrap();
-    assert_eq!(domain.provider_kind, ProviderKind::Anthropic);
+    assert_eq!(domain.provider.id, "anthropic");
     assert_eq!(domain.auth_type, AuthType::ApiKey);
 }
 
@@ -124,4 +124,15 @@ fn credentials_request() -> TestCredentialsRequest {
             api_format: None,
         },
     }
+}
+
+#[test]
+fn update_rejects_unknown_provider_id() {
+    let request: UpdateProviderRequest = serde_json::from_value(serde_json::json!({
+        "expectedUpdatedAt": Utc::now().to_rfc3339(),
+        "providerKind": "unknown-provider"
+    }))
+    .unwrap();
+    let result = rook_usecases::manage_connections::UpdateConnectionRequest::try_from(&request);
+    assert!(matches!(result, Err(error) if error == "unknown provider id: unknown-provider"));
 }

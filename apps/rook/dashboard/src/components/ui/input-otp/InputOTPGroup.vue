@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import {useForwardProps} from "reka-ui";
 import type {HTMLAttributes} from "vue";
@@ -13,10 +13,10 @@ const forwarded = useForwardProps(delegatedProps);
 
 <template>
   <div
+    :class="cn('flex items-center', props.class)"
     data-slot="input-otp-group"
     v-bind="forwarded"
-    :class="cn('flex items-center', props.class)"
   >
-    <slot />
+    <slot/>
   </div>
 </template>

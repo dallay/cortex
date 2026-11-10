@@ -5,6 +5,8 @@ pub mod connections;
 pub mod kernel;
 pub mod providers;
 pub use kernel::{ServiceHandle, ServiceLease, ServiceSlotHandle};
+mod turn;
+pub use turn::complete_turn_ends;
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -357,16 +359,77 @@ impl EventSink for ScopedEventSink<'_> {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ApprovalRequest {
     pub id: String,
     /// Specific action identity, e.g. native.shell or mcp.github.search.
     pub action: String,
+    #[serde(default)]
     pub preview: String,
+    #[serde(default)]
+    pub resource: Option<ApprovalResource>,
+    /// Host runtime provenance is deliberately omitted from persisted history.
+    #[serde(skip)]
+    pub provenance: Option<ApprovalProvenance>,
+}
+
+impl Serialize for ApprovalRequest {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        #[derive(Serialize)]
+        struct PersistedApprovalRequest<'a> {
+            id: &'a str,
+            action: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            preview: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            resource: Option<&'a ApprovalResource>,
+        }
+
+        let explicitly_non_sensitive = self
+            .resource
+            .as_ref()
+            .is_some_and(|resource| !resource.sensitive);
+        PersistedApprovalRequest {
+            id: &self.id,
+            action: &self.action,
+            preview: explicitly_non_sensitive.then_some(self.preview.as_str()),
+            resource: self
+                .resource
+                .as_ref()
+                .filter(|resource| !resource.sensitive),
+        }
+        .serialize(serializer)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApprovalResource {
+    pub canonical_path: std::path::PathBuf,
+    pub sensitive: bool,
+}
+
+/// Runtime-stamped origin. Registration wrappers overwrite any tool-supplied value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalProvenance {
+    NativeFileBuiltin,
+    Untrusted,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ApprovalDecision {
+    Reject,
+    ApproveOnce,
+    ApproveForSession,
 }
 #[async_trait]
 pub trait ApprovalPolicy: Send + Sync {
-    async fn approve(&self, request: &ApprovalRequest, cancel: CancellationToken) -> Result<bool>;
+    async fn approve(
+        &self,
+        request: &ApprovalRequest,
+        cancel: CancellationToken,
+    ) -> Result<ApprovalDecision>;
 }
 
 #[derive(Clone)]
@@ -554,8 +617,9 @@ pub trait ApprovalPrompt: Send + Sync {
     async fn request_decision(
         &self,
         request: &ApprovalRequest,
+        allowed_decisions: &[ApprovalDecision],
         cancel: CancellationToken,
-    ) -> Result<bool>;
+    ) -> Result<ApprovalDecision>;
     fn granted(&self, _request: &ApprovalRequest) {}
 }
 pub mod hooks;

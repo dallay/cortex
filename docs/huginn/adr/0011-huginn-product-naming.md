@@ -35,8 +35,7 @@ DALLAY-631 SDD evidence call out the rename explicitly.
 - The internal naming research note (the "Drive ADR" referenced during
   ideation) reached the same conclusion: **Huginn** for the autonomous
   reasoning product, **Muninn** reserved for the future memory product.
-  It also documented collisions with other open-source projects
-  (e.g. `zaidorx/huginn`, another Rust coding agent) and recommended
+  It also documented collisions with other open-source projects (e.g. `zaidorx/huginn`, another Rust coding agent) and recommended
   accepting the collision risk at this stage. This ADR consolidates
   those findings so the naming decision has a single source of truth.
 
@@ -45,8 +44,8 @@ DALLAY-631 SDD evidence call out the rename explicitly.
 1. The coding agent's official name is **Huginn**.
 2. The future persistent memory product will be named **Muninn**.
 3. Both names originate from Odin's two ravens in Norse mythology:
-   - Huginn (Old Norse: "thought") — autonomous reasoning and orchestration.
-   - Muninn (Old Norse: "memory") — durable knowledge and recall.
+    - Huginn (Old Norse: "thought") — autonomous reasoning and orchestration.
+    - Muninn (Old Norse: "memory") — durable knowledge and recall.
 4. Huginn and Muninn are distinct products or capabilities within the
    broader Cortex ecosystem; this ADR establishes identity, not a
    shared architecture.
@@ -63,23 +62,23 @@ DALLAY-631 SDD evidence call out the rename explicitly.
 
 This decision is implemented by the migration accompanying this ADR:
 
-| Existing            | Canonical (post-ADR)        |
-|---------------------|-----------------------------|
-| `apps/agent/`       | `apps/huginn/`              |
-| `crates/agent/core/` | `crates/huginn/core/`      |
-| `crates/agent/runtime/` | `crates/huginn/runtime/` |
-| `docs/agent/`       | `docs/huginn/`              |
-| `cortex-agent`      | `huginn` (Cargo package)    |
-| `agent-core`        | `huginn-core`               |
-| `agent-runtime`     | `huginn-runtime`            |
-| `agent` (binary)    | `huginn`                    |
-| `cortex/agent/config.toml` | `cortex/huginn/config.toml` (preferred) |
-| `cortex/agent/sessions.db` | `cortex/huginn/sessions.db` (preferred) |
-| `AGENT_BASE_URL`    | `HUGINN_BASE_URL`           |
-| `AGENT_MODEL`       | `HUGINN_MODEL`              |
-| `AGENT_API_KEY`     | `HUGINN_API_KEY`            |
-| `scripts/agent-linux-smoke.sh` | `scripts/huginn-linux-smoke.sh` |
-| `agent>` prompt     | `huginn>`                   |
+| Existing                       | Canonical (post-ADR)                    |
+|--------------------------------|-----------------------------------------|
+| `apps/agent/`                  | `apps/huginn/`                          |
+| `crates/agent/core/`           | `crates/huginn/core/`                   |
+| `crates/agent/runtime/`        | `crates/huginn/runtime/`                |
+| `docs/agent/`                  | `docs/huginn/`                          |
+| `cortex-agent`                 | `huginn` (Cargo package)                |
+| `agent-core`                   | `huginn-core`                           |
+| `agent-runtime`                | `huginn-runtime`                        |
+| `agent` (binary)               | `huginn`                                |
+| `cortex/agent/config.toml`     | `cortex/huginn/config.toml` (preferred) |
+| `cortex/agent/sessions.db`     | `cortex/huginn/sessions.db` (preferred) |
+| `AGENT_BASE_URL`               | `HUGINN_BASE_URL`                       |
+| `AGENT_MODEL`                  | `HUGINN_MODEL`                          |
+| `AGENT_API_KEY`                | `HUGINN_API_KEY`                        |
+| `scripts/agent-linux-smoke.sh` | `scripts/huginn-linux-smoke.sh`         |
+| `agent>` prompt                | `huginn>`                               |
 
 `AGENT_*` variables and the legacy `cortex/agent/config.toml` location
 remain readable as a one-release compatibility fallback. New installs use

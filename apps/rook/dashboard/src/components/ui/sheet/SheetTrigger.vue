@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {DialogTriggerProps} from "reka-ui";
 import {DialogTrigger} from "reka-ui";
 
@@ -10,6 +10,6 @@ const props = defineProps<DialogTriggerProps>();
     data-slot="sheet-trigger"
     v-bind="props"
   >
-    <slot />
+    <slot/>
   </DialogTrigger>
 </template>

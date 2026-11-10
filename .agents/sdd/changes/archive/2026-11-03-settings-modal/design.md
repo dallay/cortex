@@ -966,9 +966,9 @@ Add a PTY fixture mode that renders the **host-opened** settings
 dialog (no plugin registration). The new fixture uses the
 host `/settings` and mirrors the `extension` mode already present (line 552 in `pty.rs`).
 
-| Test                                            | Asserts                                                                                                                                                                     | REQ            |
-|-------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------|
-| `settings_pty_render_header_and_marker`         | Dispatching `/settings` from the chat input shows the header `theme indicators sound toasts integrations` with `theme` inverted, and the first body row is `▶ one-dark ✓`. | REQ-02, REQ-05 |
+| Test                                                         | Asserts                                                                                                                                                                     | REQ            |
+|--------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------|
+| `settings_pty_render_header_and_marker`                      | Dispatching `/settings` from the chat input shows the header `theme indicators sound toasts integrations` with `theme` inverted, and the first body row is `▶ one-dark ✓`. | REQ-02, REQ-05 |
 | `settings_pty_escape_closes_modal_without_cancelling_stream` | Open `/settings`, press Esc, the status bar shows `Settings discarded`, and an active turn keeps streaming.                                                                 | REQ-13         |
 
 ### Unit tests in `apps/huginn/tests/ui_settings.rs` (NEW)

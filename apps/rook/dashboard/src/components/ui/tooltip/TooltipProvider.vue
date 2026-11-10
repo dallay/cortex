@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {TooltipProviderProps} from "reka-ui";
 import {TooltipProvider} from "reka-ui";
 
@@ -9,6 +9,6 @@ const props = withDefaults(defineProps<TooltipProviderProps>(), {
 
 <template>
   <TooltipProvider v-bind="props">
-    <slot />
+    <slot/>
   </TooltipProvider>
 </template>

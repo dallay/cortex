@@ -26,9 +26,10 @@ use std::sync::Arc;
 pub fn parse_anthropic_rate_limit_headers(
     headers: &reqwest::header::HeaderMap,
     provider: ProviderId,
+    descriptor_id: &'static str,
     observed_at: chrono::DateTime<chrono::Utc>,
 ) -> Vec<rook_core::QuotaObservation> {
-    use rook_core::{ProviderKind, QuotaObservation};
+    use rook_core::QuotaObservation;
 
     let scope = headers
         .get("anthropic-workspace-id")
@@ -66,7 +67,7 @@ pub fn parse_anthropic_rate_limit_headers(
                 .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
                 .map(|value| value.with_timezone(&chrono::Utc));
             Some(QuotaObservation {
-                provider_kind: ProviderKind::Anthropic,
+                provider_id: descriptor_id.to_string(),
                 provider: provider.clone(),
                 connection_id: None,
                 metric: metric.to_string(),
@@ -369,6 +370,8 @@ struct ToolUseTracker {
 #[derive(Debug, Clone)]
 pub struct AnthropicProviderConfig {
     pub id: ProviderId,
+    /// Canonical descriptor id of the provider this connection represents.
+    pub provider_id: &'static str,
     pub api_key: String,
     pub base_url: String,
     pub models: Vec<KModelId>,
@@ -379,6 +382,7 @@ pub struct AnthropicProvider {
     config: AnthropicProviderConfig,
     client: Client,
     quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
+    chat_path: String,
 }
 
 /// Map an Anthropic HTTP error response to a typed `CortexError`.
@@ -430,36 +434,122 @@ impl AnthropicProvider {
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
             .redirect(reqwest::redirect::Policy::none())
             .build()?;
+        let chat_path = rook_core::descriptor_by_id(config.provider_id).map_or_else(
+            || "/v1/messages".to_string(),
+            |descriptor| descriptor.paths.chat.to_string(),
+        );
         Ok(Arc::new(Self {
             config,
             client,
             quota_recorder,
+            chat_path,
         }))
+    }
+
+    /// Configure the message endpoint from the provider descriptor.
+    pub fn with_chat_path(self: Arc<Self>, path: &str) -> Arc<Self> {
+        Arc::new(Self {
+            config: self.config.clone(),
+            client: self.client.clone(),
+            quota_recorder: self.quota_recorder.clone(),
+            chat_path: path.to_string(),
+        })
     }
 
     async fn record_quota_headers(&self, headers: &reqwest::header::HeaderMap) {
         let Some(recorder) = self.quota_recorder.as_ref() else {
             return;
         };
-        let observations =
-            parse_anthropic_rate_limit_headers(headers, self.config.id.clone(), chrono::Utc::now());
+        let observations = parse_anthropic_rate_limit_headers(
+            headers,
+            self.config.id.clone(),
+            self.config.provider_id,
+            chrono::Utc::now(),
+        );
         if let Err(error) = recorder.record_observations(observations).await {
             tracing::warn!(%error, "failed to record Anthropic quota observations");
         }
     }
 
-    fn build_stream_request(req: &CompletionRequest) -> AnthropicStreamRequest {
+    /// Convert domain tool declarations (OpenAI function shape) into the native
+    /// Anthropic wire shape. Already-native declarations pass through unchanged,
+    /// so this is idempotent.
+    fn normalize_tools(tools: Option<serde_json::Value>) -> Option<serde_json::Value> {
+        let Some(serde_json::Value::Array(items)) = tools else {
+            return tools;
+        };
+        let native: Vec<serde_json::Value> = items
+            .into_iter()
+            .map(|tool| {
+                let function = &tool["function"];
+                let has_function_shape = function.get("name").is_some();
+                if !has_function_shape {
+                    return tool;
+                }
+                let mut out = serde_json::json!({
+                    "name": function["name"],
+                    "input_schema": function.get("parameters").cloned().unwrap_or(serde_json::json!({"type": "object"})),
+                });
+                if let Some(description) = function.get("description") {
+                    out["description"] = description.clone();
+                }
+                if let Some(cache_control) = tool.get("cache_control") {
+                    out["cache_control"] = cache_control.clone();
+                }
+                out
+            })
+            .collect();
+        Some(serde_json::Value::Array(native))
+    }
+
+    /// Convert domain `tool_choice` (string or OpenAI function form) into the
+    /// native Anthropic wire shape. Native objects pass through unchanged.
+    fn normalize_tool_choice(
+        choice: Option<serde_json::Value>,
+    ) -> CortexResult<Option<serde_json::Value>> {
+        let Some(choice) = choice else {
+            return Ok(None);
+        };
+        Ok(Some(match &choice {
+            serde_json::Value::String(s) => match s.as_str() {
+                "auto" => serde_json::json!({"type": "auto"}),
+                "none" => serde_json::json!({"type": "none"}),
+                "required" => serde_json::json!({"type": "any"}),
+                _ => choice,
+            },
+            serde_json::Value::Object(obj) => {
+                if obj.get("type").and_then(|t| t.as_str()) == Some("function") {
+                    let name = obj
+                        .get("function")
+                        .and_then(|function| function.as_object())
+                        .and_then(|function| function.get("name"))
+                        .and_then(|name| name.as_str())
+                        .ok_or_else(|| {
+                            CortexError::invalid_request(
+                                "function tool_choice requires a function object with a string name",
+                            )
+                        })?;
+                    serde_json::json!({"type": "tool", "name": name})
+                } else {
+                    choice
+                }
+            }
+            _ => choice,
+        }))
+    }
+
+    fn build_stream_request(req: &CompletionRequest) -> CortexResult<AnthropicStreamRequest> {
         let system_text = Self::extract_system_messages(req);
-        AnthropicStreamRequest {
+        Ok(AnthropicStreamRequest {
             model: req.model.to_string(),
             messages: build_wire_messages(req),
             system: system_text,
             stream: true,
             max_tokens: req.max_tokens.or(Some(4096)),
             temperature: req.temperature,
-            tools: req.tools.clone(),
-            tool_choice: req.tool_choice.clone(),
-        }
+            tools: Self::normalize_tools(req.tools.clone()),
+            tool_choice: Self::normalize_tool_choice(req.tool_choice.clone())?,
+        })
     }
 
     fn extract_system_messages(req: &CompletionRequest) -> Option<String> {
@@ -482,7 +572,7 @@ impl AnthropicProvider {
         body: &AnthropicStreamRequest,
     ) -> CortexResult<reqwest::Response> {
         self.client
-            .post(format!("{}/v1/messages", self.config.base_url))
+            .post(format!("{}{}", self.config.base_url, self.chat_path))
             .header("x-api-key", &self.config.api_key)
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
@@ -501,10 +591,15 @@ impl AnthropicProvider {
     ) -> Vec<Result<StreamChunk, CortexError>> {
         let events = match sse_buffer.push_with_max_event_bytes(bytes, 2 * 1024 * 1024) {
             Ok(events) => events,
-            Err(_) => {
+            Err(sse_stream::SseBufferError::EventTooLarge { .. }) => {
                 return vec![Err(CortexError::provider(
                     "Anthropic SSE event limit exceeded",
                 ))]
+            }
+            Err(error) => {
+                return vec![Err(CortexError::provider(format!(
+                    "Anthropic SSE event rejected: {error}"
+                )))]
             }
         };
         events
@@ -647,183 +742,27 @@ impl AnthropicProvider {
         model: &ModelId,
         tracker: &mut ToolUseTracker,
     ) -> Option<Result<StreamChunk, CortexError>> {
-        let base = |delta: String, tool_calls: Vec<ToolCallDelta>| StreamChunk {
-            id: request_id.clone(),
-            model: model.clone(),
-            delta,
-            thinking: None,
-            tool_calls,
-            finish_reason: None,
-            usage: None,
-        };
         match event {
             AnthropicStreamEvent::MessageStart { message } => {
-                tracker.initial_usage = message.map(|message| message.usage);
-                if !tracker.responses {
-                    return None;
-                }
-                // A usage snapshot is a successful domain chunk and commits Responses
-                // selection, even before content. Retain it for later usage merging.
-                tracker.initial_usage.as_ref().map(|usage| {
-                    Ok(Self::tool_summary_chunk(
-                        request_id,
-                        model,
-                        tracker,
-                        &AnthropicMessageDeltaDetails { stop_reason: None },
-                        usage,
-                    ))
-                })
+                Self::message_start_chunk(message, request_id, model, tracker)
             }
             AnthropicStreamEvent::ContentBlockStart {
                 index,
                 content_block,
-            } => {
-                // Legacy parsing ignored events with non-string IDs.
-                if !tracker.responses && content_block.id.is_invalid_type() {
-                    return None;
-                }
-                if content_block.block_type == "tool_use" {
-                    let id = normalize_tool_id(&content_block.id, tracker.responses);
-                    if tracker.tools.len() >= 64 {
-                        return Some(Err(CortexError::provider(
-                            "Anthropic stream exceeded the limit of 64 tool calls",
-                        )));
-                    }
-                    if tracker.tools.iter().any(|tool| tool.index == index)
-                        || id
-                            .as_ref()
-                            .is_some_and(|id| id.len() > 256 || id.chars().any(char::is_control))
-                        || content_block
-                            .name
-                            .as_ref()
-                            .is_some_and(|name| name.len() > 4096)
-                        || content_block
-                            .input
-                            .as_ref()
-                            .is_some_and(|input| !input.is_object())
-                    {
-                        return Some(Err(CortexError::provider(
-                            "Invalid Anthropic tool_use start",
-                        )));
-                    }
-                    let initial_input = content_block.input.map(|input| input.to_string());
-                    let argument_bytes = tracker
-                        .argument_bytes
-                        .saturating_add(initial_input.as_ref().map_or(0, String::len));
-                    if argument_bytes > 1024 * 1024 {
-                        return Some(Err(CortexError::provider(
-                            "Anthropic tool argument limit exceeded",
-                        )));
-                    }
-                    tracker.argument_bytes = argument_bytes;
-                    tracker.tools.push(TrackedToolUse {
-                        index,
-                        id: id.clone(),
-                        name: content_block.name.clone(),
-                        initial_input,
-                        received_deltas: false,
-                        closed: false,
-                    });
-                    Some(Ok(base(
-                        String::new(),
-                        vec![ToolCallDelta {
-                            index,
-                            id,
-                            function: ToolCallFunctionDelta {
-                                name: content_block.name,
-                                arguments: None,
-                            },
-                        }],
-                    )))
-                } else {
-                    None
-                }
-            }
+            } => Self::content_block_start_chunk(index, content_block, request_id, model, tracker),
             AnthropicStreamEvent::ContentBlockDelta { index, delta } => match delta {
-                AnthropicDelta::Text { text } => Some(Ok(base(text, vec![]))),
+                AnthropicDelta::Text { text } => {
+                    Some(Ok(Self::base_chunk(request_id, model, text, vec![])))
+                }
                 AnthropicDelta::InputJson { partial_json } => {
-                    let Some(tool) = tracker
-                        .tools
-                        .iter_mut()
-                        .find(|tool| tool.index == index && !tool.closed)
-                    else {
-                        return Some(Err(CortexError::provider(
-                            "Anthropic tool delta without an open block",
-                        )));
-                    };
-                    let discarded_bytes = tool.initial_input.as_ref().map_or(0, String::len);
-                    let argument_bytes = tracker
-                        .argument_bytes
-                        .saturating_sub(discarded_bytes)
-                        .saturating_add(partial_json.len());
-                    if argument_bytes > 1024 * 1024 {
-                        return Some(Err(CortexError::provider(
-                            "Anthropic tool argument limit exceeded",
-                        )));
-                    }
-                    tracker.argument_bytes = argument_bytes;
-                    tool.initial_input = None;
-                    tool.received_deltas = true;
-                    Some(Ok(base(
-                        String::new(),
-                        vec![ToolCallDelta {
-                            index,
-                            id: None,
-                            function: ToolCallFunctionDelta {
-                                name: None,
-                                arguments: Some(partial_json),
-                            },
-                        }],
-                    )))
+                    Self::input_json_chunk(index, partial_json, request_id, model, tracker)
                 }
             },
             AnthropicStreamEvent::ContentBlockStop { index } => {
-                let tool = tracker.tools.iter_mut().find(|tool| tool.index == index)?;
-                tool.closed = true;
-                if tool.received_deltas {
-                    return None;
-                }
-                let arguments = tool.initial_input.take()?;
-                Some(Ok(base(
-                    String::new(),
-                    vec![ToolCallDelta {
-                        index,
-                        id: None,
-                        function: ToolCallFunctionDelta {
-                            name: None,
-                            arguments: Some(arguments),
-                        },
-                    }],
-                )))
+                Self::content_block_stop_chunk(index, request_id, model, tracker)
             }
-            AnthropicStreamEvent::MessageDelta { delta, mut usage } => {
-                // Preserve legacy skipping of a message_delta without stop_reason.
-                if !tracker.responses && delta.stop_reason.is_none() {
-                    return None;
-                }
-                if let Some(initial) = tracker.initial_usage.as_ref() {
-                    usage.input_tokens = usage.input_tokens.or(initial.input_tokens);
-                    usage.cache_read_input_tokens = usage
-                        .cache_read_input_tokens
-                        .or(initial.cache_read_input_tokens);
-                    usage.cache_creation_input_tokens = usage
-                        .cache_creation_input_tokens
-                        .or(initial.cache_creation_input_tokens);
-                }
-                let chunk = Self::tool_summary_chunk(request_id, model, tracker, &delta, &usage);
-                if tracker.responses && delta.stop_reason.is_some() && chunk.finish_reason.is_none()
-                {
-                    return Some(Err(rook_core::StreamValidationError::attach(
-                        CortexError::provider("Unknown Anthropic stop_reason"),
-                        chunk.usage,
-                    )));
-                }
-                if tracker.responses {
-                    // Subsequent partial snapshots inherit the latest accepted counters,
-                    // including explicit zeros, rather than the message_start counters.
-                    tracker.initial_usage = Some(usage);
-                }
-                Some(Ok(chunk))
+            AnthropicStreamEvent::MessageDelta { delta, usage } => {
+                Self::message_delta_chunk(delta, usage, request_id, model, tracker)
             }
             AnthropicStreamEvent::Error { error } => Some(Err(CortexError::provider(format!(
                 "Anthropic error: {} - {}",
@@ -831,6 +770,222 @@ impl AnthropicProvider {
             )))),
             _ => None,
         }
+    }
+
+    fn base_chunk(
+        request_id: &RequestId,
+        model: &ModelId,
+        delta: String,
+        tool_calls: Vec<ToolCallDelta>,
+    ) -> StreamChunk {
+        StreamChunk {
+            id: request_id.clone(),
+            model: model.clone(),
+            delta,
+            thinking: None,
+            tool_calls,
+            finish_reason: None,
+            usage: None,
+        }
+    }
+
+    fn message_start_chunk(
+        message: Option<AnthropicStreamMessage>,
+        request_id: &RequestId,
+        model: &ModelId,
+        tracker: &mut ToolUseTracker,
+    ) -> Option<Result<StreamChunk, CortexError>> {
+        tracker.initial_usage = message.map(|message| message.usage);
+        if !tracker.responses {
+            return None;
+        }
+        // A usage snapshot is a successful domain chunk and commits Responses
+        // selection, even before content. Retain it for later usage merging.
+        tracker.initial_usage.as_ref().map(|usage| {
+            Ok(Self::tool_summary_chunk(
+                request_id,
+                model,
+                tracker,
+                &AnthropicMessageDeltaDetails { stop_reason: None },
+                usage,
+            ))
+        })
+    }
+
+    fn content_block_start_chunk(
+        index: u32,
+        content_block: AnthropicContentBlockStart,
+        request_id: &RequestId,
+        model: &ModelId,
+        tracker: &mut ToolUseTracker,
+    ) -> Option<Result<StreamChunk, CortexError>> {
+        // Legacy parsing ignored events with non-string IDs.
+        if !tracker.responses && content_block.id.is_invalid_type() {
+            return None;
+        }
+        if content_block.block_type != "tool_use" {
+            return None;
+        }
+        let id = normalize_tool_id(&content_block.id, tracker.responses);
+        if tracker.tools.len() >= 64 {
+            return Some(Err(CortexError::provider(
+                "Anthropic stream exceeded the limit of 64 tool calls",
+            )));
+        }
+        if tracker.tools.iter().any(|tool| tool.index == index)
+            || id
+                .as_ref()
+                .is_some_and(|id| id.len() > 256 || id.chars().any(char::is_control))
+            || content_block
+                .name
+                .as_ref()
+                .is_some_and(|name| name.len() > 4096)
+            || content_block
+                .input
+                .as_ref()
+                .is_some_and(|input| !input.is_object())
+        {
+            return Some(Err(CortexError::provider(
+                "Invalid Anthropic tool_use start",
+            )));
+        }
+        let initial_input = content_block.input.map(|input| input.to_string());
+        let argument_bytes = tracker
+            .argument_bytes
+            .saturating_add(initial_input.as_ref().map_or(0, String::len));
+        if argument_bytes > 1024 * 1024 {
+            return Some(Err(CortexError::provider(
+                "Anthropic tool argument limit exceeded",
+            )));
+        }
+        tracker.argument_bytes = argument_bytes;
+        tracker.tools.push(TrackedToolUse {
+            index,
+            id: id.clone(),
+            name: content_block.name.clone(),
+            initial_input,
+            received_deltas: false,
+            closed: false,
+        });
+        Some(Ok(Self::base_chunk(
+            request_id,
+            model,
+            String::new(),
+            vec![ToolCallDelta {
+                index,
+                id,
+                function: ToolCallFunctionDelta {
+                    name: content_block.name,
+                    arguments: None,
+                },
+            }],
+        )))
+    }
+
+    fn input_json_chunk(
+        index: u32,
+        partial_json: String,
+        request_id: &RequestId,
+        model: &ModelId,
+        tracker: &mut ToolUseTracker,
+    ) -> Option<Result<StreamChunk, CortexError>> {
+        let Some(tool) = tracker
+            .tools
+            .iter_mut()
+            .find(|tool| tool.index == index && !tool.closed)
+        else {
+            return Some(Err(CortexError::provider(
+                "Anthropic tool delta without an open block",
+            )));
+        };
+        let discarded_bytes = tool.initial_input.as_ref().map_or(0, String::len);
+        let argument_bytes = tracker
+            .argument_bytes
+            .saturating_sub(discarded_bytes)
+            .saturating_add(partial_json.len());
+        if argument_bytes > 1024 * 1024 {
+            return Some(Err(CortexError::provider(
+                "Anthropic tool argument limit exceeded",
+            )));
+        }
+        tracker.argument_bytes = argument_bytes;
+        tool.initial_input = None;
+        tool.received_deltas = true;
+        Some(Ok(Self::base_chunk(
+            request_id,
+            model,
+            String::new(),
+            vec![ToolCallDelta {
+                index,
+                id: None,
+                function: ToolCallFunctionDelta {
+                    name: None,
+                    arguments: Some(partial_json),
+                },
+            }],
+        )))
+    }
+
+    fn content_block_stop_chunk(
+        index: u32,
+        request_id: &RequestId,
+        model: &ModelId,
+        tracker: &mut ToolUseTracker,
+    ) -> Option<Result<StreamChunk, CortexError>> {
+        let tool = tracker.tools.iter_mut().find(|tool| tool.index == index)?;
+        tool.closed = true;
+        if tool.received_deltas {
+            return None;
+        }
+        let arguments = tool.initial_input.take()?;
+        Some(Ok(Self::base_chunk(
+            request_id,
+            model,
+            String::new(),
+            vec![ToolCallDelta {
+                index,
+                id: None,
+                function: ToolCallFunctionDelta {
+                    name: None,
+                    arguments: Some(arguments),
+                },
+            }],
+        )))
+    }
+
+    fn message_delta_chunk(
+        delta: AnthropicMessageDeltaDetails,
+        mut usage: AnthropicMessageDeltaUsage,
+        request_id: &RequestId,
+        model: &ModelId,
+        tracker: &mut ToolUseTracker,
+    ) -> Option<Result<StreamChunk, CortexError>> {
+        // Preserve legacy skipping of a message_delta without stop_reason.
+        if !tracker.responses && delta.stop_reason.is_none() {
+            return None;
+        }
+        if let Some(initial) = tracker.initial_usage.as_ref() {
+            usage.input_tokens = usage.input_tokens.or(initial.input_tokens);
+            usage.cache_read_input_tokens = usage
+                .cache_read_input_tokens
+                .or(initial.cache_read_input_tokens);
+            usage.cache_creation_input_tokens = usage
+                .cache_creation_input_tokens
+                .or(initial.cache_creation_input_tokens);
+        }
+        let chunk = Self::tool_summary_chunk(request_id, model, tracker, &delta, &usage);
+        if tracker.responses && delta.stop_reason.is_some() && chunk.finish_reason.is_none() {
+            return Some(Err(rook_core::StreamValidationError::attach(
+                CortexError::provider("Unknown Anthropic stop_reason"),
+                chunk.usage,
+            )));
+        }
+        if tracker.responses {
+            // Subsequent partial snapshots inherit the latest accepted counters,
+            // including explicit zeros, rather than the message_start counters.
+            tracker.initial_usage = Some(usage);
+        }
+        Some(Ok(chunk))
     }
 }
 
@@ -879,14 +1034,14 @@ impl ProviderPort for AnthropicProvider {
             stream: false,
             max_tokens: req.max_tokens.or(Some(4096)), // SC-08: default max_tokens
             temperature: req.temperature,
-            tools: req.tools.clone(),
-            tool_choice: req.tool_choice.clone(),
+            tools: Self::normalize_tools(req.tools.clone()),
+            tool_choice: Self::normalize_tool_choice(req.tool_choice.clone())?,
         };
 
         let start = std::time::Instant::now();
         let resp = self
             .client
-            .post(format!("{}/v1/messages", self.config.base_url))
+            .post(format!("{}{}", self.config.base_url, self.chat_path))
             .header("x-api-key", &self.config.api_key)
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
@@ -983,7 +1138,7 @@ impl ProviderPort for AnthropicProvider {
         &self,
         req: &CompletionRequest,
     ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
-        let body = Self::build_stream_request(req);
+        let body = Self::build_stream_request(req)?;
         let resp = self.send_stream_request(&body).await?;
 
         // Check HTTP status before processing the stream

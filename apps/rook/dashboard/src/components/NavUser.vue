@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {LogOut, Settings, User} from "@lucide/vue";
 import {computed} from "vue";
 import {useI18n} from "vue-i18n";
@@ -41,11 +41,12 @@ async function handleLogout() {
       <DropdownMenu>
         <DropdownMenuTrigger as-child>
           <SidebarMenuButton
-            size="lg"
             class="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+            size="lg"
           >
-            <div class="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-              <User class="size-4" />
+            <div
+              class="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+              <User class="size-4"/>
             </div>
             <div class="grid flex-1 text-left text-sm leading-tight">
               <span class="truncate font-medium">{{ displayName }}</span>
@@ -54,20 +55,20 @@ async function handleLogout() {
           </SidebarMenuButton>
         </DropdownMenuTrigger>
         <DropdownMenuContent
-          class="w-56 rounded-lg"
-          :side="isMobile ? 'bottom' : 'right'"
           :align="'end'"
+          :side="isMobile ? 'bottom' : 'right'"
           :side-offset="4"
+          class="w-56 rounded-lg"
         >
           <DropdownMenuLabel>{{ t('nav.settings') }}</DropdownMenuLabel>
-          <DropdownMenuSeparator />
+          <DropdownMenuSeparator/>
           <DropdownMenuItem>
-            <Settings class="text-muted-foreground" />
+            <Settings class="text-muted-foreground"/>
             <span>{{ t('nav.settings') }}</span>
           </DropdownMenuItem>
-          <DropdownMenuSeparator />
+          <DropdownMenuSeparator/>
           <DropdownMenuItem @click="handleLogout">
-            <LogOut class="text-muted-foreground" />
+            <LogOut class="text-muted-foreground"/>
             <span>{{ t('auth.logout') }}</span>
           </DropdownMenuItem>
         </DropdownMenuContent>

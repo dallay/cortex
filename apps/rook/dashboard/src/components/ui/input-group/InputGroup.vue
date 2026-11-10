@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {HTMLAttributes} from "vue";
 import {cn} from "@/lib/utils";
 
@@ -9,8 +9,6 @@ const props = defineProps<{
 
 <template>
   <div
-    data-slot="input-group"
-    role="group"
     :class="cn(
       'group/input-group border-input dark:bg-input/30 relative flex w-full items-center rounded-md border shadow-xs transition-[color,box-shadow] outline-none',
       'h-9 min-w-0 has-[>textarea]:h-auto',
@@ -29,7 +27,9 @@ const props = defineProps<{
 
       props.class,
     )"
+    data-slot="input-group"
+    role="group"
   >
-    <slot />
+    <slot/>
   </div>
 </template>

@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 /**
  * ProviderIcon — renders the branded icon for a given `ProviderKind`.
  *
@@ -36,7 +36,7 @@ import {addCollection, Icon} from "@iconify/vue";
 import simpleIcons from "@iconify-json/simple-icons/icons.json";
 import Server from "@lucide/vue/dist/esm/icons/server.mjs";
 import {computed, ref} from "vue";
-import {PROVIDER_KINDS, type ProviderKind} from "@/config/providerCatalog";
+import {findCatalogEntry, type ProviderKind} from "@/config/providerCatalog";
 
 // Register the full Simple Icons set once at module load time.
 // Vite tree-shakes unused icons in production — only referenced icons
@@ -64,6 +64,8 @@ const props = withDefaults(
   defineProps<{
     /** Provider kind — must be one of the 6 known kinds. */
     kind: ProviderKind;
+    /** Icon identifier supplied by the provider descriptor API. */
+    iconKey?: string;
     /**
      * Loading strategy for the local `<img>` fallback path only.
      * Use `'eager'` for above-the-fold LCP candidates (e.g. detail page
@@ -85,6 +87,7 @@ const props = withDefaults(
   }>(),
   {
     loading: "lazy",
+    iconKey: undefined,
     width: 32,
     height: 32,
     decorative: true,
@@ -94,21 +97,21 @@ const props = withDefaults(
 const localFailed = ref(false);
 
 const entry = computed(
-  () => PROVIDER_KINDS.find((p) => p.kind === props.kind) ?? null,
+  () => findCatalogEntry(props.kind),
 );
 
 /** Simple Icons identifier for this kind, or null to use the local asset. */
-const iconifyIcon = computed(() => ICONIFY_MAP[props.kind] ?? null);
+const iconifyIcon = computed(() => ICONIFY_MAP[props.iconKey ?? props.kind] ?? null);
 
 /** Local asset path — only used when iconifyIcon is null. */
 const localSrc = computed(() =>
-  entry.value && !iconifyIcon.value
+  entry.value.iconFile && !iconifyIcon.value
     ? `/providers/${entry.value.iconFile}`
     : null,
 );
 
 const displayName = computed(() => {
-  if (!entry.value) return props.kind;
+  if (!entry.value.displayNameKey) return props.kind;
   // Derive a readable name from the i18n key without pulling in the
   // i18n composable (avoids a dependency on the app's i18n instance).
   // The detail view has the properly translated name in its own scope.
@@ -126,7 +129,10 @@ const ariaAttrs = computed(() =>
 
 /** ariaAttrs for the img branch — alt is sufficient, omit role/aria-label */
 const ariaAttrsForImg = computed(() =>
-  props.decorative ? ({"aria-hidden": "true"} as const) : ({role: "img", "aria-label": displayName.value} as const),
+  props.decorative ? ({"aria-hidden": "true"} as const) : ({
+    role: "img",
+    "aria-label": displayName.value
+  } as const),
 );
 
 function onLocalError() {
@@ -144,24 +150,24 @@ function onLocalError() {
   <!-- Strategy 1: Iconify bundle (openai, anthropic, ollama, gemini) -->
   <Icon
     v-if="iconifyIcon"
+    :height="height"
     :icon="iconifyIcon"
     :width="width"
-    :height="height"
-    v-bind="ariaAttrs"
     class="shrink-0"
+    v-bind="ariaAttrs"
   />
 
   <!-- Strategy 2: local SVG/PNG (groq, ollama-cloud) — and fallback sentinel -->
   <template v-else-if="localSrc && !localFailed">
     <img
-      :src="localSrc"
-      :width="width"
+      :alt="decorative ? '' : displayName"
       :height="height"
       :loading="loading"
-      decoding="async"
-      :alt="decorative ? '' : displayName"
-      v-bind="ariaAttrsForImg"
+      :src="localSrc"
+      :width="width"
       class="object-contain shrink-0"
+      decoding="async"
+      v-bind="ariaAttrsForImg"
       @error="onLocalError"
     />
   </template>
@@ -170,7 +176,7 @@ function onLocalError() {
   <Server
     v-else
     :size="iconSize"
-    v-bind="ariaAttrs"
     class="text-muted-foreground shrink-0"
+    v-bind="ariaAttrs"
   />
 </template>

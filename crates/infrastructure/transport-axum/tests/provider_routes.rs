@@ -8,7 +8,7 @@
 // End-to-end HTTP tests use axum-test (see below).
 
 use rook_core::{
-    ConnectionConfig, Credentials, EncryptedBlob, ModelId, ProviderConnection, ProviderKind,
+    ConnectionConfig, Credentials, EncryptedBlob, ModelId, ProviderConnection,
     ProviderRegistryPort, QuotaWindowThresholds, RepositoryError, TestStatus,
 };
 use rook_usecases::manage_connections::ManageConnectionsError;
@@ -26,7 +26,7 @@ use transport_axum::provider_dto::{
 fn test_connection(id: &str, name: &str) -> ProviderConnection {
     ProviderConnection {
         id: ConnectionId::parse_str(id).unwrap(),
-        provider_kind: ProviderKind::OpenAI,
+        provider: rook_core::descriptor_by_id("openai").expect("openai descriptor"),
         provider_runtime_id: ProviderId::new("openai-primary"),
         name: name.to_string(),
         priority: 1,
@@ -46,6 +46,7 @@ fn test_connection(id: &str, name: &str) -> ProviderConnection {
             api_format: Some(rook_core::ApiFormat::OpenAI),
             supported_models: Vec::new(),
         },
+        adapter_revision: 1,
         test_status: TestStatus::NeverTested,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
@@ -137,7 +138,8 @@ fn oauth_connection_response_exposes_status_but_never_tokens_or_client_secret() 
     use transport_axum::provider_dto::ProviderConnectionResponse;
 
     let mut connection = test_connection("00000000-0000-0000-0000-000000000044", "Azure OAuth");
-    connection.provider_kind = ProviderKind::AzureOpenAI;
+    connection.provider =
+        rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor");
     connection.auth_type = rook_core::AuthType::OAuth;
     connection.credentials = Credentials::OAuth {
         email: EncryptedBlob("encrypted-email".to_string()),
@@ -534,7 +536,7 @@ fn create_provider_request_converts_to_create_connection_request() {
     let request: CreateConnectionRequest =
         CreateConnectionRequest::try_from(&dto).expect("should convert");
 
-    assert_eq!(request.provider_kind, ProviderKind::OpenAI);
+    assert_eq!(request.provider.id, "openai");
     assert_eq!(request.name, "Test");
     assert_eq!(request.priority, 1);
     assert_eq!(

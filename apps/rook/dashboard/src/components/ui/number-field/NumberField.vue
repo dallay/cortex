@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {NumberFieldRootEmits, NumberFieldRootProps} from "reka-ui";
 import {NumberFieldRoot, useForwardPropsEmits} from "reka-ui";
@@ -16,7 +16,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
 </script>
 
 <template>
-  <NumberFieldRoot v-slot="slotProps" v-bind="forwarded" :class="cn('grid gap-1.5', props.class)">
-    <slot v-bind="slotProps" />
+  <NumberFieldRoot v-slot="slotProps" :class="cn('grid gap-1.5', props.class)" v-bind="forwarded">
+    <slot v-bind="slotProps"/>
   </NumberFieldRoot>
 </template>

@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {Check, Copy} from "@lucide/vue";
 import {computed, ref} from "vue";
 import {Button} from "@/components/ui/button";
@@ -60,12 +60,12 @@ const copyToClipboard = async () => {
 
 <template>
   <Button
-    :variant="variant || 'ghost'"
-    :size="size || 'icon'"
-    @click="copyToClipboard"
     :aria-label="copied ? 'Copied' : 'Copy to clipboard'"
+    :size="size || 'icon'"
+    :variant="variant || 'ghost'"
+    @click="copyToClipboard"
   >
-    <Check v-if="copied" class="h-4 w-4 text-green-600" />
-    <Copy v-else class="h-4 w-4" />
+    <Check v-if="copied" class="h-4 w-4 text-green-600"/>
+    <Copy v-else class="h-4 w-4"/>
   </Button>
 </template>

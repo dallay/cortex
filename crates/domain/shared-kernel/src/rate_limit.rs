@@ -18,7 +18,6 @@ pub enum RateLimitScope {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderRateLimit {
     pub requests_per_minute: u32,
-    pub tokens_per_minute: Option<u32>,
     pub burst: Option<u32>,
 }
 
@@ -31,7 +30,6 @@ pub struct RateLimitRule {
     pub target: String,
     pub requests_per_minute: u32,
     pub requests_per_day: Option<u32>,
-    pub tokens_per_minute: Option<u32>,
     pub burst: Option<u32>,
     #[serde(default)]
     pub provider_limits: HashMap<ProviderId, ProviderRateLimit>,
@@ -77,7 +75,6 @@ mod tests {
             target: "key_123".into(),
             requests_per_minute: 60,
             requests_per_day: Some(1000),
-            tokens_per_minute: None,
             burst: None,
             provider_limits: HashMap::new(),
         };

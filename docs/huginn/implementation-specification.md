@@ -2,15 +2,15 @@
 
 ## Crate boundaries
 
-| Crate | Responsibility |
-| --- | --- |
-| `huginn-core` | Typed ports, events, session model and service composition kernel |
-| `huginn-application` | Standard loop, context/compaction, output policy and trusted host authorization |
-| `huginn-runtime` | HTTP/SSE, native/MCP tool plugins, SQLite, filesystem instructions and adapter factories |
-| `huginn-presentation` | Replaceable presentation contract, Ratatui driver, UI state and scoped contributions |
-| `huginn-plugin-api` | Versioned author-facing contribution contract with no terminal dependencies |
-| `huginn-reference-extension` | Separately authored example extension composed statically by the CLI |
-| `huginn` | Configuration, composition root, terminal approvals and CLI |
+| Crate                        | Responsibility                                                                           |
+|------------------------------|------------------------------------------------------------------------------------------|
+| `huginn-core`                | Typed ports, events, session model and service composition kernel                        |
+| `huginn-application`         | Standard loop, context/compaction, output policy and trusted host authorization          |
+| `huginn-runtime`             | HTTP/SSE, native/MCP tool plugins, SQLite, filesystem instructions and adapter factories |
+| `huginn-presentation`        | Replaceable presentation contract, Ratatui driver, UI state and scoped contributions     |
+| `huginn-plugin-api`          | Versioned author-facing contribution contract with no terminal dependencies              |
+| `huginn-reference-extension` | Separately authored example extension composed statically by the CLI                     |
+| `huginn`                     | Configuration, composition root, terminal approvals and CLI                              |
 
 The application depends only on core ports and general-purpose libraries; runtime adapters depend inward. The CLI composes the application, runtime and presentation. None depends on Rook. [ADR-0012](adr/0012-hexagonal-application-and-plugin-lifecycle.md) records the enforced boundaries and lifecycle rules.
 Ports use async traits and typed errors. ModelProvider yields a stream of deltas;
@@ -163,6 +163,7 @@ flowchart TD
     K --> M
     L --> M
 ```
+
 - Shell uses POSIX sh, null stdin, PATH-only environment and supervised process groups.
   Timeout, cancellation and dropped execution kill the group; stdout/stderr are drained
   with bounded retained output. Nonzero exit status is returned to the model.
@@ -181,5 +182,5 @@ Separate deterministic tests exercise kernel lifecycle/rollback, edit approval a
 stale diffs, shell execution and descendant cleanup, path containment, interruption
 and resume, scoped instructions, compaction, HTTP and MCP transports, and CLI JSON.
 Public endpoints and Rook have not been asserted compatible. macOS deterministic
-checks do not establish Linux daily-use acceptance. Record full gate results in
-[validation](validation.md); real-model and Linux checks remain manual acceptance.
+checks do not establish Linux daily-use acceptance. Record full gate results;
+real-model and Linux checks remain manual acceptance.

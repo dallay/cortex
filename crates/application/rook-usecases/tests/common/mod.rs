@@ -9,9 +9,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use rook_core::{
-    ApiFormat, AuditEntry, AuditPort, CachePort, CacheStats, CompletionRequest, CompletionResponse,
-    CortexResult, FormatTranslatorPort, ModelAlias, ModelAliasRepositoryError,
-    ModelAliasRepositoryPort, ModelId, ProviderId, SignatureEntry, TokenCacheStats,
+    AuditEntry, AuditPort, CachePort, CacheStats, CompletionResponse, CortexResult, ModelAlias,
+    ModelAliasRepositoryError, ModelAliasRepositoryPort, ModelId, ProviderId, SignatureEntry,
+    TokenCacheStats,
 };
 use shared_kernel::CacheKey;
 
@@ -78,28 +78,6 @@ pub struct NoOpAudit;
 impl AuditPort for NoOpAudit {
     async fn record(&self, _entry: AuditEntry) -> CortexResult<()> {
         Ok(())
-    }
-}
-
-pub struct NoOpTranslator;
-
-impl FormatTranslatorPort for NoOpTranslator {
-    fn translate_request(
-        &self,
-        _from: ApiFormat,
-        _to: ApiFormat,
-        req: CompletionRequest,
-    ) -> CortexResult<CompletionRequest> {
-        Ok(req)
-    }
-
-    fn translate_response(
-        &self,
-        _from: ApiFormat,
-        _to: ApiFormat,
-        resp: CompletionResponse,
-    ) -> CortexResult<CompletionResponse> {
-        Ok(resp)
     }
 }
 

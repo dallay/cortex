@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {ComboboxRootEmits, ComboboxRootProps} from "reka-ui";
 import {ComboboxRoot, useForwardPropsEmits} from "reka-ui";
 
@@ -14,6 +14,6 @@ const forwarded = useForwardPropsEmits(props, emits);
     data-slot="combobox"
     v-bind="forwarded"
   >
-    <slot v-bind="slotProps" />
+    <slot v-bind="slotProps"/>
   </ComboboxRoot>
 </template>

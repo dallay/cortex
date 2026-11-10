@@ -16,7 +16,6 @@ const forwarded = useForwardProps(delegatedProps);
 
 <template>
   <StepperSeparator
-    v-bind="forwarded"
     :class="cn(
       'bg-muted',
       // Disabled
@@ -25,5 +24,6 @@ const forwarded = useForwardProps(delegatedProps);
       'group-data-[state=completed]:bg-accent',
       props.class,
     )"
+    v-bind="forwarded"
   />
 </template>

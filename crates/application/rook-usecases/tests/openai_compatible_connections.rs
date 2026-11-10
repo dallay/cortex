@@ -14,14 +14,17 @@ use chrono::{DateTime, Utc};
 use rook_core::{
     ApiFormat, CompletionRequest, CompletionResponse, CortexError, CortexResult,
     CredentialEncryptionError, EndpointGrant, EndpointPolicyConfig, HealthStatus, KeyManager,
-    ModelId, ProviderConnection, ProviderKind, ProviderPort, ProviderRepositoryPort, RegistryError,
+    ModelId, ProviderConnection, ProviderPort, ProviderRepositoryPort, RegistryError,
     RepositoryError, StreamChunk,
 };
 use rook_usecases::manage_connections::{
     CreateConnectionRequest, CredentialsInput, ManageConnections, ManageConnectionsError,
     ProviderBuildInput, ProviderBuilderPort, UpdateConnectionRequest,
 };
+use rook_usecases::{FallbackRouter, PricingConfig, RouteRequest, RoutingStrategy};
 use shared_kernel::{ConnectionId, ProviderId};
+
+mod common;
 
 const RUNTIME_A: &str = "compatible-runtime-a";
 const RUNTIME_B: &str = "compatible-runtime-b";
@@ -39,6 +42,29 @@ struct InMemoryRepo {
 impl rook_core::ProviderRepositoryPort for InMemoryRepo {
     async fn list(&self) -> Result<Vec<ProviderConnection>, RepositoryError> {
         Ok(self.connections.lock().expect("repo lock").clone())
+    }
+
+    async fn list_routing_state(
+        &self,
+    ) -> Result<Vec<rook_core::ProviderConnectionRoutingState>, RepositoryError> {
+        Ok(self
+            .connections
+            .lock()
+            .expect("repo lock")
+            .iter()
+            .map(|connection| rook_core::ProviderConnectionRoutingState {
+                id: connection.id,
+                provider_runtime_id: connection.provider_runtime_id.clone(),
+                adapter_revision: connection.adapter_revision,
+                priority: connection.priority,
+                created_at: connection.created_at,
+                is_active: connection.is_active,
+                auth_expired: matches!(
+                    &connection.test_status,
+                    rook_core::TestStatus::Expired { .. }
+                ),
+            })
+            .collect())
     }
 
     async fn find(&self, id: &ConnectionId) -> Result<Option<ProviderConnection>, RepositoryError> {
@@ -196,8 +222,28 @@ impl ProviderPort for StubProvider {
         }
     }
 
-    async fn complete(&self, _req: &CompletionRequest) -> CortexResult<CompletionResponse> {
-        Err(CortexError::provider("stub provider"))
+    async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
+        Ok(CompletionResponse {
+            id: req.id.clone(),
+            provider: self.id.clone(),
+            model: req.model.clone(),
+            content: "routed by refreshed provider".into(),
+            content_blocks: vec![],
+            thinking: None,
+            tool_calls: vec![],
+            finish_reason: None,
+            usage: rook_core::TokenUsage {
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
+                estimated_cost_usd: None,
+            },
+            latency_ms: 0,
+            cache_hit: None,
+        })
     }
 
     async fn stream(
@@ -258,7 +304,8 @@ fn create_request(
     models: &[&str],
 ) -> CreateConnectionRequest {
     CreateConnectionRequest {
-        provider_kind: ProviderKind::OpenAiCompatible,
+        provider: rook_core::descriptor_by_id("openai-compatible")
+            .expect("openai-compatible descriptor"),
         provider_runtime_id: ProviderId::new(runtime),
         auth_type: rook_core::AuthType::ApiKey,
         name: name.to_string(),
@@ -347,7 +394,7 @@ async fn two_compatible_connections_keep_independent_endpoints_credentials_and_m
             &first.id,
             UpdateConnectionRequest {
                 expected_updated_at: first.updated_at,
-                provider_kind: None,
+                provider: None,
                 provider_runtime_id: None,
                 auth_type: None,
                 name: None,
@@ -364,7 +411,7 @@ async fn two_compatible_connections_keep_independent_endpoints_credentials_and_m
             &second.id,
             UpdateConnectionRequest {
                 expected_updated_at: second.updated_at,
-                provider_kind: None,
+                provider: None,
                 provider_runtime_id: None,
                 auth_type: None,
                 name: None,
@@ -456,7 +503,7 @@ async fn disabling_and_updating_a_compatible_connection_changes_routing_without_
         .await
         .expect("second connection stored disabled");
     let mc = ManageConnections::new(
-        repo,
+        repo.clone(),
         registry.clone(),
         Arc::new(PlainKeyManager),
         builder.clone(),
@@ -481,7 +528,7 @@ async fn disabling_and_updating_a_compatible_connection_changes_routing_without_
             &first.id,
             UpdateConnectionRequest {
                 expected_updated_at: first.updated_at,
-                provider_kind: None,
+                provider: None,
                 provider_runtime_id: None,
                 auth_type: None,
                 name: None,
@@ -498,7 +545,7 @@ async fn disabling_and_updating_a_compatible_connection_changes_routing_without_
             &second.id,
             UpdateConnectionRequest {
                 expected_updated_at: second.updated_at,
-                provider_kind: None,
+                provider: None,
                 provider_runtime_id: None,
                 auth_type: None,
                 name: None,
@@ -524,7 +571,7 @@ async fn disabling_and_updating_a_compatible_connection_changes_routing_without_
         &first.id,
         UpdateConnectionRequest {
             expected_updated_at: first_current.updated_at,
-            provider_kind: None,
+            provider: None,
             provider_runtime_id: None,
             auth_type: None,
             name: None,
@@ -546,7 +593,7 @@ async fn disabling_and_updating_a_compatible_connection_changes_routing_without_
             &first.id,
             UpdateConnectionRequest {
                 expected_updated_at: first_current.updated_at,
-                provider_kind: None,
+                provider: None,
                 provider_runtime_id: None,
                 auth_type: None,
                 name: None,
@@ -598,7 +645,7 @@ async fn disabling_and_updating_a_compatible_connection_changes_routing_without_
             &second.id,
             UpdateConnectionRequest {
                 expected_updated_at: second.updated_at,
-                provider_kind: None,
+                provider: None,
                 provider_runtime_id: None,
                 auth_type: None,
                 name: None,
@@ -616,6 +663,123 @@ async fn disabling_and_updating_a_compatible_connection_changes_routing_without_
     assert_eq!(registry_ids.len(), 1);
     assert!(registry_ids.contains(&ProviderId::new(first.id.to_string())));
     assert!(!registry_ids.contains(&ProviderId::new(second.id.to_string())));
+}
+
+#[tokio::test]
+async fn updating_active_connection_refreshes_provider_seen_by_persistent_router() {
+    let repo = Arc::new(InMemoryRepo::default());
+    let builder = Arc::new(RecordingBuilder::default());
+    let router = Arc::new(FallbackRouter::new_empty(RoutingStrategy::Priority));
+    let initial = ManageConnections::new(
+        repo.clone(),
+        router.clone(),
+        Arc::new(PlainKeyManager),
+        builder.clone(),
+    );
+    let mut create = create_request(
+        RUNTIME_A,
+        "compat-refresh",
+        "https://upstream-a.example/v1",
+        "key-a",
+        &["model-before"],
+    );
+    create.is_active = false;
+    let connection = initial
+        .create(create)
+        .await
+        .expect("inactive connection is created");
+    let mc = ManageConnections::new(
+        repo.clone(),
+        router.clone(),
+        Arc::new(PlainKeyManager),
+        builder,
+    )
+    .with_endpoint_policy(EndpointPolicyConfig {
+        grants: vec![EndpointGrant {
+            connection_id: connection.id.to_string(),
+            allowed_origins: vec!["https://upstream-a.example".into()],
+        }],
+    });
+    let connection = mc
+        .update(
+            &connection.id,
+            UpdateConnectionRequest {
+                expected_updated_at: connection.updated_at,
+                provider: None,
+                provider_runtime_id: None,
+                auth_type: None,
+                name: None,
+                priority: None,
+                is_active: Some(true),
+                credentials: None,
+                config: None,
+            },
+        )
+        .await
+        .expect("connection is active before the configuration change");
+    let route = RouteRequest::new(
+        router.clone(),
+        Arc::new(common::NoOpCache),
+        Arc::new(common::NoOpAudit),
+        None,
+        Some(repo.clone()),
+        None,
+        Arc::new(PricingConfig::default()),
+        Arc::new(common::NoOpAliasRepository),
+        rook_usecases::route_request::ModelAliasesConfig {
+            enabled: false,
+            auto_seed: false,
+        },
+        None,
+    );
+
+    let updated = mc
+        .update(
+            &connection.id,
+            UpdateConnectionRequest {
+                expected_updated_at: connection.updated_at,
+                provider: None,
+                provider_runtime_id: None,
+                auth_type: None,
+                name: None,
+                priority: None,
+                is_active: None,
+                credentials: None,
+                config: Some(compatible_config(
+                    "https://upstream-a.example/v1",
+                    &["model-after"],
+                )),
+            },
+        )
+        .await
+        .expect("active connection update succeeds");
+
+    let response = route
+        .execute(CompletionRequest {
+            id: rook_core::RequestId::new(),
+            model: ModelId::new("model-after"),
+            messages: vec![],
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            tools: None,
+            tool_choice: None,
+            metadata: rook_core::RequestMetadata {
+                origin: "test".into(),
+                cacheable: false,
+                priority: 0,
+                api_key_id: None,
+                requested_tier: None,
+                combo_id: None,
+            },
+            restrictions: Default::default(),
+        })
+        .await
+        .expect("persistent router routes through refreshed provider");
+
+    assert_eq!(response.provider, ProviderId::new(updated.id.to_string()));
+    assert_eq!(response.model, ModelId::new("model-after"));
+    assert_eq!(response.content, "routed by refreshed provider");
 }
 
 #[tokio::test]
@@ -674,7 +838,8 @@ async fn compatible_connection_test_cannot_bypass_the_connection_grant() {
     let (mc, _, _, _) = usecase(EndpointPolicyConfig::default());
     let error = mc
         .test_credentials(rook_usecases::manage_connections::TestCredentialsRequest {
-            provider_kind: ProviderKind::OpenAiCompatible,
+            provider: rook_core::descriptor_by_id("openai-compatible")
+                .expect("openai-compatible descriptor"),
             provider_runtime_id: ProviderId::new(RUNTIME_A),
             auth_type: rook_core::AuthType::ApiKey,
             credentials: CredentialsInput::ApiKey {
@@ -705,7 +870,7 @@ async fn loopback_compatible_endpoint_requires_exact_connection_grant_to_activat
 
     let activation = || UpdateConnectionRequest {
         expected_updated_at: connection.updated_at,
-        provider_kind: None,
+        provider: None,
         provider_runtime_id: None,
         auth_type: None,
         name: None,
@@ -755,6 +920,25 @@ async fn create_defaults_missing_api_format_for_openai_compatible_connections() 
 }
 
 #[tokio::test]
+async fn create_defaults_missing_api_format_for_openai_connections() {
+    let (mc, _repo, _registry, _builder) = usecase(EndpointPolicyConfig::default());
+    let mut request = create_request(
+        RUNTIME_A,
+        "compat-a",
+        "https://upstream-a.example/v1",
+        "key",
+        &["model-a"],
+    );
+    request.provider = rook_core::descriptor_by_id("openai").unwrap();
+    request.is_active = false;
+    request.config.api_format = None;
+
+    let created = mc.create(request).await.expect("connection is valid");
+
+    assert_eq!(created.config.api_format, Some(ApiFormat::OpenAI));
+}
+
+#[tokio::test]
 async fn create_defaults_missing_api_format_for_anthropic_connections() {
     let (mc, _repo, _registry, _builder) = usecase(EndpointPolicyConfig::default());
     let mut request = create_request(
@@ -764,7 +948,7 @@ async fn create_defaults_missing_api_format_for_anthropic_connections() {
         "key",
         &["model-a"],
     );
-    request.provider_kind = ProviderKind::Anthropic;
+    request.provider = rook_core::descriptor_by_id("anthropic").expect("anthropic descriptor");
     request.is_active = false;
     request.config.api_format = None;
 
@@ -783,7 +967,7 @@ async fn update_resets_inherited_api_format_when_provider_kind_changes() {
         "key",
         &["model-a"],
     );
-    request.provider_kind = ProviderKind::Anthropic;
+    request.provider = rook_core::descriptor_by_id("anthropic").expect("anthropic descriptor");
     request.is_active = false;
     request.config.api_format = None;
     let connection = mc.create(request).await.expect("connection is valid");
@@ -794,7 +978,10 @@ async fn update_resets_inherited_api_format_when_provider_kind_changes() {
             &connection.id,
             UpdateConnectionRequest {
                 expected_updated_at: connection.updated_at,
-                provider_kind: Some(ProviderKind::OpenAiCompatible),
+                provider: Some(
+                    rook_core::descriptor_by_id("openai-compatible")
+                        .expect("openai-compatible descriptor"),
+                ),
                 provider_runtime_id: None,
                 auth_type: None,
                 name: None,
@@ -829,7 +1016,7 @@ async fn update_defaults_missing_api_format_for_openai_compatible_connections() 
             &connection.id,
             UpdateConnectionRequest {
                 expected_updated_at: connection.updated_at,
-                provider_kind: None,
+                provider: None,
                 provider_runtime_id: None,
                 auth_type: None,
                 name: None,
@@ -929,7 +1116,7 @@ async fn compatible_connections_reject_oauth_and_missing_base_url() {
 fn update_request(connection: &ProviderConnection) -> UpdateConnectionRequest {
     UpdateConnectionRequest {
         expected_updated_at: connection.updated_at,
-        provider_kind: None,
+        provider: None,
         provider_runtime_id: None,
         auth_type: None,
         name: None,
@@ -1196,4 +1383,28 @@ async fn startup_refresh_skips_ungranted_connections_and_passes_only_connection_
     )
     .unwrap();
     assert_eq!(provider.supported_models(), &[ModelId::new("model-a")]);
+}
+
+#[tokio::test]
+async fn nan_oauth_is_rejected_before_saving_credentials() {
+    let (mc, repo, _registry, _builder) = usecase(EndpointPolicyConfig::default());
+    let mut request = create_request(
+        RUNTIME_A,
+        "nan",
+        "https://api.nan.builders/v1",
+        "",
+        &["gemma4"],
+    );
+    request.provider = rook_core::descriptor_by_id("nan").unwrap();
+    request.auth_type = rook_core::AuthType::OAuth;
+    request.is_active = false;
+    // Invalid credentials would produce EmptyCredential if encryption were reached.
+    let result = mc.create(request).await;
+    assert!(matches!(
+        result,
+        Err(ManageConnectionsError::Validation(
+            rook_core::ValidationError::AuthTypeCredentialMismatch
+        ))
+    ));
+    assert!(repo.list().await.unwrap().is_empty());
 }

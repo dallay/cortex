@@ -57,6 +57,8 @@ ttl_secs = 60
     tracing::subscriber::with_default(warnings.clone(), || {
         RookConfig::load(file.path()).expect("legacy cache keys must remain loadable");
     });
+    // The guard is a temporary of this block, so it must be dropped before `warnings`
+    // and cannot be the tail expression of the function.
     let result = warnings.0.lock().unwrap().clone();
     result
 }

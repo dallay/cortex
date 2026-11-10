@@ -223,8 +223,6 @@ fn anthropic_response_has_correct_structure() {
 // ---------------------------------------------------------------------------
 
 use futures::stream;
-use rook_core::FormatTranslatorPort;
-use transport_axum::format_registry::{DomainPivotTranslator, FormatRegistry};
 
 struct RegistryTestProvider {
     id: ProviderId,
@@ -431,21 +429,6 @@ impl ModelAliasRepositoryPort for NoopAliasRepository {
 static REGISTRY_TEST_MODEL: std::sync::LazyLock<ModelId> =
     std::sync::LazyLock::new(|| ModelId::new("registry-test-model"));
 
-fn registry_with_openai_anthropic_pairs() -> Arc<dyn FormatTranslatorPort> {
-    let mut registry = FormatRegistry::new();
-    registry.register(
-        ApiFormat::OpenAI,
-        ApiFormat::Anthropic,
-        DomainPivotTranslator,
-    );
-    registry.register(
-        ApiFormat::Anthropic,
-        ApiFormat::OpenAI,
-        DomainPivotTranslator,
-    );
-    Arc::new(registry)
-}
-
 fn registry_route_request(provider_format: ApiFormat, content: &'static str) -> RouteRequest {
     let provider: Arc<dyn ProviderPort> = Arc::new(RegistryTestProvider {
         id: ProviderId::new(format!("{provider_format:?}-provider")),
@@ -461,7 +444,6 @@ fn registry_route_request(provider_format: ApiFormat, content: &'static str) -> 
         None,
         None, // combo_repository
         Arc::new(rook_usecases::PricingConfig::default()),
-        registry_with_openai_anthropic_pairs(),
         Arc::new(NoopAliasRepository),
         ModelAliasesConfig {
             enabled: false,
@@ -502,7 +484,7 @@ async fn anthropic_client_routes_to_openai_provider_via_registry() {
     let usecase = registry_route_request(ApiFormat::OpenAI, "openai provider response");
 
     let response = usecase
-        .execute_with_format(registry_domain_request(), ApiFormat::Anthropic)
+        .execute(registry_domain_request())
         .await
         .expect("registry should route Anthropic client request to OpenAI provider");
 
@@ -515,7 +497,7 @@ async fn openai_client_routes_to_anthropic_provider_via_registry() {
     let usecase = registry_route_request(ApiFormat::Anthropic, "anthropic provider response");
 
     let response = usecase
-        .execute_with_format(registry_domain_request(), ApiFormat::OpenAI)
+        .execute(registry_domain_request())
         .await
         .expect("registry should route OpenAI client request to Anthropic provider");
 

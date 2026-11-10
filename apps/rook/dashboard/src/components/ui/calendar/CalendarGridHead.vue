@@ -13,6 +13,6 @@ const props = defineProps<
     data-slot="calendar-grid-head"
     v-bind="props"
   >
-    <slot />
+    <slot/>
   </CalendarGridHead>
 </template>

@@ -1,11 +1,11 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {Table} from "@/components/ui/table";
 </script>
 
 <template>
   <div class="rounded-md border">
     <Table>
-      <slot />
+      <slot/>
     </Table>
   </div>
 </template>

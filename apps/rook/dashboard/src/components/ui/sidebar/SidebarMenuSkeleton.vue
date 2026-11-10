@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {HTMLAttributes} from "vue";
 import {Skeleton} from "@/components/ui/skeleton";
 import {cn} from "@/lib/utils";
@@ -14,9 +14,9 @@ const width = "70%";
 
 <template>
   <div
-    data-slot="sidebar-menu-skeleton"
-    data-sidebar="menu-skeleton"
     :class="cn('flex h-8 items-center gap-2 rounded-md px-2', props.class)"
+    data-sidebar="menu-skeleton"
+    data-slot="sidebar-menu-skeleton"
   >
     <Skeleton
       v-if="showIcon"
@@ -25,9 +25,9 @@ const width = "70%";
     />
 
     <Skeleton
+      :style="{ '--skeleton-width': width }"
       class="h-4 max-w-(--skeleton-width) flex-1"
       data-sidebar="menu-skeleton-text"
-      :style="{ '--skeleton-width': width }"
     />
   </div>
 </template>

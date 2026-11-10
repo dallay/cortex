@@ -19,10 +19,10 @@ Every provider accepts these fields when created via the CRUD API:
 
 Connections of kind `openai-compatible` accept two extra config fields:
 
-| Field             | Type            | Required | Default    | Description                                          |
-|-------------------|-----------------|----------|------------|------------------------------------------------------|
-| `supported_models` | array of string | Yes      | —          | Physical model IDs this connection serves            |
-| `api_format`      | string          | No       | `openai`   | Wire format; only `openai` is supported today        |
+| Field              | Type            | Required | Default  | Description                                   |
+|--------------------|-----------------|----------|----------|-----------------------------------------------|
+| `supported_models` | array of string | Yes      | —        | Physical model IDs this connection serves     |
+| `api_format`       | string          | No       | `openai` | Wire format; only `openai` is supported today |
 
 ## OpenAI
 
@@ -64,8 +64,7 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 > **Compatibility note:** The OpenAI provider and adapter tests verify that
 > fragmented arguments survive Rook's streaming model and come out as
 > OpenAI-compatible deltas. This does not validate Huginn end-to-end
-> against a running Rook gateway; `docs/huginn/validation.md`
-> still marks Rook as not compatible until it passes that test. Issue #279
+> against a running Rook gateway. Issue #279
 > defines this work as not required for the personal agent's MVP.
 >
 > OpenAI streams accept up to 64 tool calls, 1 MiB of aggregated arguments,
@@ -138,8 +137,8 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 **Health check behavior:**
 
 - Two-step probe:
-  1. `GET /api/tags` — verify host reachability
-  2. `POST /api/chat` (if API key configured) — verify credentials
+    1. `GET /api/tags` — verify host reachability
+    2. `POST /api/chat` (if API key configured) — verify credentials
 - Returns `HealthStatus::Warning` if no API key configured (for Ollama Cloud use cases)
 
 **Implementation status:**
@@ -183,8 +182,8 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 **Health check behavior:**
 
 - Two-step probe:
-  1. `GET /api/tags` — verify `ollama.com` is reachable (public endpoint)
-  2. `POST /api/chat` with Bearer auth — verify API key is valid
+    1. `GET /api/tags` — verify `ollama.com` is reachable (public endpoint)
+    2. `POST /api/chat` with Bearer auth — verify API key is valid
 - Returns `HealthStatus::Warning` if API key is missing (provider still works but credentials aren't validated)
 - Returns `HealthStatus::Unhealthy` with error if auth is rejected (401/403)
 
@@ -194,6 +193,7 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 - `stream()` — ✅ Implemented
 
 **Note:** Both local Ollama and Ollama Cloud use the same `providers_ollama::OllamaProvider` adapter, driven by `OllamaProviderConfig`:
+
 - **Ollama Cloud** (`ProviderKind::OllamaCloud`): `base_url` defaults to `https://ollama.com`, `api_key` set to Bearer token enabling `Authorization: Bearer ...` headers
 - **Local Ollama** (`ProviderKind::Ollama`): `base_url` defaults to `http://localhost:11434`, `api_key` unset (no auth)
 
@@ -323,15 +323,15 @@ immutable provider-connection UUID. Rook checks the grant when the connection is
 activated or updated, then checks DNS answers when it opens the upstream
 connection. The public CRUD API cannot create or widen grants.
 
-| Destination                          | Behavior                                                  |
-|--------------------------------------|-----------------------------------------------------------|
-| Public HTTPS                         | Allowed only when the exact origin is granted             |
-| Public HTTP                          | Rejected (`InsecureScheme`)                               |
-| Loopback/private destination         | Allowed only when the exact origin is granted             |
-| Link-local addresses                  | Always rejected                                           |
-| Cloud metadata addresses              | Always rejected                                           |
-| Redirects                            | Not followed; credentials are not sent to another origin |
-| Environment proxy variables          | Ignored for compatible connections                       |
+| Destination                  | Behavior                                                 |
+|------------------------------|----------------------------------------------------------|
+| Public HTTPS                 | Allowed only when the exact origin is granted            |
+| Public HTTP                  | Rejected (`InsecureScheme`)                              |
+| Loopback/private destination | Allowed only when the exact origin is granted            |
+| Link-local addresses         | Always rejected                                          |
+| Cloud metadata addresses     | Always rejected                                          |
+| Redirects                    | Not followed; credentials are not sent to another origin |
+| Environment proxy variables  | Ignored for compatible connections                       |
 
 Create the connection inactive. Add its `connection_id` and exact
 `allowed_origins` entry to `[provider_endpoint_policy]`. Restart Rook to load the
@@ -347,18 +347,18 @@ port; it does not include a URL path.
 
 ## Provider Capability Matrix
 
-| Provider      | complete() | stream() | Real health check | Default timeout |
-|---------------|------------|----------|-------------------|-----------------|
-| OpenAI        | ✅          | ✅        | ✅                 | 60s             |
-| Anthropic     | ✅          | ✅        | ❌ (placeholder)   | 60s             |
-| Ollama (1)    | ✅          | ✅        | ✅ (2-step)        | 300s            |
-| Ollama Cloud (1) | ✅       | ✅        | ✅ (2-step)        | 300s            |
-| OpenAI-Compatible | ✅       | ✅        | ✅                 | 60s             |
+| Provider          | complete() | stream() | Real health check | Default timeout |
+|-------------------|------------|----------|-------------------|-----------------|
+| OpenAI            | ✅         | ✅       | ✅                | 60s             |
+| Anthropic         | ✅         | ✅       | ❌ (placeholder)  | 60s             |
+| Ollama (1)        | ✅         | ✅       | ✅ (2-step)       | 300s            |
+| Ollama Cloud (1)  | ✅         | ✅       | ✅ (2-step)       | 300s            |
+| OpenAI-Compatible | ✅         | ✅       | ✅                | 60s             |
 
 (1) Ollama and Ollama Cloud share the same `OllamaProvider` implementation. Local Ollama uses `http://localhost:11434` with no API key; Ollama Cloud uses `https://ollama.com` with Bearer auth configured via `api_key`.
 
-| Gemini        | ❌          | ❌        | ❌ (placeholder)   | 60s             |
-| Groq          | ❌          | ❌        | ❌ (placeholder)   | 60s             |
+| Gemini | ❌ | ❌ | ❌ (placeholder)   | 60s |
+| Groq | ❌ | ❌ | ❌ (placeholder)   | 60s |
 
 ## Circuit Breaker
 

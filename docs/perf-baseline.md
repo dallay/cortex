@@ -4,13 +4,13 @@ Harness: `crates/infrastructure/transport-axum/tests/gateway_perf.rs` — REAL r
 
 ## Results (this environment, debug build)
 
-| Measurement | Result |
-|---|---|
-| Sequential overhead N=200 `POST /v1/chat/completions` | p50 **529µs**, p95 **807µs**, p99 **915µs** (assert p95 < 25ms ✅) |
-| Concurrent N=50 | wall **0.026s**, **1901.7 r/s** ✅ (>20 r/s baseline) |
-| RSS during tests (`/proc/self/status` VmRSS) | **~15.4–15.7 MB** (test harness + in-process gateway only) |
-| Streaming cancellation | drop of the SSE body after the 1st frame via gateway → in-flight **1→0** ✅ (Drop guard; no explicit CancellationToken, depends on tokio drop) |
-| Backpressure N=100 concurrent | **100/100 OK** — no `Semaphore`/limit today (documented gap, not implemented) |
+| Measurement                                           | Result                                                                                                                                         |
+|-------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------|
+| Sequential overhead N=200 `POST /v1/chat/completions` | p50 **529µs**, p95 **807µs**, p99 **915µs** (assert p95 < 25ms ✅)                                                                             |
+| Concurrent N=50                                       | wall **0.026s**, **1901.7 r/s** ✅ (>20 r/s baseline)                                                                                          |
+| RSS during tests (`/proc/self/status` VmRSS)          | **~15.4–15.7 MB** (test harness + in-process gateway only)                                                                                     |
+| Streaming cancellation                                | drop of the SSE body after the 1st frame via gateway → in-flight **1→0** ✅ (Drop guard; no explicit CancellationToken, depends on tokio drop) |
+| Backpressure N=100 concurrent                         | **100/100 OK** — no `Semaphore`/limit today (documented gap, not implemented)                                                                  |
 
 ## Cancellation and backpressure (code)
 

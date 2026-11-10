@@ -4,7 +4,6 @@
 //   - Priority: use highest-priority available provider
 //   - RoundRobin: rotate through available providers
 //   - WeightedRandom: probabilistic selection by weight
-//   - ModelBased: selects by model ID prefix/category
 //
 // Circuit breaker: providers that fail are temporarily removed from the pool.
 // Recovery is automatic after a cool-down period.
@@ -30,7 +29,6 @@ pub enum RoutingStrategy {
     Priority,
     RoundRobin,
     WeightedRandom(Vec<f32>),
-    ModelBased,
 }
 
 /// Circuit breaker state per provider
@@ -368,10 +366,6 @@ impl RouterPort for FallbackRouter {
                 candidates.get(idx).map(|(provider, _)| provider.clone())
             }
             RoutingStrategy::WeightedRandom(_) => Self::select_weighted(&candidates),
-            RoutingStrategy::ModelBased => {
-                // TODO: implement model-based routing (e.g., "anthropic/" → claude providers)
-                candidates.first().map(|(provider, _)| provider.clone())
-            }
         };
 
         selected.ok_or_else(CortexError::all_providers_exhausted)
@@ -409,7 +403,6 @@ impl RouterPort for FallbackRouter {
                 available.get(idx).map(|(provider, _)| provider.clone())
             }
             RoutingStrategy::WeightedRandom(_) => Self::select_weighted(&available),
-            RoutingStrategy::ModelBased => available.first().map(|(provider, _)| provider.clone()),
         };
         selected.ok_or_else(CortexError::all_providers_exhausted)
     }
@@ -487,6 +480,27 @@ impl RouterPort for FallbackRouter {
             .iter()
             .map(|p| p.id().clone())
             .collect()
+    }
+
+    fn eligibility_candidates(&self) -> Option<Vec<rook_core::RouterCandidateSnapshot>> {
+        let now = self.clock.now();
+        Some(
+            self.providers
+                .read()
+                .iter()
+                .map(|provider| {
+                    let circuit = self
+                        .circuits
+                        .get(provider.id())
+                        .map(|state| state.clone())
+                        .unwrap_or_default();
+                    rook_core::RouterCandidateSnapshot {
+                        provider: provider.clone(),
+                        circuit_open: circuit.is_open(now) || circuit.half_open_trial_in_flight,
+                    }
+                })
+                .collect(),
+        )
     }
 
     fn resolve_connection(
@@ -1204,22 +1218,28 @@ mod tests {
     }
 
     #[test]
-    fn model_based_strategy_falls_back_to_first_candidate() {
+    fn round_robin_strategy_rotates_candidates() {
         tokio::runtime::Builder::new_current_thread()
             .build()
             .expect("runtime")
             .block_on(async {
-                let p1 = StubProvider::new("anthropic", &["claude-3"]);
-                let p2 = StubProvider::new("openai", &["gpt-4"]);
+                let p1 = StubProvider::new("anthropic", &["shared-model"]);
+                let p2 = StubProvider::new("openai", &["shared-model"]);
                 let router =
-                    FallbackRouter::new(vec![p1.clone(), p2.clone()], RoutingStrategy::ModelBased);
-
-                // ModelBased currently falls back to first — verify it selects without error
-                let selected = router
-                    .select(&request("claude-3"))
+                    FallbackRouter::new(vec![p1.clone(), p2.clone()], RoutingStrategy::RoundRobin);
+                let first = router
+                    .select(&request("shared-model"))
                     .await
-                    .expect("should select");
-                assert_eq!(selected.id(), &ProviderId::new("anthropic"));
+                    .expect("select 1");
+                let second = router
+                    .select(&request("shared-model"))
+                    .await
+                    .expect("select 2");
+                assert_ne!(
+                    first.id(),
+                    second.id(),
+                    "round robin must rotate between candidates"
+                );
             });
     }
 
@@ -1294,6 +1314,53 @@ mod tests {
             FallbackRouter::weighted_provider_index(&[0.0, 0.0], 0.5),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn eligibility_candidates_include_open_circuit_providers() {
+        let provider = StubProvider::new("provider", &["model"]);
+        let provider_id = provider.id().clone();
+        let router = FallbackRouter::new(vec![provider], RoutingStrategy::Priority);
+        for _ in 0..FAILURE_THRESHOLD {
+            router
+                .on_failure(&provider_id, &CortexError::provider("failure"))
+                .await;
+        }
+
+        assert!(router.resolve_provider(&provider_id).is_none());
+        let candidates = router
+            .eligibility_candidates()
+            .expect("FallbackRouter exposes the raw candidate set");
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].provider.id(), &provider_id);
+        assert!(candidates[0].circuit_open);
+    }
+
+    #[tokio::test]
+    async fn eligibility_candidates_mark_reserved_half_open_trial_unavailable() {
+        let provider = StubProvider::new("provider", &["model"]);
+        let provider_id = provider.id().clone();
+        let clock = Arc::new(TestCircuitClock::new());
+        let router =
+            FallbackRouter::with_clock(vec![provider], RoutingStrategy::Priority, clock.clone());
+        for _ in 0..FAILURE_THRESHOLD {
+            router
+                .on_failure(&provider_id, &CortexError::provider("failure"))
+                .await;
+        }
+        clock.advance(CIRCUIT_COOLDOWN);
+        let _trial = router
+            .try_acquire_trial(&provider_id)
+            .await
+            .expect("the first half-open trial is reserved");
+
+        let candidates = router
+            .eligibility_candidates()
+            .expect("FallbackRouter exposes the raw candidate set");
+
+        assert_eq!(candidates.len(), 1);
+        assert!(candidates[0].circuit_open);
     }
 
     #[test]

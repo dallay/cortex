@@ -20,8 +20,16 @@ use std::{
 struct Policy(bool);
 #[async_trait]
 impl ApprovalPolicy for Policy {
-    async fn approve(&self, _: &ApprovalRequest, _: CancellationToken) -> Result<bool> {
-        Ok(self.0)
+    async fn approve(
+        &self,
+        _: &ApprovalRequest,
+        _: CancellationToken,
+    ) -> Result<huginn_core::ApprovalDecision> {
+        Ok(if self.0 {
+            huginn_core::ApprovalDecision::ApproveOnce
+        } else {
+            huginn_core::ApprovalDecision::Reject
+        })
     }
 }
 #[derive(Default)]
@@ -75,12 +83,20 @@ fn fixture(
     model: Arc<dyn ModelProvider>,
     db: &std::path::Path,
 ) -> (StandardLoop, Arc<SqliteSessions>) {
+    fixture_with_shell_timeout(model, db, 2)
+}
+
+fn fixture_with_shell_timeout(
+    model: Arc<dyn ModelProvider>,
+    db: &std::path::Path,
+    shell_timeout_secs: u64,
+) -> (StandardLoop, Arc<SqliteSessions>) {
     let sessions = Arc::new(SqliteSessions::open(db).unwrap());
     (
         StandardLoop {
             instructions: Arc::new(huginn_runtime::instructions::FilesystemInstructions),
             model,
-            tools: Arc::new(Registry::native(2).unwrap()),
+            tools: Arc::new(Registry::native(shell_timeout_secs).unwrap()),
             sessions: sessions.clone(),
             config: LoopConfig::default(),
             lifecycle: CancellationToken::new(),
@@ -98,8 +114,13 @@ fn write_invoked_skill(workspace: &std::path::Path, body: &str) {
 struct DenyPrompt;
 #[async_trait]
 impl huginn_core::ApprovalPrompt for DenyPrompt {
-    async fn request_decision(&self, _: &ApprovalRequest, _: CancellationToken) -> Result<bool> {
-        Ok(false)
+    async fn request_decision(
+        &self,
+        _: &ApprovalRequest,
+        _: &[huginn_core::ApprovalDecision],
+        _: CancellationToken,
+    ) -> Result<huginn_core::ApprovalDecision> {
+        Ok(huginn_core::ApprovalDecision::Reject)
     }
 }
 
@@ -1454,7 +1475,7 @@ async fn interruption_during_approved_shell_records_unknown_completion_without_r
         ]])),
         requests: Mutex::new(vec![]),
     });
-    let (engine, store) = fixture(model, &data.path().join("sessions.db"));
+    let (engine, store) = fixture_with_shell_timeout(model, &data.path().join("sessions.db"), 30);
     let mut session = Session::new(workspace.path().canonicalize().unwrap());
     let token = CancellationToken::new();
     let trigger = token.clone();

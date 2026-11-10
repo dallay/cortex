@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use shared_kernel::{CacheKey, ComboId, ConnectionId, ModelId, ProviderId, RequestId};
 use uuid::Uuid;
 
-use crate::{ApiKeyId, ProviderKind};
+use crate::ApiKeyId;
 
 // ============================================================================
 // User — admin user for MANAGEMENT routes
@@ -321,7 +321,6 @@ pub struct CompletionResponse {
 /// ---------------------------------------------------------------------------
 /// Streaming
 /// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone)]
 pub struct StreamChunk {
     pub id: RequestId,
@@ -374,7 +373,6 @@ pub enum FinishReason {
 /// ---------------------------------------------------------------------------
 /// Token usage & cost
 /// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenUsage {
     pub prompt_tokens: u32,
@@ -390,7 +388,6 @@ pub struct TokenUsage {
 /// ---------------------------------------------------------------------------
 /// Health
 /// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HealthStatus {
     Healthy {
@@ -465,7 +462,6 @@ impl HealthStatus {
 /// ---------------------------------------------------------------------------
 /// Audit
 /// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RequestStatus {
@@ -520,7 +516,8 @@ pub struct UsageEntry {
 pub struct QuotaObservation {
     /// Provider family and runtime instance are both retained: multiple configured
     /// runtimes of one family may report different limits.
-    pub provider_kind: ProviderKind,
+    #[serde(rename = "provider_id", alias = "provider_kind")]
+    pub provider_id: String,
     pub provider: ProviderId,
     pub connection_id: Option<ConnectionId>,
     pub metric: String,

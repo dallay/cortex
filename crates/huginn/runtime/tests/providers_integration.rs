@@ -142,7 +142,10 @@ async fn endpoint(replies: Vec<Reply>) -> Endpoint {
                     let data = match reply {
                         Reply::Tool => sse(json!({"tool_calls":[{"index":0,"id":"switch-call","type":"function","function":{"name":"switch","arguments":"{}"}}]}), "tool_calls"),
                         Reply::Text(text) => sse(json!({"content":text}), "stop"),
-                        Reply::Summary(gate) => { gate.stop().await; sse(json!({"content":"short repository summary"}), "stop") },
+                        Reply::Summary(gate) => {
+                            gate.stop().await;
+                            sse(json!({"content":"short repository summary"}), "stop")
+                        }
                         Reply::Http(status) => return (status, Body::from(SECRETS.join(" "))),
                         Reply::StreamError => format!("data: {}\n\n", json!({"error":{"message":SECRETS.join(" ")}})),
                         Reply::GatedStream(gate) => {
@@ -282,7 +285,11 @@ impl Fixture {
 struct Policy;
 #[async_trait]
 impl ApprovalPolicy for Policy {
-    async fn approve(&self, _: &ApprovalRequest, _: CancellationToken) -> Result<bool> {
+    async fn approve(
+        &self,
+        _: &ApprovalRequest,
+        _: CancellationToken,
+    ) -> Result<huginn_core::ApprovalDecision> {
         panic!("switch is effect-free")
     }
 }
@@ -653,6 +660,47 @@ async fn selected_http_and_stream_errors_never_fall_back_or_leak_credentials() {
             .await
             .unwrap();
             fixture.assert_requests(1, 1, SECRETS[1], "beta");
+            fixture.supervisor.shutdown().await;
+        }
+    }
+}
+
+/// The retry budget engages only when the adapter classifies the failure as retryable
+/// inference, so a real 5xx must be repeated and a real 4xx must not be.
+#[tokio::test]
+async fn retry_budget_repeats_server_errors_but_not_client_errors() {
+    for provider in ["openai", "ollama"] {
+        for (error, repeated) in [
+            (Reply::Http(StatusCode::BAD_GATEWAY), true),
+            (Reply::Http(StatusCode::UNAUTHORIZED), false),
+        ] {
+            let mut fixture = Fixture::new(
+                provider,
+                vec![error, Reply::Text("recovered")],
+                vec![Reply::Text("beta recovery")],
+            )
+            .await;
+            let mut engine = fixture.engine(None);
+            engine.config.max_model_retries = 1;
+            let mut session = fixture.session();
+            let events = Events::default();
+            let result = run(&engine, &mut session, "hello", &events).await;
+            if repeated {
+                result.expect("a 5xx must be repeated, not end the turn");
+                fixture.assert_requests(0, 2, SECRETS[0], "alpha");
+                assert!(
+                    events
+                        .values
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .any(|event| matches!(event, Event::ModelRetried { attempt: 1, .. })),
+                    "the repeat must be recorded as a durable event"
+                );
+            } else {
+                assert!(result.is_err(), "a 4xx must not be repeated");
+                fixture.assert_requests(0, 1, SECRETS[0], "alpha");
+            }
             fixture.supervisor.shutdown().await;
         }
     }

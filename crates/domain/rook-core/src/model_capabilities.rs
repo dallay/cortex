@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{CompletionRequest, ConnectionId, MessageContent, ProviderKind};
+use crate::{CompletionRequest, ConnectionId, MessageContent};
 
 /// Absence of evidence never means support.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,7 +57,10 @@ pub struct CapabilityOverrides {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelDeclaration {
-    pub provider_kind: ProviderKind,
+    /// Canonical provider descriptor id (legacy `provider_kind` spellings are
+    /// accepted on read through the table's alias map).
+    #[serde(alias = "provider_kind")]
+    pub provider_id: String,
     pub model_id: String,
     #[serde(default)]
     pub connection_id: Option<ConnectionId>,

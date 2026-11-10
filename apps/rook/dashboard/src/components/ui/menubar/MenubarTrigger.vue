@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {MenubarTriggerProps} from "reka-ui";
 import {MenubarTrigger, useForwardProps} from "reka-ui";
@@ -16,15 +16,15 @@ const forwardedProps = useForwardProps(delegatedProps);
 
 <template>
   <MenubarTrigger
-    data-slot="menubar-trigger"
-    v-bind="forwardedProps"
     :class="
       cn(
         'focus:bg-accent focus:text-accent-foreground data-[state=open]:bg-accent data-[state=open]:text-accent-foreground flex items-center rounded-sm px-2 py-1 text-sm font-medium outline-hidden select-none',
         props.class,
       )
     "
+    data-slot="menubar-trigger"
+    v-bind="forwardedProps"
   >
-    <slot />
+    <slot/>
   </MenubarTrigger>
 </template>

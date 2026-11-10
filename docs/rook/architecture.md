@@ -132,6 +132,7 @@ Request with X-Rook-Combo header or default_combo
   runtime ID plus the combo ID and step index.
 
 **Timeouts:**
+
 - Per-step timeout: 10 seconds
 - Overall combo timeout: 60 seconds
 
@@ -178,6 +179,7 @@ values as `QuotaObservation` records, scoped to the connection that produced the
 response. The records stay separate from locally measured usage (`UsageEntry`).
 
 **Read model:**
+
 - `QuotaObservationRecorderPort::latest_observations` (`QuotaObservationQuery`) returns
   the newest observation per connection, metric, scope, window, and source.
 - `audit-sqlite` answers that query with a bounded SQL read, filtered by connection,
@@ -185,15 +187,16 @@ response. The records stay separate from locally measured usage (`UsageEntry`).
 
 **Evaluation** (`rook-core::quota::evaluate_connection_quota`):
 
-| State | Meaning | Routing effect |
-| -- | -- | -- |
-| `Exhausted` | Fresh, applicable evidence reports no remaining capacity | The connection is skipped before upstream I/O |
-| `Available` | Fresh, applicable evidence reports remaining capacity | The connection stays eligible |
-| `Stale` | The evidence is older than the freshness window, or its reset instant passed | The connection stays eligible |
-| `NotApplicable` | The evidence describes a metric that does not apply to requests | The connection stays eligible |
-| `Unknown` | No evidence exists | The connection stays eligible |
+| State           | Meaning                                                                      | Routing effect                                |
+|-----------------|------------------------------------------------------------------------------|-----------------------------------------------|
+| `Exhausted`     | Fresh, applicable evidence reports no remaining capacity                     | The connection is skipped before upstream I/O |
+| `Available`     | Fresh, applicable evidence reports remaining capacity                        | The connection stays eligible                 |
+| `Stale`         | The evidence is older than the freshness window, or its reset instant passed | The connection stays eligible                 |
+| `NotApplicable` | The evidence describes a metric that does not apply to requests              | The connection stays eligible                 |
+| `Unknown`       | No evidence exists                                                           | The connection stays eligible                 |
 
 **Policy defaults** (`QuotaEligibilityPolicy`):
+
 - Freshness window: 300 seconds.
 - Exhaustion threshold: remaining of 0.
 - Applicable metrics: `requests`, `tokens`, `input_tokens`, `output_tokens`.
@@ -202,6 +205,7 @@ The defaults are a starting point, not a provider contract. Deployments can narr
 applicable metrics or the freshness window.
 
 **Rules:**
+
 - Only `Exhausted` skips a connection. Every other state fails open, so a missing or
   stale header never removes a working account.
 - Only observations captured for that connection count. A provider-scoped observation
@@ -215,14 +219,96 @@ applicable metrics or the freshness window.
 - Skip reasons carry quota provenance only: provider, metric, counters, and timing.
   Credentials never reach the reason string.
 
+### Provider Eligibility Stage
+
+The first selection stage returns an `EligibilityResult` with eligible targets and one
+`Rejection` for each rejected target. The public `RejectionReason` enum is closed and
+serializes with stable `snake_case` values:
+
+| Reason | Condition |
+|---|---|
+| `auth_missing` | The provider adapter reports that required authentication is unavailable. |
+| `auth_expired` | The persisted connection has `TestStatus::Expired` and its adapter is unavailable. |
+| `model_unsupported` | The provider does not support the requested model. |
+| `capability_missing` | The provider cannot satisfy a required request capability. |
+| `circuit_open` | The provider circuit is open or its half-open trial is already reserved. |
+| `quota_exhausted` | Fresh, applicable connection quota evidence proves exhaustion. |
+| `key_model_not_allowed` | The request model is outside the API key's model allowlist. |
+| `key_provider_not_allowed` | The target is outside the API key's provider allowlist. |
+| `connection_disabled` | The persisted provider connection is inactive. |
+
+When a candidate fails more than one check, the evaluator returns one reason in this order:
+key model, key provider, connection disabled, missing authentication, expired
+authentication, unsupported model, missing capability, open circuit, then exhausted quota.
+This makes rejection reporting deterministic.
+
+The candidate set contains registered router providers. A persisted inactive connection is rejected
+as `connection_disabled` only while its adapter remains registered, such as during a registry refresh
+race. A connection already removed from the router is not a candidate. Only eligible registered
+targets reach priority, round-robin, or weighted selection.
+Managed adapters expose their connection identity through `ProviderPort::connection_id()`. A
+connection-bound adapter with no persisted routing-state row is rejected as `connection_disabled`.
+An unmanaged provider remains unbound even if its ID looks like a UUID that matches a connection ID
+or runtime ID. Unbound non-UUID provider IDs may still match an active runtime ID for compatibility.
+Each managed adapter also carries a persisted adapter-configuration revision. The revision changes
+when adapter inputs change, including concurrency, endpoint, model declarations, or API format. It
+does not change for name, priority, active state, quota thresholds, health-test status, OAuth token,
+expiry, email, scope, or ID-token state, or re-encryption of semantically unchanged API-key plaintext.
+OAuth project and client configuration changes increment the revision. A revision mismatch is rejected
+as `connection_disabled` until the registry contains an adapter built from the current configuration.
+Revision comparison uses the same normalization as credential persistence. A supplied replacement can
+recover a stored credential that the key manager cannot decrypt.
+After budget admission, Rook rechecks the selected managed connection's active state before upstream
+I/O. It uses the same credential-free, bounded routing-state query. A cancellation-safe reservation
+guard releases the durable budget if the request is canceled during that check or if the check rejects
+the connection or its revision.
+Cancellation cleanup uses at most 32 concurrent release tasks. If all slots are occupied, Rook keeps
+the reservation charged and logs the saturation instead of spawning unbounded cleanup work.
+The use case also confirms that the selected target appeared in the evaluated candidate snapshot;
+this prevents a concurrent registry refresh from routing through a target whose quota or connection
+state was not checked. It also confirms the selected adapter is the same instance evaluated for that
+target. Combo and combo-stream paths use the credential-free state projection and recheck managed
+adapter identity and revision before upstream I/O.
+The selector retains each target's configured weight and cannot reintroduce a rejected target.
+The routing stage reads a credential-free candidate-specific projection from
+`ProviderRepositoryPort::list_routing_state_for_candidates`. SQLite returns only rows that match
+registered target IDs and the active runtime row with lowest priority, then lowest ID. The use case and
+repository reject more than 4,000 distinct target IDs; the use case rejects before starting the
+query. The query runs in `spawn_blocking` behind a single-slot gate and has a 250 ms deadline. Rook
+fails closed if it cannot read connection state within the deadline. A repository that does not
+implement a credential-free routing-state projection fails closed; the default port does not call
+credential-bearing `list()`. The SQLite query does not load credential columns.
+The stage resolves an explicitly connection-bound target by exact connection UUID. For unbound,
+non-UUID target IDs, it can resolve an active provider runtime ID. The runtime lookup uses priority
+then connection ID to choose one deterministic row, so quota evidence remains scoped to the selected
+connection.
+If the connection-state read fails, the router stops before upstream I/O. Quota read failures remain
+eligible under the existing bounded fail-open policy.
+
+An expired OAuth access token remains eligible when the adapter is available, so the existing
+request-time refresh path can run. Expired status rejects only when the adapter is also unavailable.
+A quota read error, timeout, stale observation, missing observation, or saturated 1,000-series query
+does not reject a candidate. A capped result remains unknown even if the returned observations appear
+exhausted. The router queries each
+connection separately under one shared 250 ms quota deadline, so one connection cannot consume
+another connection's series limit. Candidates rejected by key, connection, authentication, model, or
+capability filters do not trigger quota reads. The router refreshes circuit state after these reads
+because a cooldown can expire while connection or quota data is loading. It evaluates each quota
+result after the read completes so a reset that passes during the query restores eligibility.
+If every candidate is rejected by the API key's provider allowlist, the request remains forbidden.
+If a key-authorized candidate fails another eligibility check, the router returns
+all-providers-exhausted when no candidate remains eligible.
+
 ### `transport-axum`
 
 HTTP transport layer. All wire-format logic lives here.
 
-- **`routes.rs`** — axum router with four endpoints
+- **`routes.rs`** — axum router assembling the client-facing `/v1` routes together with the auth, bootstrap, resilience, API-key, rate-limit, usage and cache routers
 - **`openai_adapter.rs`** — OpenAI wire format ↔ domain model translation
 - **`anthropic_adapter.rs`** — Anthropic `/v1/messages` wire format ↔ domain model
+- **`responses_routes.rs`, `responses_adapter.rs`, `responses_stream.rs`** — the stateless `/v1/responses` surface, its request conversion and its streaming event encoder
 - **`provider_routes.rs`** — `/api/providers` CRUD endpoints, mounted only when enabled
+- **`oauth_routes.rs`, `combo_routes.rs`, `alias_routes.rs`, `models_routes.rs`** — dedicated routers for OAuth connections, combos, combo/model aliases and the model catalog
 - **`provider_dto.rs`** — provider connection JSON DTOs; responses always include `credentials: {}`
 
 ### Provider crates (`providers-openai`, `providers-anthropic`, `providers-ollama`, `providers-gemini`, `providers-groq`)

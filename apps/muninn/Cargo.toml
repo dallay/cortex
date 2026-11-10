@@ -34,7 +34,7 @@ serde_json.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
 uuid.workspace = true
-rmcp = { version = "=3.8.0", default-features = false, features = ["client", "transport-async-rw"] }
+rmcp = { version = "=3.9.0", default-features = false, features = ["client", "transport-async-rw"] }
 
 [lints]
 workspace = true

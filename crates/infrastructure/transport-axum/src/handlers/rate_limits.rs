@@ -293,20 +293,20 @@ pub struct RateLimitStatusWithLimits {
 
 /// Request DTO for creating a rate limit rule
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CreateRateLimitRuleRequest {
     pub scope: RateLimitScope,
     pub target: String,
     pub requests_per_minute: u32,
     pub requests_per_day: Option<u32>,
-    pub tokens_per_minute: Option<u32>,
 }
 
 /// Request DTO for updating a rate limit rule
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateRateLimitRuleRequest {
     pub requests_per_minute: Option<u32>,
     pub requests_per_day: Option<u32>,
-    pub tokens_per_minute: Option<u32>,
 }
 
 /// Response DTO for rate limit rules
@@ -317,7 +317,6 @@ pub struct RateLimitRuleResponse {
     pub target: String,
     pub requests_per_minute: u32,
     pub requests_per_day: Option<u32>,
-    pub tokens_per_minute: Option<u32>,
 }
 
 impl From<&RateLimitRule> for RateLimitRuleResponse {
@@ -328,7 +327,6 @@ impl From<&RateLimitRule> for RateLimitRuleResponse {
             target: rule.target.clone(),
             requests_per_minute: rule.requests_per_minute,
             requests_per_day: rule.requests_per_day,
-            tokens_per_minute: rule.tokens_per_minute,
         }
     }
 }
@@ -350,9 +348,6 @@ pub async fn create_rule(
     State(store): State<RateLimitRuleStore>,
     Json(req): Json<CreateRateLimitRuleRequest>,
 ) -> Result<impl IntoResponse, HttpError> {
-    if req.tokens_per_minute.is_some() {
-        return Err(HttpError { status: StatusCode::BAD_REQUEST, code: "UNSUPPORTED_LIMIT", message: "tokens_per_minute is unsupported; only requests_per_minute and requests_per_day are enforced".to_string() });
-    }
     // Validate request
     if req.target.is_empty() {
         return Err(HttpError {
@@ -406,7 +401,6 @@ pub async fn create_rule(
         target,
         requests_per_minute: req.requests_per_minute,
         requests_per_day: req.requests_per_day,
-        tokens_per_minute: None,
         burst: None,
         provider_limits: Default::default(),
     };
@@ -434,9 +428,6 @@ pub async fn update_rule(
     Path(id): Path<String>,
     Json(req): Json<UpdateRateLimitRuleRequest>,
 ) -> Result<impl IntoResponse, HttpError> {
-    if req.tokens_per_minute.is_some() {
-        return Err(HttpError { status: StatusCode::BAD_REQUEST, code: "UNSUPPORTED_LIMIT", message: "tokens_per_minute is unsupported; only requests_per_minute and requests_per_day are enforced".to_string() });
-    }
     if req.requests_per_minute == Some(0) {
         return Err(HttpError {
             status: StatusCode::BAD_REQUEST,
@@ -510,7 +501,23 @@ pub async fn get_status(
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
-    use std::net::IpAddr;
+
+    /// The unenforced tokens_per_minute dimension must be rejected at parse
+    /// time on both write DTOs, not silently ignored.
+    #[test]
+    fn create_rule_request_rejects_tokens_per_minute_at_parse_time() {
+        let body =
+            r#"{"scope":"api-key","target":"k","requests_per_minute":10,"tokens_per_minute":1000}"#;
+        let parsed: Result<CreateRateLimitRuleRequest, _> = serde_json::from_str(body);
+        assert!(parsed.is_err(), "tokens_per_minute must not be accepted");
+    }
+
+    #[test]
+    fn update_rule_request_rejects_tokens_per_minute_at_parse_time() {
+        let body = r#"{"requests_per_minute":10,"tokens_per_minute":1000}"#;
+        let parsed: Result<UpdateRateLimitRuleRequest, _> = serde_json::from_str(body);
+        assert!(parsed.is_err(), "tokens_per_minute must not be accepted");
+    }
 
     fn rule(scope: RateLimitScope, target: &str, rpm: u32, rpd: Option<u32>) -> RateLimitRule {
         RateLimitRule {
@@ -519,7 +526,6 @@ mod tests {
             target: target.to_owned(),
             requests_per_minute: rpm,
             requests_per_day: rpd,
-            tokens_per_minute: None,
             burst: None,
             provider_limits: Default::default(),
         }
@@ -690,28 +696,9 @@ mod tests {
             target: "key_abc".to_string(),
             requests_per_minute: 100,
             requests_per_day: Some(10000),
-            tokens_per_minute: None,
         };
         let res = create_rule(State(store.clone()), Json(create_req)).await;
         assert!(res.is_ok());
-
-        let unsupported_tpm = create_rule(
-            State(store.clone()),
-            Json(CreateRateLimitRuleRequest {
-                scope: RateLimitScope::ApiKey,
-                target: "key_tpm".to_string(),
-                requests_per_minute: 10,
-                requests_per_day: None,
-                tokens_per_minute: Some(1000),
-            }),
-        )
-        .await;
-        let unsupported_tpm = match unsupported_tpm {
-            Err(error) => error,
-            Ok(_) => panic!("expected unsupported token limit error"),
-        };
-        assert_eq!(unsupported_tpm.status, StatusCode::BAD_REQUEST);
-        assert_eq!(unsupported_tpm.code, "UNSUPPORTED_LIMIT");
 
         // 3. List contains 1 rule and rule payload matches
         let rules_res = list_rules(State(store.clone())).await;
@@ -731,7 +718,6 @@ mod tests {
             target: "".to_string(),
             requests_per_minute: 10,
             requests_per_day: None,
-            tokens_per_minute: None,
         };
         match create_rule(State(store.clone()), Json(empty_target_req)).await {
             Err(err) => assert_eq!(err.status, StatusCode::BAD_REQUEST),
@@ -743,7 +729,6 @@ mod tests {
             target: "ip_123".to_string(),
             requests_per_minute: 10,
             requests_per_day: None,
-            tokens_per_minute: None,
         };
         match create_rule(State(store.clone()), Json(invalid_global_req)).await {
             Err(err) => assert_eq!(err.status, StatusCode::BAD_REQUEST),
@@ -755,7 +740,6 @@ mod tests {
             target: "127.0.0.1".to_string(),
             requests_per_minute: 0,
             requests_per_day: None,
-            tokens_per_minute: None,
         };
         match create_rule(State(store.clone()), Json(zero_rpm_req)).await {
             Err(err) => assert_eq!(err.status, StatusCode::BAD_REQUEST),
@@ -768,7 +752,6 @@ mod tests {
         let zero_rpm_update = UpdateRateLimitRuleRequest {
             requests_per_minute: Some(0),
             requests_per_day: None,
-            tokens_per_minute: None,
         };
         match update_rule(
             State(store.clone()),
@@ -784,7 +767,6 @@ mod tests {
         let valid_update = UpdateRateLimitRuleRequest {
             requests_per_minute: Some(200),
             requests_per_day: Some(20000),
-            tokens_per_minute: None,
         };
         let updated = update_rule(
             State(store.clone()),
@@ -794,29 +776,12 @@ mod tests {
         .await;
         assert!(updated.is_ok());
 
-        let unsupported_update = update_rule(
-            State(store.clone()),
-            Path(rule_id.clone()),
-            Json(UpdateRateLimitRuleRequest {
-                requests_per_minute: None,
-                requests_per_day: None,
-                tokens_per_minute: Some(1000),
-            }),
-        )
-        .await;
-        let unsupported_update = match unsupported_update {
-            Err(error) => error,
-            Ok(_) => panic!("expected unsupported token limit error"),
-        };
-        assert_eq!(unsupported_update.code, "UNSUPPORTED_LIMIT");
-
         match update_rule(
             State(store.clone()),
             Path("nonexistent".to_string()),
             Json(UpdateRateLimitRuleRequest {
                 requests_per_minute: Some(10),
                 requests_per_day: None,
-                tokens_per_minute: None,
             }),
         )
         .await
@@ -937,7 +902,6 @@ mod tests {
                 target: "duplicate-key".to_string(),
                 requests_per_minute: 10,
                 requests_per_day: None,
-                tokens_per_minute: None,
             })
         };
 
@@ -960,7 +924,6 @@ mod tests {
                 target: "2001:0db8:0:0:0:0:0:1".into(),
                 requests_per_minute: 10,
                 requests_per_day: None,
-                tokens_per_minute: None,
             }),
         )
         .await;
@@ -974,7 +937,6 @@ mod tests {
                 target: "not-an-ip".into(),
                 requests_per_minute: 10,
                 requests_per_day: None,
-                tokens_per_minute: None,
             }),
         )
         .await
@@ -992,7 +954,6 @@ mod tests {
                 target: "2001:db8::1".into(),
                 requests_per_minute: 10,
                 requests_per_day: None,
-                tokens_per_minute: None,
             }),
         )
         .await
@@ -1032,7 +993,6 @@ mod tests {
                 target: "::ffff:127.0.0.1".into(),
                 requests_per_minute: 10,
                 requests_per_day: None,
-                tokens_per_minute: None,
             }),
         )
         .await;
@@ -1052,7 +1012,6 @@ mod tests {
                 target: "127.0.0.1".into(),
                 requests_per_minute: 10,
                 requests_per_day: None,
-                tokens_per_minute: None,
             }),
         )
         .await

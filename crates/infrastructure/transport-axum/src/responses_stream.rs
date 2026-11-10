@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use rook_core::{FinishReason, StreamChunk, TokenUsage};
+use rook_core::{FinishReason, StreamChunk, TokenUsage, ToolCallDelta};
 use serde_json::{json, Value};
 
 use crate::responses_adapter::{
@@ -154,81 +154,109 @@ impl ResponsesStream {
         }
         let mut events = vec![];
         if !chunk.delta.is_empty() {
-            let index = if let Some(index) = self.text_index {
-                index
-            } else {
-                let index = self.output.len();
-                let mut item = message_item(format!("msg_{}", self.context.id), "", "in_progress");
-                item["content"] = json!([]);
-                events.push(event(
-                    &mut self.sequence,
-                    "response.output_item.added",
-                    json!({"output_index":index,"item":item}),
-                ));
-                item["content"] = json!([text_part("")]);
-                self.output.push(item);
-                self.text_index = Some(index);
-                events.push(event(
-                    &mut self.sequence,
-                    "response.content_part.added",
-                    json!({"output_index":index,
-                    "item_id":self.output[index]["id"],"content_index":0,"part":text_part("")}),
-                ));
-                index
-            };
-            if let Value::String(text) = &mut self.output[index]["content"][0]["text"] {
-                text.push_str(&chunk.delta);
-            }
-            events.push(event(&mut self.sequence, "response.output_text.delta", json!({"output_index":index,
-                "item_id":self.output[index]["id"],"content_index":0,"delta":chunk.delta,"logprobs":[]})));
+            self.append_text_delta(&chunk.delta, &mut events);
         }
+        let finishing = chunk.finish_reason.is_some();
         for delta in chunk.tool_calls {
-            if !self.tools.contains_key(&delta.index) && self.tools.len() >= MAX_TOOLS {
-                return Err("Se superó el límite de 64 llamadas de función");
-            }
-            let tool = self.tools.entry(delta.index).or_default();
-            let coherent_id = delta
-                .id
-                .as_ref()
-                .is_some_and(|id| tool.id.as_ref() == Some(id));
-            if let Some(id) = delta.id {
-                if !super::responses_adapter::valid_id(&id)
-                    || tool.id.as_ref().is_some_and(|previous| previous != &id)
-                {
-                    return Err("El proveedor cambió la identidad de una función");
-                }
-                tool.id = Some(id);
-            }
-            if let Some(name) = delta.function.name.filter(|name| !name.is_empty()) {
-                // Anthropic repite la identidad completa en su resumen terminal.
-                let summary = chunk.finish_reason.is_some()
-                    && coherent_id
-                    && tool.name == name
-                    && delta.function.arguments.is_none();
-                if !summary {
-                    if tool.output_index.is_some() {
-                        return Err("El proveedor cambió el nombre de una función anunciada");
-                    }
-                    if tool.name.len().saturating_add(name.len()) > 64 {
-                        return Err("Nombre de función demasiado largo");
-                    }
-                    tool.name.push_str(&name);
-                }
-            }
-            if let Some(arguments) = delta.function.arguments {
-                self.argument_bytes = self.argument_bytes.saturating_add(arguments.len());
-                self.output_bytes = self.output_bytes.saturating_add(arguments.len());
-                if self.argument_bytes > MAX_ARGUMENT_BYTES || self.output_bytes > MAX_OUTPUT_BYTES
-                {
-                    return Err("Se superó el límite de argumentos Responses");
-                }
-                tool.arguments.push_str(&arguments);
-            }
-            self.emit_tool(delta.index, chunk.finish_reason.is_some(), &mut events)?;
+            self.apply_tool_delta(delta, finishing, &mut events)?;
         }
+        self.finish_frame(chunk.finish_reason, &mut events)?;
+        Ok(events)
+    }
+
+    /// Appends a text delta, opening the message item and its content part on first use.
+    fn append_text_delta(&mut self, delta: &str, events: &mut Vec<Value>) {
+        let index = if let Some(index) = self.text_index {
+            index
+        } else {
+            let index = self.output.len();
+            let mut item = message_item(format!("msg_{}", self.context.id), "", "in_progress");
+            item["content"] = json!([]);
+            events.push(event(
+                &mut self.sequence,
+                "response.output_item.added",
+                json!({"output_index":index,"item":item}),
+            ));
+            item["content"] = json!([text_part("")]);
+            self.output.push(item);
+            self.text_index = Some(index);
+            events.push(event(
+                &mut self.sequence,
+                "response.content_part.added",
+                json!({"output_index":index,
+                "item_id":self.output[index]["id"],"content_index":0,"part":text_part("")}),
+            ));
+            index
+        };
+        if let Value::String(text) = &mut self.output[index]["content"][0]["text"] {
+            text.push_str(delta);
+        }
+        events.push(event(
+            &mut self.sequence,
+            "response.output_text.delta",
+            json!({"output_index":index,
+            "item_id":self.output[index]["id"],"content_index":0,"delta":delta,"logprobs":[]}),
+        ));
+    }
+
+    /// Applies one tool-call delta, enforcing identity, name and size limits per function.
+    fn apply_tool_delta(
+        &mut self,
+        delta: ToolCallDelta,
+        finishing: bool,
+        events: &mut Vec<Value>,
+    ) -> Result<(), &'static str> {
+        if !self.tools.contains_key(&delta.index) && self.tools.len() >= MAX_TOOLS {
+            return Err("Se superó el límite de 64 llamadas de función");
+        }
+        let tool = self.tools.entry(delta.index).or_default();
+        let coherent_id = delta
+            .id
+            .as_ref()
+            .is_some_and(|id| tool.id.as_ref() == Some(id));
+        if let Some(id) = delta.id {
+            if !super::responses_adapter::valid_id(&id)
+                || tool.id.as_ref().is_some_and(|previous| previous != &id)
+            {
+                return Err("El proveedor cambió la identidad de una función");
+            }
+            tool.id = Some(id);
+        }
+        if let Some(name) = delta.function.name.filter(|name| !name.is_empty()) {
+            // Anthropic repite la identidad completa en su resumen terminal.
+            let summary =
+                finishing && coherent_id && tool.name == name && delta.function.arguments.is_none();
+            if !summary {
+                if tool.output_index.is_some() {
+                    return Err("El proveedor cambió el nombre de una función anunciada");
+                }
+                if tool.name.len().saturating_add(name.len()) > 64 {
+                    return Err("Nombre de función demasiado largo");
+                }
+                tool.name.push_str(&name);
+            }
+        }
+        if let Some(arguments) = delta.function.arguments {
+            self.argument_bytes = self.argument_bytes.saturating_add(arguments.len());
+            self.output_bytes = self.output_bytes.saturating_add(arguments.len());
+            if self.argument_bytes > MAX_ARGUMENT_BYTES || self.output_bytes > MAX_OUTPUT_BYTES {
+                return Err("Se superó el límite de argumentos Responses");
+            }
+            tool.arguments.push_str(&arguments);
+        }
+        self.emit_tool(delta.index, finishing, events)?;
+        Ok(())
+    }
+
+    /// Closes the frame: materializes pending functions and records the finish state.
+    fn finish_frame(
+        &mut self,
+        reason: Option<FinishReason>,
+        events: &mut Vec<Value>,
+    ) -> Result<(), &'static str> {
         // A separate finish also materializes functions without arguments.
         if matches!(
-            chunk.finish_reason,
+            reason,
             Some(FinishReason::Length | FinishReason::ContentFilter)
         ) {
             let pending: Vec<_> = self
@@ -237,14 +265,14 @@ impl ResponsesStream {
                 .filter_map(|(index, tool)| tool.output_index.is_none().then_some(*index))
                 .collect();
             for index in pending {
-                self.emit_tool(index, true, &mut events)?;
+                self.emit_tool(index, true, events)?;
             }
         }
-        if let Some(reason) = chunk.finish_reason {
+        if let Some(reason) = reason {
             self.finish_reason = Some(reason);
             self.validate_finish()?;
         }
-        Ok(events)
+        Ok(())
     }
 
     fn emit_tool(
@@ -333,7 +361,7 @@ impl ResponsesStream {
             ));
         }
         events.push(event(&mut self.sequence, if status == "completed" { "response.completed" } else { "response.incomplete" },
-            json!({"response":self.context.envelope(status, self.output.clone(), self.usage.as_ref(), Some(finish))})));
+                          json!({"response":self.context.envelope(status, self.output.clone(), self.usage.as_ref(), Some(finish))})));
         Ok(events)
     }
 

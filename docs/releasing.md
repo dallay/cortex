@@ -13,10 +13,10 @@ These do not need to share a lifecycle.
 
 Cortex is the repository and ecosystem. Its current products are:
 
-| Product | Binary | Primary code | Tag | Public status |
-| --- | --- | --- | --- | --- |
-| Rook | `rook` | `apps/rook` | `rook@vX.Y.Z` | Active pipeline; public distribution requires preflight |
-| Huginn | `huginn` | `apps/huginn` | `huginn@vX.Y.Z` | Release Please active; public distribution awaits MVP acceptance and channel preflight |
+| Product | Binary   | Primary code  | Tag             | Public status                                                                          |
+|---------|----------|---------------|-----------------|----------------------------------------------------------------------------------------|
+| Rook    | `rook`   | `apps/rook`   | `rook@vX.Y.Z`   | Active pipeline; public distribution requires preflight                                |
+| Huginn  | `huginn` | `apps/huginn` | `huginn@vX.Y.Z` | Release Please active; public distribution awaits MVP acceptance and channel preflight |
 
 There is no `cortex@vX.Y.Z` product release. Historical unprefixed Rook tags
 are retained and never rewritten. New releases use `rook@vX.Y.Z`.
@@ -45,8 +45,7 @@ The production workflow consumes only path-scoped outputs:
 - `apps/rook--tag_name`
 - `apps/rook--sha`
 
-The workflow also reads Huginn's path-scoped outputs
-(`apps/huginn--release_created`, `apps/huginn--version`,
+The workflow also reads Huginn's path-scoped outputs (`apps/huginn--release_created`, `apps/huginn--version`,
 `apps/huginn--tag_name`, and `apps/huginn--sha`), but no distribution jobs are
 connected to them. Root-level outputs are prohibited.
 

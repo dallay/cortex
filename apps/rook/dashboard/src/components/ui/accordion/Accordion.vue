@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {AccordionRootEmits, AccordionRootProps} from "reka-ui";
 import {AccordionRoot, useForwardPropsEmits} from "reka-ui";
 
@@ -10,6 +10,6 @@ const forwarded = useForwardPropsEmits(props, emits);
 
 <template>
   <AccordionRoot v-slot="slotProps" data-slot="accordion" v-bind="forwarded">
-    <slot v-bind="slotProps" />
+    <slot v-bind="slotProps"/>
   </AccordionRoot>
 </template>

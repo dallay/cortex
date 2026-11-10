@@ -46,5 +46,4 @@ to the repository root.
 - Test cancellation, denied effects, unavailable presentation, path escapes and
   stale approval proposals as relevant; use deterministic fakes for inner layers.
 - Run `cargo test -p <affected-huginn-package>` and `just huginn-architecture`.
-  Verify affected CLI/TUI interactions using the appropriate terminal workflow;
-  consult `docs/huginn/validation.md` for recorded evidence and platform limits.
+  Verify affected CLI/TUI interactions using the appropriate terminal workflow.

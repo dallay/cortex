@@ -41,6 +41,7 @@ async fn stream_results_from_body(
         .mount(&server)
         .await;
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -85,6 +86,7 @@ async fn responses_omitted_tool_ids_reach_generation_in_both_modes() {
                 .mount(&server)
                 .await;
             let provider = OpenAIProvider::new(OpenAIProviderConfig {
+                provider_id: "openai",
                 id: ProviderId::new("openai-test"),
                 api_key: "test".into(),
                 base_url: server.uri(),
@@ -146,82 +148,117 @@ async fn responses_tool_id_type_matrix_retains_usage_and_legacy_rejection() {
         json!({"nested":[{}, []]}),
     ] {
         for stream in [false, true] {
-            let server = wiremock::MockServer::start().await;
-            let call = json!({"index":0,"id":id,"function":{"name":"lookup","arguments":"{}"}});
-            let usage = json!({"prompt_tokens":3,"completion_tokens":2,"total_tokens":5});
-            // A nonterminal frame exposes normalization without finish-time validation.
-            let body = if stream {
-                format!(
-                    "data: {}\n\n",
-                    json!({"model":"gpt-4","choices":[{"delta":{"tool_calls":[call]},"finish_reason":null}],"usage":usage})
-                )
-            } else {
-                json!({"model":"gpt-4","choices":[{"message":{"tool_calls":[call]},"finish_reason":"tool_calls"}],"usage":usage}).to_string()
-            };
-            wiremock::Mock::given(wiremock::matchers::method("POST"))
-                .respond_with(wiremock::ResponseTemplate::new(200).set_body_raw(
-                    body,
-                    if stream {
-                        "text/event-stream"
-                    } else {
-                        "application/json"
-                    },
-                ))
-                .mount(&server)
-                .await;
-            let provider = OpenAIProvider::new(OpenAIProviderConfig {
-                id: ProviderId::new("openai-test"),
-                api_key: "test".into(),
-                base_url: server.uri(),
-                models: vec![ModelId::new("gpt-4")],
-                timeout_secs: 10,
-            })
-            .unwrap();
-            for origin in ["responses", "openai", "anthropic"] {
-                let mut req = stream_request();
-                req.stream = stream;
-                req.metadata.origin = origin.into();
-                if stream {
-                    let chunks = provider
-                        .stream(&req)
-                        .await
-                        .unwrap()
-                        .collect::<Vec<_>>()
-                        .await;
-                    if id.as_str().is_some_and(|id| id.len() > 256) {
-                        assert!(chunks[0].is_err());
-                        continue;
-                    }
-                    if origin != "responses" && !id.is_string() && !id.is_null() {
-                        assert!(chunks[0].is_err());
-                        continue;
-                    }
-                    let chunk = chunks[0].as_ref().unwrap();
-                    assert_eq!(chunk.usage.as_ref().unwrap().total_tokens, 5);
-                    assert_eq!(
-                        chunk.tool_calls[0].id.as_deref(),
-                        if id.is_null() {
-                            None
-                        } else {
-                            Some(id.as_str().unwrap_or_default())
-                        }
-                    );
-                } else {
-                    let response = provider.complete(&req).await;
-                    if origin != "responses" && !id.is_string() {
-                        assert!(response.is_err());
-                        continue;
-                    }
-                    let response = response.unwrap();
-                    assert_eq!(
-                        response.tool_calls[0].id.as_deref(),
-                        Some(id.as_str().unwrap_or_default())
-                    );
-                    assert_eq!(response.usage.total_tokens, 5);
-                }
-            }
+            assert_tool_id_case(&id, stream).await;
         }
     }
+}
+
+/// Every origin must agree on one tool-call identity for the same provider payload.
+async fn assert_tool_id_case(id: &serde_json::Value, stream: bool) {
+    use serde_json::json;
+    let server = wiremock::MockServer::start().await;
+    let call = json!({"index":0,"id":id,"function":{"name":"lookup","arguments":"{}"}});
+    let usage = json!({"prompt_tokens":3,"completion_tokens":2,"total_tokens":5});
+    // A nonterminal frame exposes normalization without finish-time validation.
+    let body = if stream {
+        format!(
+            "data: {}\n\n",
+            json!({"model":"gpt-4","choices":[{"delta":{"tool_calls":[call]},"finish_reason":null}],"usage":usage})
+        )
+    } else {
+        json!({"model":"gpt-4","choices":[{"message":{"tool_calls":[call]},"finish_reason":"tool_calls"}],"usage":usage}).to_string()
+    };
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_raw(
+            body,
+            if stream {
+                "text/event-stream"
+            } else {
+                "application/json"
+            },
+        ))
+        .mount(&server)
+        .await;
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
+        id: ProviderId::new("openai-test"),
+        api_key: "test".into(),
+        base_url: server.uri(),
+        models: vec![ModelId::new("gpt-4")],
+        timeout_secs: 10,
+    })
+    .unwrap();
+    for origin in ["responses", "openai", "anthropic"] {
+        assert_tool_id_for_origin(&provider, id, stream, origin).await;
+    }
+}
+
+/// One origin's expectation for the same wire payload.
+async fn assert_tool_id_for_origin(
+    provider: &OpenAIProvider,
+    id: &serde_json::Value,
+    stream: bool,
+    origin: &str,
+) {
+    let mut req = stream_request();
+    req.stream = stream;
+    req.metadata.origin = origin.into();
+    if stream {
+        assert_streamed_tool_id(provider, id, origin, &req).await;
+    } else {
+        assert_completed_tool_id(provider, id, origin, &req).await;
+    }
+}
+
+async fn assert_streamed_tool_id(
+    provider: &OpenAIProvider,
+    id: &serde_json::Value,
+    origin: &str,
+    req: &CompletionRequest,
+) {
+    let chunks = provider
+        .stream(req)
+        .await
+        .unwrap()
+        .collect::<Vec<_>>()
+        .await;
+    if id.as_str().is_some_and(|id| id.len() > 256) {
+        assert!(chunks[0].is_err());
+        return;
+    }
+    if origin != "responses" && !id.is_string() && !id.is_null() {
+        assert!(chunks[0].is_err());
+        return;
+    }
+    let chunk = chunks[0].as_ref().unwrap();
+    assert_eq!(chunk.usage.as_ref().unwrap().total_tokens, 5);
+    assert_eq!(
+        chunk.tool_calls[0].id.as_deref(),
+        if id.is_null() {
+            None
+        } else {
+            Some(id.as_str().unwrap_or_default())
+        }
+    );
+}
+
+async fn assert_completed_tool_id(
+    provider: &OpenAIProvider,
+    id: &serde_json::Value,
+    origin: &str,
+    req: &CompletionRequest,
+) {
+    let response = provider.complete(req).await;
+    if origin != "responses" && !id.is_string() {
+        assert!(response.is_err());
+        return;
+    }
+    let response = response.unwrap();
+    assert_eq!(
+        response.tool_calls[0].id.as_deref(),
+        Some(id.as_str().unwrap_or_default())
+    );
+    assert_eq!(response.usage.total_tokens, 5);
 }
 
 #[tokio::test]
@@ -243,6 +280,7 @@ async fn nullable_and_omitted_delta_ids_do_not_change_valid_tool_identity() {
         .mount(&server)
         .await;
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "test".into(),
         base_url: server.uri(),
@@ -308,6 +346,7 @@ async fn legacy_id_validation_still_includes_unselected_choices() {
             .mount(&server)
             .await;
         let provider = OpenAIProvider::new(OpenAIProviderConfig {
+            provider_id: "openai",
             id: ProviderId::new("openai-test"),
             api_key: "test".into(),
             base_url: server.uri(),
@@ -371,6 +410,7 @@ async fn responses_unknown_finish_rejects_frame_and_retains_usage() {
                 .mount(&server)
                 .await;
             let provider = OpenAIProvider::new(OpenAIProviderConfig {
+                provider_id: "openai",
                 id: ProviderId::new("openai-test"),
                 api_key: "test".into(),
                 base_url: server.uri(),
@@ -454,6 +494,7 @@ async fn health_check_returns_healthy_on_2xx() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -479,6 +520,7 @@ async fn health_check_returns_warning_on_429() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -509,6 +551,7 @@ async fn health_check_returns_unhealthy_on_401() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -539,6 +582,7 @@ async fn health_check_returns_unhealthy_on_403() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -569,6 +613,7 @@ async fn health_check_returns_unhealthy_on_500() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -593,6 +638,7 @@ async fn health_check_returns_unhealthy_on_500() {
 async fn health_check_returns_unhealthy_on_network_error() {
     // Port 1 is reserved and refuses connections — network error path.
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: "http://127.0.0.1:1".to_string(),
@@ -621,6 +667,7 @@ async fn health_check_returns_warning_on_no_key() {
     // No wiremock routes mounted — the probe must short-circuit before
     // touching the network.
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: String::new(),
         base_url: server.uri(),
@@ -650,6 +697,7 @@ async fn guarded_compatible_endpoint_blocks_untrusted_loopback_before_sending_cr
         .mount(&server)
         .await;
     let mut config = OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("compatible-test"),
         api_key: "secret-marker".to_string(),
         base_url: server.uri(),
@@ -692,6 +740,7 @@ async fn guarded_compatible_endpoint_does_not_follow_redirects_or_forward_creden
         .await;
     let provider = OpenAIProvider::new_with_endpoint_policy(
         OpenAIProviderConfig {
+            provider_id: "openai",
             id: ProviderId::new("compatible-redirect-test"),
             api_key: "secret-marker".to_string(),
             base_url: server.uri(),
@@ -726,6 +775,7 @@ async fn error_body_redacts_non_empty_secrets_shorter_than_eight_characters() {
         .mount(&server)
         .await;
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "k7".to_string(),
         base_url: server.uri(),
@@ -768,6 +818,7 @@ async fn trailing_slashes_in_base_url_are_removed_for_chat_and_health_requests()
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: format!("{}///", server.uri()),
@@ -815,6 +866,7 @@ async fn complete_returns_response_on_success() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -869,6 +921,7 @@ async fn stream_returns_chunks_on_openai_sse_success() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -934,18 +987,19 @@ async fn stream_preserves_fragmented_tool_call_deltas_and_interleaved_text() {
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/chat/completions"))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(concat!(
-            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"content":"checking ","tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"read_file","arguments":"{\"pa"}},{"index":1,"id":"call-2","type":"function","function":{"name":"count","arguments":"{\"n\":"}}]},"finish_reason":null}]}"#,
-            "\n\n",
-            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"th\":\"x\"}"}},{"index":1,"function":{"arguments":"1}"}}]},"finish_reason":null}]}"#,
-            "\n\n",
-            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
-            "\n\n",
-            "data: [DONE]\n\n"
+        r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"content":"checking ","tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"read_file","arguments":"{\"pa"}},{"index":1,"id":"call-2","type":"function","function":{"name":"count","arguments":"{\"n\":"}}]},"finish_reason":null}]}"#,
+        "\n\n",
+        r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"th\":\"x\"}"}},{"index":1,"function":{"arguments":"1}"}}]},"finish_reason":null}]}"#,
+        "\n\n",
+        r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+        "\n\n",
+        "data: [DONE]\n\n"
         )))
         .mount(&server)
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1022,6 +1076,7 @@ async fn stream_returns_error_for_malformed_upstream_json_event() {
         .mount(&server)
         .await;
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1042,20 +1097,82 @@ async fn stream_returns_error_for_malformed_upstream_json_event() {
 }
 
 #[tokio::test]
+async fn stream_reports_invalid_complete_event_before_a_later_finish_event() {
+    let results = stream_results_from_body(
+        concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"before\"},\"finish_reason\":null}]}\n\n",
+            "data: {not-json}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        )
+        .to_string(),
+    )
+    .await;
+
+    let error_index = results.iter().position(Result::is_err);
+    assert!(
+        error_index.is_some(),
+        "invalid complete SSE event must emit an error"
+    );
+}
+
+#[tokio::test]
+async fn unknown_provider_id_uses_openai_chat_and_models_paths() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "model":"gpt-4", "choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],
+                "usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
+            })),
+        )
+        .mount(&server)
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/models"))
+        .respond_with(wiremock::ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        id: ProviderId::new("unknown-provider"),
+        provider_id: "custom-openai-id",
+        api_key: "key".into(),
+        base_url: server.uri(),
+        models: vec![],
+        timeout_secs: 10,
+    })
+    .unwrap();
+    provider.complete(&stream_request()).await.unwrap();
+    assert!(matches!(
+        provider.health_check().await,
+        HealthStatus::Healthy { .. }
+    ));
+    let requests = server.received_requests().await.unwrap();
+    assert!(requests
+        .iter()
+        .any(|request| request.method == "POST" && request.url.path() == "/chat/completions"));
+    assert!(requests
+        .iter()
+        .any(|request| request.method == "GET" && request.url.path() == "/models"));
+}
+
+#[tokio::test]
 async fn stream_returns_error_when_tool_arguments_are_incomplete_at_finish() {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/chat/completions"))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(concat!(
-            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"read_file","arguments":"{\"path\":"}}]},"finish_reason":null}]}"#,
-            "\n\n",
-            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
-            "\n\n",
-            "data: [DONE]\n\n"
+        r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"read_file","arguments":"{\"path\":"}}]},"finish_reason":null}]}"#,
+        "\n\n",
+        r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+        "\n\n",
+        "data: [DONE]\n\n"
         )))
         .mount(&server)
         .await;
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1083,12 +1200,13 @@ async fn stream_returns_error_when_connection_ends_before_tool_finish_reason() {
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/chat/completions"))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(concat!(
-            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"read_file","arguments":"{}"}}]},"finish_reason":null}]}"#,
-            "\n\n"
+        r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"read_file","arguments":"{}"}}]},"finish_reason":null}]}"#,
+        "\n\n"
         )))
         .mount(&server)
         .await;
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1124,6 +1242,7 @@ async fn stream_returns_error_for_eof_inside_sse_event() {
         .mount(&server)
         .await;
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1164,6 +1283,7 @@ async fn stream_joins_multiple_data_lines_in_one_sse_event() {
         .mount(&server)
         .await;
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1316,6 +1436,7 @@ async fn complete_parses_cached_tokens_and_reasoning_tokens() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1375,6 +1496,7 @@ async fn stream_request_includes_include_usage_option() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1427,6 +1549,7 @@ async fn stream_request_includes_include_usage_option() {
 #[tokio::test]
 async fn provider_metadata_and_availability() {
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: "http://localhost".to_string(),
@@ -1441,6 +1564,7 @@ async fn provider_metadata_and_availability() {
     assert!(provider.is_available());
 
     let empty_key_provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: String::new(),
         base_url: "http://localhost".to_string(),
@@ -1472,6 +1596,7 @@ async fn complete_supports_all_roles() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1554,6 +1679,7 @@ async fn complete_returns_error_on_empty_choices() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1577,6 +1703,7 @@ async fn complete_returns_error_on_invalid_json() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1593,6 +1720,7 @@ async fn complete_returns_error_on_invalid_json() {
 #[tokio::test]
 async fn complete_returns_error_on_network_failure() {
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: "http://127.0.0.1:1".to_string(),
@@ -1609,6 +1737,7 @@ async fn complete_returns_error_on_network_failure() {
 #[tokio::test]
 async fn stream_returns_error_on_network_failure() {
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: "http://127.0.0.1:1".to_string(),
@@ -1630,15 +1759,16 @@ async fn stream_returns_error_when_tool_call_identity_changes() {
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/chat/completions"))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(concat!(
-            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"read_file"}}]}}]}"#,
-            "\n\n",
-            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-2","function":{"name":"read_file"}}]}}]}"#,
-            "\n\n"
+        r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"read_file"}}]}}]}"#,
+        "\n\n",
+        r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-2","function":{"name":"read_file"}}]}}]}"#,
+        "\n\n"
         )))
         .mount(&server)
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1666,16 +1796,17 @@ async fn stream_parses_length_and_content_filter_finish_reasons() {
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/chat/completions"))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(concat!(
-            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"content":"a"},"finish_reason":"length"}]}"#,
-            "\n\n",
-            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"content":"b"},"finish_reason":"content_filter"}]}"#,
-            "\n\n",
-            "data: [DONE]\n\n"
+        r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"content":"a"},"finish_reason":"length"}]}"#,
+        "\n\n",
+        r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{"content":"b"},"finish_reason":"content_filter"}]}"#,
+        "\n\n",
+        "data: [DONE]\n\n"
         )))
         .mount(&server)
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1704,14 +1835,15 @@ async fn stream_returns_error_when_tool_calls_empty_at_finish() {
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/chat/completions"))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(concat!(
-            r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
-            "\n\n",
-            "data: [DONE]\n\n"
+        r#"data: {"id":"chatcmpl-123","model":"gpt-4","choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+        "\n\n",
+        "data: [DONE]\n\n"
         )))
         .mount(&server)
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1760,6 +1892,7 @@ async fn complete_parses_null_content_with_tool_calls() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),

@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {ComboboxSeparatorProps} from "reka-ui";
 import {ComboboxSeparator} from "reka-ui";
@@ -14,10 +14,10 @@ const delegatedProps = reactiveOmit(props, "class");
 
 <template>
   <ComboboxSeparator
+    :class="cn('bg-border -mx-1 h-px', props.class)"
     data-slot="combobox-separator"
     v-bind="delegatedProps"
-    :class="cn('bg-border -mx-1 h-px', props.class)"
   >
-    <slot />
+    <slot/>
   </ComboboxSeparator>
 </template>

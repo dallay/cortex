@@ -33,6 +33,14 @@ pub mod hooks {
 /// The host keeps authorization, effects, events and persistence; an implementation
 /// receives them and can only request decisions (ADR-0017).
 ///
+/// # Compaction boundaries
+///
+/// [`complete_turn_ends`](crate::v1::agent::complete_turn_ends) owns the complete-turn rule:
+/// a turn ends at a tool-call-free assistant message that has a user message before it, so a
+/// summary cut there keeps the whole turn and never splits a tool-call/result pair. An
+/// implementation that compacts stops at one of those boundaries instead of reimplementing the
+/// rule.
+///
 /// # Hook registries
 ///
 /// The kernel owns both hook registries, `agent:tool-hooks@1`
@@ -68,11 +76,12 @@ pub mod hooks {
 /// conformance suite, which then proves it uses the substituted provider on the next turn.
 pub mod agent {
     pub use huginn_core::{
-        agent_loop_id, model_id, sessions_id, AgentLoop, AgentLoopCapabilities, ApprovalPolicy,
-        ApprovalRequest, CancellationToken, Event, EventSink, InstructionSource, LoopService,
-        Message, ModelDelta, ModelProvider, ModelRequest, ModelService, PreparedAction, Result,
-        Role, Session, SessionOperation, SessionStore, SessionsService, SteeringQueue, StepId,
-        Tool, ToolCall, ToolContext, ToolDefinition, ToolRegistry, TurnId,
+        agent_loop_id, complete_turn_ends, model_id, sessions_id, AgentLoop, AgentLoopCapabilities,
+        ApprovalDecision, ApprovalPolicy, ApprovalRequest, CancellationToken, Event, EventSink,
+        InstructionSource, LoopService, Message, ModelDelta, ModelProvider, ModelRequest,
+        ModelService, PreparedAction, Result, Role, Session, SessionOperation, SessionStore,
+        SessionsService, SteeringQueue, StepId, Tool, ToolCall, ToolContext, ToolDefinition,
+        ToolRegistry, TurnId,
     };
     pub use huginn_core::{
         hooks::{inference_hooks_id, tool_hooks_id, InferenceHooksService, ToolHooksService},

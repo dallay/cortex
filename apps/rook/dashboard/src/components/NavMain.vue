@@ -1,13 +1,9 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {ChevronRight} from "@lucide/vue";
 import type {Component} from "vue";
 import {useI18n} from "vue-i18n";
 import {RouterLink} from "vue-router";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+import {Collapsible, CollapsibleContent, CollapsibleTrigger,} from "@/components/ui/collapsible";
 import {
   SidebarGroup,
   SidebarGroupLabel,
@@ -40,18 +36,18 @@ defineProps<{
   <SidebarGroup>
     <SidebarGroupLabel>{{ t('sidebar.platform') }}</SidebarGroupLabel>
     <SidebarMenu>
-      <Collapsible v-for="item in items" :key="item.title" as-child :default-open="item.isActive">
+      <Collapsible v-for="item in items" :key="item.title" :default-open="item.isActive" as-child>
         <SidebarMenuItem>
-          <SidebarMenuButton as-child :tooltip="item.title">
+          <SidebarMenuButton :tooltip="item.title" as-child>
             <RouterLink :to="item.url">
-              <component :is="item.icon" />
+              <component :is="item.icon"/>
               <span>{{ item.title }}</span>
             </RouterLink>
           </SidebarMenuButton>
           <template v-if="item.items?.length">
             <CollapsibleTrigger as-child>
               <SidebarMenuAction class="data-[state=open]:rotate-90">
-                <ChevronRight />
+                <ChevronRight/>
                 <span class="sr-only">Toggle</span>
               </SidebarMenuAction>
             </CollapsibleTrigger>

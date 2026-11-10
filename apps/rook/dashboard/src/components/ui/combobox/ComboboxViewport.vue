@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {ComboboxViewportProps} from "reka-ui";
 import {ComboboxViewport, useForwardProps} from "reka-ui";
@@ -16,10 +16,10 @@ const forwarded = useForwardProps(delegatedProps);
 
 <template>
   <ComboboxViewport
+    :class="cn('max-h-[300px] scroll-py-1 overflow-x-hidden overflow-y-auto', props.class)"
     data-slot="combobox-viewport"
     v-bind="forwarded"
-    :class="cn('max-h-[300px] scroll-py-1 overflow-x-hidden overflow-y-auto', props.class)"
   >
-    <slot />
+    <slot/>
   </ComboboxViewport>
 </template>

@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {MenubarLabelProps} from "reka-ui";
 import {MenubarLabel} from "reka-ui";
@@ -13,10 +13,10 @@ const delegatedProps = reactiveOmit(props, "class", "inset");
 
 <template>
   <MenubarLabel
+    :class="cn('px-2 py-1.5 text-sm font-medium data-[inset]:pl-8', props.class)"
     :data-inset="inset ? '' : undefined"
     v-bind="delegatedProps"
-    :class="cn('px-2 py-1.5 text-sm font-medium data-[inset]:pl-8', props.class)"
   >
-    <slot />
+    <slot/>
   </MenubarLabel>
 </template>

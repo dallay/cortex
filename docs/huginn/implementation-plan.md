@@ -1,13 +1,12 @@
 # MVP implementation plan
 
 Status: **MVP implementation plan; overlay SDD archived on October 20, 2026
-with warnings.** Validation is tracked in [validation.md](validation.md).
+with warnings.**
 
 The [archive record](../../.agents/sdd/changes/archive/2026-10-20-huginn-overlay-system/archive-report.md)
 closes all 21 Apply tasks: shared overlay authority, UI event separation,
 settings persistence, observable local selection, and the persistent status bar
-with resize/viewport coverage are implemented. Verify and QA both concluded
-**PASS WITH WARNINGS**; the record reports the corrected final Apply CI gate
+with resize/viewport coverage are implemented. Verify and QA both concluded **PASS WITH WARNINGS**; the record reports the corrected final Apply CI gate
 passed 9/9. These are historical results, not validation of subsequent changes.
 No SDD phase remains pending. The remaining milestones below are accepted plans;
 neither those plans nor the implemented features establish runtime isolation or
@@ -155,7 +154,7 @@ on macOS and Linux using both a local MCP fixture and the model endpoint.
 Storage, configuration, protocol version, path containment, invocation grants and
 context budgets are now specified in [ADR-0009](adr/0009-sqlite-config-and-mvp-runtime-contracts.md)
 and the [implementation specification](implementation-specification.md).
-The implementation exists; full acceptance requires the [validation record](validation.md),
+The implementation exists; full acceptance requires
 a real model smoke test and Linux daily-use validation.
 
 ## Next interactive implementation phase — Ratatui-first plugin architecture
@@ -168,7 +167,7 @@ Delivery order:
 2. **Inline vertical slice:** Ratatui/Crossterm/Tokio renderer, multiline composer, session resume, streaming text/tool output, approval dialogs invoking the existing `ApprovalPolicy`, cancellation and terminal restoration. Maintain `run`, `--json`, `doctor` and `sessions` behavior.
 3. **Extensible UX:** expose lifecycle-owned host-rendered contributions for commands, tool renderers, status and dialogs. Demonstrate two swappable built-in contributions registered/unregistered via the kernel. Treat future user-authored plugins and a versioned extension developer contract as first-class roadmap requirements; do not prematurely freeze a dynamic ABI.
 4. **Correctness/performance:** pin versions and exercise real-PTY rapid resize, scrollback, cursor query/input races, Unicode, modal focus, permission fail-closed, external process handoff when implemented, stalled renderers and terminal recovery. Use an isolated terminal adapter or upstream fix if stock Ratatui exposes an actual defect; write no speculative fork.
-5. **Release acceptance:** only make interactive TUI the default after the smoke/PTY matrix passes on the supported terminal targets; until then, the existing CLI remains functional. Record measured evidence in `validation.md`.
+5. **Release acceptance:** only make interactive TUI the default after the smoke/PTY matrix passes on the supported terminal targets; until then, the existing CLI remains functional. Record measured evidence.
 
 The current synchronous `EventSink` must be adapted through a reliable, nonblocking projection to TUI state with coalesced redraw notifications, rather than one redraw per token or an uncontrolled second terminal reader. A pending framework-specific issue is not an excuse to extend the line-oriented CLI as the new UI architecture.
 

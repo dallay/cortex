@@ -1,4 +1,32 @@
-use providers_groq::{GroqProvider, GroqProviderConfig};
+use providers_openai::{OpenAIProvider, OpenAIProviderConfig};
+
+struct GroqProviderConfig {
+    provider_id: &'static str,
+    id: ProviderId,
+    api_key: String,
+    base_url: Option<String>,
+    models: Vec<ModelId>,
+    timeout_secs: u64,
+}
+fn groq_provider(config: GroqProviderConfig) -> anyhow::Result<OpenAIProvider> {
+    let descriptor = rook_core::descriptor_by_id("groq").unwrap();
+    OpenAIProvider::new(OpenAIProviderConfig {
+        id: config.id,
+        provider_id: config.provider_id,
+        api_key: config.api_key,
+        base_url: config
+            .base_url
+            .unwrap_or_else(|| descriptor.default_base_url.to_string()),
+        models: config.models,
+        timeout_secs: config.timeout_secs,
+    })
+    .map(|provider| {
+        provider
+            .with_chat_path(descriptor.paths.chat)
+            .with_health_path(descriptor.paths.health)
+            .with_descriptor_policy(descriptor.display_name, descriptor.quota_header_policy)
+    })
+}
 use rook_core::{CompletionRequest, HealthStatus, ModelId, ProviderPort, Role};
 use shared_kernel::{ProviderId, RequestId};
 
@@ -8,10 +36,10 @@ use shared_kernel::{ProviderId, RequestId};
 
 #[tokio::test]
 async fn health_check_returns_healthy_on_2xx() {
-    // Groq is OpenAI-compatible; the probe is GET /openai/v1/models.
+    // The descriptor base already includes `/openai/v1`; its health path is `/models`.
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path("/openai/v1/models"))
+        .and(wiremock::matchers::path("/models"))
         .and(wiremock::matchers::header(
             "Authorization",
             "Bearer gsk-test",
@@ -26,7 +54,8 @@ async fn health_check_returns_healthy_on_2xx() {
         .mount(&server)
         .await;
 
-    let provider = GroqProvider::new(GroqProviderConfig {
+    let provider = groq_provider(GroqProviderConfig {
+        provider_id: "groq",
         id: ProviderId::new("groq-test"),
         api_key: "gsk-test".to_string(),
         base_url: Some(server.uri()),
@@ -48,7 +77,7 @@ async fn health_check_does_not_follow_redirects() {
         .await;
     let source = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path("/openai/v1/models"))
+        .and(wiremock::matchers::path("/models"))
         .respond_with(
             wiremock::ResponseTemplate::new(302)
                 .insert_header("Location", format!("{}/target", target.uri())),
@@ -56,7 +85,8 @@ async fn health_check_does_not_follow_redirects() {
         .mount(&source)
         .await;
 
-    let provider = GroqProvider::new(GroqProviderConfig {
+    let provider = groq_provider(GroqProviderConfig {
+        provider_id: "groq",
         id: ProviderId::new("groq-redirect-test"),
         api_key: "gsk-test".to_string(),
         base_url: Some(source.uri()),
@@ -76,12 +106,13 @@ async fn health_check_does_not_follow_redirects() {
 async fn health_check_returns_warning_on_429() {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path("/openai/v1/models"))
+        .and(wiremock::matchers::path("/models"))
         .respond_with(wiremock::ResponseTemplate::new(429))
         .mount(&server)
         .await;
 
-    let provider = GroqProvider::new(GroqProviderConfig {
+    let provider = groq_provider(GroqProviderConfig {
+        provider_id: "groq",
         id: ProviderId::new("groq-test"),
         api_key: "gsk-test".to_string(),
         base_url: Some(server.uri()),
@@ -106,12 +137,13 @@ async fn health_check_returns_warning_on_429() {
 async fn health_check_returns_unhealthy_on_401() {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path("/openai/v1/models"))
+        .and(wiremock::matchers::path("/models"))
         .respond_with(wiremock::ResponseTemplate::new(401))
         .mount(&server)
         .await;
 
-    let provider = GroqProvider::new(GroqProviderConfig {
+    let provider = groq_provider(GroqProviderConfig {
+        provider_id: "groq",
         id: ProviderId::new("groq-test"),
         api_key: "bad-key".to_string(),
         base_url: Some(server.uri()),
@@ -136,12 +168,13 @@ async fn health_check_returns_unhealthy_on_401() {
 async fn health_check_returns_unhealthy_on_500() {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path("/openai/v1/models"))
+        .and(wiremock::matchers::path("/models"))
         .respond_with(wiremock::ResponseTemplate::new(500))
         .mount(&server)
         .await;
 
-    let provider = GroqProvider::new(GroqProviderConfig {
+    let provider = groq_provider(GroqProviderConfig {
+        provider_id: "groq",
         id: ProviderId::new("groq-test"),
         api_key: "gsk-test".to_string(),
         base_url: Some(server.uri()),
@@ -165,7 +198,8 @@ async fn health_check_returns_unhealthy_on_500() {
 #[tokio::test]
 async fn health_check_returns_unhealthy_on_network_error() {
     // Port 1 is reserved and refuses connections — network error path.
-    let provider = GroqProvider::new(GroqProviderConfig {
+    let provider = groq_provider(GroqProviderConfig {
+        provider_id: "groq",
         id: ProviderId::new("groq-test"),
         api_key: "gsk-test".to_string(),
         base_url: Some("http://127.0.0.1:1".to_string()),
@@ -192,7 +226,8 @@ async fn health_check_returns_warning_on_no_key() {
     // touching the network.
     let server = wiremock::MockServer::start().await;
     // No wiremock routes mounted.
-    let provider = GroqProvider::new(GroqProviderConfig {
+    let provider = groq_provider(GroqProviderConfig {
+        provider_id: "groq",
         id: ProviderId::new("groq-test"),
         api_key: String::new(),
         base_url: Some(server.uri()),
@@ -237,7 +272,8 @@ async fn complete_returns_response_with_token_counts() {
         .mount(&server)
         .await;
 
-    let provider = GroqProvider::new(GroqProviderConfig {
+    let provider = groq_provider(GroqProviderConfig {
+        provider_id: "groq",
         id: ProviderId::new("groq-test"),
         api_key: "gsk-test".to_string(),
         base_url: Some(server.uri()),
@@ -316,7 +352,8 @@ fn test_request(stream: bool) -> CompletionRequest {
 
 #[tokio::test]
 async fn provider_metadata_and_availability() {
-    let provider = GroqProvider::new(GroqProviderConfig {
+    let provider = groq_provider(GroqProviderConfig {
+        provider_id: "groq",
         id: ProviderId::new("groq-test"),
         api_key: "gsk-test".to_string(),
         base_url: None,
@@ -333,7 +370,8 @@ async fn provider_metadata_and_availability() {
     assert_eq!(provider.api_format(), rook_core::ApiFormat::OpenAI);
     assert!(provider.is_available());
 
-    let empty_provider = GroqProvider::new(GroqProviderConfig {
+    let empty_provider = groq_provider(GroqProviderConfig {
+        provider_id: "groq",
         id: ProviderId::new("groq-test"),
         api_key: String::new(),
         base_url: None,
@@ -361,7 +399,8 @@ async fn complete_returns_error_on_empty_choices() {
         .mount(&server)
         .await;
 
-    let provider = GroqProvider::new(GroqProviderConfig {
+    let provider = groq_provider(GroqProviderConfig {
+        provider_id: "groq",
         id: ProviderId::new("groq-test"),
         api_key: "gsk-test".to_string(),
         base_url: Some(server.uri()),
@@ -384,7 +423,8 @@ async fn complete_returns_error_on_invalid_json() {
         .mount(&server)
         .await;
 
-    let provider = GroqProvider::new(GroqProviderConfig {
+    let provider = groq_provider(GroqProviderConfig {
+        provider_id: "groq",
         id: ProviderId::new("groq-test"),
         api_key: "gsk-test".to_string(),
         base_url: Some(server.uri()),
@@ -400,7 +440,8 @@ async fn complete_returns_error_on_invalid_json() {
 
 #[tokio::test]
 async fn complete_returns_error_on_network_failure() {
-    let provider = GroqProvider::new(GroqProviderConfig {
+    let provider = groq_provider(GroqProviderConfig {
+        provider_id: "groq",
         id: ProviderId::new("groq-test"),
         api_key: "gsk-test".to_string(),
         base_url: Some("http://127.0.0.1:1".to_string()),
@@ -426,7 +467,8 @@ async fn complete_maps_http_errors_properly() {
         .mount(&server)
         .await;
 
-    let provider = GroqProvider::new(GroqProviderConfig {
+    let provider = groq_provider(GroqProviderConfig {
+        provider_id: "groq",
         id: ProviderId::new("groq-test"),
         api_key: "bad-key".to_string(),
         base_url: Some(server.uri()),
@@ -457,7 +499,8 @@ async fn complete_maps_429_rate_limit_with_reset_header() {
         .mount(&server)
         .await;
 
-    let provider = GroqProvider::new(GroqProviderConfig {
+    let provider = groq_provider(GroqProviderConfig {
+        provider_id: "groq",
         id: ProviderId::new("groq-test"),
         api_key: "gsk-test".to_string(),
         base_url: Some(server.uri()),
@@ -484,7 +527,8 @@ async fn complete_maps_400_invalid_request() {
         .mount(&server)
         .await;
 
-    let provider = GroqProvider::new(GroqProviderConfig {
+    let provider = groq_provider(GroqProviderConfig {
+        provider_id: "groq",
         id: ProviderId::new("groq-test"),
         api_key: "gsk-test".to_string(),
         base_url: Some(server.uri()),
@@ -510,7 +554,8 @@ async fn complete_maps_500_server_error() {
         .mount(&server)
         .await;
 
-    let provider = GroqProvider::new(GroqProviderConfig {
+    let provider = groq_provider(GroqProviderConfig {
+        provider_id: "groq",
         id: ProviderId::new("groq-test"),
         api_key: "gsk-test".to_string(),
         base_url: Some(server.uri()),
@@ -531,15 +576,16 @@ async fn stream_returns_chunks_on_success() {
         .and(wiremock::matchers::path("/chat/completions"))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(
             concat!(
-                "data: {\"id\":\"groq-1\",\"model\":\"llama-3.3-70b\",\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n",
-                "data: {\"id\":\"groq-1\",\"model\":\"llama-3.3-70b\",\"choices\":[{\"delta\":{\"content\":\" world\"},\"finish_reason\":null}]}\n\n",
-                "data: [DONE]\n\n",
+            "data: {\"id\":\"groq-1\",\"model\":\"llama-3.3-70b\",\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"groq-1\",\"model\":\"llama-3.3-70b\",\"choices\":[{\"delta\":{\"content\":\" world\"},\"finish_reason\":null}]}\n\n",
+            "data: [DONE]\n\n",
             )
         ))
         .mount(&server)
         .await;
 
-    let provider = GroqProvider::new(GroqProviderConfig {
+    let provider = groq_provider(GroqProviderConfig {
+        provider_id: "groq",
         id: ProviderId::new("groq-test"),
         api_key: "gsk-test".to_string(),
         base_url: Some(server.uri()),
@@ -585,7 +631,9 @@ async fn stream_parses_all_finish_reasons() {
                 serde_json::json!({
                     "id": "1",
                     "model": "m",
-                    "choices": [{"delta": {"content": "a"}, "finish_reason": reason}]
+                    "choices": [{"delta": if *reason == "tool_calls" {
+                        serde_json::json!({"tool_calls": [{"index": 0, "id": "call-1", "function": {"name": "f", "arguments": "{}"}}]})
+                    } else { serde_json::json!({"content": "a"}) }, "finish_reason": reason}]
                 })
             )
         })
@@ -596,7 +644,8 @@ async fn stream_parses_all_finish_reasons() {
         .mount(&server)
         .await;
 
-    let provider = GroqProvider::new(GroqProviderConfig {
+    let provider = groq_provider(GroqProviderConfig {
+        provider_id: "groq",
         id: ProviderId::new("groq-test"),
         api_key: "gsk-test".to_string(),
         base_url: Some(server.uri()),
@@ -630,7 +679,8 @@ async fn stream_returns_error_on_http_error() {
         .mount(&server)
         .await;
 
-    let provider = GroqProvider::new(GroqProviderConfig {
+    let provider = groq_provider(GroqProviderConfig {
+        provider_id: "groq",
         id: ProviderId::new("groq-test"),
         api_key: "gsk-test".to_string(),
         base_url: Some(server.uri()),
@@ -648,7 +698,8 @@ async fn stream_returns_error_on_http_error() {
 
 #[tokio::test]
 async fn stream_returns_error_on_network_failure() {
-    let provider = GroqProvider::new(GroqProviderConfig {
+    let provider = groq_provider(GroqProviderConfig {
+        provider_id: "groq",
         id: ProviderId::new("groq-test"),
         api_key: "gsk-test".to_string(),
         base_url: Some("http://127.0.0.1:1".to_string()),
@@ -674,7 +725,8 @@ async fn stream_returns_error_on_invalid_utf8_bytes() {
         .mount(&server)
         .await;
 
-    let provider = GroqProvider::new(GroqProviderConfig {
+    let provider = groq_provider(GroqProviderConfig {
+        provider_id: "groq",
         id: ProviderId::new("groq-test"),
         api_key: "gsk-test".to_string(),
         base_url: Some(server.uri()),
@@ -692,7 +744,10 @@ async fn stream_returns_error_on_invalid_utf8_bytes() {
 
     assert_eq!(results.len(), 1);
     let err = results[0].as_ref().expect_err("invalid utf8 fails");
-    assert!(err.to_string().contains("invalid utf-8"));
+    // SseBuffer skips invalid UTF-8 events, then the adapter rejects the
+    // unterminated event at EOF. Keep this assertion aligned with that shared
+    // OpenAI-wire contract instead of the deleted Groq adapter's wording.
+    assert!(err.to_string().contains("incomplete SSE event"));
 }
 
 #[tokio::test]
@@ -706,7 +761,8 @@ async fn stream_returns_error_on_malformed_json_event() {
         .mount(&server)
         .await;
 
-    let provider = GroqProvider::new(GroqProviderConfig {
+    let provider = groq_provider(GroqProviderConfig {
+        provider_id: "groq",
         id: ProviderId::new("groq-test"),
         api_key: "gsk-test".to_string(),
         base_url: Some(server.uri()),
@@ -724,5 +780,5 @@ async fn stream_returns_error_on_malformed_json_event() {
 
     assert_eq!(results.len(), 1);
     let err = results[0].as_ref().expect_err("malformed json fails");
-    assert!(err.to_string().contains("failed to parse stream event"));
+    assert!(err.to_string().contains("malformed OpenAI stream event"));
 }

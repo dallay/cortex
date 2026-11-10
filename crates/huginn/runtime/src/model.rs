@@ -84,8 +84,8 @@ fn transport_builder(
             && (!allow_loopback_http || !huginn_core::connections::is_loopback_endpoint(&parsed)))
     {
         return Err(AgentError::Configuration(
-                "endpoint requires validated HTTPS or explicitly enabled literal loopback HTTP; no credentials, query or fragment".into(),
-            ));
+            "endpoint requires validated HTTPS or explicitly enabled literal loopback HTTP; no credentials, query or fragment".into(),
+        ));
     }
     let mut builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
@@ -98,6 +98,86 @@ fn transport_builder(
     }
     Ok(builder)
 }
+
+/// Whether the failure identifies a permanent TLS configuration or protocol problem.
+///
+/// `reqwest` exposes no typed TLS cause, and a certificate failure also reports as
+/// `is_connect()`, so inspect specific cause descriptions. Generic TLS and handshake errors
+/// include transient network failures such as an EOF and must remain retryable.
+fn is_tls_failure(error: &reqwest::Error) -> bool {
+    let mut cause = std::error::Error::source(error);
+    while let Some(error) = cause {
+        let detail = error.to_string().to_ascii_lowercase();
+        if [
+            "certificate",
+            "received fatal alert: unknownca",
+            "peer is incompatible",
+            "received corrupt message of type invalidcontenttype",
+            "received corrupt message of type unknownprotocolversion",
+            "received fatal alert: protocolversion",
+            "received fatal alert: noapplicationprotocol",
+            "peer doesn't support any known protocol",
+        ]
+        .iter()
+        .any(|marker| detail.contains(marker))
+        {
+            return true;
+        }
+        cause = std::error::Error::source(error);
+    }
+    false
+}
+
+/// Whether a request that never produced response headers can plausibly reach the provider
+/// on the next attempt.
+///
+/// A timeout is always worth repeating, because the connection may simply be slow. A refused
+/// or reset connection, and a body that failed to upload, are transport conditions that may
+/// clear on their own, including an EOF during a TLS handshake. Certificate and protocol
+/// incompatibility failures indicate an endpoint or configuration problem. Redirect and
+/// client builder failures describe the request itself and are also permanent.
+fn is_transient_request(error: &reqwest::Error) -> bool {
+    if error.is_timeout() {
+        return true;
+    }
+    if is_tls_failure(error) {
+        return false;
+    }
+    error.is_connect() || error.is_body() || error.is_request()
+}
+
+/// Whether a response body that started arriving and then broke is worth repeating.
+///
+/// `hyper` reports an interrupted body as a decode error, so decoding is transient here even
+/// though it describes neither the request nor the provider's answer.
+fn is_transient_body(error: &reqwest::Error) -> bool {
+    is_transient_request(error) || error.is_decode()
+}
+
+/// Classifies a transport-level inference failure, keeping `detail` as the diagnostic.
+///
+/// Inference produced no host effect, so `AgentError::Inference` is the variant the loop
+/// asks `is_retryable_inference()` about; the permanent alternative stays
+/// `AgentError::Model`.
+fn transport_failure(transient: bool, detail: &str) -> AgentError {
+    if transient {
+        AgentError::Inference(detail.into())
+    } else {
+        AgentError::Model(detail.into())
+    }
+}
+
+/// 5xx means the provider failed to serve a request that was described correctly, so the
+/// same request may succeed next time. 4xx describes the request itself, so repeating it
+/// cannot help and would only burn the retry budget.
+fn status_failure(status: reqwest::StatusCode) -> AgentError {
+    if status.is_server_error() {
+        AgentError::Inference(format!("endpoint returned HTTP {status}"))
+    } else {
+        AgentError::Model(format!("endpoint returned HTTP {status}"))
+    }
+}
+
 fn wire_message(message: &Message) -> Value {
     let mut result = json!({"role": message.role, "content": message.content});
     if !message.tool_calls.is_empty() {
@@ -132,15 +212,12 @@ impl ModelProvider for OpenAiProvider {
             biased;
             _ = cancel.cancelled() => return Err(AgentError::Cancelled),
             response = tokio::time::timeout(Duration::from_secs(self.timeout_secs), builder.send()) => response
-                .map_err(|_| AgentError::Model("HTTP response headers timed out".into()))?
-                .map_err(|_| AgentError::Model("HTTP request failed (check endpoint/network)".into()))?,
+                .map_err(|_| AgentError::Inference("HTTP response headers timed out".into()))?
+                .map_err(|error| transport_failure(is_transient_request(&error), "HTTP request failed (check endpoint/network)"))?,
         };
         if !response.status().is_success() {
             // Do not echo provider bodies or authenticated request URLs into session history.
-            return Err(AgentError::Model(format!(
-                "endpoint returned HTTP {}",
-                response.status()
-            )));
+            return Err(status_failure(response.status()));
         }
         let state = StreamState {
             bytes: response.bytes_stream().boxed(),
@@ -166,14 +243,17 @@ impl ModelProvider for OpenAiProvider {
                 };
                 let parsed = match chunk {
                     Some(Ok(bytes)) => state.parser.push(&bytes),
-                    Some(Err(_)) => Err(AgentError::Model("stream interrupted".into())),
+                    Some(Err(error)) => Err(transport_failure(is_transient_body(&error), "stream interrupted")),
                     None => state.parser.eof(),
                 };
                 match parsed {
                     Ok(items) => state.queued.extend(items.into_iter().map(Ok)),
-                    Err(error) => { state.queued.push_back(Err(error)); state.ended=true; }
+                    Err(error) => {
+                        state.queued.push_back(Err(error));
+                        state.ended = true;
+                    }
                 }
-                if state.parser.done { state.ended=true; }
+                if state.parser.done { state.ended = true; }
             }
         }).boxed())
     }
@@ -211,7 +291,7 @@ impl SseParser {
                 continue;
             }
             if data.trim() == "[DONE]" {
-                result.extend(self.finish()?);
+                result.extend(self.finish(true)?);
                 break;
             }
             self.process_payload(&data, &mut result)?;
@@ -328,20 +408,28 @@ impl SseParser {
         }
         Ok(())
     }
+    /// Ends a response body that stopped arriving.
+    ///
+    /// A transport that closes mid-response is the canonical transient inference failure:
+    /// nothing was executed, so the loop may repeat the same request.
     pub fn eof(&mut self) -> Result<Vec<ModelDelta>> {
         if self.done {
             return Ok(vec![]);
         }
         if !self.buffer.iter().all(u8::is_ascii_whitespace) {
-            return Err(AgentError::Model("truncated SSE event".into()));
+            return Err(AgentError::Inference("truncated SSE event".into()));
         }
-        self.finish()
+        self.finish(false)
     }
-    fn finish(&mut self) -> Result<Vec<ModelDelta>> {
+    /// `body_complete` separates `[DONE]` from a body that stopped arriving: the first is a
+    /// provider that sent no finish marker, the second is a truncation.
+    fn finish(&mut self, body_complete: bool) -> Result<Vec<ModelDelta>> {
         if !self.finished {
-            return Err(AgentError::Model(
-                "stream ended without a finish marker".into(),
-            ));
+            return Err(if body_complete {
+                AgentError::Model("stream ended without a finish marker".into())
+            } else {
+                AgentError::Inference("stream ended without a finish marker".into())
+            });
         }
         let mut ids = std::collections::BTreeSet::new();
         let mut result = vec![];

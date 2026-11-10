@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {SelectRootEmits, SelectRootProps} from "reka-ui";
 import {SelectRoot, useForwardPropsEmits} from "reka-ui";
 
@@ -14,6 +14,6 @@ const forwarded = useForwardPropsEmits(props, emits);
     data-slot="select"
     v-bind="forwarded"
   >
-    <slot v-bind="slotProps" />
+    <slot v-bind="slotProps"/>
   </SelectRoot>
 </template>

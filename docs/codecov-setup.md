@@ -27,24 +27,26 @@ The `codecov.yml` file at the project root defines:
 ### Flags Definition
 
 #### Backend Flag
+
 - **Name**: `backend`
 - **Paths**:
-  - `apps/rook/src/**`
-  - `apps/rook/tests/**`
-  - `crates/**`
-  - `packages/**`
+    - `apps/rook/src/**`
+    - `apps/rook/tests/**`
+    - `crates/**`
+    - `packages/**`
 - **Targets**:
-  - Project: 85%
-  - Patch: 85%
+    - Project: 85%
+    - Patch: 85%
 - **Carryforward**: Enabled
 
 #### Frontend Flag
+
 - **Name**: `frontend`
 - **Paths**:
-  - `apps/rook/dashboard/**`
+    - `apps/rook/dashboard/**`
 - **Targets**:
-  - Project: 80%
-  - Patch: 75%
+    - Project: 80%
+    - Patch: 75%
 - **Carryforward**: Enabled
 
 ## CI/CD Integration
@@ -67,6 +69,7 @@ Located in `.github/workflows/ci.yml` as the `coverage` job:
 ```
 
 **Key Points**:
+
 - Runs after backend tests pass
 - Uses `cargo-llvm-cov` for Rust coverage
 - Uploads with `flags: backend`
@@ -91,6 +94,7 @@ Located in `.github/workflows/ci.yml` as the `coverage-frontend` job:
 ```
 
 **Key Points**:
+
 - Runs after frontend tests pass
 - Uses Vitest with coverage enabled
 - Uploads with `flags: frontend`
@@ -115,6 +119,7 @@ Coverage Report
 ### Commit Statuses
 
 You'll see separate statuses for:
+
 - `codecov/project` - Overall project coverage
 - `codecov/project/backend` - Backend coverage
 - `codecov/project/frontend` - Frontend coverage
@@ -123,6 +128,7 @@ You'll see separate statuses for:
 ### Flag Analytics
 
 Navigate to **Coverage → Flags** in Codecov UI to:
+
 - Track historical coverage by flag
 - Visualize backend vs frontend trends
 - Filter file lists by flag
@@ -157,6 +163,7 @@ Expected response: `200 OK` with validation details.
 **Root cause**: The `after_n_builds: 2` setting in `codecov.yml` waits for **both** backend and frontend coverage uploads before posting a comment. If path-filter in CI skips one job (e.g., frontend-only changes skip backend coverage), Codecov will wait indefinitely or timeout.
 
 **How to detect**:
+
 1. Check CI logs - if only one coverage job ran, the comment will be delayed
 2. Look at Codecov dashboard - you'll see only one flag uploaded (backend OR frontend, not both)
 3. Path-filter output in CI shows which jobs were skipped
@@ -207,6 +214,7 @@ Expected response: `200 OK` with validation details.
 ## Future Enhancements
 
 Consider adding flags for:
+
 - `integration` - Integration tests
 - `e2e` - End-to-end tests
 - `unit` - Unit tests only

@@ -118,24 +118,24 @@ Numbering follows the dependency order the design implies (deps → state → Ui
 
 ## Verification matrix
 
-| REQ                               | Tasks implementing it        | How it is checked                                                                                                                                        |
-|-----------------------------------|------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
-| REQ-01 — `/settings` registration | T-02, T-03, T-05, T-12       | `tests/dispatch_settings.rs::dispatch_opens_settings_dialog`; `tests/dispatch_settings.rs::dispatch_settings_is_not_sent_as_a_prompt`                                     |
-| REQ-02 — Modal structure          | T-02, T-07                   | `tests/pty.rs::settings_pty_render_header_and_marker`                                                                                                    |
-| REQ-03 — Tab navigation           | T-02, T-08                   | `tests/settings.rs::tab_cycling_wraps`                                                                                                                   |
-| REQ-04 — Item navigation          | T-02, T-08                   | `tests/settings.rs::item_selection_wraps`                                                                                                                |
-| REQ-05 — Tab content              | T-02, T-07                   | `tests/settings.rs::snapshot_items_match_locked_d6`; `tests/pty.rs::settings_pty_render_header_and_marker`                                                 |
-| REQ-06 — Working copy             | T-02, T-08                   | `tests/settings.rs::projected_ui_config_matches_working_copy`; `tests/settings.rs::discard_does_not_invoke_closure`                                         |
-| REQ-07 — Apply on Enter           | T-02, T-04, T-08, T-10, T-12 | `tests/settings.rs::apply_invokes_closure_exactly_once`; `apps/huginn/tests/ui_settings.rs::round_trip_full_state`                                          |
-| REQ-08 — Discard on Esc           | T-02, T-08                   | `tests/settings.rs::discard_does_not_invoke_closure`; `tests/pty.rs::settings_pty_escape_closes_modal_without_cancelling_stream`                          |
-| REQ-09 — TOML round-trip          | T-01, T-10                   | `apps/huginn/tests/ui_settings.rs::round_trip_full_state`; `apps/huginn/tests/ui_settings.rs::writes_to_missing_path`                                        |
+| REQ                               | Tasks implementing it        | How it is checked                                                                                                                                                  |
+|-----------------------------------|------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| REQ-01 — `/settings` registration | T-02, T-03, T-05, T-12       | `tests/dispatch_settings.rs::dispatch_opens_settings_dialog`; `tests/dispatch_settings.rs::dispatch_settings_is_not_sent_as_a_prompt`                              |
+| REQ-02 — Modal structure          | T-02, T-07                   | `tests/pty.rs::settings_pty_render_header_and_marker`                                                                                                              |
+| REQ-03 — Tab navigation           | T-02, T-08                   | `tests/settings.rs::tab_cycling_wraps`                                                                                                                             |
+| REQ-04 — Item navigation          | T-02, T-08                   | `tests/settings.rs::item_selection_wraps`                                                                                                                          |
+| REQ-05 — Tab content              | T-02, T-07                   | `tests/settings.rs::snapshot_items_match_locked_d6`; `tests/pty.rs::settings_pty_render_header_and_marker`                                                         |
+| REQ-06 — Working copy             | T-02, T-08                   | `tests/settings.rs::projected_ui_config_matches_working_copy`; `tests/settings.rs::discard_does_not_invoke_closure`                                                |
+| REQ-07 — Apply on Enter           | T-02, T-04, T-08, T-10, T-12 | `tests/settings.rs::apply_invokes_closure_exactly_once`; `apps/huginn/tests/ui_settings.rs::round_trip_full_state`                                                 |
+| REQ-08 — Discard on Esc           | T-02, T-08                   | `tests/settings.rs::discard_does_not_invoke_closure`; `tests/pty.rs::settings_pty_escape_closes_modal_without_cancelling_stream`                                   |
+| REQ-09 — TOML round-trip          | T-01, T-10                   | `apps/huginn/tests/ui_settings.rs::round_trip_full_state`; `apps/huginn/tests/ui_settings.rs::writes_to_missing_path`                                              |
 | REQ-10 — Defaults                 | T-02, T-09, T-10             | `apps/huginn/tests/config_resolution.rs::ui_defaults_fill_absent_sections_and_partial_nested_tables`; `tests/settings.rs::defaults_round_trip_and_match_canonical` |
-| REQ-11 — Inner-unknown tolerance  | T-02, T-09, T-10             | `apps/huginn/tests/ui_settings.rs::preserves_inner_unknown_keys`                                                                                          |
-| REQ-12 — Modal precedence         | T-03, T-04, T-08             | `tests/preemption.rs::settings_survives_tab_navigation`; `tests/preemption.rs::settings_can_be_reopened_after_esc`                                           |
-| REQ-13 — Esc cancels nothing      | T-08                         | `tests/preemption.rs::settings_esc_does_not_cancel_turn`; `tests/pty.rs::settings_pty_escape_closes_modal_without_cancelling_stream`                          |
-| REQ-14 — `(+) Add provider…`      | T-02, T-08                   | `tests/settings.rs::settings_add_provider_shows_notice`                                                                                                  |
-| REQ-15 — line-mode exclusion      | T-14                         | README documents `--line-mode` exclusion; no production branch reaches `dispatch_command` from `LinePrompt`                                              |
-| REQ-16 — Completion catalog       | T-06                         | `tests/completion.rs::settings_host_completion_catalog`; PTY completion assertion                                                                        |
+| REQ-11 — Inner-unknown tolerance  | T-02, T-09, T-10             | `apps/huginn/tests/ui_settings.rs::preserves_inner_unknown_keys`                                                                                                   |
+| REQ-12 — Modal precedence         | T-03, T-04, T-08             | `tests/preemption.rs::settings_survives_tab_navigation`; `tests/preemption.rs::settings_can_be_reopened_after_esc`                                                 |
+| REQ-13 — Esc cancels nothing      | T-08                         | `tests/preemption.rs::settings_esc_does_not_cancel_turn`; `tests/pty.rs::settings_pty_escape_closes_modal_without_cancelling_stream`                               |
+| REQ-14 — `(+) Add provider…`      | T-02, T-08                   | `tests/settings.rs::settings_add_provider_shows_notice`                                                                                                            |
+| REQ-15 — line-mode exclusion      | T-14                         | README documents `--line-mode` exclusion; no production branch reaches `dispatch_command` from `LinePrompt`                                                        |
+| REQ-16 — Completion catalog       | T-06                         | `tests/completion.rs::settings_host_completion_catalog`; PTY completion assertion                                                                                  |
 
 ## Out of scope reminder (repeated for reviewers)
 
@@ -154,6 +154,7 @@ Locked out of v1 so the persistence surface is not misread as live behaviour. An
 ## Review Workload Forecast
 
 **Estimated complexity**: Medium
+
 - **Line count**: ~400 lines (production code + tests)
 - **Files changed**: ~15 files across presentation crate and huginn binary
 - **Review time estimate**: 45-60 minutes
@@ -166,6 +167,7 @@ Locked out of v1 so the persistence surface is not misread as live behaviour. An
 **Selected strategy**: Single PR
 
 **Justification**:
+
 - Change is cohesive (single feature: settings modal)
 - Total scope is ~400 lines with 15 tasks
 - All tasks have clear dependencies and flow naturally
@@ -173,6 +175,7 @@ Locked out of v1 so the persistence surface is not misread as live behaviour. An
 - No parallel work streams needed
 
 **Fallback**: If reviewer requests chunking, natural split points are:
+
 1. **First slice** (Commits 1-4): State machine + rendering + input lease (~250 lines)
 2. **Second slice** (Commits 5-7): Persistence + documentation (~150 lines)
 

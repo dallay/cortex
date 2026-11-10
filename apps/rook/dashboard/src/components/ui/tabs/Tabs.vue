@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {TabsRootEmits, TabsRootProps} from "reka-ui";
 import {TabsRoot, useForwardPropsEmits} from "reka-ui";
@@ -17,10 +17,10 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
 <template>
   <TabsRoot
     v-slot="slotProps"
+    :class="cn('flex flex-col gap-2', props.class)"
     data-slot="tabs"
     v-bind="forwarded"
-    :class="cn('flex flex-col gap-2', props.class)"
   >
-    <slot v-bind="slotProps" />
+    <slot v-bind="slotProps"/>
   </TabsRoot>
 </template>

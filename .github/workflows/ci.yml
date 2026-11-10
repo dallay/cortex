@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [ main, develop ]
   pull_request:
-    branches: [main, develop]
+    branches: [ main, develop ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -67,7 +67,7 @@ jobs:
           persist-credentials: false
       - name: Validate single authoritative workspace
         run: test ! -f apps/rook/dashboard/pnpm-workspace.yaml && test ! -f apps/rook/dashboard/pnpm-lock.yaml
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 26
@@ -108,7 +108,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 26
@@ -161,7 +161,7 @@ jobs:
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
-    needs: [changes, build-dashboard]
+    needs: [ changes, build-dashboard ]
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -185,7 +185,7 @@ jobs:
   check:
     name: Check
     runs-on: ubuntu-latest
-    needs: [changes, build-dashboard]
+    needs: [ changes, build-dashboard ]
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -211,7 +211,7 @@ jobs:
     name: Test (Rust)
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [changes, build-dashboard, fmt, clippy]
+    needs: [ changes, build-dashboard, fmt, clippy ]
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -323,7 +323,7 @@ jobs:
     name: Test (Frontend)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: [changes]
+    needs: [ changes ]
     if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.github == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -331,7 +331,7 @@ jobs:
           persist-credentials: false
       - name: Validate single authoritative workspace
         run: test ! -f apps/rook/dashboard/pnpm-workspace.yaml && test ! -f apps/rook/dashboard/pnpm-lock.yaml
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 26
@@ -352,7 +352,7 @@ jobs:
     name: Test (E2E)
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    needs: [changes, test, test-frontend]
+    needs: [ changes, test, test-frontend ]
     if: |
       always() &&
       (needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true' || needs.changes.outputs.docker == 'true' || needs.changes.outputs.github == 'true') &&
@@ -362,7 +362,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 26
@@ -383,7 +383,7 @@ jobs:
   doc:
     name: Doc
     runs-on: ubuntu-latest
-    needs: [changes, build-dashboard]
+    needs: [ changes, build-dashboard ]
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -410,7 +410,7 @@ jobs:
   audit:
     name: Audit
     runs-on: ubuntu-latest
-    needs: [changes, build-dashboard]
+    needs: [ changes, build-dashboard ]
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -446,8 +446,10 @@ jobs:
         run: mkdir -p reports/trivy
       - name: Run Trivy filesystem + dependency scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         with:
-          version: v0.76.1
+          version: v0.76.2
           scan-type: fs
           scan-ref: .
           scanners: vuln,misconfig
@@ -457,7 +459,7 @@ jobs:
           output: reports/trivy/trivy-pr.sarif
           exit-code: '1'
       - name: Upload Trivy SARIF
-        if: always()
+        if: always() && hashFiles('reports/trivy/trivy-pr.sarif') != ''
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e
         with:
           sarif_file: reports/trivy/trivy-pr.sarif
@@ -507,7 +509,12 @@ jobs:
 
   semgrep-pr:
     name: Security / Semgrep (SAST)
-    runs-on: ubuntu-latest
+    # La imagen ubuntu-26.04 usa Python 3.14 y rompe el semgrep==1.126.0 fijado:
+    # el CLI aborta al importar protobuf/opentelemetry y el control de rutas
+    # falla con JSONDecodeError por stdout vacio. Se fija la imagen en la que
+    # el gate paso por ultima vez; actualizar el pin de semgrep requiere
+    # revisar las expectativas del control "disabled" del script.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs: changes
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.docker == 'true' || needs.changes.outputs.github == 'true'
@@ -519,7 +526,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Semgrep CLI
-        run: pip install semgrep==1.126.0
+        # setuptools<81 mantiene pkg_resources, que el semgrep fijado exige al
+        # importar. Debe coincidir con el pin de la recipe just ci-semgrep.
+        run: pip install semgrep==1.126.0 'setuptools<81'
       - name: Check exact path exceptions and scanner controls
         env:
           SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
@@ -558,7 +567,7 @@ jobs:
   coverage:
     name: Coverage (Rust)
     runs-on: ubuntu-latest
-    needs: [changes, build-dashboard, test]
+    needs: [ changes, build-dashboard, test ]
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
     permissions:
       contents: read
@@ -599,7 +608,7 @@ jobs:
   coverage-frontend:
     name: Coverage (Frontend)
     runs-on: ubuntu-latest
-    needs: [changes, test-frontend]
+    needs: [ changes, test-frontend ]
     if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.github == 'true'
     permissions:
       contents: read
@@ -608,7 +617,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 26
@@ -633,7 +642,7 @@ jobs:
     name: SonarCloud
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    needs: [changes, test, test-frontend, build-dashboard]
+    needs: [ changes, test, test-frontend, build-dashboard ]
     # Toda PR requiere análisis. Los push conservan los filtros por rutas.
     # Sin credenciales, también se bloquean forks y Dependabot.
     if: |
@@ -668,7 +677,7 @@ jobs:
           path: ~/.sonar/cache
           key: ${{ runner.os }}-sonar
           restore-keys: ${{ runner.os }}-sonar
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 26
@@ -693,7 +702,7 @@ jobs:
           cargo llvm-cov -p muninn-providers -p muninn --no-report
           cargo llvm-cov report --lcov --output-path coverage/rust-lcov.info
       - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@4d1dc0c91ee400dcf8a6dddf2f705ac36542e304 # v8.4.0
+        uses: SonarSource/sonarqube-scan-action@e805d875275f728fac1885b413934be6d7c63f65 # v8.4.1
         with:
           args: >-
             -Dsonar.qualitygate.wait=true
@@ -772,7 +781,7 @@ jobs:
   build-targets:
     name: Build (cross-compile validation)
     runs-on: ubuntu-latest
-    needs: [changes, build-dashboard, test]
+    needs: [ changes, build-dashboard, test ]
     if: |
       github.event_name == 'push' &&
       (needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true')
@@ -801,7 +810,7 @@ jobs:
   build-windows:
     name: Build (Windows validation)
     runs-on: windows-latest
-    needs: [changes, build-dashboard, test]
+    needs: [ changes, build-dashboard, test ]
     if: |
       github.event_name == 'push' &&
       (needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true')
@@ -831,7 +840,7 @@ jobs:
   build-darwin:
     name: Build (Darwin validation)
     runs-on: macos-latest
-    needs: [changes, build-dashboard, test]
+    needs: [ changes, build-dashboard, test ]
     if: |
       github.event_name == 'push' &&
       (needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true')
@@ -862,14 +871,14 @@ jobs:
   test-multi:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    needs: [changes, build-dashboard, test]
+    needs: [ changes, build-dashboard, test ]
     if: |
       github.event_name == 'push' &&
       (needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true')
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [ macos-latest, windows-latest ]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -4,7 +4,7 @@
 
 A user with a **valid** Ollama Cloud API key currently hitting the weekly quota (HTTP 429 from `/api/chat`) cannot add their provider connection: the "Test connection" button reports `Unhealthy` and Save stays disabled. The credentials are fine — only the quota is exhausted. Today's `health_check()` conflates three distinct failure modes into one bucket: **auth rejected** (401/403), **quota exhausted** (429), and **server unreachable** (5xx / network). All three return `HealthStatus::Unhealthy`, which the dashboard renders as red, blocks Save, and gives the user no signal that the key itself is valid.
 
-We adopt a cortex-flavored version of OmniRoute's 3-layer probe pattern (`tmp/OmniRoute/src/lib/providers/validation.ts`): probe the provider's cheapest read endpoint, classify the response into one of `ok | warning | unhealthy | unknown | expired`, and surface a **warning** state for 429 and no-token-but-reachable so a valid key with a transient quota hit is still addable.
+We adopt a cortex-flavored version of the reference gateway's 3-layer probe pattern (`tmp/reference-gateway/src/lib/providers/validation.ts`): probe the provider's cheapest read endpoint, classify the response into one of `ok | warning | unhealthy | unknown | expired`, and surface a **warning** state for 429 and no-token-but-reachable so a valid key with a transient quota hit is still addable.
 
 ## What Changes
 
@@ -49,7 +49,7 @@ We adopt a cortex-flavored version of OmniRoute's 3-layer probe pattern (`tmp/Om
 - **Server-side rate limiting** (`rate-limiting/` spec) — different concern; not test-connection UX.
 - **Provider fallback chains on 429** (`combo-execution/` spec) — server-side retry, separate.
 - **Per-client rate limiting on test endpoints** — separate change.
-- **A new `/api/providers/validate` endpoint** — OmniRoute splits this; we collapse into the existing `test-credentials` endpoint.
+- **A new `/api/providers/validate` endpoint** — the reference gateway splits this; we collapse into the existing `test-credentials` endpoint.
 - **Persisting `warning` in `TestStatus`** — only `Active | Unhealthy | Unknown | Expired | NeverTested` is persisted. Warnings are wire-only.
 - **Adding auth introspection to Anthropic** — Anthropic stays at `Unknown` (no probe). Future work.
 
@@ -104,7 +104,7 @@ We adopt a cortex-flavored version of OmniRoute's 3-layer probe pattern (`tmp/Om
 - We are NOT introducing a new HTTP endpoint.
 - We are NOT changing the persistence model (`TestStatus` stays 5-variant).
 - We are NOT changing the OAuth expiry path (`expired` remains a hard failure).
-- We are NOT introducing a separate `/validate` endpoint (OmniRoute does this; we collapse into the existing `/test-credentials`).
+- We are NOT introducing a separate `/validate` endpoint (the reference gateway does this; we collapse into the existing `/test-credentials`).
 - We are NOT trying to detect free-tier vs paid-tier — we just respect the 429 we receive.
 
 ## Rollback Plan

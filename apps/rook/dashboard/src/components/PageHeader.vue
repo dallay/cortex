@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 defineProps<{
   title: string;
   description?: string;
@@ -12,7 +12,7 @@ defineProps<{
       {{ description }}
     </p>
     <div v-if="$slots.default" class="mt-4">
-      <slot />
+      <slot/>
     </div>
   </div>
 </template>

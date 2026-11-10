@@ -12,14 +12,14 @@ const {error, formItemId} = useFormField();
 
 <template>
   <Label
-    data-slot="form-label"
-    :data-error="!!error"
     :class="cn(
       'data-[error=true]:text-destructive',
       props.class,
     )"
+    :data-error="!!error"
     :for="formItemId"
+    data-slot="form-label"
   >
-    <slot />
+    <slot/>
   </Label>
 </template>

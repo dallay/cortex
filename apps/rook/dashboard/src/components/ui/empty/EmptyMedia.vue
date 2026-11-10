@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {HTMLAttributes} from "vue";
 import {cn} from "@/lib/utils";
 import type {EmptyMediaVariants} from ".";
@@ -12,10 +12,10 @@ const props = defineProps<{
 
 <template>
   <div
-    data-slot="empty-icon"
-    :data-variant="variant"
     :class="cn(emptyMediaVariants({ variant }), props.class)"
+    :data-variant="variant"
+    data-slot="empty-icon"
   >
-    <slot />
+    <slot/>
   </div>
 </template>

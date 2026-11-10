@@ -21,8 +21,8 @@ use super::{
 };
 use super::{
     ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeySubject, Combo, ComboValidationError,
-    NewSession, NewUser, PasswordHash, ProviderConnection, ProviderKind, RepositoryError, Session,
-    SessionId, SpendingBudgetReservation, SpendingBudgetReservationError,
+    NewSession, NewUser, PasswordHash, ProviderConnection, ProviderConnectionRoutingState,
+    RepositoryError, Session, SessionId, SpendingBudgetReservation, SpendingBudgetReservationError,
     SpendingReservationOutcome, User, UserId,
 };
 
@@ -35,6 +35,18 @@ use super::{
 pub trait ProviderPort: Send + Sync + 'static {
     fn id(&self) -> &ProviderId;
     fn supported_models(&self) -> &[ModelId];
+
+    /// Connection identity for adapters registered from a persisted connection.
+    /// Static or unmanaged providers return `None`.
+    fn connection_id(&self) -> Option<&ConnectionId> {
+        None
+    }
+
+    /// Revision of the adapter-relevant persisted configuration used to build this provider.
+    /// Managed providers return `None` when they cannot prove their configuration revision.
+    fn connection_revision(&self) -> Option<i64> {
+        None
+    }
 
     /// Effective model evidence, including the adapter's implementation limits.
     fn model_capabilities(&self, _model: &ModelId) -> crate::ModelCapabilities {
@@ -87,6 +99,13 @@ pub trait ProviderPort: Send + Sync + 'static {
     ) -> CortexResult<BoxStream<'static, CortexResult<StreamChunk>>>;
 }
 
+/// A registered provider and the circuit state observed for one eligibility pass.
+#[derive(Clone)]
+pub struct RouterCandidateSnapshot {
+    pub provider: Arc<dyn ProviderPort>,
+    pub circuit_open: bool,
+}
+
 /// Supplies an OAuth access token for a provider connection.
 /// `force_refresh` is used only after the upstream rejects a request with 401.
 #[async_trait]
@@ -96,26 +115,6 @@ pub trait OAuthTokenPort: Send + Sync {
         connection_id: &ConnectionId,
         force_refresh: bool,
     ) -> CortexResult<String>;
-}
-
-// ---------------------------------------------------------------------------
-// FormatTranslatorPort — explicit domain-pivot format routing
-// ---------------------------------------------------------------------------
-
-pub trait FormatTranslatorPort: Send + Sync {
-    fn translate_request(
-        &self,
-        from: ApiFormat,
-        to: ApiFormat,
-        req: CompletionRequest,
-    ) -> CortexResult<CompletionRequest>;
-
-    fn translate_response(
-        &self,
-        from: ApiFormat,
-        to: ApiFormat,
-        resp: CompletionResponse,
-    ) -> CortexResult<CompletionResponse>;
 }
 
 // ---------------------------------------------------------------------------
@@ -182,6 +181,12 @@ pub trait RouterPort: Send + Sync {
 
     /// Get the list of all registered providers
     fn providers(&self) -> Vec<ProviderId>;
+
+    /// Return all registered candidates with their circuit state for eligibility evaluation.
+    /// `None` means this router does not expose a complete candidate snapshot.
+    fn eligibility_candidates(&self) -> Option<Vec<RouterCandidateSnapshot>> {
+        None
+    }
 
     /// Resolve an exact adapter without applying request-capability pruning.
     /// Used by ordered combo steps so skips retain their own reason.
@@ -374,9 +379,68 @@ pub trait ProviderRegistryPort: Send + Sync {
 // ProviderRepositoryPort — persistence for provider connections
 // ---------------------------------------------------------------------------
 
+/// Maximum number of distinct targets accepted by one candidate routing-state read.
+pub const MAX_PROVIDER_ROUTING_STATE_TARGET_IDS: usize = 4_000;
+
 #[async_trait]
 pub trait ProviderRepositoryPort: Send + Sync {
     async fn list(&self) -> Result<Vec<ProviderConnection>, RepositoryError>;
+
+    /// Return credential-free connection facts used during provider eligibility evaluation.
+    async fn list_routing_state(
+        &self,
+    ) -> Result<Vec<ProviderConnectionRoutingState>, RepositoryError> {
+        Err(RepositoryError::Database(
+            "credential-free provider routing-state projection is not implemented".to_string(),
+        ))
+    }
+
+    /// Return routing state that matches the requested candidate targets.
+    /// The default implementation filters a credential-free routing-state projection. Persistence
+    /// adapters should override it with a credential-free, candidate-targeted query.
+    async fn list_routing_state_for_candidates(
+        &self,
+        targets: &[ProviderId],
+    ) -> Result<Vec<ProviderConnectionRoutingState>, RepositoryError> {
+        let mut target_ids = std::collections::HashSet::new();
+        for target in targets {
+            target_ids.insert(target.clone());
+            if let Ok(connection_id) = ConnectionId::parse_str(target.as_str()) {
+                target_ids.insert(ProviderId::new(connection_id.to_string()));
+            }
+        }
+        if target_ids.len() > MAX_PROVIDER_ROUTING_STATE_TARGET_IDS {
+            return Err(RepositoryError::Database(format!(
+                "routing-state target limit exceeded: {} > {}",
+                target_ids.len(),
+                MAX_PROVIDER_ROUTING_STATE_TARGET_IDS
+            )));
+        }
+        let runtime_ids: std::collections::HashSet<_> = targets
+            .iter()
+            .filter(|target| ConnectionId::parse_str(target.as_str()).is_err())
+            .cloned()
+            .collect();
+        let mut states = self.list_routing_state().await?;
+        states.sort_by(|left, right| {
+            left.priority
+                .cmp(&right.priority)
+                .then_with(|| left.id.0.cmp(&right.id.0))
+        });
+        let mut seen_runtime_ids = std::collections::HashSet::new();
+        let mut matched = Vec::new();
+        for state in states {
+            let exact_match = target_ids.contains(&ProviderId::new(state.id.to_string()));
+            let runtime_match = state.is_active
+                && runtime_ids.contains(&state.provider_runtime_id)
+                && seen_runtime_ids.insert(state.provider_runtime_id.clone());
+            if exact_match || runtime_match {
+                matched.push(state);
+            }
+        }
+        Ok(matched)
+    }
+
     async fn find(&self, id: &ConnectionId) -> Result<Option<ProviderConnection>, RepositoryError>;
     async fn find_connection_id_by_runtime(
         &self,
@@ -602,11 +666,11 @@ pub type BoxStream<'a, T> = futures::stream::BoxStream<'a, T>;
 // The wire format
 // and the consuming UI must NOT depend on the implementation details.
 
-/// Model membership for a provider kind; presence is not capability evidence.
+/// Model membership for a provider; presence is not capability evidence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelCatalogEntry {
     pub model_id: String,
-    pub provider_kind: ProviderKind,
+    pub provider_id: String,
 }
 
 #[async_trait]
@@ -617,7 +681,7 @@ pub trait ModelCatalogPort: Send + Sync {
     /// Include declarations scoped to this connection without publishing them globally.
     async fn list_for_connection(
         &self,
-        _kind: ProviderKind,
+        _provider: &'static crate::provider_descriptor::ProviderDescriptor,
         _connection: &ConnectionId,
     ) -> Vec<ModelCatalogEntry> {
         self.list().await
@@ -627,7 +691,7 @@ pub trait ModelCatalogPort: Send + Sync {
     /// Model presence alone provides no capability guarantees.
     async fn resolve(
         &self,
-        _kind: ProviderKind,
+        _provider: &'static crate::provider_descriptor::ProviderDescriptor,
         _connection: Option<&ConnectionId>,
         _model: &str,
     ) -> crate::ModelCapabilities {
@@ -830,6 +894,46 @@ mod usage_port_tests {
         }
     }
 
+    struct RoutingStateOnlyRepository {
+        states: Vec<ProviderConnectionRoutingState>,
+    }
+
+    #[async_trait]
+    impl ProviderRepositoryPort for RoutingStateOnlyRepository {
+        async fn list(&self) -> Result<Vec<ProviderConnection>, RepositoryError> {
+            Ok(Vec::new())
+        }
+
+        async fn list_routing_state(
+            &self,
+        ) -> Result<Vec<ProviderConnectionRoutingState>, RepositoryError> {
+            Ok(self.states.clone())
+        }
+
+        async fn find(
+            &self,
+            _id: &ConnectionId,
+        ) -> Result<Option<ProviderConnection>, RepositoryError> {
+            Ok(None)
+        }
+
+        async fn create(&self, _conn: &ProviderConnection) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+
+        async fn update(
+            &self,
+            _conn: &ProviderConnection,
+            _expected_updated_at: DateTime<Utc>,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+
+        async fn delete(&self, _id: &ConnectionId) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+    }
+
     #[test]
     fn usage_recorder_port_exposes_write_and_read_methods() {
         let port = FakeUsageRecorder;
@@ -883,5 +987,60 @@ mod usage_port_tests {
 
         assert_eq!(found, Some(connection_id));
         assert_eq!(missing, None);
+    }
+
+    #[test]
+    fn routing_state_default_fails_closed_without_a_credential_free_projection() {
+        let repo = FakeProviderRepository {
+            runtime_id: ProviderId::new("openai-primary"),
+            connection_id: ConnectionId::new(),
+        };
+
+        let result = futures::executor::block_on(
+            repo.list_routing_state_for_candidates(&[ProviderId::new("openai-primary")]),
+        );
+
+        assert!(matches!(
+            result,
+            Err(RepositoryError::Database(message))
+                if message.contains("credential-free")
+        ));
+    }
+
+    #[test]
+    fn default_candidate_projection_returns_only_the_best_runtime_match() {
+        let runtime_id = ProviderId::new("shared-runtime");
+        let best_id = ConnectionId::new();
+        let later_id = ConnectionId::new();
+        let now = Utc::now();
+        let repo = RoutingStateOnlyRepository {
+            states: vec![
+                ProviderConnectionRoutingState {
+                    id: later_id,
+                    provider_runtime_id: runtime_id.clone(),
+                    adapter_revision: 1,
+                    priority: 8,
+                    created_at: now,
+                    is_active: true,
+                    auth_expired: false,
+                },
+                ProviderConnectionRoutingState {
+                    id: best_id,
+                    provider_runtime_id: runtime_id.clone(),
+                    adapter_revision: 2,
+                    priority: 1,
+                    created_at: now,
+                    is_active: true,
+                    auth_expired: false,
+                },
+            ],
+        };
+
+        let states =
+            futures::executor::block_on(repo.list_routing_state_for_candidates(&[runtime_id]))
+                .expect("runtime routing state");
+
+        assert_eq!(states.len(), 1);
+        assert_eq!(states[0].id, best_id);
     }
 }
