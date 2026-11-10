@@ -116,6 +116,7 @@ async fn notify_provider_success(router: &dyn RouterPort, provider: &ProviderId)
 const MAX_RETRY_ATTEMPTS: usize = 4;
 const MAX_ELIGIBILITY_SNAPSHOT_RETRIES: usize = 1;
 const MAX_PENDING_SPENDING_RELEASES: usize = 32;
+const QUOTA_READ_CONCURRENCY: usize = 8;
 const QUOTA_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
 const ELIGIBILITY_STATE_READ_TIMEOUT: Duration = Duration::from_millis(250);
 
@@ -1137,18 +1138,26 @@ impl RouteRequest {
         }
 
         let mut queried_connections = std::collections::HashSet::new();
-        let read_connections = async {
-            for connection in connections {
-                if !queried_connections.insert(connection.id) {
-                    continue;
-                }
+        let unique_connections = connections
+            .iter()
+            .copied()
+            .filter(|connection| queried_connections.insert(connection.id))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut reads = futures::stream::iter(unique_connections)
+            .map(|connection| async move {
                 let query = QuotaObservationQuery {
                     connection_ids: vec![connection.id],
                     provider: Some(connection.provider_runtime_id.clone()),
                     limit: QuotaObservationQuery::MAX_LIMIT,
                     ..QuotaObservationQuery::default()
                 };
-                let observations = match reader.latest_observations(&query).await {
+                (connection, reader.latest_observations(&query).await)
+            })
+            .buffer_unordered(QUOTA_READ_CONCURRENCY);
+        let read_connections = async {
+            while let Some((connection, result)) = reads.next().await {
+                let observations = match result {
                     Ok(observations) => observations,
                     Err(error) => {
                         tracing::warn!(

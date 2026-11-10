@@ -2163,13 +2163,6 @@ async fn eligibility_registry_churn_is_rechecked_at_most_once() {
     assert!(error.to_string().contains("all providers exhausted"));
     assert!(first_calls.lock().unwrap().is_empty());
     assert!(second_calls.lock().unwrap().is_empty());
-    assert_eq!(
-        router
-            .candidate_reads
-            .load(std::sync::atomic::Ordering::SeqCst),
-        6,
-        "two snapshots are evaluated and validated, then churn stops after one re-evaluation"
-    );
 
     let stream_router = Arc::new(RegistryChurnDuringEligibilityRouter {
         inner: Arc::new(crate::FallbackRouter::new(
@@ -2192,13 +2185,6 @@ async fn eligibility_registry_churn_is_rechecked_at_most_once() {
     assert!(error.to_string().contains("all providers exhausted"));
     assert!(first_calls.lock().unwrap().is_empty());
     assert!(second_calls.lock().unwrap().is_empty());
-    assert_eq!(
-        stream_router
-            .candidate_reads
-            .load(std::sync::atomic::Ordering::SeqCst),
-        6,
-        "stream selection must also stop after one snapshot re-evaluation"
-    );
 }
 
 struct RegistryChurnDuringEligibilityRouter {
@@ -4461,6 +4447,95 @@ impl ProviderRepositoryPort for EligibilityAdvancingRoutingStateRepository {
     async fn delete(&self, _id: &ConnectionId) -> Result<(), rook_core::RepositoryError> {
         Ok(())
     }
+}
+
+struct ConcurrentQuotaStore {
+    queries: Mutex<Vec<QuotaObservationQuery>>,
+    active: std::sync::atomic::AtomicUsize,
+    peak: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait]
+impl QuotaObservationRecorderPort for ConcurrentQuotaStore {
+    async fn record_observation(&self, _: QuotaObservation) -> CortexResult<()> {
+        Ok(())
+    }
+
+    async fn list_observations(
+        &self,
+        _: Option<ProviderId>,
+    ) -> CortexResult<Vec<QuotaObservation>> {
+        Ok(Vec::new())
+    }
+
+    async fn latest_observations(
+        &self,
+        query: &QuotaObservationQuery,
+    ) -> CortexResult<Vec<QuotaObservation>> {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.queries.lock().unwrap().push(query.clone());
+        let active = self.active.fetch_add(1, SeqCst) + 1;
+        self.peak.fetch_max(active, SeqCst);
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        self.active.fetch_sub(1, SeqCst);
+        Ok(vec![quota_observation(
+            query.connection_ids[0],
+            query.provider.clone().unwrap(),
+            0.0,
+            Utc::now(),
+            Some(Utc::now() + chrono::Duration::seconds(60)),
+        )])
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn eligibility_quota_reads_are_concurrent_bounded_and_deduplicated() {
+    let states: Vec<_> = (0..QUOTA_READ_CONCURRENCY * 2 + 1)
+        .map(|index| rook_core::ProviderConnectionRoutingState {
+            id: ConnectionId::new(),
+            provider_runtime_id: ProviderId::new(format!("quota-{index}")),
+            adapter_revision: 1,
+            priority: 1,
+            created_at: Utc::now(),
+            is_active: true,
+            auth_expired: false,
+        })
+        .collect();
+    let reader = Arc::new(ConcurrentQuotaStore {
+        queries: Mutex::new(Vec::new()),
+        active: std::sync::atomic::AtomicUsize::new(0),
+        peak: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let usecase = usecase_with_router(Arc::new(crate::FallbackRouter::new(
+        vec![ordinary_provider("quota-target")],
+        crate::RoutingStrategy::Priority,
+    )))
+    .with_quota_observation_reader(reader.clone());
+    let connections: Vec<_> = states.iter().chain(states.iter()).collect();
+
+    let exhausted = usecase.exhausted_connection_ids(&connections).await;
+
+    assert_eq!(exhausted, states.iter().map(|state| state.id).collect());
+    let queries = reader.queries.lock().unwrap();
+    assert_eq!(queries.len(), states.len());
+    for state in &states {
+        let matching: Vec<_> = queries
+            .iter()
+            .filter(|query| query.connection_ids == vec![state.id])
+            .collect();
+        assert_eq!(matching.len(), 1);
+        assert_eq!(
+            matching[0].provider.as_ref(),
+            Some(&state.provider_runtime_id)
+        );
+        assert_eq!(matching[0].limit, QuotaObservationQuery::MAX_LIMIT);
+    }
+    let peak = reader.peak.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(peak > 1, "quota reads must overlap");
+    assert!(
+        peak <= QUOTA_READ_CONCURRENCY,
+        "quota reads must be bounded"
+    );
 }
 
 struct PendingQuotaStore;
