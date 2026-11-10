@@ -417,6 +417,44 @@ it('acota la excepción de Gitleaks del fixture GM-05 a su archivo y su valor',
           'sin allowlist global para el fixture');
     });
 
+it('acota los marcadores sintéticos de Seatbelt a su archivo y sus valores', () => {
+  const {globalSection, rules} = gitleaksRules(gitleaksConfig);
+  const generic = rules.find((rule) => rule.id === 'generic_secret');
+  assert.ok(generic, 'regla generic_secret presente');
+
+  const scoped = generic.allowlists.filter(
+      (section) => section.includes('crates/huginn/runtime/src/tools'));
+  assert.equal(scoped.length, 1, 'una allowlist acotada para tools.rs');
+  const block = scoped[0];
+  assert.ok(block.includes('condition = "AND"'),
+      'condición AND para acotar la coincidencia');
+  assert.ok(block.includes('regexTarget = "match"'),
+      'el objetivo es la coincidencia completa');
+  assert.ok(
+      block.includes(
+          `paths = ['''^crates/huginn/runtime/src/tools\\.rs$''']`),
+      'ruta exacta del módulo de herramientas',
+  );
+  assert.ok(
+      block.includes(
+          `'''(?i)^secret\\s*=\\s*"(other-workspace-secret-value|credential-fixture-secret-not-real|external-fixture-secret|unassigned-temp-fixture-secret|cwd-does-not-expand-permissions|symlink-target-fixture-secret)$'''`),
+      'solo los marcadores sintéticos de las pruebas de denegación',
+  );
+  assert.doesNotMatch(block, /condition = "OR"/);
+
+  for (const rule of
+      rules.filter((candidate) => candidate.id !== 'generic_secret')) {
+    assert.ok(
+        !rule.allowlists.some(
+            (section) => section.includes('crates/huginn/runtime/src/tools')),
+        `la regla ${rule.id} no declara excepciones de Seatbelt`,
+    );
+  }
+
+  assert.doesNotMatch(globalSection, /crates\/huginn\/runtime\/src\/tools\.rs/,
+      'sin allowlist global para los fixtures de Seatbelt');
+});
+
 it('conecta cada dependencia de Required con el runner sin perder resultados',
     () => {
       const block = jobBlock('required');
