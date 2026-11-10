@@ -13,6 +13,13 @@ regexes = [
   '''(?i)^API_KEY=legacy-history-secret$''',
 ]
 
+[[rules.allowlists]]
+description = "Synthetic wrong-credential-kind fixture in the connection credential-kind mismatch test"
+condition = "AND"
+regexTarget = "match"
+paths = ['''^crates/application/rook-usecases/src/manage_connections/tests/mod\.rs$''']
+regexes = ['''(?i)^api_key:\s*"wrong-credential-kind$''']
+
 [[rules]]
 id = "aws_access_key"
 description = "AWS Access Key"
@@ -41,6 +48,13 @@ condition = "AND"
 regexTarget = "match"
 paths = ['''^dev/muninn/tests/test_gm05_build\.py$''']
 regexes = ['''(?i)^token\s*=\s*"synthetic-test-value$''']
+
+[[rules.allowlists]]
+description = "OAuth client secret field binding in the connection update path; the value is a decrypted blob variable, not a literal secret"
+condition = "AND"
+regexTarget = "match"
+paths = ['''^crates/application/rook-usecases/src/manage_connections\.rs$''']
+regexes = ['''(?i)^secret:\s*stored_client_secret$''']
 
 [[rules]]
 id = "openai_gcp_hf_api_key"
