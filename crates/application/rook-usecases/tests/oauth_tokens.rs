@@ -157,6 +157,7 @@ fn oauth_connection(
             oauth_tenant_id: tenant.map(str::to_string),
         },
         config: test_config(),
+        adapter_revision: 1,
         test_status: TestStatus::NeverTested,
         created_at: now,
         updated_at: now,
@@ -177,6 +178,7 @@ fn api_key_connection() -> ProviderConnection {
             api_key: blob("key"),
         },
         config: test_config(),
+        adapter_revision: 1,
         test_status: TestStatus::NeverTested,
         created_at: now,
         updated_at: now,
@@ -320,6 +322,7 @@ async fn azure_refresh_rotates_tokens_and_marks_active() {
         "azure-client",
         Some("tenant-1"),
     );
+    let adapter_revision = conn.adapter_revision;
     let id = conn.id;
     let repo = Arc::new(MemoryRepo::new(vec![conn]));
     let manager = OAuthTokenManager::with_endpoint_overrides(
@@ -351,6 +354,7 @@ async fn azure_refresh_rotates_tokens_and_marks_active() {
         Credentials::ApiKey { .. } => panic!("must stay OAuth"),
     }
     assert!(matches!(stored.test_status, TestStatus::Active { .. }));
+    assert_eq!(stored.adapter_revision, adapter_revision);
 }
 
 #[tokio::test]

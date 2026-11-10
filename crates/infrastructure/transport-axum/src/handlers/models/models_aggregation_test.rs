@@ -52,6 +52,7 @@ fn make_connection(
             api_format: Some(rook_core::ApiFormat::OpenAI),
             supported_models: Vec::new(),
         },
+        adapter_revision: 1,
         test_status: TestStatus::NeverTested,
         created_at: Utc::now(),
         updated_at: Utc::now(),

@@ -51,6 +51,7 @@ fn connection(id: &str, models: &[&str]) -> ProviderConnection {
             supported_models: models.iter().map(|model| ModelId::new(*model)).collect(),
             api_format: Some(ApiFormat::OpenAI),
         },
+        adapter_revision: 1,
         test_status: TestStatus::NeverTested,
         created_at: timestamp,
         updated_at: timestamp,

@@ -46,6 +46,7 @@ fn test_connection(id: &str, name: &str) -> ProviderConnection {
             api_format: Some(rook_core::ApiFormat::OpenAI),
             supported_models: Vec::new(),
         },
+        adapter_revision: 1,
         test_status: TestStatus::NeverTested,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
