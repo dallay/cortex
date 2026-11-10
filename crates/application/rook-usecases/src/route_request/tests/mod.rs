@@ -58,6 +58,7 @@ fn classifies_success_local_backpressure_upstream_failure_and_timeout() {
 
 mod default_combo;
 mod output_validation;
+mod preflight_guards;
 mod progressive_combo;
 mod spending_budget;
 

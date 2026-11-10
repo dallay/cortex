@@ -135,6 +135,40 @@ fn config() -> ConnectionConfig {
     }
 }
 
+fn oauth_revision_test_connection(
+    project_id: &str,
+    oauth_client_secret: Option<&str>,
+    adapter_revision: i64,
+) -> ProviderConnection {
+    ProviderConnection {
+        id: ConnectionId::new(),
+        provider: rook_core::descriptor_by_id("gemini").expect("gemini descriptor"),
+        provider_runtime_id: ProviderId::new("google-revision-test"),
+        name: "oauth-revision-test".to_string(),
+        priority: 1,
+        is_active: true,
+        auth_type: AuthType::OAuth,
+        credentials: Credentials::OAuth {
+            email: EncryptedBlob("nonce-0|user@example.com".to_string()),
+            access_token: EncryptedBlob("nonce-0|old-access".to_string()),
+            refresh_token: EncryptedBlob("nonce-0|old-refresh".to_string()),
+            expires_at: Utc::now().timestamp() + 60,
+            scope: EncryptedBlob("nonce-0|scope".to_string()),
+            id_token: EncryptedBlob("nonce-0|old-id".to_string()),
+            project_id: EncryptedBlob(project_id.to_string()),
+            oauth_client_id: "client-id".to_string(),
+            oauth_client_secret: oauth_client_secret
+                .map(|secret| EncryptedBlob(secret.to_string())),
+            oauth_tenant_id: None,
+        },
+        config: config(),
+        adapter_revision,
+        test_status: TestStatus::NeverTested,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    }
+}
+
 #[test]
 fn admission_state_is_reused_for_the_same_connection_id() {
     let manager = usecase();
@@ -952,6 +986,291 @@ fn rotating_oauth_tokens_does_not_increment_adapter_revision() {
                 .expect("OAuth token rotation succeeds");
 
             assert_eq!(updated.adapter_revision, 4);
+        });
+}
+
+fn oauth_revision_test_input(
+    project_id: &str,
+    oauth_client_secret: Option<&str>,
+) -> CredentialsInput {
+    CredentialsInput::OAuth {
+        email: "user@example.com".to_string(),
+        access_token: "new-access".to_string(),
+        refresh_token: "new-refresh".to_string(),
+        expires_at: Utc::now().timestamp() + 3600,
+        scope: "scope".to_string(),
+        id_token: "new-id".to_string(),
+        project_id: project_id.to_string(),
+        oauth_client_id: "client-id".to_string(),
+        oauth_client_secret: oauth_client_secret.map(str::to_string),
+        oauth_tenant_id: None,
+    }
+}
+
+struct SelectiveFailKeyManager;
+
+impl KeyManager for SelectiveFailKeyManager {
+    fn encrypt(&self, plaintext: &str) -> Result<String, rook_core::CredentialEncryptionError> {
+        Ok(format!("test:{plaintext}"))
+    }
+
+    fn decrypt(&self, ciphertext: &str) -> Result<String, rook_core::CredentialEncryptionError> {
+        let Some(value) = ciphertext.strip_prefix("test:") else {
+            return Err(rook_core::CredentialEncryptionError::Decrypt(
+                "invalid test blob".to_string(),
+            ));
+        };
+        if value == "broken-secret" {
+            return Err(rook_core::CredentialEncryptionError::Decrypt(
+                "intentional client-secret failure".to_string(),
+            ));
+        }
+        Ok(value.to_string())
+    }
+}
+
+#[test]
+fn changing_auth_type_increments_adapter_revision() {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("runtime")
+        .block_on(async {
+            let conn = oauth_revision_test_connection("nonce-0|project-123", None, 4);
+            let mc = ManageConnections::new(
+                Arc::new(PopulatedRepo { conn: conn.clone() }),
+                Arc::new(EmptyRegistry),
+                Arc::new(NonceKeyManager(std::sync::atomic::AtomicUsize::new(1))),
+                Arc::new(NoopProviderBuilder),
+            );
+
+            let updated = mc
+                .update(
+                    &conn.id,
+                    UpdateConnectionRequest {
+                        expected_updated_at: conn.updated_at,
+                        auth_type: Some(AuthType::ApiKey),
+                        credentials: Some(CredentialsInput::ApiKey {
+                            api_key: "replacement-key".to_string(),
+                        }),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect("Gemini accepts API-key credentials");
+
+            assert_eq!(updated.adapter_revision, 5);
+            assert_eq!(updated.auth_type, AuthType::ApiKey);
+        });
+}
+
+#[test]
+fn adapter_revision_overflow_is_rejected() {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("runtime")
+        .block_on(async {
+            let mut conn = oauth_revision_test_connection("nonce-0|project-123", None, i64::MAX);
+            conn.auth_type = AuthType::ApiKey;
+            conn.credentials = Credentials::ApiKey {
+                api_key: EncryptedBlob("nonce-0|current-key".to_string()),
+            };
+            let mc = ManageConnections::new(
+                Arc::new(PopulatedRepo { conn: conn.clone() }),
+                Arc::new(EmptyRegistry),
+                Arc::new(NonceKeyManager(std::sync::atomic::AtomicUsize::new(1))),
+                Arc::new(NoopProviderBuilder),
+            );
+
+            let result = mc
+                .update(
+                    &conn.id,
+                    UpdateConnectionRequest {
+                        expected_updated_at: conn.updated_at,
+                        provider_runtime_id: Some(ProviderId::new("google-renamed")),
+                        ..Default::default()
+                    },
+                )
+                .await;
+
+            assert!(matches!(
+                result,
+                Err(ManageConnectionsError::Repository(RepositoryError::Database(message)))
+                    if message == "provider adapter revision overflow"
+            ));
+        });
+}
+
+#[test]
+fn unchanged_oauth_client_secret_does_not_increment_adapter_revision() {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("runtime")
+        .block_on(async {
+            let conn = oauth_revision_test_connection(
+                "nonce-0|project-123",
+                Some("nonce-0|client-secret"),
+                4,
+            );
+            let mc = ManageConnections::new(
+                Arc::new(PopulatedRepo { conn: conn.clone() }),
+                Arc::new(EmptyRegistry),
+                Arc::new(NonceKeyManager(std::sync::atomic::AtomicUsize::new(1))),
+                Arc::new(NoopProviderBuilder),
+            );
+
+            let updated = mc
+                .update(
+                    &conn.id,
+                    UpdateConnectionRequest {
+                        expected_updated_at: conn.updated_at,
+                        credentials: Some(oauth_revision_test_input(
+                            "project-123",
+                            Some("client-secret"),
+                        )),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect("unchanged OAuth adapter configuration is valid");
+
+            assert_eq!(updated.adapter_revision, 4);
+        });
+}
+
+#[test]
+fn changed_oauth_client_secret_increments_adapter_revision() {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("runtime")
+        .block_on(async {
+            let conn = oauth_revision_test_connection(
+                "nonce-0|project-123",
+                Some("nonce-0|old-secret"),
+                4,
+            );
+            let mc = ManageConnections::new(
+                Arc::new(PopulatedRepo { conn: conn.clone() }),
+                Arc::new(EmptyRegistry),
+                Arc::new(NonceKeyManager(std::sync::atomic::AtomicUsize::new(1))),
+                Arc::new(NoopProviderBuilder),
+            );
+
+            let updated = mc
+                .update(
+                    &conn.id,
+                    UpdateConnectionRequest {
+                        expected_updated_at: conn.updated_at,
+                        credentials: Some(oauth_revision_test_input(
+                            "project-123",
+                            Some("new-secret"),
+                        )),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect("changed OAuth client secret is valid");
+
+            assert_eq!(updated.adapter_revision, 5);
+        });
+}
+
+#[test]
+fn undecryptable_oauth_client_secret_increments_adapter_revision() {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("runtime")
+        .block_on(async {
+            let conn =
+                oauth_revision_test_connection("test:project-123", Some("test:broken-secret"), 4);
+            let mc = ManageConnections::new(
+                Arc::new(PopulatedRepo { conn: conn.clone() }),
+                Arc::new(EmptyRegistry),
+                Arc::new(SelectiveFailKeyManager),
+                Arc::new(NoopProviderBuilder),
+            );
+
+            let updated = mc
+                .update(
+                    &conn.id,
+                    UpdateConnectionRequest {
+                        expected_updated_at: conn.updated_at,
+                        credentials: Some(oauth_revision_test_input(
+                            "project-123",
+                            Some("replacement-secret"),
+                        )),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect("replacement secret must recover unknown stored configuration");
+
+            assert_eq!(updated.adapter_revision, 5);
+        });
+}
+
+#[test]
+fn undecryptable_oauth_project_id_increments_adapter_revision() {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("runtime")
+        .block_on(async {
+            let conn = oauth_revision_test_connection("corrupt-project", None, 4);
+            let mc = ManageConnections::new(
+                Arc::new(PopulatedRepo { conn: conn.clone() }),
+                Arc::new(EmptyRegistry),
+                Arc::new(FailDecryptKeyManager),
+                Arc::new(NoopProviderBuilder),
+            );
+
+            let updated = mc
+                .update(
+                    &conn.id,
+                    UpdateConnectionRequest {
+                        expected_updated_at: conn.updated_at,
+                        credentials: Some(oauth_revision_test_input("replacement-project", None)),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect("replacement project must recover unknown stored configuration");
+
+            assert_eq!(updated.adapter_revision, 5);
+        });
+}
+
+#[test]
+fn credentials_of_a_different_type_are_rejected() {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("runtime")
+        .block_on(async {
+            let conn = oauth_revision_test_connection("nonce-0|project-123", None, 4);
+            let mc = ManageConnections::new(
+                Arc::new(PopulatedRepo { conn: conn.clone() }),
+                Arc::new(EmptyRegistry),
+                Arc::new(NonceKeyManager(std::sync::atomic::AtomicUsize::new(1))),
+                Arc::new(NoopProviderBuilder),
+            );
+
+            let result = mc
+                .update(
+                    &conn.id,
+                    UpdateConnectionRequest {
+                        expected_updated_at: conn.updated_at,
+                        credentials: Some(CredentialsInput::ApiKey {
+                            api_key: "wrong-credential-kind".to_string(),
+                        }),
+                        ..Default::default()
+                    },
+                )
+                .await;
+
+            assert!(matches!(
+                result,
+                Err(ManageConnectionsError::Validation(
+                    ValidationError::AuthTypeCredentialMismatch
+                ))
+            ));
         });
 }
 
