@@ -170,7 +170,7 @@ pub struct EffectivePolicy {
     global_denied_capabilities: BTreeSet<Capability>,
     user_denied_capabilities: BTreeSet<Capability>,
     denied_capabilities: BTreeSet<Capability>,
-    escalation_capabilities: BTreeSet<Capability>,
+    escalation_capabilities: Option<BTreeSet<Capability>>,
 }
 
 impl EffectivePolicy {
@@ -228,13 +228,13 @@ impl EffectivePolicy {
             denied_capabilities: managed
                 .map(|restrictions| restrictions.denied_capabilities)
                 .unwrap_or_default(),
-            escalation_capabilities: BTreeSet::new(),
+            escalation_capabilities: None,
         }
     }
 
     /// Escalations are explicit, finite, and cannot override managed denials.
     pub fn with_escalations(mut self, capabilities: impl IntoIterator<Item = Capability>) -> Self {
-        self.escalation_capabilities = capabilities.into_iter().collect();
+        self.escalation_capabilities = Some(capabilities.into_iter().collect());
         self
     }
 
@@ -273,8 +273,10 @@ impl EffectivePolicy {
         }
         if self.approval_mode == ApprovalMode::OnRequest
             && approver_available
-            && (self.escalation_capabilities.is_empty()
-                || self.escalation_capabilities.contains(&capability))
+            && self
+                .escalation_capabilities
+                .as_ref()
+                .is_none_or(|capabilities| capabilities.contains(&capability))
         {
             return AuthorizationOutcome::RequiresApproval;
         }
@@ -445,6 +447,21 @@ mod tests {
         assert_eq!(
             policy.decide(Capability::FileWrite, false),
             AuthorizationOutcome::Denied
+        );
+    }
+
+    #[test]
+    fn explicitly_empty_escalations_deny_out_of_profile_capabilities() {
+        let policy =
+            EffectivePolicy::resolve(PolicySettings::default(), None, ProjectTrust::default())
+                .with_escalations([]);
+        assert_eq!(
+            policy.decide(Capability::Shell, true),
+            AuthorizationOutcome::Denied
+        );
+        assert_eq!(
+            policy.decide(Capability::FileRead, true),
+            AuthorizationOutcome::Allowed
         );
     }
 

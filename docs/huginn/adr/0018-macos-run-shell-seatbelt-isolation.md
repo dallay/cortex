@@ -1,10 +1,17 @@
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:844b3a794dc2189dfc990413f0c0a027a6764b91323d844665b3de813c59ecb0 -->
+
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:f3e8de776fcca00213102b6d0812f700155dea499085f7a24a7ef1e004f0bf07 -->
+
 # ADR-0018: Mandatory Seatbelt isolation for macOS shell commands
 
-## Status
-
-Accepted for implementation; operational verification remains limited to the
-macOS version recorded in the SDD apply evidence. This status does not indicate
-release acceptance.
+- Status: Accepted for implementation; operational verification remains limited to the macOS version recorded in the SDD apply evidence. This is not release acceptance.
+- Date: 2026-11-10
+- Product: Huginn
+- Decision basis: Archived SDD implementation and macOS scenario evidence linked below.
 
 ## Context
 
@@ -28,6 +35,12 @@ execution. There is no opt-out, fallback, bypass, or persistent grant.
 operation and does not change the sandbox. Native tools and MCP are outside
 this boundary. This decision makes no Linux or Windows isolation claim.
 
+## Alternatives considered
+
+- Signed App Sandbox prototype: requires packaging and user-selected resources; the prototype did not establish the required shell confinement.
+- Opt-out sandbox setting: would remove the mandatory execution boundary.
+- Treating approval as consent to run unsandboxed: would conflate operation authorization with isolation and weaken the boundary.
+
 ## Consequences
 
 - Shell commands that require network access or paths outside the workspace
@@ -49,4 +62,10 @@ macOS, requires `/usr/bin/sandbox-exec`, and runs the unfiltered
 `cargo test -p huginn-runtime` suite. A CI pass is required for merge. It does
 not establish compatibility with other macOS versions or Apple endorsement.
 
-Implementation and scenario evidence: [SDD change](../../.agents/sdd/changes/huginn-autonomous-workspace-permissions/).
+## Follow-up and evidence
+
+Verify compatibility on each supported macOS version.
+
+Implementation and scenario evidence: [SDD change](../../../.agents/sdd/changes/archive/2026-11-10-huginn-autonomous-workspace-permissions/).
+
+<!-- /coderabbit-ai-generated:v1 --><!-- /coderabbit-ai-generated:v1 -->

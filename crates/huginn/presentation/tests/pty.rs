@@ -513,6 +513,10 @@ fn inline_approval_defaults_to_reject_navigates_and_ignores_paste() {
         pty.send("\x1b[C");
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
+    pty.send("\x06");
+    pty.wait_for("Approval for native.edit");
+    pty.send("\x1b[F");
+    pty.wait_for("PREVIEW_LAST");
     pty.send("\x1b[C\r");
     pty.wait_output_for("APPROVED");
     pty.send("\x03");
@@ -1019,13 +1023,17 @@ fn approval_resize_below_minimum_disarms_until_a_fresh_draw() {
     );
 
     // Restore a viable viewport. A fresh draw re-arms the same request, but
-    // the visible approval choice can now be confirmed without reviewing the complete preview.
+    // the preview must be rendered through its end before confirmation.
     let before_restore = pty.output().len();
     pty.resize(30, 100);
     pty.wait_for_output_change(before_restore);
     pty.wait_for("›Reject");
     pty.send("\x1b[C");
     pty.wait_for("›Approve once");
+    pty.send("\x06");
+    pty.wait_for("Approval for native.edit");
+    pty.send("\x1b[F");
+    pty.wait_for("PREVIEW_LAST");
     pty.send("\r");
     pty.wait_output_for("APPROVED");
     pty.send("\x03");
@@ -1185,6 +1193,10 @@ fn composer_and_fresh_approval_work_after_100_streaming_resizes() {
     std::thread::sleep(std::time::Duration::from_millis(100));
     pty.send("\x1b[C");
     pty.wait_for("›Approve once");
+    pty.send("\x06");
+    pty.wait_for("Approval for native.edit");
+    pty.send("\x1b[F");
+    pty.wait_for("PREVIEW_LAST");
     pty.send("\r");
     pty.wait_for("APPROVED");
     pty.send("\x03");

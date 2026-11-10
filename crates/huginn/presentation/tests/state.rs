@@ -466,7 +466,7 @@ async fn approval_retains_diff_and_requires_armed_visible_choice() {
 }
 
 #[tokio::test]
-async fn approval_does_not_require_a_preview_row_to_be_rendered() {
+async fn approval_requires_a_preview_row_to_be_rendered() {
     let ui = ui();
     let payload = request();
     let task = {
@@ -496,7 +496,7 @@ async fn approval_does_not_require_a_preview_row_to_be_rendered() {
 
     assert_eq!(
         task.await.unwrap().unwrap(),
-        huginn_core::ApprovalDecision::ApproveOnce
+        huginn_core::ApprovalDecision::Reject
     );
 }
 
@@ -627,7 +627,9 @@ async fn approval_paste_cannot_authorize_and_selected_policy_choice_is_traced() 
     );
     let (ticket, focus) = {
         let mut state = ui.lock();
-        state.modal_mut().unwrap().armed = true;
+        let modal = state.modal_mut().unwrap();
+        modal.armed = true;
+        modal.details_rendered = true;
         (state.overlays.ticket(), state.overlays.focus())
     };
     ui.overlay_input(Input::Paste("\r".into()), ticket, focus);
@@ -651,7 +653,7 @@ async fn approval_paste_cannot_authorize_and_selected_policy_choice_is_traced() 
 }
 
 #[tokio::test]
-async fn armed_collapsed_approval_can_resolve_before_details_are_drawn() {
+async fn armed_collapsed_incomplete_approval_is_rejected() {
     let ui = ui();
     let task = {
         let ui = ui.clone();
@@ -671,7 +673,7 @@ async fn armed_collapsed_approval_can_resolve_before_details_are_drawn() {
     overlay_key(&ui, crossterm::event::KeyCode::Enter);
     assert_eq!(
         task.await.unwrap().unwrap(),
-        huginn_core::ApprovalDecision::ApproveOnce
+        huginn_core::ApprovalDecision::Reject
     );
 }
 
@@ -2057,9 +2059,28 @@ async fn public_resolver_rejects_positive_decision_for_unarmed_modal() {
 }
 
 #[tokio::test]
-async fn public_resolver_accepts_armed_collapsed_native_file_approval() {
+async fn public_resolver_rejects_armed_collapsed_native_file_approval() {
     let (ui, task) = pending_approval().await;
     ui.lock().modal_mut().unwrap().armed = true;
+    ui.resolve_modal(true);
+    assert_eq!(
+        task.await.unwrap().unwrap(),
+        huginn_core::ApprovalDecision::Reject
+    );
+}
+
+#[tokio::test]
+async fn public_resolver_accepts_renderer_confirmed_complete_summary() {
+    let (ui, task) = pending_approval().await;
+    {
+        let mut state = ui.lock();
+        let modal = state.modal_mut().unwrap();
+        modal.request.action = "native.shell".into();
+        modal.request.preview = "Command: echo ok".into();
+        modal.armed = true;
+        modal.summary_complete = true;
+        drop(state);
+    }
     ui.resolve_modal(true);
     assert_eq!(
         task.await.unwrap().unwrap(),
@@ -2122,7 +2143,7 @@ async fn reject_can_be_confirmed_before_expanded_preview_is_read() {
 }
 
 #[tokio::test]
-async fn collapsed_native_file_approval_can_be_confirmed_without_reviewing_preview() {
+async fn collapsed_native_file_approval_requires_reviewing_preview() {
     let (ui, task) = pending_approval().await;
     {
         let mut state = ui.lock();
@@ -2140,7 +2161,7 @@ async fn collapsed_native_file_approval_can_be_confirmed_without_reviewing_previ
             .expect("armed positive choice should resolve directly")
             .unwrap()
             .unwrap(),
-        huginn_core::ApprovalDecision::ApproveOnce
+        huginn_core::ApprovalDecision::Reject
     );
 }
 
@@ -2158,7 +2179,7 @@ async fn collapsed_native_file_request_can_be_rejected_immediately() {
 }
 
 #[tokio::test]
-async fn approval_can_be_confirmed_before_the_final_preview_page_is_painted() {
+async fn approval_requires_final_preview_page_to_be_painted() {
     let (ui, task) = pending_approval().await;
     {
         let mut state = ui.lock();
@@ -2177,12 +2198,12 @@ async fn approval_can_be_confirmed_before_the_final_preview_page_is_painted() {
 
     assert_eq!(
         task.await.unwrap().unwrap(),
-        huginn_core::ApprovalDecision::ApproveOnce
+        huginn_core::ApprovalDecision::Reject
     );
 }
 
 #[tokio::test]
-async fn shell_approval_can_be_confirmed_without_expanding_details() {
+async fn multiline_shell_approval_requires_expanding_details() {
     let (ui, task) = pending_approval().await;
     {
         let mut state = ui.lock();
@@ -2202,12 +2223,12 @@ async fn shell_approval_can_be_confirmed_without_expanding_details() {
             .expect("armed shell approval should resolve directly")
             .unwrap()
             .unwrap(),
-        huginn_core::ApprovalDecision::ApproveOnce
+        huginn_core::ApprovalDecision::Reject
     );
 }
 
 #[tokio::test]
-async fn shell_approval_does_not_require_sequential_preview_rendering() {
+async fn shell_approval_requires_sequential_preview_rendering() {
     let (ui, task) = pending_approval().await;
     {
         let mut state = ui.lock();
@@ -2225,7 +2246,7 @@ async fn shell_approval_does_not_require_sequential_preview_rendering() {
     overlay_key(&ui, enter);
     assert_eq!(
         task.await.unwrap().unwrap(),
-        huginn_core::ApprovalDecision::ApproveOnce
+        huginn_core::ApprovalDecision::Reject
     );
 }
 

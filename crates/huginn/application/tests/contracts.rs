@@ -244,6 +244,60 @@ async fn managed_denial_of_native_write_is_final_before_host_prompt() {
 }
 
 #[tokio::test]
+async fn managed_denial_of_native_shell_is_final_before_host_prompt() {
+    use huginn_application::permission_policy::{
+        ApprovalMode, EffectivePolicy, ManagedRestrictions, PolicySettings, ProcessProfile,
+        ProjectTrust,
+    };
+    struct RecordingPrompt(AtomicUsize);
+    #[async_trait]
+    impl ApprovalPrompt for RecordingPrompt {
+        async fn request_decision(
+            &self,
+            _: &ApprovalRequest,
+            _: &[ApprovalDecision],
+            _: CancellationToken,
+        ) -> Result<ApprovalDecision> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(ApprovalDecision::ApproveOnce)
+        }
+    }
+
+    let prompt = Arc::new(RecordingPrompt(AtomicUsize::new(0)));
+    let policy = EffectivePolicy::resolve(
+        PolicySettings {
+            profile: ProcessProfile::Restricted,
+            approval_mode: ApprovalMode::OnRequest,
+        },
+        Some(ManagedRestrictions {
+            denied_capabilities: [huginn_application::permission_policy::Capability::Shell].into(),
+            ..ManagedRestrictions::default()
+        }),
+        ProjectTrust::default(),
+    );
+    let host = HostPolicy::new(prompt.clone(), ["native.shell".to_owned()].into())
+        .with_effective_policy(Arc::new(policy));
+    let mut request = ApprovalRequest {
+        id: "managed-denied-shell".into(),
+        action: "native.shell".into(),
+        preview: "Command: echo ok".into(),
+        resource: None,
+        provenance: None,
+    };
+
+    for action in ["native.shell", "native.shell.exec"] {
+        request.action = action.into();
+        assert_eq!(
+            host.approve(&request, CancellationToken::new())
+                .await
+                .unwrap(),
+            ApprovalDecision::Reject
+        );
+    }
+    assert_eq!(prompt.0.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn user_rule_prohibition_precedes_host_prompt_and_session_grant() {
     use huginn_application::permission_policy::{
         ApprovalMode, Capability, EffectivePolicy, GlobalRules, PolicySettings, ProcessProfile,

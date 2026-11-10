@@ -143,6 +143,7 @@ pub struct Modal {
     pub number: u64,
     pub request: ApprovalRequest,
     pub armed: bool,
+    pub summary_complete: bool,
     pub scroll: usize,
     pub last_scroll: usize,
     /// Scroll offset visible in the most recently completed approval frame.
@@ -167,6 +168,7 @@ impl Modal {
                 provenance: None,
             },
             armed: false,
+            summary_complete: false,
             scroll: 0,
             last_scroll: 0,
             rendered_scroll: 0,
@@ -1483,7 +1485,11 @@ impl Ui {
         if let Some(Payload::Approval(mut modal)) = retired.map(ActiveOverlay::into_payload) {
             let positive = decision != huginn_core::ApprovalDecision::Reject;
             let decision = if modal.allowed_decisions.contains(&decision)
-                && (!positive || modal.armed)
+                && (!positive
+                    || (modal.armed
+                        && (modal.summary_complete
+                            || (modal.details_rendered
+                                && modal.rendered_scroll >= modal.last_scroll))))
                 && !self.stop.is_cancelled()
             {
                 decision
@@ -1734,6 +1740,7 @@ impl ApprovalPrompt for Ui {
                 number,
                 request: request.clone(),
                 armed: false,
+                summary_complete: false,
                 scroll: 0,
                 last_scroll: 0,
                 rendered_scroll: 0,

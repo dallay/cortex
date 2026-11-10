@@ -49,7 +49,7 @@ static MODIFY_OTHER_KEYS_ACTIVE: AtomicBool = AtomicBool::new(false);
 static KITTY_KEYBOARD_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Lines the transcript moves per page when scrolling the history.
 const HISTORY_PAGE: usize = 10;
-const HELP: &str = "Enter sends; Shift+Enter (on compatible terminals), Alt+Enter or Ctrl+J inserts a newline. PgUp/PgDn scroll the transcript. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals are inline: Left/Right selects, Enter confirms the visible choice once the request is armed, Esc rejects, Ctrl+F opens optional details, and Up/Down or PgUp/PgDn scrolls the preview. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
+const HELP: &str = "Enter sends; Shift+Enter (on compatible terminals), Alt+Enter or Ctrl+J inserts a newline. PgUp/PgDn scroll the transcript. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals are inline: Left/Right selects, Enter confirms the visible choice once the request is armed, Esc rejects, Ctrl+F opens details; incomplete summaries require reviewing details through the end, and Up/Down or PgUp/PgDn scrolls the preview. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
 
 #[cfg(unix)]
 fn begin_keyboard_protocol() -> std::io::Result<()> {
@@ -317,6 +317,7 @@ struct Driver {
 struct FrameProgress {
     last_scroll: usize,
     preview_visible: bool,
+    summary_complete: bool,
 }
 
 struct Completion(CancellationToken);
@@ -919,9 +920,13 @@ impl Driver {
             if state.overlays.snapshot() == view.overlay_identity {
                 if let Some(modal) = state.modal_mut() {
                     modal.last_scroll = progress.last_scroll;
+                    modal.summary_complete = progress.summary_complete
+                        && modal.request.preview == safe(&modal.request.preview);
                     modal.details_rendered = *expanded && progress.preview_visible;
                     if *expanded {
-                        if modal.request.action == "native.shell" {
+                        if modal.request.action == "native.shell"
+                            || modal.request.action.starts_with("native.shell.")
+                        {
                             if *preview_scroll <= modal.rendered_scroll.saturating_add(1) {
                                 modal.rendered_scroll = modal.rendered_scroll.max(*preview_scroll);
                             }
@@ -1096,13 +1101,26 @@ impl Driver {
                 summary,
                 id,
                 if *expanded {
-                    "Optional details (↑↓/PgUp/PgDn):"
+                    "Review details (↑↓/PgUp/PgDn):"
                 } else {
-                    "Ctrl+F: optional details"
+                    "Ctrl+F: review details"
                 },
                 selector
             )
         };
+        // Only a single complete command can be approved from the summary.
+        // Diffs and other payloads require the rendered details through their end.
+        let summary_complete = !*expanded
+            && action == "native.shell"
+            && preview.split_once("Command:").is_some_and(|(_, command)| {
+                let command = command.strip_prefix(' ').unwrap_or(command);
+                !command.contains(['\n', '\r', '\t']) && command == summary
+            })
+            && content.lines().all(|line| {
+                unicode_width::UnicodeWidthStr::width(line)
+                    <= usize::from(panel.width.saturating_sub(2))
+            })
+            && content.lines().count() <= usize::from(panel.height.saturating_sub(2));
         let mut preview_visible = false;
         let last_scroll = if *expanded {
             let lines = wrapped(preview, panel.width.saturating_sub(2));
@@ -1161,6 +1179,7 @@ impl Driver {
         FrameProgress {
             last_scroll,
             preview_visible,
+            summary_complete,
         }
     }
 
@@ -2421,6 +2440,59 @@ mod tests {
     }
 
     #[test]
+    fn collapsed_approval_requires_complete_unclipped_command() {
+        for (action, summary, preview, width, expected) in [
+            (
+                "native.shell",
+                "echo ok",
+                "Directory: /workspace\nCommand: echo ok",
+                80,
+                true,
+            ),
+            (
+                "native.shell",
+                "echo ok",
+                "Directory: /workspace\nCommand: echo ok\necho hidden",
+                80,
+                false,
+            ),
+            (
+                "native.shell",
+                "echo a_very_long_command",
+                "Command: echo a_very_long_command",
+                20,
+                false,
+            ),
+            (
+                "native.edit_file",
+                "edit f",
+                "--- f\n+++ f\n+hidden",
+                80,
+                false,
+            ),
+        ] {
+            let view = test_view(OverlayView::Approval(
+                action.into(),
+                "id".into(),
+                summary.into(),
+                preview.into(),
+                vec![
+                    huginn_core::ApprovalDecision::Reject,
+                    huginn_core::ApprovalDecision::ApproveOnce,
+                ],
+                0,
+                false,
+                0,
+            ));
+            assert_eq!(
+                frame_progress(&view, width, 24).summary_complete,
+                expected,
+                "{preview}"
+            );
+        }
+    }
+
+    #[test]
     fn expanded_approval_with_empty_preview_is_not_marked_reviewed() {
         let view = test_view(OverlayView::Approval(
             "native.write_file".into(),
@@ -2673,7 +2745,7 @@ mod tests {
     #[test]
     fn help_explains_that_details_are_optional_for_approval() {
         assert!(HELP.contains("visible choice once the request is armed"));
-        assert!(HELP.contains("optional details"));
+        assert!(HELP.contains("incomplete summaries require reviewing details through the end"));
     }
 
     #[test]
@@ -2835,6 +2907,7 @@ mod tests {
             FrameProgress {
                 last_scroll: 7,
                 preview_visible: true,
+                summary_complete: false,
             },
         );
 

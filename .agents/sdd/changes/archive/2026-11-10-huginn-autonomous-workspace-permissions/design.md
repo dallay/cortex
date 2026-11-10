@@ -1,3 +1,11 @@
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:27baf03b86d9229f2172bc70922e1dde5e6b7969a223302aa1c696e19d096539 -->
+
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:0d6aff0f4c3f7bf83834b26a013cd4f240af74aae44bb6c48b6a91b69f0776de -->
+
 # Diseño: Permisos autónomos del espacio de trabajo de Huginn
 
 ## Enfoque técnico
@@ -46,7 +54,7 @@ Los errores compuestos deben distinguir la fase: para un fallo previo al spawn, 
 
 ### Decisión: Resolver raíces y serializar rutas de forma conservadora
 
-**Elección:** Resolver el workspace una sola vez antes de generar el perfil, canonicalizarlo y exigir que exista, sea directorio y no cambie de identidad durante la preparación. Generar reglas de lectura y escritura separadas. Las rutas se emiten como literales SBPL mediante una única rutina de serialización probada, escapando comillas, barras inversas, caracteres de control y cualquier sintaxis con significado. No se interpolan rutas en texto de shell, regex SBPL ni fragmentos de política.
+**Elección:** Resolver el workspace una sola vez antes de generar el perfil, canonicalizarlo y exigir que exista, sea directorio. Generar reglas de lectura y escritura separadas. El perfil enviado permite lectura bajo `/bin` y `/usr/lib` y `file-read-metadata` sobre el padre inmediato del workspace. Las rutas se emiten como literales SBPL mediante una única rutina de serialización probada, escapando comillas, barras inversas, caracteres de control y cualquier sintaxis con significado. No se interpolan rutas en texto de shell, regex SBPL ni fragmentos de política.
 
 **Justificación y límites:** `canonicalize` no cierra carreras entre comprobar rutas y usarlas, ni protege por sí solo contra renombres/enlaces concurrentes. Las pruebas cubrirán enlaces simbólicos dentro y fuera del workspace, rutas con metacaracteres y cambios de destino. El diseño no afirmará resistencia a todas las carreras de pathname/FD que Seatbelt no permita demostrar. No se heredan descriptores arbitrarios; se configuran explícitamente stdio y no se usan `pre_exec` ni FDs de usuario como acceso indirecto. Ante raíz ambigua, no canonicalizable o fuera del alcance, se rechaza la ejecución.
 
@@ -60,7 +68,7 @@ No se permite escritura global en `/tmp`, home, preferencias, `/Applications` ni
 
 **Justificación:** Codex es referencia de mecanismo, no autorización para importar su allowlist. SBPL y los requisitos de dyld/runtime pueden variar por versión de macOS. El conjunto concreto se valida en los runners macOS bloqueantes; no se fija una afirmación de compatibilidad cruzada no respaldada por pruebas. Un fallo de una herramienta por una dependencia no autorizada se informa; no se resuelve abriendo permisos amplios sin evaluación.
 
-**Evidencia y ajuste de implementación (macOS 27.3, 2026-11-09):** el perfil inicial, sin reglas de bootstrap dyld, terminaba en `SIGABRT` incluso para `/usr/bin/true` y `/bin/sh -c 'exit 0'` al invocarlo directamente con `sandbox-exec`. Importar `dyld-support.sb` antes de las reglas locales de denegación permitió iniciar esos procesos y, con las reglas existentes, permitió shell read/write en la raíz canónica mientras denegó un marcador externo. El archivo del sistema identifica sus reglas como necesarias para el bootstrap de dyld y se declara interfaz privada de Apple, sujeta a cambios. La implementación importa solo `dyld-support.sb`; no importa `system.sb`, no añade permisos globales de lectura ni permisos de red. La operación exacta que causa el aborto inicial no se aisló. Esta importación es un riesgo de compatibilidad explícito: disponibilidad, contenido y comportamiento se deben comprobar en cada runner macOS soportado; cualquier error mantiene `run_shell` cerrado. No se afirma
+**Evidencia y ajuste de implementación (macOS 27.3, 2026-11-09):** el perfil inicial, sin reglas de bootstrap dyld, terminaba en `SIGABRT` incluso para `/usr/bin/true` y `/bin/sh -c 'exit 0'` al invocarlo directamente con `sandbox-exec`. Importar `dyld-support.sb` antes de las reglas locales de denegación permitió iniciar esos procesos y, con las reglas existentes, permitió shell read/write en la raíz canónica mientras denegó un marcador externo. El archivo del sistema identifica sus reglas como necesarias para el bootstrap de dyld y se declara interfaz privada de Apple, sujeta a cambios. La implementación importa solo `dyld-support.sb`; no importa `system.sb`, añade lectura bajo `/bin` y `/usr/lib` y metadatos del padre inmediato del workspace, sin permisos de red. La operación exacta que causa el aborto inicial no se aisló. Esta importación es un riesgo de compatibilidad explícito: disponibilidad, contenido y comportamiento se deben comprobar en cada runner macOS soportado; cualquier error mantiene `run_shell` cerrado. No se afirma
 que la importación por sí sola pruebe confinamiento completo.
 
 ## Flujo de datos y comando
@@ -169,3 +177,5 @@ La política no construible, el ejecutable ausente o el fallo de aplicación de 
 
 - [ ] La matriz de macOS soportada debe definirse desde el soporte de producto y runners disponibles; este diseño no fija compatibilidad que aún no se haya probado.
 - [ ] El perfil mínimo final y cualquier permiso de runtime/temporal deben cerrarse con evidencia en runners macOS; el diseño no presume que la lista inicial sea suficiente.
+
+<!-- /coderabbit-ai-generated:v1 --><!-- /coderabbit-ai-generated:v1 -->

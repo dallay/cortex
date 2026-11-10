@@ -824,6 +824,7 @@ jobs:
         shell: bash
         run: |
           test "$RUNNER_OS" = "macOS"
+          sw_vers
           test -x /usr/bin/sandbox-exec
       - name: Run unfiltered Huginn runtime tests, including Seatbelt enforcement
         shell: bash
@@ -832,6 +833,9 @@ jobs:
           cargo test -p huginn-runtime 2>&1 | tee huginn-runtime-tests.log
           for required_test in \
             run_shell_can_read_and_write_inside_workspace \
+            run_shell_timeout_terminates_descendant_holding_output_pipes \
+            run_shell_cancellation_terminates_descendant_holding_output_pipes \
+            run_shell_cannot_read_external_marker_after_changing_cwd \
             run_shell_cannot_read_marker_outside_workspace \
             run_shell_seatbelt_denies_tcp_connect_after_host_control_succeeds \
             run_shell_seatbelt_denies_udp_datagram_after_host_control_succeeds \

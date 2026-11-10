@@ -1,3 +1,11 @@
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:70168a6d5ba42de730739ce1c9732fcd2fdc2fe39b4e63d8f2e1fcd4c870bda2 -->
+
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:ed99815a5a04bdfc399ca33e91dc7bbf3a7b98f24938392e93bdb6bbb96d9bca -->
+
 # Propuesta: Permisos autónomos de espacio de trabajo para Huginn
 
 ## Intención
@@ -11,10 +19,10 @@ Apple depreca `sandbox-exec` y las interfaces Seatbelt relacionadas. La implemen
 ### Incluido
 
 - Implementar un backend de sandbox solo para macOS, basado en SBPL dinámico y el ejecutable absoluto `/usr/bin/sandbox-exec`, aplicado a `/bin/sh -c` y sus descendientes.
-- Mantener el sandbox activo por defecto en macOS, con `(deny default)`, permisos mínimos demostrados, lectura/escritura acotada al workspace y acceso de red denegado.
+- Mantener el sandbox activo por defecto en macOS, con `(deny default)`, permisos mínimos demostrados, escritura acotada al workspace, lectura del workspace y excepciones de runtime bajo `/bin` y `/usr/lib`, metadatos del padre inmediato del workspace y acceso de red denegado.
 - Separar el confinamiento técnico de la política de aprobación. Una aprobación ordinaria autoriza una operación según la política; no elimina ni amplía la frontera del sistema operativo.
 - Si falla la preparación, validación, instalación del perfil o el launcher, no ejecutar el comando. Informar un error al usuario; no reintentar fuera del sandbox.
-- Mantener las concesiones persistentes desactivadas y no crear, cargar ni honrar un registro de grants.
+- Mantener las concesiones persistentes desactivadas y no crear, cargar ni honrar un registro de grants persistentes. Los grants de sesión de `HostPolicy` permanecen solo en memoria, vinculados a la sesión, acción y ruta canónica exactas para `native.write_file` y `native.edit_file` con procedencia nativa y recurso no sensible; no amplían el sandbox de shell.
 - Preservar las decisiones vigentes sobre resolución de política y alcance de operaciones: las restricciones administradas prevalecen y solo restringen; la confianza del proyecto no amplía permisos; `Deny` y `Allow once` conservan su alcance; no se añaden modos YOLO, Exit ni acceso total.
 - Preservar el ciclo de vida actual de ejecución, incluyendo entorno seleccionado, directorio de trabajo, entrada/salida, cancelación y timeout. Para las salidas controladas, realizar cleanup explícito y propagar su error; ante terminación abrupta o cancelación por `drop`, usar `Drop` como intento de mejor esfuerzo, sin prometer que los recursos se eliminen.
 - Documentar la deprecación de Apple, los límites del sandbox y la posibilidad de que algunos comandos existentes fallen.
@@ -86,3 +94,5 @@ Si la matriz de macOS, las pruebas adversariales o la confiabilidad de la interf
 - [ ] La matriz de versiones principales de macOS informa resultados reproducibles y límites observados.
 - [ ] Grants persistentes siguen desactivados; Linux y Windows quedan fuera del alcance, sin claims de paridad.
 - [ ] La documentación explica la deprecación de Apple, el cambio de default y la posibilidad de que algunos comandos fallen.
+
+<!-- /coderabbit-ai-generated:v1 --><!-- /coderabbit-ai-generated:v1 -->

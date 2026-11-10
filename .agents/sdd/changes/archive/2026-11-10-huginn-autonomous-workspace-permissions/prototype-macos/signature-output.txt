@@ -1,9 +1,9 @@
 $ codesign -d --entitlements :- "$APP"
-Executable=/Users/acosta/Dev/dallay/cortex/.agents/sdd/changes/huginn-autonomous-workspace-permissions/prototype-macos/build/AppSandboxPrototype.app/Contents/MacOS/AppSandboxPrototype
+Executable=<repo>/.agents/sdd/changes/huginn-autonomous-workspace-permissions/prototype-macos/build/AppSandboxPrototype.app/Contents/MacOS/AppSandboxPrototype
 warning: Specifying ':' in the path is deprecated and will not work in a future release
 <?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>com.apple.security.app-sandbox</key><true/><key>com.apple.security.files.user-selected.read-write</key><true/></dict></plist>
 $ codesign -d --entitlements :- "$APP/Contents/Helpers/ProbeHelper"
-Executable=/Users/acosta/Dev/dallay/cortex/.agents/sdd/changes/huginn-autonomous-workspace-permissions/prototype-macos/build/AppSandboxPrototype.app/Contents/Helpers/ProbeHelper
+Executable=<repo>/.agents/sdd/changes/huginn-autonomous-workspace-permissions/prototype-macos/build/AppSandboxPrototype.app/Contents/Helpers/ProbeHelper
 warning: Specifying ':' in the path is deprecated and will not work in a future release
 <?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>com.apple.security.app-sandbox</key><true/><key>com.apple.security.inherit</key><true/></dict></plist>
 $ codesign -dv --verbose=4 "$APP"

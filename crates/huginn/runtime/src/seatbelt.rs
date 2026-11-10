@@ -1,6 +1,7 @@
 //! Pure SBPL profile construction for the macOS shell launcher.
 
-const MAX_PROFILE_BYTES: usize = 64 * 1024;
+// The private seatbelt module keeps this shared limit internal to the crate.
+pub const MAX_PROFILE_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxRoots {
@@ -25,6 +26,7 @@ impl SandboxProfile {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProfileError {
     RootNotAbsolute,
+    MissingParent,
     NonUnicodePath,
     TooLarge,
 }
@@ -65,7 +67,8 @@ pub fn build_profile(roots: &SandboxRoots) -> Result<SandboxProfile, ProfileErro
     );
     profile.push_str(&sbpl_string(path));
     profile.push_str("))\n");
-    if let Some(parent) = workspace.parent() {
+    {
+        let parent = workspace.parent().ok_or(ProfileError::MissingParent)?;
         let parent = parent.to_str().ok_or(ProfileError::NonUnicodePath)?;
         profile.push_str("(allow file-read-metadata (literal ");
         profile.push_str(&sbpl_string(parent));
@@ -147,6 +150,29 @@ mod tests {
         assert!(profile.as_str().contains("\\\\"));
         assert!(profile.as_str().contains("\\n"));
         assert!(!profile.as_str().contains("\n(allow default)"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_non_unicode_parent() {
+        use std::os::unix::ffi::OsStringExt;
+        let workspace = std::path::PathBuf::from(std::ffi::OsString::from_vec(
+            b"/invalid-\xff/workspace".to_vec(),
+        ));
+        assert_eq!(
+            build_profile(&SandboxRoots { workspace }),
+            Err(ProfileError::NonUnicodePath)
+        );
+    }
+
+    #[test]
+    fn rejects_filesystem_root() {
+        assert_eq!(
+            build_profile(&SandboxRoots {
+                workspace: std::path::PathBuf::from("/")
+            }),
+            Err(ProfileError::MissingParent)
+        );
     }
 
     #[test]

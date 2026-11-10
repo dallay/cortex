@@ -353,11 +353,15 @@ it('exige enforcement Seatbelt de Huginn en PR sobre macOS sin filtrar tests',
       assert.match(seatbelt, /needs\.changes\.outputs\.backend == 'true'/);
       assert.match(seatbelt, /needs\.changes\.outputs\.github == 'true'/);
       assert.match(seatbelt, /test "\$RUNNER_OS" = "macOS"/);
+      assert.match(seatbelt, /sw_vers/);
       assert.match(seatbelt, /test -x \/usr\/bin\/sandbox-exec/);
       assert.match(seatbelt,
           /cargo test -p huginn-runtime 2>&1 \| tee huginn-runtime-tests\.log/);
       for (const requiredTest of [
         'run_shell_can_read_and_write_inside_workspace',
+        'run_shell_timeout_terminates_descendant_holding_output_pipes',
+        'run_shell_cancellation_terminates_descendant_holding_output_pipes',
+        'run_shell_cannot_read_external_marker_after_changing_cwd',
         'run_shell_cannot_read_marker_outside_workspace',
         'run_shell_seatbelt_denies_tcp_connect_after_host_control_succeeds',
         'run_shell_seatbelt_denies_udp_datagram_after_host_control_succeeds',

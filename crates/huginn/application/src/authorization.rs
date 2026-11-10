@@ -68,13 +68,15 @@ impl<P: ApprovalPrompt + ?Sized> HostPolicy<P> {
         }
         let capability = match request.action.as_str() {
             "native.write_file" | "native.edit_file" => Some(Capability::FileWrite),
+            action if action == "native.shell" || action.starts_with("native.shell.") => {
+                Some(Capability::Shell)
+            }
             _ => None,
         };
         // Restrictions are checked before any volatile grant lookup. Neither a
         // session approval nor a matching workspace grant can weaken them.
         if capability.is_some_and(|capability| {
-            self.effective_policy.denial_source(capability).is_some()
-                || self.effective_policy.decide(capability, true) == AuthorizationOutcome::Denied
+            self.effective_policy.decide(capability, true) == AuthorizationOutcome::Denied
         }) {
             return Ok(ApprovalDecision::Reject);
         }

@@ -1053,8 +1053,8 @@ fn create_seatbelt_profile(profile: &str) -> Result<SeatbeltProfileFile> {
 
 #[cfg(target_os = "macos")]
 fn create_seatbelt_profile_under(profile: &str, temp_root: &Path) -> Result<SeatbeltProfileFile> {
+    use crate::seatbelt::MAX_PROFILE_BYTES;
     use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
-    const MAX_PROFILE_BYTES: usize = 64 * 1024;
     if profile.len() > MAX_PROFILE_BYTES {
         return Err(AgentError::Tool("shell profile exceeds size limit".into()));
     }
@@ -1862,6 +1862,34 @@ mod run_shell_seatbelt_tests {
     }
 
     #[tokio::test]
+    async fn run_shell_accepts_workspace_metacharacters_and_denies_external_reads() {
+        let fixture = tempfile::tempdir().unwrap();
+        // Exercise quote/backslash escaping and every control escape form with
+        // the real Seatbelt parser, as well as spaces and parentheses.
+        for name in [
+            "space quote\" backslash\\ (workspace)",
+            "newline\ncarriage\rtab\tcontrol\u{1}",
+        ] {
+            let workspace = fixture.path().join(name);
+            std::fs::create_dir(&workspace).unwrap();
+            let ctx = context(workspace.canonicalize().unwrap());
+            let output = run_shell("printf ok > f && cat f", &ctx, 10).await.unwrap();
+            assert!(output.contains("ok"), "{output}");
+            assert_eq!(std::fs::read_to_string(workspace.join("f")).unwrap(), "ok");
+            let external = fixture.path().join("external-marker");
+            std::fs::write(&external, "external-secret").unwrap();
+            let output = run_shell(&format!("cat '{}'", external.display()), &ctx, 10)
+                .await
+                .unwrap();
+            assert!(!output.contains("external-secret"), "{output}");
+            assert!(
+                output.contains("Operation not permitted") || output.contains("Permission denied"),
+                "{output}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn invalid_workspace_fails_before_command_can_write_marker() {
         let fixture = tempfile::tempdir().unwrap();
         let marker = fixture.path().join("must-not-exist");
@@ -2141,7 +2169,7 @@ mod run_shell_seatbelt_tests {
                         return pids;
                     }
                 }
-                tokio::task::yield_now().await;
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
         })
         .await

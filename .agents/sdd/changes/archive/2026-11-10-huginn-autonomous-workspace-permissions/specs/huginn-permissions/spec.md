@@ -1,3 +1,11 @@
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:5504633c91fe35636f47df8846e193e5dfc3a1c5f5a08ce1d252d3b48ebbf224 -->
+
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:255efca5789786ff78ad02486fd9b8af6ee7fafdeccf9ce89176d709f1208792 -->
+
 # Delta Specification: Permisos autónomos del espacio de trabajo
 
 ## MODIFIED Requirements
@@ -19,7 +27,7 @@ El mecanismo depende de interfaces Seatbelt de Apple que están deprecadas. Hugi
 
 #### Scenario: Acceso fuera del workspace denegado
 
-- GIVEN un comando intenta leer o modificar un archivo fuera de las rutas permitidas del workspace
+- GIVEN un comando intenta leer o modificar un archivo fuera del workspace y de las excepciones de lectura de runtime bajo `/bin` y `/usr/lib` y metadatos del padre inmediato
 - WHEN el proceso shell o uno de sus descendientes solicita el acceso
 - THEN el sistema operativo deniega el acceso
 - AND el comando no obtiene permisos adicionales por cambiar su directorio de trabajo
@@ -40,7 +48,7 @@ El mecanismo depende de interfaces Seatbelt de Apple que están deprecadas. Hugi
 #### Scenario: Descendiente intenta eludir la política
 
 - GIVEN un comando inicia un descendiente o una ejecución alternativa
-- WHEN ese proceso intenta acceder a archivos fuera del workspace o a la red
+- WHEN ese proceso intenta acceder a archivos fuera de las rutas autorizadas (workspace, lectura bajo `/bin` y `/usr/lib` y metadatos del padre inmediato) o a la red
 - THEN el sistema operativo deniega el acceso bajo la misma política
 
 #### Scenario: Fallo del launcher o de la política
@@ -67,7 +75,7 @@ El mecanismo depende de interfaces Seatbelt de Apple que están deprecadas. Hugi
 
 ### Requirement: Aprobación, política y aislamiento son controles independientes
 
-Huginn MUST conservar las semánticas de política y aprobación de fase 1. Las reglas de usuario y globales, las restricciones administradas y las decisiones de aprobación determinan si una operación está autorizada; no conceden ni amplían el aislamiento del sistema operativo. Las restricciones administradas prevalecen y solo pueden restringir. `Deny` MUST impedir la operación, y `Allow once` MUST autorizar únicamente la operación presentada. Huginn MUST NOT introducir grants persistentes, ni cargarlos, crearlos u honrarlos. Huginn MUST NOT introducir modos YOLO, Exit o de acceso total.
+Huginn MUST conservar las semánticas de política y aprobación de fase 1. Las reglas de usuario y globales, las restricciones administradas y las decisiones de aprobación determinan si una operación está autorizada; no conceden ni amplían el aislamiento del sistema operativo. Las restricciones administradas prevalecen y solo pueden restringir. `Deny` MUST impedir la operación, y `Allow once` MUST autorizar únicamente la operación presentada. Huginn MUST NOT introducir grants persistentes, ni cargarlos, crearlos u honrarlos. Huginn MUST NOT introducir modos YOLO, Exit ni nuevos modos de acceso total. El perfil de autorización `full-access` existente sigue disponible; no desactiva ni amplía el sandbox obligatorio de `run_shell` en macOS.
 
 #### Scenario: Aprobación ordinaria no retira el aislamiento
 
@@ -169,3 +177,5 @@ Si se descarta abruptamente el future o su owner y solo se ejecuta `Drop`, el cl
 - WHEN la escritura se completa
 - THEN Huginn usa una operación que escribe todos los bytes o informa un error de escritura
 - AND la conformidad no depende de inducir un error de cierre de `std::fs::File` mediante su API safe
+
+<!-- /coderabbit-ai-generated:v1 --><!-- /coderabbit-ai-generated:v1 -->
