@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import os
 import pathlib
 import subprocess
 import sys
@@ -33,6 +32,14 @@ def make_fixture(root: pathlib.Path) -> dict[str, pathlib.Path]:
     return {"chosen": chosen, "unchosen": unchosen, **{f"grant-ancestor-{i}": p for i, p in enumerate(ancestors)}, "grant-store": grants}
 
 
+def resolve_probe_binary(candidate: str) -> pathlib.Path:
+    """Resolve the probe binary and refuse anything that is not an existing file."""
+    binary = pathlib.Path(candidate).expanduser().resolve()
+    if not binary.is_file():
+        raise ValueError(f"probe binary is not an existing file: {candidate}")
+    return binary
+
+
 def run_probe(binary: pathlib.Path, role: str, resource: pathlib.Path, operation: str) -> dict:
     completed = subprocess.run(
         [str(binary), "--probe", role, str(resource), operation],
@@ -50,7 +57,7 @@ def main() -> int:
     if len(sys.argv) != 3:
         print("usage: harness.py PROBE_BINARY baseline|sandbox", file=sys.stderr)
         return 64
-    binary = pathlib.Path(sys.argv[1]).resolve()
+    binary = resolve_probe_binary(sys.argv[1])
     mode = sys.argv[2]
     if mode not in {"baseline", "sandbox"}:
         print("mode must be baseline or sandbox", file=sys.stderr)
