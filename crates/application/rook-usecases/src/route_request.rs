@@ -851,7 +851,11 @@ impl RouteRequest {
             None
         };
         if eligibility.is_none() && provider.connection_id().is_some() && connection.is_none() {
-            return AttemptPreparation::Reevaluate;
+            // Without an eligibility snapshot there is nothing to refresh: the connection
+            // bound provider has no active connection, so it must be excluded and the
+            // remaining candidates must be considered. This mirrors the late recheck
+            // that returns `Retry` for the same state.
+            return AttemptPreparation::Retry(provider_id);
         }
 
         if !self.selected_provider_was_assessed(&provider, &provider_id, eligibility.as_ref()) {
