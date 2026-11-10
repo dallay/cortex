@@ -121,9 +121,10 @@ fn next_character_range(text: &str, cursor: usize) -> Option<Range<usize>> {
 /// Full approval preview for the permission modal.
 ///
 /// Numbered header, action, optional `Effect:` summary and the complete
-/// preview. Semantics mirror the line adapter exactly because both derive
-/// from `huginn_core::approval`; only the confirmation mechanism differs
-/// (fresh typed code here, one-time yes/no there).
+/// preview used by the approval details view. Both adapters derive the
+/// summary from `huginn_core::approval`; the TUI exposes the preview on demand
+/// and confirms a visible policy choice after its modal is armed, while the
+/// line adapter shows its preview inline and uses one-time yes/no input.
 pub fn approval_preview(action: &str, number: u64, preview: &str) -> String {
     let mut text = format!(
         "{}\nAction: {}",
