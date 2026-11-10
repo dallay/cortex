@@ -68,7 +68,7 @@ The SBPL path language, canonicalization/symlink semantics, inherited descriptor
 - Child process behavior, signal handling and process groups must be tested under `sandbox-exec`; process-wrap cleanup currently wraps `/bin/sh` directly, and wrapping another launcher can alter group leader semantics.
 - macOS CI coverage is on push-only `test-multi` (`macos-latest`), not pull requests. Required PR enforcement needs workflow scope change in a later phase; local-only integration tests are insufficient as sole security evidence.
 - Linux and Windows remain unresolved: Linux might use a separate Landlock/seccomp/Bubblewrap strategy, Windows a distinct restricted-token/AppContainer/job-object strategy, but neither has been researched or verified here. Do not claim cross-platform isolation or persistent-grant protection.
-- Existing signed App Sandbox POC artifacts remain in `prototype-macos/`; user requested that it be closed/abandoned, but this phase explicitly does not delete artifacts. The orchestrator must choose a later authorized cleanup action. Do not cite prototype evidence as proof.
+- The signed App Sandbox POC artifacts in `prototype-macos/` were removed on 2026-11-10 under explicit user authorization, after the pivot to the Seatbelt backend. They were never evidence of sandbox enforcement; do not cite prototype evidence as proof and do not restore the artifacts.
 - Existing SDD proposal/spec/design/tasks describe a signed App Sandbox feasibility POC and are architecturally obsolete. Do not apply them. Re-run explore/propose/spec/design/tasks, preserving still-relevant authorization requirements while superseding the old approach.
 
 ## Ready for proposal
