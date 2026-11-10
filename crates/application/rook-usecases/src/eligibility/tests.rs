@@ -118,3 +118,50 @@ fn eligibility_uses_key_policy_precedence_for_multiple_failures() {
     );
     assert!(result.eligible.is_empty());
 }
+
+#[test]
+fn eligibility_uses_circuit_precedence_over_quota() {
+    let mut candidate = eligible_candidate("open-circuit-exhausted-quota");
+    candidate.circuit_open = true;
+    candidate.quota_exhausted = true;
+
+    let result = evaluate_candidates([candidate.clone()]);
+
+    assert_eq!(
+        result.rejected,
+        vec![Rejection {
+            target: candidate.target,
+            reason: RejectionReason::CircuitOpen,
+        }]
+    );
+    assert!(result.eligible.is_empty());
+}
+
+#[test]
+fn eligibility_uses_auth_precedence_over_model_support() {
+    let mut candidate = eligible_candidate("missing-auth-unsupported-model");
+    candidate.auth = AuthState::Missing;
+    candidate.model_supported = false;
+
+    let result = evaluate_candidates([candidate.clone()]);
+
+    assert_eq!(
+        result.rejected,
+        vec![Rejection {
+            target: candidate.target,
+            reason: RejectionReason::AuthMissing,
+        }]
+    );
+    assert!(result.eligible.is_empty());
+}
+
+#[test]
+fn quota_check_skips_stable_rejections_but_checks_open_circuits() {
+    let mut missing_auth = eligible_candidate("missing-auth");
+    missing_auth.auth = AuthState::Missing;
+    let mut open_circuit = eligible_candidate("open-circuit");
+    open_circuit.circuit_open = true;
+
+    assert!(!missing_auth.requires_quota_check());
+    assert!(open_circuit.requires_quota_check());
+}

@@ -74,7 +74,7 @@ impl QuotaObservationRecorderPort for FailingQuotaStore {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn quota_reads_are_concurrent_bounded_and_issued_once_per_connection() {
     let connection_count = super::QUOTA_READ_CONCURRENCY + 2;
     let mut providers = Vec::with_capacity(connection_count);
