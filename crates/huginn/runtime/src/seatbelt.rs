@@ -29,6 +29,13 @@ pub enum ProfileError {
     MissingParent,
     NonUnicodePath,
     TooLarge,
+    /// The workspace path contains a control character.
+    ///
+    /// SBPL string literals do not define a portable escape for control
+    /// characters. Emitting one anyway produces a profile whose path filter
+    /// does not match the real path, so the sandbox denies the workspace
+    /// instead of granting it. Refuse the workspace and fail closed.
+    UnsupportedPathCharacter,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +64,9 @@ pub fn build_profile(roots: &SandboxRoots) -> Result<SandboxProfile, ProfileErro
         return Err(ProfileError::RootNotAbsolute);
     }
     let path = workspace.to_str().ok_or(ProfileError::NonUnicodePath)?;
+    if path.chars().any(char::is_control) {
+        return Err(ProfileError::UnsupportedPathCharacter);
+    }
     let mut profile = String::from(
         "(version 1)\n(import \"dyld-support.sb\")\n(deny default)\n\
          (allow process-fork)\n\
@@ -90,13 +100,6 @@ fn sbpl_string(value: &str) -> String {
         match ch {
             '\\' => result.push_str("\\\\"),
             '"' => result.push_str("\\\""),
-            '\n' => result.push_str("\\n"),
-            '\r' => result.push_str("\\r"),
-            '\t' => result.push_str("\\t"),
-            ch if ch.is_control() => {
-                use std::fmt::Write as _;
-                let _ = write!(result, "\\u{{{:x}}}", ch as u32);
-            }
             ch => result.push(ch),
         }
     }
@@ -143,13 +146,26 @@ mod tests {
     #[test]
     fn path_metacharacters_are_data_not_profile_syntax() {
         let workspace = tempfile::tempdir().unwrap();
-        let path = workspace.path().join("é'\"\\(allow default)\n");
+        let path = workspace.path().join("é'\"\\(allow default)");
         std::fs::create_dir(&path).unwrap();
         let profile = build_profile(&SandboxRoots { workspace: path }).unwrap();
         assert!(profile.as_str().contains("\\\""));
         assert!(profile.as_str().contains("\\\\"));
-        assert!(profile.as_str().contains("\\n"));
         assert!(!profile.as_str().contains("\n(allow default)"));
+        assert!(!profile
+            .as_str()
+            .lines()
+            .any(|line| line.starts_with("(allow default)")));
+    }
+
+    #[test]
+    fn rejects_workspaces_with_control_characters() {
+        let workspace = tempfile::tempdir().unwrap();
+        let path = workspace.path().join("control\u{1}workspace");
+        assert_eq!(
+            build_profile(&SandboxRoots { workspace: path }),
+            Err(ProfileError::UnsupportedPathCharacter)
+        );
     }
 
     #[cfg(unix)]
@@ -219,14 +235,15 @@ mod tests {
     #[test]
     fn hostile_path_characters_cannot_inject_sbpl_rules() {
         let workspace = tempfile::tempdir().unwrap();
-        let path = workspace
-            .path()
-            .join("quote\" slash\\ control\n (allow network*)");
+        let path = workspace.path().join("quote\" slash\\ (allow network*)");
         std::fs::create_dir(&path).unwrap();
         let profile = build_profile(&SandboxRoots { workspace: path }).unwrap();
         let text = profile.as_str();
 
         assert!(!text.contains("\n(allow network*)"));
+        assert!(!text
+            .lines()
+            .any(|line| line.starts_with("(allow network*)")));
         assert_eq!(
             text.lines()
                 .filter(|line| line.starts_with("(allow "))

@@ -1864,12 +1864,9 @@ mod run_shell_seatbelt_tests {
     #[tokio::test]
     async fn run_shell_accepts_workspace_metacharacters_and_denies_external_reads() {
         let fixture = tempfile::tempdir().unwrap();
-        // Exercise quote/backslash escaping and every control escape form with
-        // the real Seatbelt parser, as well as spaces and parentheses.
-        for name in [
-            "space quote\" backslash\\ (workspace)",
-            "newline\ncarriage\rtab\tcontrol\u{1}",
-        ] {
+        // Exercise quote/backslash escaping, spaces and parentheses against the
+        // real Seatbelt parser.
+        for name in ["space quote\" backslash\\ (workspace)"] {
             let workspace = fixture.path().join(name);
             std::fs::create_dir(&workspace).unwrap();
             let ctx = context(workspace.canonicalize().unwrap());
@@ -1887,6 +1884,22 @@ mod run_shell_seatbelt_tests {
                 "{output}"
             );
         }
+
+        // SBPL has no portable escape for control characters, so a workspace
+        // path that contains one is refused before the shell starts.
+        let control = fixture.path().join("control\u{1}workspace");
+        std::fs::create_dir(&control).unwrap();
+        let result = run_shell(
+            "printf reached > f",
+            &context(control.canonicalize().unwrap()),
+            10,
+        )
+        .await;
+        assert!(result.is_err(), "{result:?}");
+        assert!(
+            !control.join("f").exists(),
+            "shell started despite an unusable profile"
+        );
     }
 
     #[tokio::test]
