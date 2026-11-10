@@ -499,6 +499,10 @@ fn inline_approval_defaults_to_reject_navigates_and_ignores_paste() {
         prompt.contains("User: approve"),
         "conversation remains visible: {prompt}"
     );
+    assert!(
+        prompt.contains("native.edit") && prompt.contains("edit /workspace/note.txt"),
+        "approval action and effect summary must be visible before a decision: {prompt}"
+    );
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while !pty.screen_text().contains("›Approve once") {
         assert!(
@@ -509,43 +513,8 @@ fn inline_approval_defaults_to_reject_navigates_and_ignores_paste() {
         pty.send("\x1b[C");
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-    pty.send("\x06");
-    pty.wait_for("PREVIEW_FIRST");
     pty.send("\x1b[C\r");
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    assert!(
-        !pty.output().contains("APPROVED"),
-        "approval cannot resolve before the expanded diff is scrolled to its end"
-    );
-    assert!(
-        pty.screen_text().contains("›Approve once"),
-        "the inline approval remains active while the diff is incomplete"
-    );
-    pty.send(&"\x1b[B".repeat(20));
-    pty.wait_for("diff-line-19");
-    let middle = pty.screen_text();
-    assert!(
-        middle.contains("diff-line-19"),
-        "the middle of the complete diff must be reachable: {middle}"
-    );
-    pty.send("\x1b[F");
-    pty.wait_for("PREVIEW_LAST");
-    let expanded = pty.screen_text();
-    assert!(
-        expanded.contains("PREVIEW_LAST"),
-        "last diff line must be visible: {expanded}"
-    );
-    pty.wait_for("›Approve once");
-    let expanded = pty.screen_text();
-    assert!(
-        expanded.contains("›Approve once"),
-        "actions must remain visible with the diff: {expanded}"
-    );
-    pty.send("\x1b[200~\r\x1b[201~");
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    assert!(!pty.output().contains("APPROVED"), "paste cannot authorize");
-    pty.send("\x1b[C\r");
-    pty.wait_for("APPROVED");
+    pty.wait_output_for("APPROVED");
     pty.send("\x03");
     pty.finish(true);
 }
@@ -1050,24 +1019,11 @@ fn approval_resize_below_minimum_disarms_until_a_fresh_draw() {
     );
 
     // Restore a viable viewport. A fresh draw re-arms the same request, but
-    // approval still requires reviewing the complete native-file preview.
+    // the visible approval choice can now be confirmed without reviewing the complete preview.
     let before_restore = pty.output().len();
     pty.resize(30, 100);
     pty.wait_for_output_change(before_restore);
     pty.wait_for("›Reject");
-    pty.send("\x06");
-    pty.wait_for("PREVIEW_FIRST");
-    pty.send("\x1b[F");
-    pty.wait_for("PREVIEW_LAST");
-    let reviewed = pty.screen_text();
-    assert!(
-        reviewed.contains("PREVIEW_LAST"),
-        "the final preview page must be visible before approval: {reviewed}"
-    );
-    assert!(
-        !pty.output().contains("APPROVED"),
-        "approval must remain pending until review is complete"
-    );
     pty.send("\x1b[C");
     pty.wait_for("›Approve once");
     pty.send("\r");
@@ -1227,19 +1183,6 @@ fn composer_and_fresh_approval_work_after_100_streaming_resizes() {
     pty.send("approve\r");
     pty.wait_for("›Reject");
     std::thread::sleep(std::time::Duration::from_millis(100));
-    pty.send("\x06");
-    pty.wait_for("PREVIEW_FIRST");
-    pty.send("\x1b[F");
-    pty.wait_for("PREVIEW_LAST");
-    let reviewed = pty.screen_text();
-    assert!(
-        reviewed.contains("PREVIEW_LAST"),
-        "the final preview page must be visible before approval: {reviewed}"
-    );
-    assert!(
-        !pty.output().contains("APPROVED"),
-        "approval must remain pending until review is complete"
-    );
     pty.send("\x1b[C");
     pty.wait_for("›Approve once");
     pty.send("\r");

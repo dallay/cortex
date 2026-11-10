@@ -19,6 +19,7 @@ const successResults = {
   clippy: 'success',
   check: 'success',
   test: 'success',
+  'test-huginn-seatbelt': 'success',
   'test-frontend': 'success',
   'test-e2e': 'success',
   doc: 'success',

@@ -34,6 +34,7 @@ living documentation treat Huginn as the canonical name.
 | [ADR-0014](0014-builtin-providers-and-turn-scoped-model-routing.md) | Built-in providers and turn-scoped model routing                | Direction Accepted; delivery status and its acceptance are recorded separately                                                                 |
 | [ADR-0015](0015-separate-product-releases-from-cargo-publishing.md) | Separate product releases from Cargo publishing                 | Accepted; Huginn's publication remains conditioned on product acceptance                                                                       |
 | [ADR-0016](0016-restrict-only-tool-hooks.md)                        | Restrict-only tool hooks                                        | Proposed; complements ADR-0007 and ADR-0013 without ceding approval authority                                                                  |
+| [ADR-0018](0018-macos-run-shell-seatbelt-isolation.md)              | Mandatory Seatbelt isolation for macOS shell commands           | Accepted for implementation; verification scope and deprecation risk are recorded in the ADR                                                   |
 
 ## Record format
 

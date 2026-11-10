@@ -341,14 +341,14 @@ the case that proves each one, and the contract gaps that remain are in
 
 Built-in tools registered by the Huginn runtime:
 
-| Tool           | Description                                                       | Module                 |
-|----------------|-------------------------------------------------------------------|------------------------|
-| `list_files`   | List workspace files                                              | `runtime/src/tools.rs` |
-| `read_file`    | Read a UTF-8 file                                                 | `runtime/src/tools.rs` |
-| `search_files` | Search literal text in workspace files                            | `runtime/src/tools.rs` |
-| `write_file`   | Create or replace a file; requires approval                       | `runtime/src/tools.rs` |
-| `edit_file`    | Apply a reviewed text replacement; requires approval              | `runtime/src/tools.rs` |
-| `shell`        | Run a POSIX shell command; requires approval and is not sandboxed | `runtime/src/tools.rs` |
+| Tool           | Description                                                                                 | Module                 |
+|----------------|---------------------------------------------------------------------------------------------|------------------------|
+| `list_files`   | List workspace files                                                                        | `runtime/src/tools.rs` |
+| `read_file`    | Read a UTF-8 file                                                                           | `runtime/src/tools.rs` |
+| `search_files` | Search literal text in workspace files                                                      | `runtime/src/tools.rs` |
+| `write_file`   | Create or replace a file; requires approval                                                 | `runtime/src/tools.rs` |
+| `edit_file`    | Apply a reviewed text replacement; requires approval                                        | `runtime/src/tools.rs` |
+| `shell`        | Run a POSIX shell command; requires approval and uses mandatory Seatbelt isolation on macOS | `runtime/src/tools.rs` |
 
 ## MCP Integration
 
@@ -358,6 +358,24 @@ A server definition includes a command, arguments, explicit environment values,
 and optional mappings from host variable names. See the configuration schema
 and examples in [`mcp.rs`](../../crates/huginn/runtime/src/mcp.rs); server
 configuration must not be confused with an approval or sandbox boundary.
+
+### `run_shell` isolation on macOS
+
+The runtime builds a deny-by-default SBPL profile and invokes the command with
+the absolute `/usr/bin/sandbox-exec` path. The profile permits the canonical
+workspace and the minimum runtime rules observed to start the shell. It denies
+network and socket operations. The shell and its descendants inherit the
+profile. A missing launcher or profile error prevents execution; Huginn does
+not retry without isolation. Approval remains an independent authorization
+control: `Deny` blocks the operation and `Allow once` does not alter the
+profile. No persistent grants or sandbox opt-out are provided.
+
+Seatbelt covers only `run_shell` and descendants, not native tools or MCP.
+Linux and Windows have no equivalent isolation claim from this feature. Apple
+deprecates `sandbox-exec` and its private `dyld-support.sb` import; availability
+and behavior can change. Compatibility is established only for versions tested
+by the blocking CI job. Shell commands that require network access or paths
+outside the workspace may fail.
 
 ### MCP Client Lifecycle
 

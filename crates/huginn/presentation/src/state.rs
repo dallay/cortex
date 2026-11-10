@@ -1481,12 +1481,8 @@ impl Ui {
         };
         if let Some(Payload::Approval(mut modal)) = retired.map(ActiveOverlay::into_payload) {
             let positive = decision != huginn_core::ApprovalDecision::Reject;
-            let review_incomplete = !modal.expanded
-                || !modal.details_rendered
-                || modal.scroll < modal.last_scroll
-                || modal.rendered_scroll < modal.last_scroll;
             let decision = if modal.allowed_decisions.contains(&decision)
-                && (!positive || (modal.armed && !review_incomplete))
+                && (!positive || modal.armed)
                 && !self.stop.is_cancelled()
             {
                 decision

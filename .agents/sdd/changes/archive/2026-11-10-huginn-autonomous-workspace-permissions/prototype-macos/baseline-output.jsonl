@@ -1,0 +1,1262 @@
+{
+  "expected": "allow",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/chosen-workspace",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "allow",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/chosen-workspace",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "allow",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/chosen-workspace",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "allow",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/chosen-workspace",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "allow",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/chosen-workspace",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/unchosen-workspace",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/unchosen-workspace",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/unchosen-workspace",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/unchosen-workspace",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/unchosen-workspace",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn/grants",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn/grants",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn/grants",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn/grants",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn/grants",
+  "role": "host",
+  "succeeded": true
+}
+{
+  "expected": "allow",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/chosen-workspace",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "allow",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/chosen-workspace",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "allow",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/chosen-workspace",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "allow",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/chosen-workspace",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "allow",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/chosen-workspace",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/unchosen-workspace",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/unchosen-workspace",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/unchosen-workspace",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/unchosen-workspace",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/unchosen-workspace",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn/grants",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn/grants",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn/grants",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn/grants",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn/grants",
+  "role": "helper",
+  "succeeded": true
+}
+{
+  "expected": "allow",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/chosen-workspace",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "allow",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/chosen-workspace",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "allow",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/chosen-workspace",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "allow",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/chosen-workspace",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "allow",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/chosen-workspace",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/unchosen-workspace",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/unchosen-workspace",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/unchosen-workspace",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/unchosen-workspace",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/unchosen-workspace",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn/grants",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn/grants",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn/grants",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn/grants",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn/grants",
+  "role": "shell",
+  "succeeded": true
+}
+{
+  "expected": "allow",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/chosen-workspace",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "allow",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/chosen-workspace",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "allow",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/chosen-workspace",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "allow",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/chosen-workspace",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "allow",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/chosen-workspace",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/unchosen-workspace",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/unchosen-workspace",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/unchosen-workspace",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/unchosen-workspace",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/unchosen-workspace",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "read",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn/grants",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "list",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn/grants",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "create",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn/grants",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "modify",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn/grants",
+  "role": "nested",
+  "succeeded": true
+}
+{
+  "expected": "deny",
+  "operation": "replace",
+  "resource": "/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-app-sandbox-probe-eotmoxz7/fake-home/Library/Application Support/Huginn/grants",
+  "role": "nested",
+  "succeeded": true
+}
+SUMMARY mode=baseline probes=160 expectation_failures=140
+MISMATCH role=host resource=unchosen operation=read succeeded=True error=None
+MISMATCH role=host resource=unchosen operation=list succeeded=True error=None
+MISMATCH role=host resource=unchosen operation=create succeeded=True error=None
+MISMATCH role=host resource=unchosen operation=modify succeeded=True error=None
+MISMATCH role=host resource=unchosen operation=replace succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-0 operation=read succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-0 operation=list succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-0 operation=create succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-0 operation=modify succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-0 operation=replace succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-1 operation=read succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-1 operation=list succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-1 operation=create succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-1 operation=modify succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-1 operation=replace succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-2 operation=read succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-2 operation=list succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-2 operation=create succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-2 operation=modify succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-2 operation=replace succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-3 operation=read succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-3 operation=list succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-3 operation=create succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-3 operation=modify succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-3 operation=replace succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-4 operation=read succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-4 operation=list succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-4 operation=create succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-4 operation=modify succeeded=True error=None
+MISMATCH role=host resource=grant-ancestor-4 operation=replace succeeded=True error=None
+MISMATCH role=host resource=grant-store operation=read succeeded=True error=None
+MISMATCH role=host resource=grant-store operation=list succeeded=True error=None
+MISMATCH role=host resource=grant-store operation=create succeeded=True error=None
+MISMATCH role=host resource=grant-store operation=modify succeeded=True error=None
+MISMATCH role=host resource=grant-store operation=replace succeeded=True error=None
+MISMATCH role=helper resource=unchosen operation=read succeeded=True error=None
+MISMATCH role=helper resource=unchosen operation=list succeeded=True error=None
+MISMATCH role=helper resource=unchosen operation=create succeeded=True error=None
+MISMATCH role=helper resource=unchosen operation=modify succeeded=True error=None
+MISMATCH role=helper resource=unchosen operation=replace succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-0 operation=read succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-0 operation=list succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-0 operation=create succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-0 operation=modify succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-0 operation=replace succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-1 operation=read succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-1 operation=list succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-1 operation=create succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-1 operation=modify succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-1 operation=replace succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-2 operation=read succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-2 operation=list succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-2 operation=create succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-2 operation=modify succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-2 operation=replace succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-3 operation=read succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-3 operation=list succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-3 operation=create succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-3 operation=modify succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-3 operation=replace succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-4 operation=read succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-4 operation=list succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-4 operation=create succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-4 operation=modify succeeded=True error=None
+MISMATCH role=helper resource=grant-ancestor-4 operation=replace succeeded=True error=None
+MISMATCH role=helper resource=grant-store operation=read succeeded=True error=None
+MISMATCH role=helper resource=grant-store operation=list succeeded=True error=None
+MISMATCH role=helper resource=grant-store operation=create succeeded=True error=None
+MISMATCH role=helper resource=grant-store operation=modify succeeded=True error=None
+MISMATCH role=helper resource=grant-store operation=replace succeeded=True error=None
+MISMATCH role=shell resource=unchosen operation=read succeeded=True error=None
+MISMATCH role=shell resource=unchosen operation=list succeeded=True error=None
+MISMATCH role=shell resource=unchosen operation=create succeeded=True error=None
+MISMATCH role=shell resource=unchosen operation=modify succeeded=True error=None
+MISMATCH role=shell resource=unchosen operation=replace succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-0 operation=read succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-0 operation=list succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-0 operation=create succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-0 operation=modify succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-0 operation=replace succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-1 operation=read succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-1 operation=list succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-1 operation=create succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-1 operation=modify succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-1 operation=replace succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-2 operation=read succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-2 operation=list succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-2 operation=create succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-2 operation=modify succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-2 operation=replace succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-3 operation=read succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-3 operation=list succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-3 operation=create succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-3 operation=modify succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-3 operation=replace succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-4 operation=read succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-4 operation=list succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-4 operation=create succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-4 operation=modify succeeded=True error=None
+MISMATCH role=shell resource=grant-ancestor-4 operation=replace succeeded=True error=None
+MISMATCH role=shell resource=grant-store operation=read succeeded=True error=None
+MISMATCH role=shell resource=grant-store operation=list succeeded=True error=None
+MISMATCH role=shell resource=grant-store operation=create succeeded=True error=None
+MISMATCH role=shell resource=grant-store operation=modify succeeded=True error=None
+MISMATCH role=shell resource=grant-store operation=replace succeeded=True error=None
+MISMATCH role=nested resource=unchosen operation=read succeeded=True error=None
+MISMATCH role=nested resource=unchosen operation=list succeeded=True error=None
+MISMATCH role=nested resource=unchosen operation=create succeeded=True error=None
+MISMATCH role=nested resource=unchosen operation=modify succeeded=True error=None
+MISMATCH role=nested resource=unchosen operation=replace succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-0 operation=read succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-0 operation=list succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-0 operation=create succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-0 operation=modify succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-0 operation=replace succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-1 operation=read succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-1 operation=list succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-1 operation=create succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-1 operation=modify succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-1 operation=replace succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-2 operation=read succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-2 operation=list succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-2 operation=create succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-2 operation=modify succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-2 operation=replace succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-3 operation=read succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-3 operation=list succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-3 operation=create succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-3 operation=modify succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-3 operation=replace succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-4 operation=read succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-4 operation=list succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-4 operation=create succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-4 operation=modify succeeded=True error=None
+MISMATCH role=nested resource=grant-ancestor-4 operation=replace succeeded=True error=None
+MISMATCH role=nested resource=grant-store operation=read succeeded=True error=None
+MISMATCH role=nested resource=grant-store operation=list succeeded=True error=None
+MISMATCH role=nested resource=grant-store operation=create succeeded=True error=None
+MISMATCH role=nested resource=grant-store operation=modify succeeded=True error=None
+MISMATCH role=nested resource=grant-store operation=replace succeeded=True error=None
+RED baseline outside_access_successes=140; sandbox boundary absent

@@ -346,6 +346,32 @@ it('ejecuta siempre las pruebas CI y exige su resultado real', () => {
   assert.doesNotMatch(jobBlock('required'), /continue-on-error:/);
 });
 
+it('exige enforcement Seatbelt de Huginn en PR sobre macOS sin filtrar tests',
+    () => {
+      const seatbelt = jobBlock('test-huginn-seatbelt');
+      assert.match(seatbelt, /^    runs-on: macos-latest\s*$/m);
+      assert.match(seatbelt, /needs\.changes\.outputs\.backend == 'true'/);
+      assert.match(seatbelt, /needs\.changes\.outputs\.github == 'true'/);
+      assert.match(seatbelt, /test "\$RUNNER_OS" = "macOS"/);
+      assert.match(seatbelt, /test -x \/usr\/bin\/sandbox-exec/);
+      assert.match(seatbelt,
+          /cargo test -p huginn-runtime 2>&1 \| tee huginn-runtime-tests\.log/);
+      for (const requiredTest of [
+        'run_shell_can_read_and_write_inside_workspace',
+        'run_shell_cannot_read_marker_outside_workspace',
+        'run_shell_seatbelt_denies_tcp_connect_after_host_control_succeeds',
+        'run_shell_seatbelt_denies_udp_datagram_after_host_control_succeeds',
+        'run_shell_seatbelt_denies_unix_socket_connect_after_host_control_succeeds',
+      ]) {
+        assert.ok(seatbelt.includes(requiredTest),
+            `required test ${requiredTest}`);
+      }
+      assert.doesNotMatch(seatbelt, /--(?:skip|exact|ignored)|-- .*seatbelt/);
+      assert.match(jobBlock('required'), /^      - test-huginn-seatbelt\s*$/m);
+      assert.match(jobBlock('required'),
+          /RESULT_TEST_HUGINN_SEATBELT: \$\{\{ needs\.test-huginn-seatbelt\.result \}\}/);
+    });
+
 it('acota la excepción de Gitleaks del fixture GM-05 a su archivo y su valor',
     () => {
       const {globalSection, rules} = gitleaksRules(gitleaksConfig);

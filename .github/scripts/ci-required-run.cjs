@@ -11,6 +11,7 @@ const resultKeys = {
   clippy: 'CLIPPY',
   check: 'CHECK',
   test: 'TEST',
+  'test-huginn-seatbelt': 'TEST_HUGINN_SEATBELT',
   'test-frontend': 'TEST_FRONTEND',
   coverage: 'COVERAGE',
   'coverage-frontend': 'COVERAGE_FRONTEND',

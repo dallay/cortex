@@ -49,7 +49,7 @@ static MODIFY_OTHER_KEYS_ACTIVE: AtomicBool = AtomicBool::new(false);
 static KITTY_KEYBOARD_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Lines the transcript moves per page when scrolling the history.
 const HISTORY_PAGE: usize = 10;
-const HELP: &str = "Enter sends; Shift+Enter (on compatible terminals), Alt+Enter or Ctrl+J inserts a newline. PgUp/PgDn scroll the transcript. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals are inline: Left/Right selects, Enter confirms, Esc rejects, Ctrl+F shows details, and Up/Down or PgUp/PgDn scrolls the complete preview. Enter confirms only after the full preview is rendered and reviewed. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
+const HELP: &str = "Enter sends; Shift+Enter (on compatible terminals), Alt+Enter or Ctrl+J inserts a newline. PgUp/PgDn scroll the transcript. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals are inline: Left/Right selects, Enter confirms the visible choice once the request is armed, Esc rejects, Ctrl+F opens optional details, and Up/Down or PgUp/PgDn scrolls the preview. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
 
 #[cfg(unix)]
 fn begin_keyboard_protocol() -> std::io::Result<()> {
@@ -765,8 +765,6 @@ impl View {
                             .is_some_and(|resource| resource.sensitive)
                         {
                             "sensitive resource".into()
-                        } else if m.request.action == "native.shell" && !m.expanded {
-                            "Shell command · Ctrl+F to review".into()
                         } else {
                             let shell_command = (m.request.action == "native.shell")
                                 .then_some(())
@@ -1086,13 +1084,9 @@ impl Driver {
             .map(|name| format!("›{name}"))
             .unwrap_or_else(|| "›Reject".into());
         let selector = if narrow { selected_choice } else { selector };
-        let narrow_summary = if action == "native.shell" && !*expanded {
-            "Ctrl+F: review full command"
-        } else {
-            summary
-        };
+        let narrow_summary = summary;
         let mut content = if narrow {
-            format!("#{}\n{}\n{}", id, narrow_summary, selector)
+            format!("{}\n{}\n{}", action, narrow_summary, selector)
         } else if compact {
             format!("{} · {} · #{}\n{}", action, summary, id, selector)
         } else {
@@ -1102,9 +1096,9 @@ impl Driver {
                 summary,
                 id,
                 if *expanded {
-                    "Details (↑↓/PgUp/PgDn; approve after the last line):"
+                    "Optional details (↑↓/PgUp/PgDn):"
                 } else {
-                    "Ctrl+F: review details to approve"
+                    "Ctrl+F: optional details"
                 },
                 selector
             )
@@ -2483,11 +2477,11 @@ mod tests {
     }
 
     #[test]
-    fn collapsed_shell_approval_explains_that_the_full_command_needs_review() {
+    fn collapsed_shell_approval_shows_command_and_optional_details_hint() {
         let view = test_view(OverlayView::Approval(
             "native.shell".into(),
             "shell-long".into(),
-            "Shell command · Ctrl+F to review".into(),
+            "echo first line".into(),
             "Directory: /workspace\nCommand: echo first line\necho second line".into(),
             vec![
                 huginn_core::ApprovalDecision::Reject,
@@ -2500,7 +2494,10 @@ mod tests {
 
         let text = frame_text(&view, 20, 8);
 
-        assert!(text.contains("Ctrl+F"), "expansion hint missing: {text}");
+        assert!(
+            text.contains("native.shell") && text.contains("echo first line"),
+            "shell action and command summary missing: {text}"
+        );
         assert!(text.contains("Reject"), "Reject is unavailable: {text}");
     }
 
@@ -2511,7 +2508,7 @@ mod tests {
         let first = test_view(OverlayView::Approval(
             "native.shell".into(),
             "shell-long".into(),
-            "Shell command · Ctrl+F to review".into(),
+            "echo x".into(),
             preview.clone(),
             vec![
                 huginn_core::ApprovalDecision::Reject,
@@ -2535,7 +2532,7 @@ mod tests {
         let last = test_view(OverlayView::Approval(
             "native.shell".into(),
             "shell-long".into(),
-            "Shell command · Ctrl+F to review".into(),
+            "echo x".into(),
             preview,
             vec![
                 huginn_core::ApprovalDecision::Reject,
@@ -2674,9 +2671,9 @@ mod tests {
     }
 
     #[test]
-    fn help_explains_that_approval_requires_reviewing_the_full_preview() {
-        assert!(HELP.contains("full preview"));
-        assert!(HELP.contains("rendered and reviewed"));
+    fn help_explains_that_details_are_optional_for_approval() {
+        assert!(HELP.contains("visible choice once the request is armed"));
+        assert!(HELP.contains("optional details"));
     }
 
     #[test]
