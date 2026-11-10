@@ -15,10 +15,12 @@ default = []
 minilm-cpu = ["muninn-providers/minilm-cpu"]
 
 [dependencies]
+async-trait.workspace = true
 muninn-application = { path = "../../crates/muninn/application" }
 muninn-bridge = { path = "../../crates/muninn/bridge" }
 muninn-core = { path = "../../crates/muninn/core" }
 muninn-neo4j = { path = "../../crates/muninn/neo4j" }
+muninn-mcp = { path = "../../crates/muninn/mcp" }
 muninn-providers = { path = "../../crates/muninn/providers" }
 anyhow.workspace = true
 axum.workspace = true
@@ -26,11 +28,13 @@ clap.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
 chrono.workspace = true
 uuid.workspace = true
+rmcp = { version = "=3.8.0", default-features = false, features = ["client", "transport-async-rw"] }
 
 [lints]
 workspace = true

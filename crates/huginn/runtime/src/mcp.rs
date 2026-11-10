@@ -10,6 +10,7 @@ use rmcp::{
     RoleClient, ServiceExt,
 };
 use serde::Deserialize;
+use std::future::Future;
 use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -27,6 +28,7 @@ pub struct ServerConfig {
 }
 type Client = RunningService<RoleClient, ()>;
 type SharedClient = Arc<tokio::sync::Mutex<Client>>;
+#[derive(Default)]
 pub struct McpClients {
     clients: Vec<SharedClient>,
     tools: Vec<Arc<dyn Tool>>,
@@ -42,7 +44,68 @@ impl McpClients {
         cancel: CancellationToken,
         timeout_secs: u64,
     ) -> Result<Self> {
-        let mut clients = Self::discover(configs, workspace, policy, cancel, timeout_secs).await?;
+        Self::connect_with(
+            configs,
+            workspace,
+            registry,
+            policy,
+            cancel,
+            timeout_secs,
+            |config| async move {
+                let mut command = tokio::process::Command::new(&config.command);
+                command
+                    .args(&config.args)
+                    .current_dir(workspace)
+                    .env_clear()
+                    .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+                    .envs(&config.env);
+                for (child_name, source_name) in &config.env_from {
+                    let value = std::env::var_os(source_name).ok_or_else(|| {
+                        AgentError::Configuration(format!(
+                            "MCP environment variable {source_name} is unset"
+                        ))
+                    })?;
+                    command.env(child_name, value);
+                }
+                let mut command = CommandWrap::from(command);
+                command.wrap(ProcessGroup::leader()).wrap(KillOnDrop);
+                let transport = TokioChildProcess::new(command)?;
+                ().serve(transport).await.map_err(|_| {
+                    AgentError::Tool(format!("MCP {} initialization failed", config.name))
+                })
+            },
+        )
+        .await
+    }
+
+    async fn connect_with<F, Fut>(
+        configs: &[ServerConfig],
+        workspace: &Path,
+        registry: &Registry,
+        policy: &dyn ApprovalPolicy,
+        cancel: CancellationToken,
+        timeout_secs: u64,
+        mut connector: F,
+    ) -> Result<Self>
+    where
+        F: FnMut(ServerConfig) -> Fut,
+        Fut: Future<Output = Result<Client>>,
+    {
+        let mut clients = Self::default();
+        if let Err(error) = clients
+            .initialize_with(
+                configs,
+                workspace,
+                policy,
+                cancel,
+                timeout_secs,
+                &mut connector,
+            )
+            .await
+        {
+            let _ = clients.shutdown().await;
+            return Err(error);
+        }
         match registry.batch(std::mem::take(&mut clients.tools)) {
             Ok(leases) => clients.leases = leases,
             Err(error) => {
@@ -82,6 +145,52 @@ impl McpClients {
         cancel: CancellationToken,
         timeout_secs: u64,
     ) -> Result<()> {
+        self.initialize_with(
+            configs,
+            workspace,
+            policy,
+            cancel,
+            timeout_secs,
+            &mut |config| async move {
+                let mut command = tokio::process::Command::new(&config.command);
+                command
+                    .args(&config.args)
+                    .current_dir(workspace)
+                    .env_clear()
+                    .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+                    .envs(&config.env);
+                for (child_name, source_name) in &config.env_from {
+                    let value = std::env::var_os(source_name).ok_or_else(|| {
+                        AgentError::Configuration(format!(
+                            "MCP environment variable {source_name} is unset"
+                        ))
+                    })?;
+                    command.env(child_name, value);
+                }
+                let mut command = CommandWrap::from(command);
+                command.wrap(ProcessGroup::leader()).wrap(KillOnDrop);
+                let transport = TokioChildProcess::new(command)?;
+                ().serve(transport).await.map_err(|_| {
+                    AgentError::Tool(format!("MCP {} initialization failed", config.name))
+                })
+            },
+        )
+        .await
+    }
+
+    async fn initialize_with<F, Fut>(
+        &mut self,
+        configs: &[ServerConfig],
+        workspace: &Path,
+        policy: &dyn ApprovalPolicy,
+        cancel: CancellationToken,
+        timeout_secs: u64,
+        connector: &mut F,
+    ) -> Result<()>
+    where
+        F: FnMut(ServerConfig) -> Fut,
+        Fut: Future<Output = Result<Client>>,
+    {
         let mut names = std::collections::BTreeSet::new();
         for config in configs {
             if config.name.is_empty()
@@ -100,29 +209,11 @@ impl McpClients {
             if !policy.approve(&request, cancel.clone()).await? {
                 continue;
             }
-            let mut command = tokio::process::Command::new(&config.command);
-            command
-                .args(&config.args)
-                .current_dir(workspace)
-                .env_clear()
-                .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-                .envs(&config.env);
-            for (child_name, source_name) in &config.env_from {
-                let value = std::env::var_os(source_name).ok_or_else(|| {
-                    AgentError::Configuration(format!(
-                        "MCP environment variable {source_name} is unset"
-                    ))
-                })?;
-                command.env(child_name, value);
-            }
-            let mut command = CommandWrap::from(command);
-            command.wrap(ProcessGroup::leader()).wrap(KillOnDrop);
-            let transport = TokioChildProcess::new(command)?;
             let connection = tokio::select! {
                 _=cancel.cancelled()=>return Err(AgentError::Cancelled),
-                value=tokio::time::timeout(Duration::from_secs(timeout_secs),().serve(transport))=>value
+                value=tokio::time::timeout(Duration::from_secs(timeout_secs),connector(config.clone()))=>value
                     .map_err(|_|AgentError::Tool(format!("MCP {} initialization timed out",config.name)))?
-                    .map_err(|_|AgentError::Tool(format!("MCP {} initialization failed",config.name)))?,
+                    ?,
             };
             self.cancellations.push(connection.cancellation_token());
             let client = Arc::new(tokio::sync::Mutex::new(connection));
@@ -207,6 +298,7 @@ impl Drop for McpClients {
         }
     }
 }
+
 struct McpTool {
     client: SharedClient,
     remote_name: String,
@@ -353,4 +445,186 @@ pub fn register_plugins(
         }))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use huginn_application::authorization::HostPolicy;
+    use huginn_core::{ApprovalPrompt, ApprovalRequest, ToolCall, ToolContext, ToolRegistry};
+    use rmcp::ServiceExt;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Mutex,
+    };
+
+    struct Decisions(Mutex<Vec<(String, bool)>>);
+
+    struct FixedHandler(Arc<AtomicUsize>);
+
+    #[async_trait]
+    impl muninn_mcp::ToolHandler for FixedHandler {
+        async fn call(
+            &self,
+            arguments: &serde_json::Value,
+        ) -> std::result::Result<serde_json::Value, String> {
+            if arguments.get("user_identifier").is_some() {
+                return Err("unsupported argument".into());
+            }
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(serde_json::json!({"owner":"fixed-owner","items":["fixed-owner result"]}))
+        }
+    }
+
+    #[async_trait]
+    impl ApprovalPrompt for Decisions {
+        async fn request_decision(
+            &self,
+            request: &ApprovalRequest,
+            _: CancellationToken,
+        ) -> Result<bool> {
+            let mut decisions = self.0.lock().unwrap();
+            let allowed = decisions
+                .iter()
+                .find(|(action, _)| action == &request.action)
+                .map(|(_, allowed)| *allowed)
+                .unwrap_or(false);
+            decisions.push((request.action.clone(), allowed));
+            drop(decisions);
+            Ok(allowed)
+        }
+    }
+
+    #[tokio::test]
+    async fn actual_muninn_server_uses_huginn_startup_and_invocation_approvals() {
+        let prompt = Arc::new(Decisions(Mutex::new(vec![
+            ("mcp.denied.start".into(), false),
+            ("mcp.memory.start".into(), true),
+            ("mcp.memory.muninn_search_messages".into(), true),
+            ("mcp.memory.muninn_search_preferences".into(), false),
+        ])));
+        let policy = HostPolicy::new(prompt.clone(), Default::default());
+        let registry = Registry::default();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (client_io, server_io) = tokio::io::duplex(16 * 1024);
+        let handler_calls = calls.clone();
+        let mut server = muninn_mcp::Server::default();
+        for name in ["muninn_search_messages", "muninn_search_preferences"] {
+            server
+                .register(
+                    muninn_mcp::Catalog::ScopedRetrieval,
+                    name,
+                    Box::new(FixedHandler(handler_calls.clone())),
+                )
+                .unwrap();
+        }
+        let server_task = tokio::spawn(async move {
+            let (reader, writer) = tokio::io::split(server_io);
+            muninn_mcp::serve(tokio::io::BufReader::new(reader), writer, &mut server).await
+        });
+        let connects = Arc::new(AtomicUsize::new(0));
+        let connect_counter = connects.clone();
+        let client_io = Arc::new(Mutex::new(Some(client_io)));
+        let configs = [config("denied"), config("memory")];
+        let mut clients = McpClients::connect_with(
+            &configs,
+            Path::new("."),
+            &registry,
+            &policy,
+            CancellationToken::new(),
+            5,
+            move |_config| {
+                let connects = connect_counter.clone();
+                let client_io = client_io.clone();
+                async move {
+                    connects.fetch_add(1, Ordering::SeqCst);
+                    let io = client_io.lock().unwrap().take().unwrap();
+                    ().serve(io)
+                        .await
+                        .map_err(|e| AgentError::Tool(e.to_string()))
+                }
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(connects.load(Ordering::SeqCst), 1);
+        assert_eq!(registry.definitions().len(), 2);
+
+        let context = ToolContext {
+            selected_skills: vec![],
+            workspace: ".".into(),
+            cancellation: CancellationToken::new(),
+        };
+        let messages = registry.get("mcp_memory_0").unwrap();
+        let prepared = messages
+            .prepare(
+                &ToolCall {
+                    id: "approved".into(),
+                    name: "mcp_memory_0".into(),
+                    arguments: serde_json::json!({"query":"x"}),
+                },
+                &context,
+            )
+            .await
+            .unwrap();
+        assert!(policy
+            .approve(
+                prepared.approval.as_ref().unwrap(),
+                context.cancellation.clone()
+            )
+            .await
+            .unwrap());
+        let output = messages.execute(prepared, &context).await.unwrap();
+        assert!(output.contains("fixed-owner"));
+
+        let client = clients.clients[0].lock().await;
+        let scoped_attempt = client
+            .call_tool(
+                CallToolRequestParams::new("muninn_search_messages").with_arguments(
+                    serde_json::json!({"query":"x", "user_identifier":"attacker"})
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(scoped_attempt.is_error, Some(true));
+        drop(client);
+
+        let preferences = registry.get("mcp_memory_1").unwrap();
+        let denied = preferences
+            .prepare(
+                &ToolCall {
+                    id: "denied-call".into(),
+                    name: "mcp_memory_1".into(),
+                    arguments: serde_json::json!({"query":"x"}),
+                },
+                &context,
+            )
+            .await
+            .unwrap();
+        assert!(!policy
+            .approve(
+                denied.approval.as_ref().unwrap(),
+                context.cancellation.clone()
+            )
+            .await
+            .unwrap());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        clients.shutdown().await.unwrap();
+        server_task.abort();
+        let _ = server_task.await;
+    }
+
+    fn config(name: &str) -> ServerConfig {
+        ServerConfig {
+            name: name.into(),
+            command: "unused".into(),
+            args: vec![],
+            env: Default::default(),
+            env_from: Default::default(),
+        }
+    }
 }

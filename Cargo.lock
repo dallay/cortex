@@ -2849,6 +2849,7 @@ dependencies = [
  "huginn-plugin-api",
  "keyring",
  "libc",
+ "muninn-mcp",
  "process-wrap",
  "rcgen",
  "reqwest",
@@ -3687,8 +3688,11 @@ dependencies = [
  "muninn-application",
  "muninn-bridge",
  "muninn-core",
+ "muninn-mcp",
  "muninn-neo4j",
  "muninn-providers",
+ "rmcp",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -3760,7 +3764,9 @@ dependencies = [
 name = "muninn-mcp"
 version = "0.0.1"
 dependencies = [
+ "async-trait",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]

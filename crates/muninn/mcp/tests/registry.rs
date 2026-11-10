@@ -2,9 +2,17 @@ mod common;
 use muninn_mcp::{Catalog, Server, ToolHandler};
 use serde_json::{json, Value};
 
+async fn call(server: &mut Server, method: &str, params: Value) -> Value {
+    server
+        .handle(common::request(method, params))
+        .await
+        .unwrap()
+}
+
 struct Echo;
+#[async_trait::async_trait]
 impl ToolHandler for Echo {
-    fn call(&self, arguments: &Value) -> Result<Value, String> {
+    async fn call(&self, arguments: &Value) -> Result<Value, String> {
         Ok(arguments.clone())
     }
 }
@@ -25,7 +33,26 @@ fn catalogs_preserve_exact_fixtures() {
 }
 
 #[test]
-fn only_registered_handlers_are_visible_and_callable() {
+fn scoped_retrieval_catalog_exposes_only_messages_and_preferences_without_scope_input() {
+    let tools = Catalog::ScopedRetrieval.tools();
+    let names = tools
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        ["muninn_search_messages", "muninn_search_preferences"]
+    );
+    for tool in tools.as_array().unwrap() {
+        assert_eq!(tool["inputSchema"]["additionalProperties"], false);
+        assert!(tool["inputSchema"]["properties"]["user_identifier"].is_null());
+    }
+}
+
+#[tokio::test]
+async fn only_registered_handlers_are_visible_and_callable() {
     let mut server = Server::default();
     assert!(server
         .register(Catalog::Core, "nonexistent", Box::new(Echo))
@@ -36,21 +63,19 @@ fn only_registered_handlers_are_visible_and_callable() {
     assert!(server
         .register(Catalog::Core, "memory_search", Box::new(Echo))
         .is_err());
-    let call = |server: &mut Server, method: &str, params: Value| {
-        server.handle(common::request(method, params)).unwrap()
-    };
-    call(&mut server, "server/discover", json!({}));
+    call(&mut server, "server/discover", json!({})).await;
     assert!(server
         .register(Catalog::Core, "memory_store_message", Box::new(Echo))
         .is_err());
-    let listed = call(&mut server, "tools/list", json!({}));
+    let listed = call(&mut server, "tools/list", json!({})).await;
     assert_eq!(listed["result"]["tools"].as_array().unwrap().len(), 1);
     assert_eq!(listed["result"]["tools"][0], Catalog::Core.tools()[0]);
     let response = call(
         &mut server,
         "tools/call",
         json!({"name":"memory_search","arguments":{"query":"hola"}}),
-    );
+    )
+    .await;
     assert_eq!(response["result"]["isError"], false);
     let text = response["result"]["content"][0]["text"].as_str().unwrap();
     assert_eq!(
@@ -62,7 +87,8 @@ fn only_registered_handlers_are_visible_and_callable() {
             &mut server,
             "tools/call",
             json!({"name":"memory_search","arguments":[]})
-        )["error"]["code"],
+        )
+        .await["error"]["code"],
         -32602
     );
 }

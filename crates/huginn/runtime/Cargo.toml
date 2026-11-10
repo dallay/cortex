@@ -68,6 +68,8 @@ tempfile = "=3.27.0"
 axum.workspace = true
 tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring", "tls12"] }
 rcgen = "=0.14.10"
+muninn-mcp = { path = "../../muninn/mcp" }
+rmcp = { version = "=3.8.0", default-features = false, features = ["client", "transport-async-rw"] }
 
 [lints]
 workspace = true

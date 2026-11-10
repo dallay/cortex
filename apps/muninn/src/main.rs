@@ -1,5 +1,7 @@
 //! Muninn command-line entry point and composition root.
 
+mod mcp_command;
+
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
@@ -210,6 +212,12 @@ enum Command {
         #[arg(long, env = "MUNINN_BRIDGE_ALLOW_CLEAR", default_value_t = false)]
         allow_destructive_clear: bool,
     },
+    /// Serve fixed-owner, read-only retrieval over MCP stdio.
+    Mcp {
+        /// Required host-selected data scope. This is not authentication.
+        #[arg(long, env = "MUNINN_MCP_OWNER_SCOPE", hide_env_values = true)]
+        owner_scope: String,
+    },
 }
 
 fn embedder(args: &EmbeddingArgs) -> Result<Option<Arc<dyn Embedder>>> {
@@ -416,7 +424,7 @@ fn geocoding(args: &GeocodingArgs) -> Result<Option<(GeocodingConfig, Arc<dyn Ge
     }
 }
 
-async fn connect(args: &Neo4jArgs, dimensions: usize) -> Result<Neo4jClient> {
+async fn connect(args: &Neo4jArgs) -> Result<Neo4jClient> {
     let config = Neo4jConfig {
         uri: args.neo4j_uri.clone(),
         username: args.neo4j_user.clone(),
@@ -424,11 +432,40 @@ async fn connect(args: &Neo4jArgs, dimensions: usize) -> Result<Neo4jClient> {
         database: args.neo4j_database.clone(),
         ..Neo4jConfig::default()
     };
-    let client = Neo4jClient::connect(&config).await?;
-    let schema = SchemaManager::new(&client, dimensions);
-    schema.setup_all().await?;
-    schema.validate_vector_index_dimensions(dimensions).await?;
-    Ok(client)
+    Ok(Neo4jClient::connect(&config).await?)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SchemaAction {
+    SetupAll,
+    ValidateVectorDimensions,
+}
+
+const fn schema_actions(command: &Command) -> &'static [SchemaAction] {
+    match command {
+        Command::Mcp { .. } => &[SchemaAction::ValidateVectorDimensions],
+        Command::Bridge { .. } | Command::Schema => &[
+            SchemaAction::SetupAll,
+            SchemaAction::ValidateVectorDimensions,
+        ],
+    }
+}
+
+async fn apply_schema_policy(
+    client: &Neo4jClient,
+    dimensions: usize,
+    command: &Command,
+) -> Result<()> {
+    let schema = SchemaManager::new(client, dimensions);
+    for action in schema_actions(command) {
+        match action {
+            SchemaAction::SetupAll => schema.setup_all().await?,
+            SchemaAction::ValidateVectorDimensions => {
+                schema.validate_vector_index_dimensions(dimensions).await?
+            }
+        }
+    }
+    Ok(())
 }
 
 #[tokio::main]
@@ -438,18 +475,25 @@ async fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .init();
     let cli = Cli::parse();
+    let mcp_scope = match &cli.command {
+        Command::Mcp { owner_scope } => Some(
+            mcp_command::HostOwnerScope::parse(Some(owner_scope)).map_err(anyhow::Error::msg)?,
+        ),
+        _ => None,
+    };
     let embedder = embedder(&cli.embedding)?;
-    let extraction = extractor(&cli.extraction)?;
-    let enrichment = enrichment(&cli.enrichment)?;
-    let geocoding = geocoding(&cli.geocoding)?;
+    let (extraction, enrichment, geocoding) = optional_stages(&cli)?;
     let dimensions = embedder
         .as_ref()
         .map_or(cli.embedding.embedding_dimensions, |provider| {
             provider.dimensions()
         });
-    let client = connect(&cli.neo4j, dimensions)
+    let client = connect(&cli.neo4j)
         .await
         .context("Neo4j initialisation failed")?;
+    apply_schema_policy(&client, dimensions, &cli.command)
+        .await
+        .context("Neo4j schema validation failed")?;
 
     match cli.command {
         Command::Schema => {
@@ -512,6 +556,41 @@ async fn main() -> Result<()> {
             axum::serve(listener, app).await?;
             Ok(())
         }
+        Command::Mcp { .. } => {
+            let scope = mcp_scope.expect("MCP command validates scope before composition");
+            let mut server = mcp_command::server(
+                scope,
+                Arc::new(Neo4jShortTermStore::new(client.clone())),
+                Arc::new(Neo4jLongTermStore::new(client.clone())),
+                embedder,
+            )
+            .map_err(anyhow::Error::msg)?;
+            muninn_mcp::serve(
+                tokio::io::BufReader::new(tokio::io::stdin()),
+                tokio::io::stdout(),
+                &mut server,
+            )
+            .await?;
+            Ok(())
+        }
+    }
+}
+
+type OptionalStages = (
+    Option<Arc<dyn EntityExtractor>>,
+    Option<EnrichmentStage>,
+    Option<(GeocodingConfig, Arc<dyn Geocoder>)>,
+);
+
+fn optional_stages(cli: &Cli) -> Result<OptionalStages> {
+    if matches!(cli.command, Command::Bridge { .. }) {
+        Ok((
+            extractor(&cli.extraction)?,
+            enrichment(&cli.enrichment)?,
+            geocoding(&cli.geocoding)?,
+        ))
+    } else {
+        Ok((None, None, None))
     }
 }
 
@@ -522,6 +601,81 @@ mod tests {
 
     fn parse_cli(arguments: &[&str]) -> Cli {
         Cli::try_parse_from(arguments).expect("synthetic CLI arguments must parse")
+    }
+
+    #[test]
+    fn mcp_command_does_not_initialize_optional_bridge_services() {
+        let cli = parse_cli(&[
+            "muninn",
+            "--neo4j-password",
+            "synthetic",
+            "--embedding-provider",
+            "hash",
+            "--extraction-provider",
+            "spacy",
+            "--enrichment-enabled",
+            "--enrichment-providers",
+            "diffbot",
+            "--geocoding-enabled",
+            "--geocoding-provider",
+            "google",
+            "mcp",
+            "--owner-scope",
+            "owner-a",
+        ]);
+        let stages = optional_stages(&cli).unwrap();
+        assert!(stages.0.is_none());
+        assert!(stages.1.is_none());
+        assert!(stages.2.is_none());
+    }
+
+    #[test]
+    fn mcp_accepts_embedding_none_without_remote_identity_or_credentials() {
+        let cli = parse_cli(&[
+            "muninn",
+            "--neo4j-password",
+            "synthetic",
+            "--embedding-provider",
+            "none",
+            "mcp",
+            "--owner-scope",
+            "owner-a",
+        ]);
+        assert!(cli.embedding.embedding_identity.is_none());
+        assert!(embedder(&cli.embedding).unwrap().is_none());
+    }
+
+    #[test]
+    fn schema_policy_keeps_mcp_read_only_and_setup_for_existing_commands() {
+        let mcp = parse_cli(&[
+            "muninn",
+            "--neo4j-password",
+            "synthetic",
+            "mcp",
+            "--owner-scope",
+            "owner-a",
+        ]);
+        let bridge = parse_cli(&["muninn", "--neo4j-password", "synthetic", "bridge"]);
+        let schema = parse_cli(&["muninn", "--neo4j-password", "synthetic", "schema"]);
+
+        assert_eq!(
+            schema_actions(&mcp.command),
+            &[SchemaAction::ValidateVectorDimensions]
+        );
+        assert_eq!(
+            schema_actions(&bridge.command),
+            &[
+                SchemaAction::SetupAll,
+                SchemaAction::ValidateVectorDimensions
+            ]
+        );
+        assert_eq!(
+            schema_actions(&schema.command),
+            &[
+                SchemaAction::SetupAll,
+                SchemaAction::ValidateVectorDimensions
+            ]
+        );
     }
 
     #[test]
@@ -950,6 +1104,7 @@ mod tests {
                 assert!(!allow_destructive_clear);
             }
             Command::Schema => panic!("bridge invocation must not select schema"),
+            Command::Mcp { .. } => panic!("bridge invocation must not select MCP"),
         }
     }
 

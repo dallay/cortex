@@ -4,10 +4,11 @@ use serde_json::json;
 mod common;
 use common::request;
 
-#[test]
-fn discovery_has_own_identity_and_only_implemented_capabilities() {
+#[tokio::test]
+async fn discovery_has_own_identity_and_only_implemented_capabilities() {
     let response = Server::default()
         .handle(request("server/discover", json!({})))
+        .await
         .unwrap();
     assert_eq!(
         response["result"]["supportedVersions"],

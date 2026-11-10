@@ -2,11 +2,13 @@
 
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 pub enum Catalog {
     Core,
     Extended,
     ExtendedPlatinum,
+    ScopedRetrieval,
 }
 
 impl Catalog {
@@ -15,6 +17,7 @@ impl Catalog {
             Self::Core => include_str!("../registry/core.json"),
             Self::Extended => include_str!("../registry/extended.json"),
             Self::ExtendedPlatinum => include_str!("../registry/extended-platinum.json"),
+            Self::ScopedRetrieval => include_str!("../registry/scoped-retrieval.json"),
         };
         serde_json::from_str::<Value>(source).expect("embedded registry must be valid JSON")
             ["tools"]
@@ -24,8 +27,9 @@ impl Catalog {
 
 /// Adapters validate tool-specific arguments and enforce authorization before use.
 /// Errors must be safe for external display (no credentials or sensitive payloads).
+#[async_trait::async_trait]
 pub trait ToolHandler: Send + Sync {
-    fn call(&self, arguments: &Value) -> Result<Value, String>;
+    async fn call(&self, arguments: &Value) -> Result<Value, String>;
 }
 
 struct RegisteredTool {
@@ -34,6 +38,38 @@ struct RegisteredTool {
 }
 
 pub const PROTOCOL_VERSION: &str = "2026-07-28";
+pub const MAX_RESULT_BYTES: usize = 1024 * 1024;
+const TOOL_TIMEOUT: Duration = Duration::from_secs(30);
+
+struct BoundedBuffer(Vec<u8>);
+
+impl std::io::Write for BoundedBuffer {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let remaining = (MAX_RESULT_BYTES + 1).saturating_sub(self.0.len());
+        let written = remaining.min(bytes.len());
+        self.0.extend_from_slice(&bytes[..written]);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+enum ResultSerializationError {
+    TooLarge,
+    Failed,
+}
+
+fn serialize_result(value: &Value) -> Result<Vec<u8>, ResultSerializationError> {
+    let mut buffer = BoundedBuffer(Vec::with_capacity(MAX_RESULT_BYTES + 1));
+    match serde_json::to_writer(&mut buffer, value) {
+        Ok(()) if buffer.0.len() <= MAX_RESULT_BYTES => Ok(buffer.0),
+        Ok(()) => Err(ResultSerializationError::TooLarge),
+        Err(_) if buffer.0.len() > MAX_RESULT_BYTES => Err(ResultSerializationError::TooLarge),
+        Err(_) => Err(ResultSerializationError::Failed),
+    }
+}
 
 #[derive(Default)]
 pub struct Server {
@@ -74,7 +110,7 @@ impl Server {
         Ok(())
     }
 
-    pub fn handle(&mut self, request: Value) -> Option<Value> {
+    pub async fn handle(&mut self, request: Value) -> Option<Value> {
         let id = request.get("id").cloned();
         let valid_id = id
             .as_ref()
@@ -90,6 +126,34 @@ impl Server {
         let params = request.get("params");
         let id = id?;
         self.started = true;
+        if method == "initialize" {
+            let Some(params) = params.filter(|p| p.is_object()) else {
+                return Some(error(id, -32602, "Initialization parameters required"));
+            };
+            if params["protocolVersion"] != PROTOCOL_VERSION
+                || !params["capabilities"].is_object()
+                || !params["clientInfo"]["name"].is_string()
+                || !params["clientInfo"]["version"].is_string()
+            {
+                let requested = params
+                    .get("protocolVersion")
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                let mut response = error(
+                    id,
+                    -32022,
+                    "Unsupported protocol version or invalid client information",
+                );
+                response["error"]["data"] =
+                    json!({"supported":[PROTOCOL_VERSION],"requested":requested});
+                return Some(response);
+            }
+            return Some(json!({"jsonrpc":"2.0","id":id,"result":{
+                "protocolVersion":PROTOCOL_VERSION,
+                "capabilities":{"tools":{"listChanged":false}},
+                "serverInfo":{"name":"muninn","version":env!("CARGO_PKG_VERSION")}
+            }}));
+        }
         let Some(params) = params.filter(|p| p.is_object()) else {
             return Some(error(id, -32602, "Request metadata required"));
         };
@@ -110,7 +174,9 @@ impl Server {
         let result = match method {
             "server/discover" => Some(json!({"jsonrpc":"2.0","id":id,"result":{
                 "supportedVersions":[PROTOCOL_VERSION],
-                "capabilities":{"tools":{"listChanged":false}}
+                "capabilities":{"tools":{"listChanged":false}},
+                "ttlMs":0,
+                "cacheScope":"private"
             }})),
             "ping" => Some(json!({"jsonrpc":"2.0","id":id,"result":{}})),
             "tools/list" => Some(
@@ -140,9 +206,23 @@ impl Server {
                 if !arguments.is_object() {
                     return Some(error(id, -32602, "Invalid tool arguments"));
                 }
-                let (payload, failed) = tool.handler.call(arguments).map_or_else(
+                let result = tokio::time::timeout(TOOL_TIMEOUT, tool.handler.call(arguments))
+                    .await
+                    .unwrap_or_else(|_| Err("timeout".to_owned()));
+                let (payload, failed) = result.map_or_else(
                     |_| ("Tool execution failed".to_owned(), true),
-                    |value| (value.to_string(), false),
+                    |value| match serialize_result(&value) {
+                        Ok(bytes) => (
+                            String::from_utf8(bytes).expect("JSON serialization is valid UTF-8"),
+                            false,
+                        ),
+                        Err(ResultSerializationError::TooLarge) => {
+                            ("Tool result exceeds size limit".to_owned(), true)
+                        }
+                        Err(ResultSerializationError::Failed) => {
+                            ("Tool execution failed".to_owned(), true)
+                        }
+                    },
                 );
                 Some(
                     json!({"jsonrpc":"2.0","id":id,"result":{"content":[{"type":"text","text":payload}],"isError":failed}}),
@@ -166,18 +246,18 @@ impl Server {
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 
 /// Run one stdio session. Oversized input closes the session without echoing it.
-pub fn serve<R: std::io::BufRead, W: std::io::Write>(
+pub async fn serve<R: tokio::io::AsyncBufRead + Unpin, W: tokio::io::AsyncWrite + Unpin>(
     mut reader: R,
     mut writer: W,
     server: &mut Server,
 ) -> std::io::Result<()> {
-    use std::io::{BufRead, Error, ErrorKind, Read};
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, Error, ErrorKind};
     loop {
         let mut frame = Vec::new();
-        let read = reader
-            .by_ref()
+        let read = (&mut reader)
             .take((MAX_MESSAGE_BYTES + 1) as u64)
-            .read_until(b'\n', &mut frame)?;
+            .read_until(b'\n', &mut frame)
+            .await?;
         if read == 0 {
             return Ok(());
         }
@@ -190,14 +270,39 @@ pub fn serve<R: std::io::BufRead, W: std::io::Write>(
                 "MCP message exceeds size limit",
             ));
         }
-        let response = serde_json::from_slice::<Value>(&frame).map_or_else(
-            |_| Some(error(Value::Null, -32700, "Parse error")),
-            |request| server.handle(request),
-        );
+        let response = match serde_json::from_slice::<Value>(&frame) {
+            Ok(request) => server.handle(request).await,
+            Err(_) => Some(error(Value::Null, -32700, "Parse error")),
+        };
         if let Some(response) = response {
-            serde_json::to_writer(&mut writer, &response)?;
-            writer.write_all(b"\n")?;
-            writer.flush()?;
+            frame.clear();
+            serde_json::to_writer(&mut frame, &response)?;
+            if frame.len() > MAX_MESSAGE_BYTES {
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    "MCP response exceeds size limit",
+                ));
+            }
+            writer.write_all(&frame).await?;
+            writer.write_all(b"\n").await?;
+            writer.flush().await?;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BoundedBuffer, MAX_RESULT_BYTES};
+    use std::io::Write;
+
+    #[test]
+    fn result_buffer_caps_serialized_bytes_at_limit_plus_one() {
+        let mut buffer = BoundedBuffer(Vec::new());
+        let oversized = vec![b'x'; MAX_RESULT_BYTES + 128];
+
+        let written = buffer.write(&oversized).unwrap();
+
+        assert_eq!(written, MAX_RESULT_BYTES + 1);
+        assert_eq!(buffer.0.len(), MAX_RESULT_BYTES + 1);
     }
 }

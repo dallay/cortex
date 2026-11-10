@@ -1,0 +1,33 @@
+{
+  "tools": [
+    {
+      "name": "muninn_search_messages",
+      "title": "Search messages",
+      "description": "Search messages in the host-configured owner scope. The owner scope is fixed for this server process.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "query": { "type": "string", "minLength": 1 },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 20 }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "muninn_search_preferences",
+      "title": "Search preferences",
+      "description": "Search preferences in the host-configured owner scope. The owner scope is fixed for this server process.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "query": { "type": "string", "minLength": 1 },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 20 },
+          "category": { "type": "string" }
+        },
+        "required": ["query"]
+      }
+    }
+  ]
+}
