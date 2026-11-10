@@ -1223,7 +1223,7 @@ impl ManageConnections {
                 Credentials::OAuth {
                     project_id: stored_project,
                     oauth_client_id: stored_client_id,
-                    oauth_client_secret: stored_client_secret,
+                    oauth_client_secret: stored_secret_blob,
                     oauth_tenant_id: stored_tenant,
                     ..
                 },
@@ -1231,7 +1231,7 @@ impl ManageConnections {
                 let Ok(stored_project) = self.key_manager.decrypt(stored_project.as_str()) else {
                     return false;
                 };
-                let stored_secret = match stored_client_secret {
+                let stored_secret = match stored_secret_blob {
                     Some(secret) => match self.key_manager.decrypt(secret.as_str()) {
                         Ok(secret) => Some(secret),
                         Err(_) => return false,

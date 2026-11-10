@@ -325,7 +325,20 @@ impl RouteRequest {
                     Ok(connection) => connection,
                     Err(error) => {
                         drop(permit);
-                        return Err(error);
+                        tracing::warn!(
+                            step_index = step_index + 1,
+                            provider_id = %provider_id,
+                            %error,
+                            skip_reason = "connection_state_unavailable",
+                            "skipping combo stream step after routing-state re-read failed"
+                        );
+                        record_combo_skip(
+                            &mut errors,
+                            &provider_id,
+                            step_index,
+                            "connection_state_unavailable",
+                        );
+                        continue;
                     }
                 };
                 let current_runtime = current_connection.and_then(|current| {

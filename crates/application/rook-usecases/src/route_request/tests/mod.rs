@@ -2129,6 +2129,14 @@ async fn refreshed_same_id_provider_is_reassessed_before_all_rejected_error() {
     );
 }
 
+/// Upper bound on candidate snapshot reads during a churned request.
+///
+/// The routing stage evaluates a snapshot, validates it against the registry,
+/// and allows one re-evaluation before it fails closed. Each evaluation reads
+/// the candidate list a small number of times, so the bound scales with that
+/// fixed retry budget instead of pinning one exact call pattern.
+const MAX_CHURN_CANDIDATE_READS: usize = 12;
+
 #[tokio::test]
 async fn eligibility_registry_churn_is_rechecked_at_most_once() {
     let target = ProviderId::new("churning-provider");
@@ -2151,6 +2159,7 @@ async fn eligibility_registry_churn_is_rechecked_at_most_once() {
         )),
         providers: [first, second],
         candidate_reads: std::sync::atomic::AtomicUsize::new(0),
+        exposed_providers: Mutex::new(Vec::new()),
     });
     let usecase = usecase_with_router(router.clone());
     let mut req = request();
@@ -2164,6 +2173,20 @@ async fn eligibility_registry_churn_is_rechecked_at_most_once() {
     assert!(error.to_string().contains("all providers exhausted"));
     assert!(first_calls.lock().unwrap().is_empty());
     assert!(second_calls.lock().unwrap().is_empty());
+    assert!(
+        router
+            .candidate_reads
+            .load(std::sync::atomic::Ordering::SeqCst)
+            <= MAX_CHURN_CANDIDATE_READS,
+        "churn must stop after one refresh instead of retrying without a bound: reads={}",
+        router
+            .candidate_reads
+            .load(std::sync::atomic::Ordering::SeqCst)
+    );
+    assert!(
+        router.exposed_providers.lock().unwrap().len() >= 2,
+        "the registry must actually churn for this test to cover the refresh path"
+    );
 
     let stream_router = Arc::new(RegistryChurnDuringEligibilityRouter {
         inner: Arc::new(crate::FallbackRouter::new(
@@ -2172,6 +2195,7 @@ async fn eligibility_registry_churn_is_rechecked_at_most_once() {
         )),
         providers: router.providers.clone(),
         candidate_reads: std::sync::atomic::AtomicUsize::new(0),
+        exposed_providers: Mutex::new(Vec::new()),
     });
     let stream_usecase = usecase_with_router(stream_router.clone());
     let mut stream_req = request();
@@ -2186,12 +2210,24 @@ async fn eligibility_registry_churn_is_rechecked_at_most_once() {
     assert!(error.to_string().contains("all providers exhausted"));
     assert!(first_calls.lock().unwrap().is_empty());
     assert!(second_calls.lock().unwrap().is_empty());
+    assert!(
+        stream_router
+            .candidate_reads
+            .load(std::sync::atomic::Ordering::SeqCst)
+            <= MAX_CHURN_CANDIDATE_READS,
+        "stream selection must also stop after one snapshot re-evaluation"
+    );
+    assert!(
+        stream_router.exposed_providers.lock().unwrap().len() >= 2,
+        "the registry must actually churn for this test to cover the refresh path"
+    );
 }
 
 struct RegistryChurnDuringEligibilityRouter {
     inner: Arc<crate::FallbackRouter>,
     providers: [Arc<dyn ProviderPort>; 2],
     candidate_reads: std::sync::atomic::AtomicUsize,
+    exposed_providers: Mutex<Vec<ProviderId>>,
 }
 
 #[async_trait]
@@ -2221,11 +2257,13 @@ impl RouterPort for RegistryChurnDuringEligibilityRouter {
         let index = self
             .candidate_reads
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        rook_core::ProviderRegistryPort::replace_all(
-            self.inner.as_ref(),
-            vec![self.providers[index % 2].clone()],
-        )
-        .expect("registry refresh succeeds");
+        let provider = self.providers[index % 2].clone();
+        self.exposed_providers
+            .lock()
+            .unwrap()
+            .push(provider.id().clone());
+        rook_core::ProviderRegistryPort::replace_all(self.inner.as_ref(), vec![provider])
+            .expect("registry refresh succeeds");
         snapshot
     }
 }
@@ -3540,6 +3578,90 @@ impl ProviderRepositoryPort for RevisionChangingProviderRepository {
 struct FailsOneRoutingStateReadRepository {
     connections: HashMap<ConnectionId, rook_core::ProviderConnection>,
     fail_connection_id: ConnectionId,
+}
+
+struct FailsSecondRoutingStateReadRepository {
+    connections: HashMap<ConnectionId, rook_core::ProviderConnection>,
+    fail_connection_id: ConnectionId,
+    reads: std::sync::atomic::AtomicUsize,
+    timeout: bool,
+    /// When set, every connection fails the routing-state re-read instead of
+    /// only `fail_connection_id`. The first read always succeeds so the
+    /// failure lands on the post-permission re-read.
+    fail_every_connection: bool,
+}
+
+#[async_trait]
+impl ProviderRepositoryPort for FailsSecondRoutingStateReadRepository {
+    async fn list(&self) -> Result<Vec<rook_core::ProviderConnection>, rook_core::RepositoryError> {
+        Ok(self.connections.values().cloned().collect())
+    }
+
+    async fn list_routing_state_for_candidates(
+        &self,
+        targets: &[ProviderId],
+    ) -> Result<Vec<rook_core::ProviderConnectionRoutingState>, rook_core::RepositoryError> {
+        let is_failing_target = self.fail_every_connection
+            || targets
+                .iter()
+                .any(|target| target.as_str() == self.fail_connection_id.to_string());
+        if is_failing_target && self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 0 {
+            if self.timeout {
+                return std::future::pending().await;
+            }
+            return Err(rook_core::RepositoryError::Database(
+                "routing-state reread test failure".to_string(),
+            ));
+        }
+
+        Ok(self
+            .connections
+            .values()
+            .filter(|connection| {
+                targets
+                    .iter()
+                    .any(|target| target.as_str() == connection.id.to_string())
+            })
+            .map(|connection| rook_core::ProviderConnectionRoutingState {
+                id: connection.id,
+                provider_runtime_id: connection.provider_runtime_id.clone(),
+                adapter_revision: connection.adapter_revision,
+                priority: connection.priority,
+                created_at: connection.created_at,
+                is_active: connection.is_active,
+                auth_expired: matches!(
+                    &connection.test_status,
+                    rook_core::TestStatus::Expired { .. }
+                ),
+            })
+            .collect())
+    }
+
+    async fn find(
+        &self,
+        id: &ConnectionId,
+    ) -> Result<Option<rook_core::ProviderConnection>, rook_core::RepositoryError> {
+        Ok(self.connections.get(id).cloned())
+    }
+
+    async fn create(
+        &self,
+        _connection: &rook_core::ProviderConnection,
+    ) -> Result<(), rook_core::RepositoryError> {
+        unreachable!("test repository is read-only")
+    }
+
+    async fn update(
+        &self,
+        _connection: &rook_core::ProviderConnection,
+        _expected_updated_at: chrono::DateTime<Utc>,
+    ) -> Result<(), rook_core::RepositoryError> {
+        unreachable!("test repository is read-only")
+    }
+
+    async fn delete(&self, _id: &ConnectionId) -> Result<(), rook_core::RepositoryError> {
+        unreachable!("test repository is read-only")
+    }
 }
 
 #[async_trait]
@@ -5225,6 +5347,289 @@ fn quota_combo_setup(
         first_calls,
         second_calls,
     }
+}
+
+/// Combo under test, the per-provider call recorders, the router, and the
+/// repository whose routing-state re-read fails.
+type ComboStateRereadSetup = (
+    Combo,
+    Arc<Mutex<Vec<String>>>,
+    Arc<Mutex<Vec<String>>>,
+    Arc<dyn RouterPort>,
+    Arc<dyn ProviderRepositoryPort>,
+);
+
+/// Streaming harness for the same combo, plus the per-provider call recorders.
+type ComboStreamStateRereadSetup = (
+    RouteRequest,
+    Combo,
+    Arc<Mutex<Vec<String>>>,
+    Arc<Mutex<Vec<String>>>,
+);
+
+fn combo_state_reread_setup(timeout: bool, fail_every_connection: bool) -> ComboStateRereadSetup {
+    let first_connection = ConnectionId::new();
+    let second_connection = ConnectionId::new();
+    let runtime_id = ProviderId::new("combo-reread-runtime");
+    let first_calls = Arc::new(Mutex::new(Vec::new()));
+    let second_calls = Arc::new(Mutex::new(Vec::new()));
+    let first_provider = connection_bound_provider(
+        Arc::new(SpyProvider {
+            id: ProviderId::new(first_connection.to_string()),
+            model: ModelId::new("gpt-test"),
+            seen_models: first_calls.clone(),
+        }),
+        first_connection,
+    );
+    let second_provider = connection_bound_provider(
+        Arc::new(SpyProvider {
+            id: ProviderId::new(second_connection.to_string()),
+            model: ModelId::new("gpt-test"),
+            seen_models: second_calls.clone(),
+        }),
+        second_connection,
+    );
+    let router: Arc<dyn RouterPort> = Arc::new(OrderedRouter {
+        providers: Vec::new(),
+        connection_providers: HashMap::from([
+            (first_connection, first_provider),
+            (second_connection, second_provider),
+        ]),
+    });
+    let repository: Arc<dyn ProviderRepositoryPort> =
+        Arc::new(FailsSecondRoutingStateReadRepository {
+            connections: HashMap::from([
+                (
+                    first_connection,
+                    test_connection(first_connection, runtime_id.clone(), true),
+                ),
+                (
+                    second_connection,
+                    test_connection(second_connection, runtime_id.clone(), true),
+                ),
+            ]),
+            fail_connection_id: first_connection,
+            reads: std::sync::atomic::AtomicUsize::new(0),
+            timeout,
+            fail_every_connection,
+        });
+    let combo = Combo::new(
+        "combo-state-reread".to_string(),
+        ComboStrategy::Priority,
+        vec![
+            ComboStep {
+                provider_id: runtime_id.clone(),
+                model: ModelId::new("gpt-test"),
+                connection_id: Some(first_connection),
+                priority: 1,
+            },
+            ComboStep {
+                provider_id: runtime_id,
+                model: ModelId::new("gpt-test"),
+                connection_id: Some(second_connection),
+                priority: 2,
+            },
+        ],
+    );
+    (combo, first_calls, second_calls, router, repository)
+}
+
+#[tokio::test]
+async fn combo_state_reread_error_skips_step_and_falls_back() {
+    let (combo, first_calls, second_calls, router, repository) =
+        combo_state_reread_setup(false, false);
+    let harness = combo_harness_with_repositories(
+        combo.clone(),
+        vec![],
+        router,
+        Arc::new(Mutex::new(Vec::new())),
+        Some(repository),
+    );
+
+    let result = harness
+        .usecase
+        .execute_combo(
+            &combo,
+            combo_req("gpt-test", rook_core::ApiKeyRestrictions::default()),
+        )
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "the next verified step must serve the request: {result:?}"
+    );
+    assert!(
+        first_calls.lock().unwrap().is_empty(),
+        "the unreadable connection must not reach upstream"
+    );
+    assert_eq!(second_calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn combo_state_reread_timeout_skips_step_and_falls_back() {
+    let (combo, first_calls, second_calls, router, repository) =
+        combo_state_reread_setup(true, false);
+    let harness = combo_harness_with_repositories(
+        combo.clone(),
+        vec![],
+        router,
+        Arc::new(Mutex::new(Vec::new())),
+        Some(repository),
+    );
+
+    let result = harness
+        .usecase
+        .execute_combo(
+            &combo,
+            combo_req("gpt-test", rook_core::ApiKeyRestrictions::default()),
+        )
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "the next verified step must serve the request: {result:?}"
+    );
+    assert!(
+        first_calls.lock().unwrap().is_empty(),
+        "the timed-out connection must not reach upstream"
+    );
+    assert_eq!(second_calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn combo_state_reread_failure_records_connection_state_unavailable_reason() {
+    let (combo, first_calls, second_calls, router, repository) =
+        combo_state_reread_setup(false, true);
+    let harness = combo_harness_with_repositories(
+        combo.clone(),
+        vec![],
+        router,
+        Arc::new(Mutex::new(Vec::new())),
+        Some(repository),
+    );
+
+    let error = harness
+        .usecase
+        .execute_combo(
+            &combo,
+            combo_req("gpt-test", rook_core::ApiKeyRestrictions::default()),
+        )
+        .await
+        .expect_err("every step must be skipped when the routing-state re-read fails");
+
+    let reasons = error
+        .combo_skip_reasons()
+        .expect("the exhausted combo must expose the recorded skip reasons");
+    assert!(
+        reasons
+            .iter()
+            .any(|(_, reason)| reason == "connection_state_unavailable"),
+        "the failed re-read must record the connection_state_unavailable skip reason: {reasons:?}"
+    );
+    assert!(
+        first_calls.lock().unwrap().is_empty(),
+        "the unreadable connection must not reach upstream"
+    );
+    assert!(
+        second_calls.lock().unwrap().is_empty(),
+        "every skipped connection must not reach upstream"
+    );
+}
+
+fn combo_stream_state_reread_setup(
+    timeout: bool,
+    fail_every_connection: bool,
+) -> ComboStreamStateRereadSetup {
+    let (combo, first_calls, second_calls, router, repository) =
+        combo_state_reread_setup(timeout, fail_every_connection);
+    let combo_id = combo.id;
+    let aliases = HashMap::from([(
+        "rook/state-reread".to_string(),
+        ComboAlias::new(ModelId::new("rook/state-reread"), combo_id),
+    )]);
+    let usecase = RouteRequest::new(
+        router,
+        Arc::new(TestCache {
+            get_calls: Mutex::new(0),
+            set_calls: Mutex::new(0),
+        }),
+        Arc::new(TestAudit {
+            entries: Mutex::new(Vec::new()),
+        }),
+        None,
+        Some(repository),
+        Some(Arc::new(MapComboRepository {
+            combos: HashMap::from([(combo_id, combo.clone())]),
+        })),
+        Arc::new(crate::PricingConfig::default()),
+        Arc::new(TestAliasRepository),
+        test_alias_config(),
+        None,
+    )
+    .with_combo_alias_repository(Arc::new(MapComboAliasRepository { aliases }));
+    (usecase, combo, first_calls, second_calls)
+}
+
+#[tokio::test]
+async fn combo_stream_state_reread_error_skips_step_and_falls_back() {
+    let (usecase, _combo, first_calls, second_calls) =
+        combo_stream_state_reread_setup(false, false);
+    let stream = usecase
+        .execute_stream(stream_req("rook/state-reread"))
+        .await
+        .expect("the next verified stream step must start");
+    let chunks = stream.collect::<Vec<_>>().await;
+
+    assert!(!chunks.is_empty());
+    assert!(chunks.iter().all(Result::is_ok));
+    assert!(first_calls.lock().unwrap().is_empty());
+    assert_eq!(second_calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn combo_stream_state_reread_timeout_skips_step_and_falls_back() {
+    let (usecase, _combo, first_calls, second_calls) = combo_stream_state_reread_setup(true, false);
+    let stream = usecase
+        .execute_stream(stream_req("rook/state-reread"))
+        .await
+        .expect("the next verified stream step must start");
+    let chunks = stream.collect::<Vec<_>>().await;
+
+    assert!(!chunks.is_empty());
+    assert!(chunks.iter().all(Result::is_ok));
+    assert!(first_calls.lock().unwrap().is_empty());
+    assert_eq!(second_calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn combo_stream_state_reread_failure_records_connection_state_unavailable_reason() {
+    let (usecase, _combo, first_calls, second_calls) = combo_stream_state_reread_setup(false, true);
+
+    let error = match usecase
+        .execute_stream(stream_req("rook/state-reread"))
+        .await
+    {
+        Ok(_) => panic!("every stream step must be skipped when the routing-state re-read fails"),
+        Err(error) => error,
+    };
+
+    let reasons = error
+        .combo_skip_reasons()
+        .expect("the exhausted combo must expose the recorded skip reasons");
+    assert!(
+        reasons
+            .iter()
+            .any(|(_, reason)| reason == "connection_state_unavailable"),
+        "the failed re-read must record the connection_state_unavailable skip reason: {reasons:?}"
+    );
+    assert!(
+        first_calls.lock().unwrap().is_empty(),
+        "the unreadable connection must not reach upstream"
+    );
+    assert!(
+        second_calls.lock().unwrap().is_empty(),
+        "every skipped connection must not reach upstream"
+    );
 }
 
 #[tokio::test]

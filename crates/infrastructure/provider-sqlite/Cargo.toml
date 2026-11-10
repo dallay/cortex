@@ -17,4 +17,5 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 
 [dev-dependencies]
+refinery = { workspace = true }
 tempfile = "=3.27.0"

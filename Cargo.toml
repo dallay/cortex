@@ -101,6 +101,7 @@ ttl_cache = "0.5"
 
 # Database
 rusqlite = { version = "0.41", features = ["bundled"] }
+refinery = { version = "0.10", features = ["rusqlite"] }
 
 # HTTP clients
 reqwest = { version = "0.13", features = ["form", "json", "rustls"], default-features = false }

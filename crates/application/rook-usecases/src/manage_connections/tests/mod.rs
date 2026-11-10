@@ -1258,7 +1258,7 @@ fn credentials_of_a_different_type_are_rejected() {
                     UpdateConnectionRequest {
                         expected_updated_at: conn.updated_at,
                         credentials: Some(CredentialsInput::ApiKey {
-                            api_key: "wrong-credential-kind".to_string(),
+                            api_key: "wrong-kind".to_string(),
                         }),
                         ..Default::default()
                     },

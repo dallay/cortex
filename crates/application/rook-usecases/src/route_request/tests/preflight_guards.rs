@@ -8,6 +8,47 @@
 use super::*;
 use crate::catalogued_provider::CataloguedProvider;
 use rook_core::QuotaObservationQuery;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
+
+struct ConcurrentQuotaStore {
+    active_reads: AtomicUsize,
+    max_active_reads: AtomicUsize,
+    query_count: AtomicUsize,
+}
+
+impl ConcurrentQuotaStore {
+    fn observe_max(&self, active: usize) {
+        self.max_active_reads.fetch_max(active, Ordering::SeqCst);
+    }
+}
+
+#[async_trait]
+impl QuotaObservationRecorderPort for ConcurrentQuotaStore {
+    async fn record_observation(&self, _observation: QuotaObservation) -> CortexResult<()> {
+        Ok(())
+    }
+
+    async fn list_observations(
+        &self,
+        _provider: Option<ProviderId>,
+    ) -> CortexResult<Vec<QuotaObservation>> {
+        Ok(Vec::new())
+    }
+
+    async fn latest_observations(
+        &self,
+        query: &QuotaObservationQuery,
+    ) -> CortexResult<Vec<QuotaObservation>> {
+        assert_eq!(query.connection_ids.len(), 1);
+        self.query_count.fetch_add(1, Ordering::SeqCst);
+        let active = self.active_reads.fetch_add(1, Ordering::SeqCst) + 1;
+        self.observe_max(active);
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        self.active_reads.fetch_sub(1, Ordering::SeqCst);
+        Ok(Vec::new())
+    }
+}
 
 /// Quota store whose reads always fail.
 struct FailingQuotaStore;
@@ -31,6 +72,65 @@ impl QuotaObservationRecorderPort for FailingQuotaStore {
     ) -> CortexResult<Vec<QuotaObservation>> {
         Err(CortexError::provider("quota store unavailable"))
     }
+}
+
+#[tokio::test]
+async fn quota_reads_are_concurrent_bounded_and_issued_once_per_connection() {
+    let connection_count = super::QUOTA_READ_CONCURRENCY + 2;
+    let mut providers = Vec::with_capacity(connection_count);
+    let mut connections = HashMap::new();
+    for index in 0..connection_count {
+        let connection_id = ConnectionId::new();
+        let runtime_id = ProviderId::new(format!("quota-concurrency-runtime-{index}"));
+        providers.push(connection_bound_provider(
+            Arc::new(SpyProvider {
+                id: ProviderId::new(connection_id.to_string()),
+                model: TEST_MODEL.clone(),
+                seen_models: Arc::new(Mutex::new(Vec::new())),
+            }),
+            connection_id,
+        ));
+        connections.insert(
+            connection_id,
+            test_connection(connection_id, runtime_id, true),
+        );
+    }
+    let router: Arc<dyn RouterPort> = Arc::new(crate::FallbackRouter::new(
+        providers,
+        crate::RoutingStrategy::Priority,
+    ));
+    let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(QuotaAwareProviderRepository {
+        connections,
+        runtime_connections: HashMap::new(),
+    });
+    let quota_store = Arc::new(ConcurrentQuotaStore {
+        active_reads: AtomicUsize::new(0),
+        max_active_reads: AtomicUsize::new(0),
+        query_count: AtomicUsize::new(0),
+    });
+    let usecase = usecase_with_router_and_provider_repository(router, repository)
+        .with_quota_observation_reader(quota_store.clone());
+    let mut req = request();
+    req.metadata.cacheable = false;
+
+    usecase
+        .execute(req)
+        .await
+        .expect("quota reads should complete within the shared deadline");
+
+    assert_eq!(
+        quota_store.query_count.load(Ordering::SeqCst),
+        connection_count
+    );
+    let max_active = quota_store.max_active_reads.load(Ordering::SeqCst);
+    assert!(
+        max_active > 1,
+        "reads should overlap; observed {max_active}"
+    );
+    assert!(
+        max_active <= super::QUOTA_READ_CONCURRENCY,
+        "read concurrency exceeded its configured limit: {max_active}"
+    );
 }
 
 #[tokio::test]
