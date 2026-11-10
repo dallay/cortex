@@ -16,11 +16,13 @@ without treating approval as permission to remove that boundary.
 ## Decision
 
 On macOS, every `run_shell` invocation MUST use `/usr/bin/sandbox-exec` and a
-dynamic deny-by-default SBPL profile. The profile permits only the workspace
-and runtime operations supported by evidence, and denies network and socket
-access. The shell and descendants remain subject to the same profile. Failure
-to prepare or apply the profile MUST stop execution. There is no opt-out,
-fallback, bypass, or persistent grant.
+dynamic deny-by-default SBPL profile. The profile permits the workspace, read
+metadata for the workspace's immediate parent only, and runtime operations
+supported by evidence. The parent metadata exception supports POSIX directory
+listing of the workspace; it does not permit listing or reading parent contents.
+The profile denies network and socket access. The shell and descendants remain
+subject to the same profile. Failure to prepare or apply the profile MUST stop
+execution. There is no opt-out, fallback, bypass, or persistent grant.
 
 `Deny` continues to block execution. `Allow once` approves only the requested
 operation and does not change the sandbox. Native tools and MCP are outside
@@ -30,6 +32,8 @@ this boundary. This decision makes no Linux or Windows isolation claim.
 
 - Shell commands that require network access or paths outside the workspace
   can fail.
+- Listing a workspace can report its own `..` entry without granting access to
+  the parent directory's contents.
 - Apple deprecates Seatbelt interfaces. `dyld-support.sb` is private Apple
   behavior. Availability and behavior can change; Huginn fails closed.
 - Support claims are limited to macOS versions actually tested. The current

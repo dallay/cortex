@@ -497,7 +497,7 @@ impl Tool for NativeTool {
             Kind::Search => ("search_files", "Search literal text in UTF-8 files under a workspace path.", json!({"path":{"type":"string"},"query":{"type":"string","minLength":1}}), vec!["query"]),
             Kind::Write => ("write_file", "Create or replace a UTF-8 file. Shows a diff and requires approval. Parent directory must exist.", json!({"path":{"type":"string"},"content":{"type":"string"}}), vec!["path", "content"]),
             Kind::Edit => ("edit_file", "Replace exactly one occurrence of old_text with new_text. Shows a diff and requires approval.", json!({"path":{"type":"string"},"old_text":{"type":"string","minLength":1},"new_text":{"type":"string"}}), vec!["path", "old_text", "new_text"]),
-            Kind::Shell => ("shell", "Run a POSIX shell command in the workspace, with explicit approval and bounded time/output. This is not sandboxed.", json!({"command":{"type":"string","minLength":1}}), vec!["command"]),
+            Kind::Shell => ("shell", "Run a POSIX shell command in the workspace, with explicit approval and bounded time/output. On macOS, Seatbelt limits workspace data access, while allowing runtime-required reads and metadata access to the immediate parent; network and socket access remain denied. Other platforms do not add an OS sandbox.", json!({"command":{"type":"string","minLength":1}}), vec!["command"]),
         };
         ToolDefinition {
             name: name.into(),
@@ -1403,6 +1403,104 @@ mod run_shell_seatbelt_tests {
         assert!(output.starts_with("Exit: exit status: 0\n"), "{output}");
         assert!(output.contains("beforeafter"), "{output}");
         assert_eq!(std::fs::read_to_string(marker).unwrap(), "after");
+    }
+
+    #[tokio::test]
+    async fn run_shell_can_print_cwd_and_list_workspace_contents() {
+        let workspace = tempfile::tempdir().unwrap();
+        std::fs::write(workspace.path().join("README.md"), "workspace file").unwrap();
+        std::fs::write(workspace.path().join("hi.md"), "another file").unwrap();
+        let canonical_workspace = workspace.path().canonicalize().unwrap();
+
+        let output = run_shell("pwd; ls -la", &context(canonical_workspace.clone()), 10)
+            .await
+            .unwrap();
+
+        assert!(output.starts_with("Exit: exit status: 0\n"), "{output}");
+        assert!(
+            output.contains(&canonical_workspace.display().to_string()),
+            "pwd did not report the canonical workspace: {output}"
+        );
+        assert!(
+            output.contains("README.md"),
+            "workspace listing missing README: {output}"
+        );
+        assert!(
+            output.contains("hi.md"),
+            "workspace listing missing hi.md: {output}"
+        );
+        assert!(
+            !output.contains("ls: .: Operation not permitted")
+                && !output.contains("ls: fts_read: Operation not permitted"),
+            "ls failed to enumerate the workspace: {output}"
+        );
+    }
+
+    #[tokio::test]
+    async fn listing_workspace_needs_only_metadata_for_its_parent() {
+        let workspace = tempfile::tempdir().unwrap();
+        std::fs::write(workspace.path().join("README.md"), "workspace file").unwrap();
+        let roots = crate::seatbelt::prepare_workspace(workspace.path()).unwrap();
+        let profile = crate::seatbelt::build_profile(&roots).unwrap();
+        let parent_marker = roots
+            .workspace()
+            .parent()
+            .unwrap()
+            .join("parent-secret-marker");
+        std::fs::write(&parent_marker, "parent-secret-content").unwrap();
+
+        let listing = run_shell_with_seatbelt_profile(
+            "pwd; ls -la",
+            roots.workspace(),
+            profile.as_str(),
+            &context(roots.workspace().to_path_buf()),
+            10,
+        )
+        .await
+        .unwrap();
+        assert!(listing.starts_with("Exit: exit status: 0\n"), "{listing}");
+        assert!(listing.contains("README.md"), "{listing}");
+
+        let parent_listing = run_shell_with_seatbelt_profile(
+            "ls -la ..",
+            roots.workspace(),
+            profile.as_str(),
+            &context(roots.workspace().to_path_buf()),
+            10,
+        )
+        .await
+        .unwrap();
+        assert!(
+            parent_listing.contains("Operation not permitted"),
+            "parent contents must remain inaccessible: {parent_listing}"
+        );
+        assert!(
+            !parent_listing.contains("README.md"),
+            "workspace child unexpectedly appeared in the parent listing: {parent_listing}"
+        );
+        assert!(
+            !parent_listing.contains("parent-secret-marker")
+                && !parent_listing.contains("parent-secret-content"),
+            "parent entries or contents became visible: {parent_listing}"
+        );
+
+        let parent_read = run_shell_with_seatbelt_profile(
+            "cat ../parent-secret-marker",
+            roots.workspace(),
+            profile.as_str(),
+            &context(roots.workspace().to_path_buf()),
+            10,
+        )
+        .await
+        .unwrap();
+        assert!(
+            parent_read.contains("Operation not permitted"),
+            "direct read of parent data must be denied: {parent_read}"
+        );
+        assert!(
+            !parent_read.contains("parent-secret-content"),
+            "parent file contents became visible: {parent_read}"
+        );
     }
 
     fn run_host_probe(command: &str) -> std::process::Output {

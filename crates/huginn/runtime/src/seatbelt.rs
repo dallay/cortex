@@ -64,7 +64,14 @@ pub fn build_profile(roots: &SandboxRoots) -> Result<SandboxProfile, ProfileErro
          (allow file-read* (subpath ",
     );
     profile.push_str(&sbpl_string(path));
-    profile.push_str("))\n(allow file-write* (subpath ");
+    profile.push_str("))\n");
+    if let Some(parent) = workspace.parent() {
+        let parent = parent.to_str().ok_or(ProfileError::NonUnicodePath)?;
+        profile.push_str("(allow file-read-metadata (literal ");
+        profile.push_str(&sbpl_string(parent));
+        profile.push_str("))\n");
+    }
+    profile.push_str("(allow file-write* (subpath ");
     profile.push_str(&sbpl_string(path));
     profile.push_str("))\n");
     if profile.len() > MAX_PROFILE_BYTES {
@@ -109,6 +116,7 @@ mod tests {
         assert!(text.contains("(deny default)"));
         assert!(text.contains("(allow file-read* (subpath "));
         assert!(text.contains("(allow file-write* (subpath "));
+        assert!(text.contains("(allow file-read-metadata (literal "));
         assert!(!text.contains("network"));
         assert!(!text.contains("socket"));
         assert!(!text.contains("(subpath \"/usr\")"));
@@ -197,7 +205,7 @@ mod tests {
             text.lines()
                 .filter(|line| line.starts_with("(allow "))
                 .count(),
-            6
+            7
         );
     }
 
