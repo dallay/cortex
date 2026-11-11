@@ -513,12 +513,71 @@ fn inline_approval_defaults_to_reject_navigates_and_ignores_paste() {
         pty.send("\x1b[C");
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
+    // Bracketed paste is text, never a confirmation.
+    pty.send("\x1b[200~\r\x1b[201~");
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert!(!pty.output().contains("APPROVED"), "paste cannot authorize");
     pty.send("\x06");
     pty.wait_for("Approval for native.edit");
     pty.send("\x1b[F");
     pty.wait_for("PREVIEW_LAST");
     pty.send("\x1b[C\r");
     pty.wait_output_for("APPROVED");
+    pty.send("\x03");
+    pty.finish(true);
+}
+
+/// Waits until Right reaches the positive choice, i.e. the approval is armed.
+fn select_approve_once(pty: &Pty) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !pty.screen_text().contains("›Approve once") {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "approval was not promoted before timeout: {}",
+            pty.screen_text()
+        );
+        pty.send("\x1b[C");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn single_line_shell_approves_from_the_collapsed_panel_with_enter() {
+    let mut pty = start("normal", true);
+    pty.wait_for("Huginn");
+    pty.send("approve-shell\r");
+    pty.wait_for("›Reject");
+    select_approve_once(&pty);
+    pty.send("\r");
+    pty.wait_output_for("APPROVED");
+    pty.send("\x03");
+    pty.finish(true);
+}
+
+#[test]
+fn multiline_shell_cannot_approve_from_the_collapsed_panel() {
+    let mut pty = start("normal", true);
+    pty.wait_for("Huginn");
+    pty.send("approve-shell-multiline\r");
+    pty.wait_for("›Reject");
+    select_approve_once(&pty);
+    pty.send("\r");
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    let screen = pty.screen_text();
+    assert!(
+        !pty.output().contains("APPROVED") && !pty.output().contains("DENIED"),
+        "an unreviewed multi-line command must neither grant nor silently reject: {screen}"
+    );
+    assert!(
+        screen.contains("›Approve once"),
+        "the request stays open: {screen}"
+    );
+    assert!(
+        screen.to_lowercase().contains("review all details"),
+        "the reviewer is told what is missing: {screen}"
+    );
+    pty.send("\x1b");
+    pty.wait_for("DENIED");
     pty.send("\x03");
     pty.finish(true);
 }

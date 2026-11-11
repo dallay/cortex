@@ -247,8 +247,14 @@ impl Payload {
         }
         let count = modal.allowed_decisions.len();
         match key.code {
-            KeyCode::Left if count > 0 => modal.selected = modal.selected.saturating_sub(1),
-            KeyCode::Right if count > 0 => modal.selected = (modal.selected + 1).min(count - 1),
+            KeyCode::Left if count > 0 => {
+                modal.selected = modal.selected.saturating_sub(1);
+                modal.review_notice = false;
+            }
+            KeyCode::Right if count > 0 => {
+                modal.selected = (modal.selected + 1).min(count - 1);
+                modal.review_notice = false;
+            }
             KeyCode::PageDown | KeyCode::Down if modal.expanded => {
                 let next = modal.scroll.saturating_add(1).min(modal.last_scroll);
                 modal.scroll = if modal.request.action == "native.shell" {

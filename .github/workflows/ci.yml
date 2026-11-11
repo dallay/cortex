@@ -841,5 +841,8 @@ jobs:
             run_shell_seatbelt_denies_udp_datagram_after_host_control_succeeds \
             run_shell_seatbelt_denies_unix_socket_connect_after_host_control_succeeds
           do
-            grep -F "$required_test" huginn-runtime-tests.log | grep -F ' ... ok'
+            if ! grep -E "^test (.*::)?${required_test} \.\.\. ok$" huginn-runtime-tests.log; then
+              echo "::error::required Seatbelt test did not report ok: ${required_test}" >&2
+              exit 1
+            fi
           done
