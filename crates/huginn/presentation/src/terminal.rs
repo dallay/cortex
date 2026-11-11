@@ -940,8 +940,9 @@ impl Driver {
                         modal.rendered_scroll = 0;
                     }
                     // The notice is only stale once the missing review is done.
-                    if modal.review_satisfied() {
+                    if modal.review_notice && modal.review_satisfied() {
                         modal.review_notice = false;
+                        ui.dirty.notify_one();
                     }
                 }
             }
@@ -1164,7 +1165,7 @@ impl Driver {
         frame.render_widget(
             Paragraph::new(content).block(Block::bordered().title(if view.review_notice {
                 if compact {
-                    "Review all details first"
+                    "Ctrl+F: review all details"
                 } else {
                     "Approval — review all details (Ctrl+F, ↓ to the end) before approving"
                 }
@@ -2996,6 +2997,11 @@ mod tests {
         assert!(ui.lock().modal().is_some_and(|modal| modal.review_notice));
         let noticed = View::snapshot(&ui.lock());
         assert!(frame_text(&noticed, 80, 24).contains("review all details"));
+        assert!(frame_text(&noticed, 20, 8).contains("Ctrl+F"));
+        while tokio::time::timeout(std::time::Duration::from_millis(1), ui.dirty.notified())
+            .await
+            .is_ok()
+        {}
 
         // Reading one row at a time reaches the end and retires the notice.
         for step in 1..=7 {
@@ -3017,6 +3023,18 @@ mod tests {
         assert_eq!(rendered, 7);
         assert!(satisfied);
         assert!(!notice);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), ui.dirty.notified())
+                .await
+                .is_ok()
+        );
+        let view = View::snapshot(&ui.lock());
+        Driver::update_modal_scroll(&ui, &view, progress);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), ui.dirty.notified())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

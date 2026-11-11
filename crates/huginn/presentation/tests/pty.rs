@@ -562,7 +562,7 @@ fn multiline_shell_cannot_approve_from_the_collapsed_panel() {
     pty.wait_for("›Reject");
     select_approve_once(&pty);
     pty.send("\r");
-    std::thread::sleep(std::time::Duration::from_millis(150));
+    pty.wait_for("review all details");
     let screen = pty.screen_text();
     assert!(
         !pty.output().contains("APPROVED") && !pty.output().contains("DENIED"),

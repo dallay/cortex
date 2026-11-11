@@ -123,7 +123,7 @@ fn explicitly_empty_escalations_deny_out_of_profile_capabilities() {
 fn managed_denials_cannot_be_escalated() {
     let policy = EffectivePolicy::resolve(
         PolicySettings {
-            profile: ProcessProfile::FullAccess,
+            profile: ProcessProfile::Workspace,
             approval_mode: ApprovalMode::OnRequest,
         },
         Some(ManagedRestrictions {
