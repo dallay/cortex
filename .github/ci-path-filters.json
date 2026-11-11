@@ -12,6 +12,7 @@
     "apps/rook/**",
     "apps/huginn/**",
     "crates/**",
+    ".config/nextest.toml",
     "Cargo.toml",
     "Cargo.lock",
     "**/Cargo.toml",
