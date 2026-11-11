@@ -1,221 +1,125 @@
-# Codecov Configuration with Flags
+# Integración de Codecov
 
-This document explains the Codecov setup for the code-quality (Rook) project, which uses flags to separate backend (Rust) and frontend (Vue.js dashboard) coverage reports.
+Este documento describe los reportes de cobertura, Bundle Analysis y Test Analytics de Cortex.
+El workflow de CI está en `.github/workflows/ci.yml` y la configuración del servicio está en
+`codecov.yml`.
 
-## Overview
+## Cobertura de código
 
-The project uses Codecov's **Flag Management** feature to:
+Codecov recibe reportes separados para backend (`backend`) y dashboard (`frontend`). El archivo
+`codecov.yml` configura objetivos distintos para ambos flags, carryforward y comentarios de PR.
+Los jobs `coverage` y `coverage-frontend` suben los reportes LCOV mediante el action Codecov v7.
 
-1. Track coverage separately for backend and frontend code
-2. Set independent coverage targets for each area
-3. Display flag-specific coverage in PR comments
-4. Enable carryforward flags for partial test runs
+Los flags cubren estas rutas y objetivos:
 
-## Configuration Structure
+- `backend`: `apps/rook/src/**`, `apps/rook/tests/**` y `crates/**`; objetivo de proyecto del 85% y
+  objetivo de patch del 85%.
+- `frontend`: `apps/rook/dashboard/**`; objetivo de proyecto del 80% y objetivo de patch del 75%.
+- Los flags usan carryforward para conservar el último reporte cuando un job no corre por el filtro
+  de rutas.
 
-### Main Configuration (`codecov.yml`)
+El comentario de PR muestra resumen, diff, flags, componentes, archivos y pie. `codecov.yml` espera
+un reporte con `after_n_builds: 1`; carryforward conserva el último flag omitido y una segunda subida
+actualiza el comentario existente.
 
-The `codecov.yml` file at the project root defines:
+Las subidas de cobertura usan `fail_ci_if_error: false`. Los umbrales locales de cobertura y el job
+`CI / Required` conservan la responsabilidad de bloquear una regresión; una falla temporal del
+servicio Codecov no cambia esos gates.
 
-- **Overall project coverage targets**: 70-100% range with auto target
-- **Backend flag**: 85% target for Rust code
-- **Frontend flag**: 80% target for Vue.js dashboard
-- **Flag Management**: Automatic approach with `flag_management` section
-- **PR Comments**: Shows coverage breakdown by flag
-- **Bundle Analysis**: Enabled for frontend with 5% warning threshold
+El comentario de cobertura usa `after_n_builds: 1` porque los filtros de ruta pueden omitir uno de
+los jobs. Las reglas carryforward conservan el último reporte válido para el flag omitido. Si el
+segundo reporte también llega, Codecov actualiza el comentario existente. La opción
+`show_carryforward_flags: true` muestra una columna para identificar los flags con datos carryforward.
 
-### Flags Definition
+## Bundle Analysis
 
-#### Backend Flag
+El dashboard usa `@codecov/vite-plugin` en `apps/rook/dashboard/vite.config.ts`. El plugin aparece
+después de los demás plugins de Vite y publica el bundle con el nombre `rook-dashboard`.
 
-- **Name**: `backend`
-- **Paths**:
-    - `apps/rook/src/**`
-    - `apps/rook/tests/**`
-    - `crates/**`
-    - `packages/**`
-- **Targets**:
-    - Project: 85%
-    - Patch: 85%
-- **Carryforward**: Enabled
+El job `build-dashboard` activa el plugin cuando el detector marca cambios frontend. Entrega
+`CODECOV_TOKEN` al paso de build en pushes y PRs humanos de la misma repo. Los PRs de Dependabot no
+ejecutan Bundle Analysis porque no reciben los secretos de GitHub Actions. Los PRs de forks tampoco
+reciben el secreto; `gitService: "github"` permite el modo tokenless de Codecov para el análisis del
+bundle en este repositorio público. Los builds locales y los builds sin cambios frontend no suben
+bundles.
 
-#### Frontend Flag
+`codecov.yml` define un umbral de cambio del 5% y un estado `informational`. Bundle Analysis informa
+el tamaño del bundle; no bloquea la fusión.
 
-- **Name**: `frontend`
-- **Paths**:
-    - `apps/rook/dashboard/**`
-- **Targets**:
-    - Project: 80%
-    - Patch: 75%
-- **Carryforward**: Enabled
+Los PRs de forks sí pueden usar el modo tokenless para publicar el reporte del bundle.
 
-## CI/CD Integration
+## Test Analytics
 
-### Backend Coverage Job
+Codecov Test Analytics acepta resultados JUnit XML. CI produce dos reportes principales:
 
-Located in `.github/workflows/ci.yml` as the `coverage` job:
+- **Rust (Linux):** el job principal `Test (Rust)` usa `cargo-nextest` para ejecutar las pruebas
+  unitarias y de integración con el perfil `ci` de `.config/nextest.toml`. El reporte se escribe en
+  `target/nextest/ci/junit.xml`. Nextest no ejecuta doctests; CI los conserva con
+  `cargo test --workspace --all-features --doc`.
+- **Dashboard:** Vitest escribe `apps/rook/dashboard/junit.xml` con los reporters `default` y
+  `junit`, para conservar detalles en la consola y generar el archivo XML.
 
-```yaml
-- name: Generate coverage report
-  run: cargo llvm-cov --lcov --output-path lcov.info
+El workflow sube ambos archivos con `codecov/codecov-action` v7 y `report_type: test_results`. Usa
+los flags `backend` y `frontend` para distinguir cada suite. Cada paso de subida usa
+`fail_ci_if_error: false`, así que un fallo de Codecov no reemplaza ni debilita los tests requeridos.
 
-- name: Upload coverage to Codecov
-  uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6
-  with:
-    files: lcov.info
-    flags: backend  # ← Backend flag
-    fail_ci_if_error: true
-    verbose: true
+Las cargas de Test Analytics se ejecutan aunque una suite falle, excepto si el job fue cancelado. Se
+omiten en PRs de forks y de Dependabot porque esos eventos no reciben `CODECOV_TOKEN`. Los jobs Rust
+específicos de macOS/Windows, la suite auxiliar de Node y las pruebas E2E siguen ejecutándose, pero
+quedan fuera de esta integración.
+
+CI conserva cada archivo JUnit como artifact por siete días, incluso en PRs de forks y de Dependabot.
+La subida del artifact es no bloqueante.
+
+El workflow usa el action Codecov v7, que admite `report_type: test_results`. No usa
+`codecov/test-results-action`, porque [ese repositorio está archivado](https://github.com/codecov/test-results-action).
+
+## Validación local
+
+Ejecuta estos comandos desde la raíz del repositorio:
+
+```sh
+cargo install cargo-nextest --locked --version 0.9.151
+node --test .github/scripts/ci-workflow.test.cjs
+cargo nextest run --workspace --all-features --profile ci
+cargo nextest run -p shared-kernel --all-features --profile ci
+cargo test --workspace --all-features --doc
+pnpm --filter @dallay/rook-dashboard exec vitest run --reporter=default --reporter=junit --outputFile.junit=junit.xml
 ```
 
-**Key Points**:
+El último comando crea `apps/rook/dashboard/junit.xml`. La configuración de bundle se verifica en
+CI, donde el plugin se activa solo para cambios frontend.
 
-- Runs after backend tests pass
-- Uses `cargo-llvm-cov` for Rust coverage
-- Uploads with `flags: backend`
-- Only runs when backend files change
+## Diagnóstico
 
-### Frontend Coverage Job
+- **Falta el comentario de cobertura:** comprueba que al menos un job de cobertura terminó y que el
+  comentario tiene `after_n_builds: 1`.
+- **Falta el reporte de bundle:** comprueba que los filtros marcaron cambios frontend. Los PRs de
+  forks usan el modo tokenless; los demás builds requieren el secreto `CODECOV_TOKEN`.
+- **Faltan resultados de tests:** comprueba que existe el archivo JUnit de cada runner y que la
+  subida usa `report_type: test_results`. Los PRs de forks no suben resultados a Test Analytics, pero
+  conservan los XML como artifacts de CI.
+- **Falla un estado de cobertura:** revisa el objetivo y el umbral correspondiente en `codecov.yml`.
+  No cambies esos valores para compensar un reporte ausente.
 
-Located in `.github/workflows/ci.yml` as the `coverage-frontend` job:
+## Verificación en Codecov
 
-```yaml
-- name: Run Vitest with coverage
-  working-directory: apps/rook/dashboard
-  run: pnpm exec vitest run --coverage --coverage.reporter=lcov
+Después de una ejecución de CI:
 
-- name: Upload coverage to Codecov
-  uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6
-  with:
-    files: apps/rook/dashboard/coverage/lcov.info
-    flags: frontend  # ← Frontend flag
-    fail_ci_if_error: true
-    verbose: true
-```
+1. Revisa los logs de `Build Dashboard` para confirmar que el plugin publicó el bundle.
+2. Revisa los logs de los dos pasos `Upload ... test results to Codecov` para confirmar que los
+   archivos JUnit se aceptaron.
+3. En Codecov, abre la vista de bundles para consultar tamaño total, tamaño comprimido y cambios por
+   commit o PR.
+4. En Codecov, abre la pestaña **Tests** para revisar duración, fallos y tendencias de las pruebas.
 
-**Key Points**:
+Si falta un reporte, confirma primero que el job de tests generó el archivo JUnit esperado y que la
+subida de Test Analytics tuvo acceso a `CODECOV_TOKEN`. Los PRs de forks publican Bundle Analysis sin
+token, pero no publican resultados de Test Analytics.
 
-- Runs after frontend tests pass
-- Uses Vitest with coverage enabled
-- Uploads with `flags: frontend`
-- Only runs when frontend files change
+Para consultar los contratos externos, revisa la [guía de Bundle Analysis de Codecov], la
+[guía de Test Analytics de Codecov] y la [referencia del action Codecov].
 
-## Expected Behavior
-
-### PR Comments
-
-When both backend and frontend are uploaded, the PR comment will show:
-
-```
-Coverage Report
-
-| Flag     | Coverage | Δ     |
-|----------|----------|-------|
-| backend  | 87.5%    | +2.3% |
-| frontend | 82.1%    | -0.5% |
-| Overall  | 85.2%    | +1.1% |
-```
-
-### Commit Statuses
-
-You'll see separate statuses for:
-
-- `codecov/project` - Overall project coverage
-- `codecov/project/backend` - Backend coverage
-- `codecov/project/frontend` - Frontend coverage
-- `codecov/patch` - New code coverage
-
-### Flag Analytics
-
-Navigate to **Coverage → Flags** in Codecov UI to:
-
-- Track historical coverage by flag
-- Visualize backend vs frontend trends
-- Filter file lists by flag
-- See flag-specific coverage gaps
-
-## Carryforward Flags
-
-Both flags have `carryforward: true`, which means:
-
-- If only backend tests run, frontend coverage is carried forward from the last run
-- If only frontend tests run, backend coverage is carried forward
-- Useful for CI optimizations where not all tests run on every commit
-
-**Important**: At least one full upload of both flags is required initially.
-
-## Validation
-
-To validate the `codecov.yml` configuration:
-
-```bash
-curl --data-binary @codecov.yml https://codecov.io/validate
-```
-
-Expected response: `200 OK` with validation details.
-
-## Troubleshooting
-
-### Delayed or missing PR comments
-
-**Symptom**: Codecov comment doesn't appear on PR, or appears much later than expected.
-
-**Root cause**: The `after_n_builds: 2` setting in `codecov.yml` waits for **both** backend and frontend coverage uploads before posting a comment. If path-filter in CI skips one job (e.g., frontend-only changes skip backend coverage), Codecov will wait indefinitely or timeout.
-
-**How to detect**:
-
-1. Check CI logs - if only one coverage job ran, the comment will be delayed
-2. Look at Codecov dashboard - you'll see only one flag uploaded (backend OR frontend, not both)
-3. Path-filter output in CI shows which jobs were skipped
-
-**Solutions**:
-
-#### Option 1: Adjust `after_n_builds` dynamically (recommended)
-
-- Set `after_n_builds: 1` if you frequently make frontend-only or backend-only changes
-- Trade-off: Comments appear faster but may not show complete coverage picture
-
-#### Option 2: Remove path-filter restrictions
-
-- Always run both coverage jobs regardless of changes
-- Trade-off: Longer CI times but consistent comment behavior
-
-#### Option 3: Use Codecov's carryforward flags
-
-- Already enabled in config - Codecov will use previous coverage for skipped jobs
-- The comment will eventually post after timeout (~10 minutes)
-- Trade-off: Delayed comments but accurate coverage using carried-forward data
-
-### Flag not showing in PR comment
-
-1. Check that the upload succeeded in CI logs
-2. Verify the flag name matches exactly in both `codecov.yml` and CI upload
-3. See "Delayed or missing PR comments" above if only one flag uploaded
-
-### Coverage not updating
-
-1. Check if carryforward is causing stale data
-2. Verify the file paths in flag definitions match your repo structure
-3. Look for upload errors in CI logs with `verbose: true`
-
-### Status check failing unexpectedly
-
-1. Review the target percentages in `codecov.yml`
-2. Check if threshold is too strict for your workflow
-3. Consider using `informational: true` for non-blocking statuses
-
-## References
-
-- [Codecov Flags Documentation](https://docs.codecov.com/docs/flags)
-- [Flag Management Best Practices](https://docs.codecov.com/docs/flags#flag-management)
-- [Carryforward Flags](https://docs.codecov.com/docs/carryforward-flags)
-- [Bundle Analysis](https://docs.codecov.com/docs/bundle-analysis)
-
-## Future Enhancements
-
-Consider adding flags for:
-
-- `integration` - Integration tests
-- `e2e` - End-to-end tests
-- `unit` - Unit tests only
-- Per-package flags for the monorepo structure
+[guía de Bundle Analysis de Codecov]: https://docs.codecov.com/docs/bundle-analysis
+[guía de Test Analytics de Codecov]: https://docs.codecov.com/docs/test-analytics
+[referencia del action Codecov]: https://github.com/codecov/codecov-action

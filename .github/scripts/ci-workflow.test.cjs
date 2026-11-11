@@ -163,6 +163,7 @@ const routeCases = [
   ['scripts/setup-codegraph.sh', ['backend', 'github']],
   ['.github/ci-path-filters.json', ['github']],
   ['.github/ci-quality-policy.json', ['github']],
+  ['.config/nextest.toml', ['backend']],
   // El paquete completo incluye el dashboard: se aceptan controles backend adicionales.
   ['apps/rook/dashboard/src/main.tsx', ['frontend', 'backend']],
   ['apps/huginn/src/main.rs', ['backend']],
@@ -470,3 +471,107 @@ it('conecta cada dependencia de Required con el runner sin perder resultados',
         assert.ok(runner.includes(`'${key}'`), id);
       }
     });
+
+function namedStep(id, name) {
+  const step = jobBlock(id).match(
+      new RegExp(
+          `^      - name: ${name}\\n([\\s\\S]*?)(?=^      - |$(?![\\s\\S]))`,
+          'm'));
+  assert.ok(step, `${id}: step ${name}`);
+  return step[1];
+}
+
+it('genera y sube resultados JUnit de Rust sin perder doctests', () => {
+  const nextestConfigPath = path.join(__dirname, '../../.config/nextest.toml');
+  assert.ok(fs.existsSync(nextestConfigPath), 'perfil CI de Nextest presente');
+  const nextestConfig = fs.readFileSync(nextestConfigPath, 'utf8');
+  assert.match(nextestConfig, /^\[profile\.ci\]$/m);
+  assert.match(nextestConfig, /^\[profile\.ci\.junit\]$/m);
+  assert.match(nextestConfig, /^path = "junit\.xml"$/m);
+
+  const rust = jobBlock('test');
+  assert.match(rust, /tool: nextest@0\.9\.151/);
+  assert.match(rust,
+      /cargo nextest run --workspace --all-features --profile ci/);
+  assert.match(rust, /cargo test --workspace --all-features --doc/);
+
+  const upload = namedStep('test', 'Upload Rust test results to Codecov');
+  assert.match(upload, /if: \$\{\{ !cancelled\(\) &&/);
+  assert.match(upload,
+      /github\.event_name != 'pull_request' \|\| github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
+  assert.match(upload,
+      /if: \$\{\{ !cancelled\(\) && github\.actor != 'dependabot\[bot\]' &&/);
+  assert.match(upload,
+      /uses: codecov\/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7/);
+  assert.match(upload, /report_type: test_results/);
+  assert.match(upload, /files: target\/nextest\/ci\/junit\.xml/);
+  assert.match(upload, /flags: backend/);
+  assert.match(upload, /fail_ci_if_error: false/);
+  assert.match(upload, /token: \$\{\{ secrets\.CODECOV_TOKEN \}\}/);
+
+  const artifact = namedStep('test', 'Retain Rust JUnit report artifact');
+  assert.match(artifact,
+      /if: \$\{\{ !cancelled\(\) && hashFiles\('target\/nextest\/ci\/junit\.xml'\) != '' \}\}/);
+  assert.match(artifact,
+      /uses: actions\/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7\.0\.2/);
+  assert.match(artifact, /path: target\/nextest\/ci\/junit\.xml/);
+  assert.match(artifact, /retention-days: 7/);
+  assert.match(artifact, /continue-on-error: true/);
+});
+
+it('genera y sube resultados JUnit de Vitest tras el job de frontend', () => {
+  const frontend = jobBlock('test-frontend');
+  assert.match(frontend,
+      /pnpm exec vitest run --reporter=default --reporter=junit --outputFile\.junit=junit\.xml/);
+
+  const upload = namedStep(
+      'test-frontend', 'Upload Frontend test results to Codecov');
+  assert.match(upload, /if: \$\{\{ !cancelled\(\) &&/);
+  assert.match(upload,
+      /github\.event_name != 'pull_request' \|\| github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
+  assert.match(upload,
+      /if: \$\{\{ !cancelled\(\) && github\.actor != 'dependabot\[bot\]' &&/);
+  assert.match(upload,
+      /uses: codecov\/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7/);
+  assert.match(upload, /report_type: test_results/);
+  assert.match(upload, /files: apps\/rook\/dashboard\/junit\.xml/);
+  assert.match(upload, /flags: frontend/);
+  assert.match(upload, /fail_ci_if_error: false/);
+  assert.match(upload, /token: \$\{\{ secrets\.CODECOV_TOKEN \}\}/);
+
+  const artifact = namedStep(
+      'test-frontend', 'Retain Frontend JUnit report artifact');
+  assert.match(artifact,
+      /if: \$\{\{ !cancelled\(\) && hashFiles\('apps\/rook\/dashboard\/junit\.xml'\) != '' \}\}/);
+  assert.match(artifact,
+      /uses: actions\/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7\.0\.2/);
+  assert.match(artifact, /path: apps\/rook\/dashboard\/junit\.xml/);
+  assert.match(artifact, /retention-days: 7/);
+  assert.match(artifact, /continue-on-error: true/);
+});
+
+it('activa Bundle Analysis solo para cambios frontend y limita el token', () => {
+  const build = namedStep('build-dashboard', 'Build dashboard');
+  assert.match(build,
+      /CODECOV_BUNDLE_ANALYSIS: \$\{\{ needs\.changes\.outputs\.frontend == 'true' && github\.actor != 'dependabot\[bot\]' \}\}/);
+  assert.match(build,
+      /CODECOV_TOKEN: \$\{\{ needs\.changes\.outputs\.frontend == 'true' && github\.actor != 'dependabot\[bot\]' && \(github\.event_name != 'pull_request' \|\| github\.event\.pull_request\.head\.repo\.full_name == github\.repository\) && secrets\.CODECOV_TOKEN \|\| '' \}\}/);
+
+  const viteConfig = fs.readFileSync(
+      path.join(__dirname, '../../apps/rook/dashboard/vite.config.ts'), 'utf8');
+  assert.match(viteConfig,
+      /enableBundleAnalysis: process\.env\.CODECOV_BUNDLE_ANALYSIS === "true"/);
+  assert.match(viteConfig,
+      /uploadToken: process\.env\.CODECOV_TOKEN \|\| undefined/);
+  assert.match(viteConfig, /gitService: "github"/);
+});
+
+it('publica pronto comentarios de cobertura y conserva los flags carryforward', () => {
+  const codecovConfig = fs.readFileSync(
+      path.join(__dirname, '../../codecov.yml'), 'utf8');
+  assert.match(codecovConfig, /^  after_n_builds: 1$/m);
+  assert.match(codecovConfig, /^  show_carryforward_flags: true$/m);
+  assert.match(codecovConfig, /carryforward: true/);
+  assert.match(codecovConfig, /warning_threshold: "5%"/);
+  assert.match(codecovConfig, /status: "informational"/);
+});

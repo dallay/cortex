@@ -20,9 +20,10 @@ export default defineConfig({
 		tailwindcss(),
 		// Put the Codecov vite plugin after all other plugins
 		codecovVitePlugin({
-			enableBundleAnalysis: process.env.CODECOV_TOKEN !== undefined,
+			enableBundleAnalysis: process.env.CODECOV_BUNDLE_ANALYSIS === "true",
 			bundleName: "rook-dashboard",
-			uploadToken: process.env.CODECOV_TOKEN,
+			uploadToken: process.env.CODECOV_TOKEN || undefined,
+			gitService: "github",
 		}),
 	],
 	resolve: {
