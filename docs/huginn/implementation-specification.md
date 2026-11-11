@@ -64,8 +64,11 @@ approval outcomes before effects. Calls execute sequentially. Permission policy
 runs outside model/provider code and cannot be changed by repository text. The
 interactive presentation shows the requested action, target/effect summary, and
 policy-allowed choices before the decision. The complete preview remains
-available as optional expanded details; expansion is not required to confirm a
-visible choice after the modal is armed. Explicit `--allow` grants apply only to
+available as expanded details. A positive choice requires review: a complete
+single-line `native.shell` command is approvable from the collapsed panel, while
+every other request must have its expanded preview rendered through the last
+line. An unreviewed acceptance keeps the request open and shows a notice;
+rejection never requires review. Explicit `--allow` grants apply only to
 that CLI invocation. Approval previews must identify the
 target/location, requested change or arguments, and relevant external-effect or
 sandboxing risk. MCP tool previews identify the server and remote tool, show the

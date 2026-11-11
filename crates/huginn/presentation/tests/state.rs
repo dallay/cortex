@@ -2299,20 +2299,22 @@ async fn approval_notice_survives_navigation_at_choice_boundaries() {
 
     // Right at the final choice must preserve the outstanding review notice.
     overlay_key(&ui, KeyCode::Right);
-    {
-        let state = ui.lock();
-        let modal = state.modal().unwrap();
-        assert_eq!(modal.selected, 1);
-        assert!(modal.review_notice);
-    }
+    let (selected, notice) = ui
+        .lock()
+        .modal()
+        .map(|modal| (modal.selected, modal.review_notice))
+        .unwrap();
+    assert_eq!(selected, 1);
+    assert!(notice);
     // A real choice change clears the notice.
     overlay_key(&ui, KeyCode::Left);
-    {
-        let state = ui.lock();
-        let modal = state.modal().unwrap();
-        assert_eq!(modal.selected, 0);
-        assert!(!modal.review_notice);
-    }
+    let (selected, notice) = ui
+        .lock()
+        .modal()
+        .map(|modal| (modal.selected, modal.review_notice))
+        .unwrap();
+    assert_eq!(selected, 0);
+    assert!(!notice);
     overlay_key(&ui, KeyCode::Left);
     assert_eq!(ui.lock().modal().unwrap().selected, 0);
     overlay_key(&ui, KeyCode::Enter);
