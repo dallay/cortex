@@ -48,7 +48,7 @@ impl AgentLoop for Engine {
                     &huginn_core::ApprovalRequest {
                         id: "test".into(),
                         action: "native.edit".into(),
-                        preview: std::iter::once("PREVIEW_FIRST".to_owned())
+                        preview: std::iter::once("--- /workspace/note.txt".to_owned())
                             .chain((0..40).map(|index| format!("diff-line-{index:02}")))
                             .chain(std::iter::once("PREVIEW_LAST".to_owned()))
                             .collect::<Vec<_>>()

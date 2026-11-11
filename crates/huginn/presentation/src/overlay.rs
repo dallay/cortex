@@ -263,18 +263,6 @@ impl Payload {
                 modal.scroll = modal.last_scroll
             }
             KeyCode::End if modal.expanded => {}
-            KeyCode::Enter
-                if modal.armed
-                    && modal
-                        .allowed_decisions
-                        .get(modal.selected)
-                        .is_some_and(|decision| {
-                            *decision != huginn_core::ApprovalDecision::Reject
-                        })
-                    && (!modal.expanded
-                        || !modal.details_rendered
-                        || modal.scroll < modal.last_scroll
-                        || modal.rendered_scroll < modal.last_scroll) => {}
             KeyCode::Enter if modal.armed => {
                 return Effect::Resolve(
                     modal

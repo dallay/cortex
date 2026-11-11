@@ -1,4 +1,5 @@
 //! Trusted host policy. Presentation plugins can collect decisions but never see grants.
+use crate::permission_policy::{AuthorizationOutcome, Capability, EffectivePolicy, PolicySettings};
 use async_trait::async_trait;
 use huginn_core::{
     AgentError, ApprovalDecision, ApprovalPolicy, ApprovalPrompt, ApprovalProvenance,
@@ -13,6 +14,7 @@ use std::{
 pub struct HostPolicy<P: ApprovalPrompt + ?Sized> {
     prompt: Arc<P>,
     allowed: BTreeSet<String>,
+    effective_policy: Arc<EffectivePolicy>,
     session_grants: Arc<Mutex<HashSet<(String, String, PathBuf)>>>,
 }
 impl<P: ApprovalPrompt + ?Sized> Clone for HostPolicy<P> {
@@ -20,6 +22,7 @@ impl<P: ApprovalPrompt + ?Sized> Clone for HostPolicy<P> {
         Self {
             prompt: self.prompt.clone(),
             allowed: self.allowed.clone(),
+            effective_policy: self.effective_policy.clone(),
             session_grants: self.session_grants.clone(),
         }
     }
@@ -29,11 +32,24 @@ impl<P: ApprovalPrompt + ?Sized> HostPolicy<P> {
         Self {
             prompt,
             allowed,
+            effective_policy: Arc::new(EffectivePolicy::resolve(
+                PolicySettings::default(),
+                None,
+                Default::default(),
+            )),
             session_grants: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
-    /// Bind session grants to the trusted identity held by the application session.
+    pub fn with_effective_policy(mut self, policy: Arc<EffectivePolicy>) -> Self {
+        self.effective_policy = policy;
+        self
+    }
+
+    pub fn effective_policy(&self) -> &EffectivePolicy {
+        &self.effective_policy
+    }
+
     pub fn for_session(&self, session_id: impl Into<String>) -> SessionPolicy<P> {
         SessionPolicy {
             host: self.clone(),
@@ -49,6 +65,20 @@ impl<P: ApprovalPrompt + ?Sized> HostPolicy<P> {
     ) -> Result<ApprovalDecision> {
         if cancel.is_cancelled() || !self.prompt.is_available() {
             return Err(AgentError::Cancelled);
+        }
+        let capability = match request.action.as_str() {
+            "native.write_file" | "native.edit_file" => Some(Capability::FileWrite),
+            action if action == "native.shell" || action.starts_with("native.shell.") => {
+                Some(Capability::Shell)
+            }
+            _ => None,
+        };
+        // Restrictions are checked before any volatile grant lookup. Neither a
+        // session approval nor a matching workspace grant can weaken them.
+        if capability.is_some_and(|capability| {
+            self.effective_policy.decide(capability, true) == AuthorizationOutcome::Denied
+        }) {
+            return Ok(ApprovalDecision::Reject);
         }
         let eligible = matches!(
             request.action.as_str(),

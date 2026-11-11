@@ -14,7 +14,11 @@ max_iterations = 20
 context_tokens = 32768
 max_output_tokens = 4096
 
-# Launch and each remote call require approval. No sandbox is provided.
+# Launch and each remote call require approval. On macOS, run_shell always uses
+# the required Seatbelt sandbox; it has no opt-out. The sandbox denies network
+# access and limits shell file access to its workspace. Seatbelt is deprecated
+# by Apple and may change or become unavailable. Other platforms do not have
+# equivalent isolation from this feature. Native tools and MCP are not covered.
 # Use an absolute executable path; the child environment is explicitly configured.
 # [[mcp]]
 # name = "local"
@@ -40,4 +44,3 @@ max_output_tokens = 4096
 # line_numbers = true
 # [ui.integrations]
 # entries = []
-

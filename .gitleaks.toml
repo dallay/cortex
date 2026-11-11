@@ -56,6 +56,15 @@ regexTarget = "match"
 paths = ['''^crates/application/rook-usecases/src/manage_connections\.rs$''']
 regexes = ['''(?i)^secret:\s*stored_client_secret$''']
 
+[[rules.allowlists]]
+description = "Synthetic secret markers in the Huginn Seatbelt denial tests"
+condition = "AND"
+regexTarget = "match"
+paths = ['''^crates/huginn/runtime/src/tools\.rs$''']
+regexes = [
+  '''(?i)^secret\s*=\s*"(other-workspace-secret-value|credential-fixture-secret-not-real|external-fixture-secret|unassigned-temp-fixture-secret|cwd-does-not-expand-permissions|symlink-target-fixture-secret)$''',
+]
+
 [[rules]]
 id = "openai_gcp_hf_api_key"
 description = "OpenAI/GCP/Hugging Face API Key pattern"

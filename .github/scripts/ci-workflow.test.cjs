@@ -346,6 +346,36 @@ it('ejecuta siempre las pruebas CI y exige su resultado real', () => {
   assert.doesNotMatch(jobBlock('required'), /continue-on-error:/);
 });
 
+it('exige enforcement Seatbelt de Huginn en PR sobre macOS sin filtrar tests',
+    () => {
+      const seatbelt = jobBlock('test-huginn-seatbelt');
+      assert.match(seatbelt, /^    runs-on: macos-latest\s*$/m);
+      assert.match(seatbelt, /needs\.changes\.outputs\.backend == 'true'/);
+      assert.match(seatbelt, /needs\.changes\.outputs\.github == 'true'/);
+      assert.match(seatbelt, /test "\$RUNNER_OS" = "macOS"/);
+      assert.match(seatbelt, /sw_vers/);
+      assert.match(seatbelt, /test -x \/usr\/bin\/sandbox-exec/);
+      assert.match(seatbelt,
+          /cargo test -p huginn-runtime 2>&1 \| tee huginn-runtime-tests\.log/);
+      for (const requiredTest of [
+        'run_shell_can_read_and_write_inside_workspace',
+        'run_shell_timeout_terminates_descendant_holding_output_pipes',
+        'run_shell_cancellation_terminates_descendant_holding_output_pipes',
+        'run_shell_cannot_read_external_marker_after_changing_cwd',
+        'run_shell_cannot_read_marker_outside_workspace',
+        'run_shell_seatbelt_denies_tcp_connect_after_host_control_succeeds',
+        'run_shell_seatbelt_denies_udp_datagram_after_host_control_succeeds',
+        'run_shell_seatbelt_denies_unix_socket_connect_after_host_control_succeeds',
+      ]) {
+        assert.ok(seatbelt.includes(requiredTest),
+            `required test ${requiredTest}`);
+      }
+      assert.doesNotMatch(seatbelt, /--(?:skip|exact|ignored)|-- .*seatbelt/);
+      assert.match(jobBlock('required'), /^      - test-huginn-seatbelt\s*$/m);
+      assert.match(jobBlock('required'),
+          /RESULT_TEST_HUGINN_SEATBELT: \$\{\{ needs\.test-huginn-seatbelt\.result \}\}/);
+    });
+
 it('acota la excepción de Gitleaks del fixture GM-05 a su archivo y su valor',
     () => {
       const {globalSection, rules} = gitleaksRules(gitleaksConfig);
@@ -386,6 +416,44 @@ it('acota la excepción de Gitleaks del fixture GM-05 a su archivo y su valor',
       assert.doesNotMatch(globalSection, /dev\/muninn|synthetic-test-value/,
           'sin allowlist global para el fixture');
     });
+
+it('acota los marcadores sintéticos de Seatbelt a su archivo y sus valores', () => {
+  const {globalSection, rules} = gitleaksRules(gitleaksConfig);
+  const generic = rules.find((rule) => rule.id === 'generic_secret');
+  assert.ok(generic, 'regla generic_secret presente');
+
+  const scoped = generic.allowlists.filter(
+      (section) => section.includes('crates/huginn/runtime/src/tools'));
+  assert.equal(scoped.length, 1, 'una allowlist acotada para tools.rs');
+  const block = scoped[0];
+  assert.ok(block.includes('condition = "AND"'),
+      'condición AND para acotar la coincidencia');
+  assert.ok(block.includes('regexTarget = "match"'),
+      'el objetivo es la coincidencia completa');
+  assert.ok(
+      block.includes(
+          `paths = ['''^crates/huginn/runtime/src/tools\\.rs$''']`),
+      'ruta exacta del módulo de herramientas',
+  );
+  assert.ok(
+      block.includes(
+          `'''(?i)^secret\\s*=\\s*"(other-workspace-secret-value|credential-fixture-secret-not-real|external-fixture-secret|unassigned-temp-fixture-secret|cwd-does-not-expand-permissions|symlink-target-fixture-secret)$'''`),
+      'solo los marcadores sintéticos de las pruebas de denegación',
+  );
+  assert.doesNotMatch(block, /condition = "OR"/);
+
+  for (const rule of
+      rules.filter((candidate) => candidate.id !== 'generic_secret')) {
+    assert.ok(
+        !rule.allowlists.some(
+            (section) => section.includes('crates/huginn/runtime/src/tools')),
+        `la regla ${rule.id} no declara excepciones de Seatbelt`,
+    );
+  }
+
+  assert.doesNotMatch(globalSection, /crates\/huginn\/runtime\/src\/tools\.rs/,
+      'sin allowlist global para los fixtures de Seatbelt');
+});
 
 it('conecta cada dependencia de Required con el runner sin perder resultados',
     () => {
