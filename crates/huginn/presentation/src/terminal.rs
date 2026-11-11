@@ -1164,7 +1164,9 @@ impl Driver {
         };
         frame.render_widget(
             Paragraph::new(content).block(Block::bordered().title(if view.review_notice {
-                if compact {
+                if *expanded {
+                    "↓ to the end"
+                } else if compact {
                     "Ctrl+F: review all details"
                 } else {
                     "Approval — review all details (Ctrl+F, ↓ to the end) before approving"
@@ -2996,8 +2998,10 @@ mod tests {
         );
         assert!(ui.lock().modal().is_some_and(|modal| modal.review_notice));
         let noticed = View::snapshot(&ui.lock());
-        assert!(frame_text(&noticed, 80, 24).contains("review all details"));
-        assert!(frame_text(&noticed, 20, 8).contains("Ctrl+F"));
+
+        for (width, height) in [(20, 8), (40, 10), (80, 24), (120, 40)] {
+            assert!(frame_text(&noticed, width, height).contains("↓ to the end"));
+        }
         while tokio::time::timeout(std::time::Duration::from_millis(1), ui.dirty.notified())
             .await
             .is_ok()

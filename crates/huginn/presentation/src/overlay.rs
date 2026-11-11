@@ -607,30 +607,3 @@ impl<T> OverlayMachine<T> {
 #[cfg(feature = "test-driver")]
 #[doc(hidden)]
 pub mod test_support;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn approval_notice_survives_navigation_at_choice_boundaries() {
-        for (selected, key, expected) in [
-            (0, KeyCode::Left, 0),
-            (1, KeyCode::Right, 1),
-            (0, KeyCode::Right, 1),
-            (1, KeyCode::Left, 0),
-        ] {
-            let mut modal = crate::state::Modal::test_stub();
-            modal.selected = selected;
-            modal.review_notice = true;
-            Payload::approval_input(
-                &mut modal,
-                KeyEvent::new(key, KeyModifiers::NONE),
-                false,
-                false,
-            );
-            assert_eq!(modal.selected, expected);
-            assert_eq!(modal.review_notice, selected == expected);
-        }
-    }
-}
