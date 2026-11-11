@@ -42,17 +42,34 @@ impl AgentLoop for Engine {
             session.interrupted = true;
             return Err(huginn_core::AgentError::Cancelled);
         }
-        if prompt == "approve" {
+        if matches!(
+            prompt.as_str(),
+            "approve" | "approve-shell" | "approve-shell-multiline"
+        ) {
+            let (action, preview) = match prompt.as_str() {
+                "approve-shell" => (
+                    "native.shell",
+                    "Directory: /workspace\nCommand: echo ok".to_owned(),
+                ),
+                "approve-shell-multiline" => (
+                    "native.shell",
+                    "Directory: /workspace\nCommand: echo first\necho second".to_owned(),
+                ),
+                _ => (
+                    "native.edit",
+                    std::iter::once("--- /workspace/note.txt".to_owned())
+                        .chain((0..40).map(|index| format!("diff-line-{index:02}")))
+                        .chain(std::iter::once("PREVIEW_LAST".to_owned()))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                ),
+            };
             let approved = policy
                 .approve(
                     &huginn_core::ApprovalRequest {
                         id: "test".into(),
-                        action: "native.edit".into(),
-                        preview: std::iter::once("--- /workspace/note.txt".to_owned())
-                            .chain((0..40).map(|index| format!("diff-line-{index:02}")))
-                            .chain(std::iter::once("PREVIEW_LAST".to_owned()))
-                            .collect::<Vec<_>>()
-                            .join("\n"),
+                        action: action.into(),
+                        preview,
                         resource: None,
                         provenance: None,
                     },

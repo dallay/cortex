@@ -49,7 +49,7 @@ static MODIFY_OTHER_KEYS_ACTIVE: AtomicBool = AtomicBool::new(false);
 static KITTY_KEYBOARD_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Lines the transcript moves per page when scrolling the history.
 const HISTORY_PAGE: usize = 10;
-const HELP: &str = "Enter sends; Shift+Enter (on compatible terminals), Alt+Enter or Ctrl+J inserts a newline. PgUp/PgDn scroll the transcript. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals are inline: Left/Right selects, Enter confirms the visible choice once the request is armed, Esc rejects, Ctrl+F opens details; incomplete summaries require reviewing details through the end, and Up/Down or PgUp/PgDn scrolls the preview. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
+const HELP: &str = "Enter sends; Shift+Enter (on compatible terminals), Alt+Enter or Ctrl+J inserts a newline. PgUp/PgDn scroll the transcript. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals are inline: Left/Right selects, Enter confirms the visible choice once the request is armed, Esc rejects, Ctrl+F opens details; incomplete summaries require reviewing details through the end, and Enter on an unreviewed request keeps it open until you do; Up/Down or PgUp/PgDn scrolls the preview. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
 
 #[cfg(unix)]
 fn begin_keyboard_protocol() -> std::io::Result<()> {
@@ -692,6 +692,8 @@ struct View {
     busy: bool,
     overlay: Option<OverlayView>,
     overlay_identity: Option<crate::overlay::OverlaySnapshot>,
+    /// An acceptance was refused because the approval was not fully reviewed.
+    review_notice: bool,
 }
 impl View {
     fn snapshot(state: &crate::state::UiState) -> Self {
@@ -704,6 +706,7 @@ impl View {
             tail: state.tail.clone(),
             busy: state.busy,
             overlay_identity: state.overlays.snapshot(),
+            review_notice: state.modal().is_some_and(|modal| modal.review_notice),
             overlay: state
                 .overlays
                 .active()
@@ -936,6 +939,11 @@ impl Driver {
                     } else {
                         modal.rendered_scroll = 0;
                     }
+                    // The notice is only stale once the missing review is done.
+                    if modal.review_notice && modal.review_satisfied() {
+                        modal.review_notice = false;
+                        ui.dirty.notify_one();
+                    }
                 }
             }
         }
@@ -1155,7 +1163,15 @@ impl Driver {
             0
         };
         frame.render_widget(
-            Paragraph::new(content).block(Block::bordered().title(if compact {
+            Paragraph::new(content).block(Block::bordered().title(if view.review_notice {
+                if *expanded {
+                    "↓ to the end"
+                } else if compact {
+                    "Ctrl+F: review all details"
+                } else {
+                    "Approval — review all details (Ctrl+F, ↓ to the end) before approving"
+                }
+            } else if compact {
                 "Approval"
             } else {
                 "Approval — ←/→ select · Enter confirm · Esc reject · Ctrl+F details"
@@ -2366,6 +2382,7 @@ mod tests {
             busy: false,
             overlay: Some(overlay),
             overlay_identity: None,
+            review_notice: false,
             completion: Suggestions::default(),
         }
     }
@@ -2917,6 +2934,111 @@ mod tests {
         assert_eq!(modal.last_scroll, 7);
         assert!(modal.details_rendered);
         assert_eq!(modal.rendered_scroll, 7);
+    }
+
+    /// A shell preview may only count rows the reviewer reached one at a time.
+    /// A jumped scroll offset must not satisfy the review, so Enter keeps the
+    /// request open and shows the notice; finishing the review clears it.
+    #[tokio::test]
+    async fn shell_review_ignores_jumped_scroll_and_notice_clears_when_reviewed() {
+        use crate::overlay::{OpenRequest, Origin, OverlayKind, Payload};
+        let ui = Ui::new(
+            &Session::new(".".into()),
+            Arc::new(Contributions::default()),
+            CancellationToken::new(),
+            Arc::new(crate::settings::UiConfig::defaults()),
+            Arc::new(|_| Ok(())),
+        )
+        .0;
+        {
+            let mut state = ui.lock();
+            let mut modal = crate::state::Modal::test_stub();
+            modal.request.action = "native.shell".into();
+            modal.request.preview = "Directory: /workspace\nCommand: echo a\necho b".into();
+            modal.expanded = true;
+            modal.armed = true;
+            modal.selected = 1;
+            modal.scroll = 7;
+            modal.rendered_scroll = 0;
+            let ticket = state.overlays.ticket();
+            state.overlays.open(OpenRequest {
+                kind: OverlayKind::Approval,
+                origin: Origin::Host,
+                operation: crate::event::OperationId::default(),
+                payload: Payload::Approval(modal),
+                ticket,
+            });
+        }
+        let view = View::snapshot(&ui.lock());
+        let progress = FrameProgress {
+            last_scroll: 7,
+            preview_visible: true,
+            summary_complete: false,
+        };
+        Driver::update_modal_scroll(&ui, &view, progress);
+        let (rendered, satisfied) = ui
+            .lock()
+            .modal()
+            .map(|modal| (modal.rendered_scroll, modal.review_satisfied()))
+            .unwrap();
+        assert_eq!(rendered, 0, "a jump must not count as rendered");
+        assert!(!satisfied);
+
+        let (ticket, focus) = {
+            let state = ui.lock();
+            (state.overlays.ticket(), state.overlays.focus())
+        };
+        ui.overlay_input(
+            Event::Key(crossterm::event::KeyEvent::new(
+                KeyCode::Enter,
+                KeyModifiers::NONE,
+            )),
+            ticket,
+            focus,
+        );
+        assert!(ui.lock().modal().is_some_and(|modal| modal.review_notice));
+        let noticed = View::snapshot(&ui.lock());
+
+        for (width, height) in [(20, 8), (40, 10), (80, 24), (120, 40)] {
+            assert!(frame_text(&noticed, width, height).contains("↓ to the end"));
+        }
+        while tokio::time::timeout(std::time::Duration::from_millis(1), ui.dirty.notified())
+            .await
+            .is_ok()
+        {}
+
+        // Reading one row at a time reaches the end and retires the notice.
+        for step in 1..=7 {
+            ui.lock().modal_mut().unwrap().scroll = step;
+            let view = View::snapshot(&ui.lock());
+            Driver::update_modal_scroll(&ui, &view, progress);
+        }
+        let (rendered, satisfied, notice) = ui
+            .lock()
+            .modal()
+            .map(|modal| {
+                (
+                    modal.rendered_scroll,
+                    modal.review_satisfied(),
+                    modal.review_notice,
+                )
+            })
+            .unwrap();
+        assert_eq!(rendered, 7);
+        assert!(satisfied);
+        assert!(!notice);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), ui.dirty.notified())
+                .await
+                .is_ok()
+        );
+        let view = View::snapshot(&ui.lock());
+        Driver::update_modal_scroll(&ui, &view, progress);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), ui.dirty.notified())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

@@ -152,6 +152,9 @@ pub struct Modal {
     pub selected: usize,
     pub expanded: bool,
     pub details_rendered: bool,
+    /// Set when an acceptance was refused because the review is incomplete.
+    /// The request stays open; the panel tells the reviewer what is missing.
+    pub review_notice: bool,
     reply: Option<oneshot::Sender<huginn_core::ApprovalDecision>>,
 }
 #[cfg(test)]
@@ -179,11 +182,20 @@ impl Modal {
             selected: 0,
             expanded: false,
             details_rendered: false,
+            review_notice: false,
             reply: None,
         }
     }
 }
 impl Modal {
+    /// A positive decision is valid only after the reviewer saw the whole
+    /// request: a complete one-line command, or the rendered details through
+    /// their last line. The approval must also be armed by a completed paint.
+    pub const fn review_satisfied(&self) -> bool {
+        self.armed
+            && (self.summary_complete
+                || (self.details_rendered && self.rendered_scroll >= self.last_scroll))
+    }
     pub fn scroll_up(&mut self) {
         self.scroll = self.scroll.min(self.last_scroll).saturating_sub(1);
     }
@@ -1457,39 +1469,60 @@ impl Ui {
     }
     pub fn resolve_modal(&self, approved: bool) {
         let ticket = self.lock().overlays.ticket();
-        self.resolve_modal_at(
+        self.finish_modal(
             if approved {
                 huginn_core::ApprovalDecision::ApproveOnce
             } else {
                 huginn_core::ApprovalDecision::Reject
             },
             ticket,
+            false,
         );
     }
+    /// Interactive confirmation. An acceptance that has not been reviewed
+    /// keeps the request open and explains why; it never grants and never
+    /// silently destroys the request.
     pub(crate) fn resolve_modal_at(
         &self,
         decision: huginn_core::ApprovalDecision,
         ticket: TransitionTicket,
     ) {
+        self.finish_modal(decision, ticket, true);
+    }
+    fn finish_modal(
+        &self,
+        decision: huginn_core::ApprovalDecision,
+        ticket: TransitionTicket,
+        keep_open_until_reviewed: bool,
+    ) {
+        let positive = decision != huginn_core::ApprovalDecision::Reject;
         let retired = {
             let mut state = self.lock();
             if state.overlays.ticket() != ticket {
                 return;
             }
-            if state.modal().is_none() {
+            let Some(modal) = state.modal_mut() else {
+                return;
+            };
+            if keep_open_until_reviewed
+                && positive
+                && modal.allowed_decisions.contains(&decision)
+                && !modal.review_satisfied()
+                && !self.stop.is_cancelled()
+            {
+                modal.review_notice = true;
+                drop(state);
+                self.dirty.notify_one();
                 return;
             }
             let id = state.overlays.snapshot().unwrap().id;
             state.overlays.close(id)
         };
         if let Some(Payload::Approval(mut modal)) = retired.map(ActiveOverlay::into_payload) {
-            let positive = decision != huginn_core::ApprovalDecision::Reject;
+            // Defense in depth: the gate is enforced again after the close so
+            // no caller can obtain a grant without a satisfied review.
             let decision = if modal.allowed_decisions.contains(&decision)
-                && (!positive
-                    || (modal.armed
-                        && (modal.summary_complete
-                            || (modal.details_rendered
-                                && modal.rendered_scroll >= modal.last_scroll))))
+                && (!positive || modal.review_satisfied())
                 && !self.stop.is_cancelled()
             {
                 decision
@@ -1751,6 +1784,7 @@ impl ApprovalPrompt for Ui {
                     .unwrap_or(0),
                 expanded: false,
                 details_rendered: false,
+                review_notice: false,
                 reply: Some(sender),
             });
             let operation = state.current_operation;

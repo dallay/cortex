@@ -653,16 +653,8 @@ async fn approval_paste_cannot_authorize_and_selected_policy_choice_is_traced() 
 }
 
 #[tokio::test]
-async fn armed_collapsed_incomplete_approval_is_rejected() {
-    let ui = ui();
-    let task = {
-        let ui = ui.clone();
-        tokio::spawn(async move {
-            ui.request_decision(&request(), &APPROVAL_DECISIONS, CancellationToken::new())
-                .await
-        })
-    };
-    pending(&ui).await;
+async fn armed_collapsed_incomplete_approval_stays_open_and_grants_nothing() {
+    let (ui, task) = pending_approval().await;
     {
         let mut state = ui.lock();
         let modal = state.modal_mut().unwrap();
@@ -671,10 +663,7 @@ async fn armed_collapsed_incomplete_approval_is_rejected() {
         drop(state);
     }
     overlay_key(&ui, crossterm::event::KeyCode::Enter);
-    assert_eq!(
-        task.await.unwrap().unwrap(),
-        huginn_core::ApprovalDecision::Reject
-    );
+    assert_review_required(&ui, task).await;
 }
 
 #[tokio::test]
@@ -2142,6 +2131,36 @@ async fn reject_can_be_confirmed_before_expanded_preview_is_read() {
     );
 }
 
+/// An accepted-but-unreviewed approval must not grant, must not send a reply and
+/// must leave the request open with a visible review notice.
+async fn assert_review_required(
+    ui: &Ui,
+    task: tokio::task::JoinHandle<huginn_core::Result<huginn_core::ApprovalDecision>>,
+) {
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        !task.is_finished(),
+        "an unreviewed acceptance must not resolve the request"
+    );
+    let notice = ui
+        .lock()
+        .modal()
+        .map(|modal| modal.review_notice)
+        .expect("the approval must stay open");
+    assert!(notice, "the reviewer must be told what is missing");
+    // The request is still answerable: Reject closes it and is delivered.
+    ui.lock().modal_mut().unwrap().selected = 0;
+    overlay_key(ui, KeyCode::Enter);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .expect("reject must still resolve the request")
+            .unwrap()
+            .unwrap(),
+        huginn_core::ApprovalDecision::Reject
+    );
+}
+
 #[tokio::test]
 async fn collapsed_native_file_approval_requires_reviewing_preview() {
     let (ui, task) = pending_approval().await;
@@ -2155,14 +2174,7 @@ async fn collapsed_native_file_approval_requires_reviewing_preview() {
 
     overlay_key(&ui, KeyCode::Enter);
 
-    assert_eq!(
-        tokio::time::timeout(Duration::from_secs(1), task)
-            .await
-            .expect("armed positive choice should resolve directly")
-            .unwrap()
-            .unwrap(),
-        huginn_core::ApprovalDecision::Reject
-    );
+    assert_review_required(&ui, task).await;
 }
 
 #[tokio::test]
@@ -2196,10 +2208,7 @@ async fn approval_requires_final_preview_page_to_be_painted() {
 
     overlay_key(&ui, KeyCode::Enter);
 
-    assert_eq!(
-        task.await.unwrap().unwrap(),
-        huginn_core::ApprovalDecision::Reject
-    );
+    assert_review_required(&ui, task).await;
 }
 
 #[tokio::test]
@@ -2217,18 +2226,11 @@ async fn multiline_shell_approval_requires_expanding_details() {
 
     let enter = KeyCode::Enter;
     overlay_key(&ui, enter);
-    assert_eq!(
-        tokio::time::timeout(Duration::from_secs(1), task)
-            .await
-            .expect("armed shell approval should resolve directly")
-            .unwrap()
-            .unwrap(),
-        huginn_core::ApprovalDecision::Reject
-    );
+    assert_review_required(&ui, task).await;
 }
 
 #[tokio::test]
-async fn shell_approval_requires_sequential_preview_rendering() {
+async fn shell_approval_with_unreached_rendered_scroll_stays_open() {
     let (ui, task) = pending_approval().await;
     {
         let mut state = ui.lock();
@@ -2244,10 +2246,7 @@ async fn shell_approval_requires_sequential_preview_rendering() {
     }
     let enter = KeyCode::Enter;
     overlay_key(&ui, enter);
-    assert_eq!(
-        task.await.unwrap().unwrap(),
-        huginn_core::ApprovalDecision::Reject
-    );
+    assert_review_required(&ui, task).await;
 }
 
 #[tokio::test]
@@ -2286,4 +2285,41 @@ async fn shell_scroll_waits_for_each_frame_while_other_approvals_can_advance() {
             );
         }
     }
+}
+
+#[tokio::test]
+async fn approval_notice_survives_navigation_at_choice_boundaries() {
+    let (ui, task) = pending_approval().await;
+    ui.lock().modal_mut().unwrap().armed = true;
+
+    overlay_key(&ui, KeyCode::Right);
+    overlay_key(&ui, KeyCode::Enter);
+    assert!(ui.lock().modal().unwrap().review_notice);
+    assert!(!task.is_finished());
+
+    // Right at the final choice must preserve the outstanding review notice.
+    overlay_key(&ui, KeyCode::Right);
+    let (selected, notice) = ui
+        .lock()
+        .modal()
+        .map(|modal| (modal.selected, modal.review_notice))
+        .unwrap();
+    assert_eq!(selected, 1);
+    assert!(notice);
+    // A real choice change clears the notice.
+    overlay_key(&ui, KeyCode::Left);
+    let (selected, notice) = ui
+        .lock()
+        .modal()
+        .map(|modal| (modal.selected, modal.review_notice))
+        .unwrap();
+    assert_eq!(selected, 0);
+    assert!(!notice);
+    overlay_key(&ui, KeyCode::Left);
+    assert_eq!(ui.lock().modal().unwrap().selected, 0);
+    overlay_key(&ui, KeyCode::Enter);
+    assert_eq!(
+        task.await.unwrap().unwrap(),
+        huginn_core::ApprovalDecision::Reject
+    );
 }
