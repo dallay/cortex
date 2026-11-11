@@ -67,8 +67,10 @@ policy-allowed choices before the decision. The complete preview remains
 available as expanded details. A positive choice requires review: a complete
 single-line `native.shell` command is approvable from the collapsed panel, while
 every other request must have its expanded preview rendered through the last
-line. An unreviewed acceptance keeps the request open and shows a notice;
-rejection never requires review. Explicit `--allow` grants apply only to
+line. In the TUI, an unreviewed acceptance keeps the request open and shows a
+notice; rejection never requires review. Programmatic resolution
+(`resolve_modal(true)`), a cancelled decision and a disallowed decision close
+the request as Reject. Explicit `--allow` grants apply only to
 that CLI invocation. Approval previews must identify the
 target/location, requested change or arguments, and relevant external-effect or
 sandboxing risk. MCP tool previews identify the server and remote tool, show the
