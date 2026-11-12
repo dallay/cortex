@@ -575,3 +575,42 @@ it('publica pronto comentarios de cobertura y conserva los flags carryforward', 
   assert.match(codecovConfig, /warning_threshold: "5%"/);
   assert.match(codecovConfig, /status: "informational"/);
 });
+
+it('define componentes de cobertura por producto con estados informativos', () => {
+  const codecovConfig = fs.readFileSync(
+      path.join(__dirname, '../../codecov.yml'), 'utf8');
+
+  assert.match(codecovConfig, /^component_management:$/m);
+
+  // Los componentes se identifican por producto y no pisan los flags.
+  for (const componentId of ['rook', 'huginn', 'dashboard']) {
+    assert.match(codecovConfig,
+        new RegExp(`^    - component_id: ${componentId}$`, 'm'));
+  }
+
+  // Rutas de cada producto, derivadas de la estructura del workspace.
+  assert.match(codecovConfig, /^        - "apps\/rook\/src\/\*\*"$/m);
+  assert.match(codecovConfig, /^        - "apps\/rook\/tests\/\*\*"$/m);
+  assert.match(codecovConfig, /^        - "crates\/domain\/\*\*"$/m);
+  assert.match(codecovConfig, /^        - "crates\/application\/\*\*"$/m);
+  assert.match(codecovConfig, /^        - "crates\/infrastructure\/\*\*"$/m);
+  assert.match(codecovConfig, /^        - "apps\/huginn\/src\/\*\*"$/m);
+  assert.match(codecovConfig, /^        - "apps\/huginn\/tests\/\*\*"$/m);
+  assert.match(codecovConfig, /^        - "crates\/huginn\/\*\*"$/m);
+  assert.match(codecovConfig, /^        - "apps\/rook\/dashboard\/\*\*"$/m);
+
+  // Los estados por componente son informativos: no bloquean el merge.
+  const componentBlock = codecovConfig.match(
+      /^component_management:$\n([\s\S]*?)(?=^\S)/m);
+  assert.ok(componentBlock, 'bloque component_management');
+  const componentStatuses = componentBlock[1].match(
+      /- type: (project|patch)\n\s+target: [^\n]+\n\s+informational: true/g);
+  assert.equal(componentStatuses?.length, 2,
+      'un status project y un status patch informativos');
+
+  // Los gates de cobertura existentes no cambian.
+  assert.match(codecovConfig, /^      backend:$/m);
+  assert.match(codecovConfig, /^        target: 85%$/m);
+  assert.match(codecovConfig, /^      frontend:$/m);
+  assert.match(codecovConfig, /^        target: 80%$/m);
+});
