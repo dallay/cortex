@@ -15,6 +15,7 @@ pub mod eligibility;
 pub mod route_request;
 pub mod route_selection;
 pub mod router_impl;
+pub mod scoring;
 pub mod spending_budget;
 
 pub use auth::{
@@ -27,6 +28,11 @@ pub use authenticate_client_api::{AuthenticateClientApi, AuthenticateClientApiEr
 pub use cost_estimation::{estimate_cost_usd, PricingConfig, PricingEntry};
 pub use eligibility::{EligibilityResult, Rejection, RejectionReason, TargetRef};
 pub use health_check::HealthCheck;
+pub use scoring::{
+    build_score_components, build_selection_reason, build_signals_snapshot, CandidatePricing,
+    CandidateScoreComponents, CandidateSignals, RawEvidence, ScoreComponent, SelectionFallback,
+    SelectionMethod, SelectionReason, SignalsSnapshot, UnknownReason,
+};
 pub use manage_api_keys::{
     CreateApiKeyRequest, ManageApiKeys, ManageApiKeysError, UpdateApiKeyRequest,
 };

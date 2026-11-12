@@ -236,22 +236,73 @@ impl FallbackRouter {
             .collect()
     }
 
+    /// Validate weights against the full registry. Returns an error for invalid configurations.
+    fn validate_weights(
+        configured_weights: &[f32],
+        registry_len: usize,
+    ) -> CortexResult<()> {
+        if configured_weights.len() != registry_len {
+            return Err(CortexError::weighted_config_error(format!(
+                "weight count ({}) does not match provider registry size ({})",
+                configured_weights.len(),
+                registry_len
+            )));
+        }
+        for (i, w) in configured_weights.iter().enumerate() {
+            if w.is_nan() || w.is_infinite() {
+                return Err(CortexError::weighted_config_error(format!(
+                    "weight at index {} is not finite ({})",
+                    i, w
+                )));
+            }
+            if *w < 0.0 {
+                return Err(CortexError::weighted_config_error(format!(
+                    "weight at index {} is negative ({})",
+                    i, w
+                )));
+            }
+        }
+        if configured_weights.iter().all(|&w| w == 0.0) {
+            return Err(CortexError::weighted_config_error(
+                "all weights are zero, no provider can be selected".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     fn select_weighted(
         candidates: &[(Arc<dyn ProviderPort>, Option<f32>)],
-    ) -> Option<Arc<dyn ProviderPort>> {
-        let Some(weights) = candidates
+        configured_weights: &[f32],
+        registry_len: usize,
+    ) -> CortexResult<Option<Arc<dyn ProviderPort>>> {
+        // Validate the configured weights against the full registry.
+        Self::validate_weights(configured_weights, registry_len)?;
+
+        // Extract weights for surviving candidates (after eligibility filtering).
+        let weights: Vec<f32> = candidates
             .iter()
-            .map(|(_, weight)| *weight)
-            .collect::<Option<Vec<_>>>()
-        else {
-            // Preserve the first-candidate fallback for mismatched configuration.
-            return candidates.first().map(|(provider, _)| provider.clone());
-        };
+            .filter_map(|(_, w)| *w)
+            .collect();
+
+        if weights.is_empty() {
+            return Ok(None);
+        }
+
+        // If all surviving candidates have zero weight, fall back to the first
+        // eligible candidate rather than failing. This is a valid post-filter
+        // scenario, not a configuration error.
+        let total: f32 = weights.iter().sum();
+        if total <= 0.0 {
+            return Ok(candidates.first().map(|(provider, _)| provider.clone()));
+        }
+
         let mut rng = rand::rng();
-        Self::weighted_provider_index(&weights, rng.random())
-            .and_then(|index| candidates.get(index))
-            .or_else(|| candidates.first())
-            .map(|(provider, _)| provider.clone())
+        let index = Self::weighted_provider_index(&weights, rng.random())
+            .ok_or_else(|| CortexError::weighted_config_error(
+                "weighted selection failed with valid weights".to_string(),
+            ))?;
+        
+        Ok(candidates.get(index).map(|(provider, _)| provider.clone()))
     }
 
     /// Returns a snapshot of circuit breaker state for all registered providers.
@@ -365,7 +416,13 @@ impl RouterPort for FallbackRouter {
                 *index = idx + 1;
                 candidates.get(idx).map(|(provider, _)| provider.clone())
             }
-            RoutingStrategy::WeightedRandom(_) => Self::select_weighted(&candidates),
+            RoutingStrategy::WeightedRandom(weights) => {
+                let registry_len = self.providers.read().len();
+                match Self::select_weighted(&candidates, weights, registry_len)? {
+                    Some(provider) => return Ok(provider),
+                    None => return Err(CortexError::all_providers_exhausted()),
+                }
+            }
         };
 
         selected.ok_or_else(CortexError::all_providers_exhausted)
@@ -402,7 +459,13 @@ impl RouterPort for FallbackRouter {
                 *index = (idx + 1) % available.len();
                 available.get(idx).map(|(provider, _)| provider.clone())
             }
-            RoutingStrategy::WeightedRandom(_) => Self::select_weighted(&available),
+            RoutingStrategy::WeightedRandom(weights) => {
+                let registry_len = self.providers.read().len();
+                match Self::select_weighted(&available, weights, registry_len)? {
+                    Some(provider) => return Ok(provider),
+                    None => return Err(CortexError::all_providers_exhausted()),
+                }
+            }
         };
         selected.ok_or_else(CortexError::all_providers_exhausted)
     }
@@ -1364,7 +1427,7 @@ mod tests {
     }
 
     #[test]
-    fn weighted_random_strategy_falls_back_to_first_when_weights_mismatch() {
+    fn weighted_random_strategy_errors_on_weights_mismatch() {
         tokio::runtime::Builder::new_current_thread()
             .build()
             .expect("runtime")
@@ -1373,14 +1436,118 @@ mod tests {
                 let p2 = StubProvider::new("b", &["model-x"]);
                 let router = FallbackRouter::new(
                     vec![p1.clone(), p2.clone()],
-                    // 3 weights but only 2 providers — should fall back to first
+                    // 3 weights but only 2 providers — should return explicit error
                     RoutingStrategy::WeightedRandom(vec![0.5, 0.3, 0.2]),
                 );
 
-                let selected = router
-                    .select(&request("model-x"))
-                    .await
-                    .expect("should select");
+                let result = router.select(&request("model-x")).await;
+                match result {
+                    Err(e) => assert!(e.is_weighted_config_error(), "should be a weighted config error"),
+                    Ok(_) => panic!("should error on weight mismatch"),
+                }
+            });
+    }
+
+    #[test]
+    fn weighted_random_strategy_errors_on_negative_weight() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let p1 = StubProvider::new("a", &["model-x"]);
+                let p2 = StubProvider::new("b", &["model-x"]);
+                let router = FallbackRouter::new(
+                    vec![p1.clone(), p2.clone()],
+                    RoutingStrategy::WeightedRandom(vec![0.5, -0.5]),
+                );
+
+                let result = router.select(&request("model-x")).await;
+                match result {
+                    Err(e) => assert!(e.is_weighted_config_error(), "should be a weighted config error"),
+                    Ok(_) => panic!("should error on negative weight"),
+                }
+            });
+    }
+
+    #[test]
+    fn weighted_random_strategy_errors_on_nan_weight() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let p1 = StubProvider::new("a", &["model-x"]);
+                let p2 = StubProvider::new("b", &["model-x"]);
+                let router = FallbackRouter::new(
+                    vec![p1.clone(), p2.clone()],
+                    RoutingStrategy::WeightedRandom(vec![0.5, f32::NAN]),
+                );
+
+                let result = router.select(&request("model-x")).await;
+                match result {
+                    Err(e) => assert!(e.is_weighted_config_error(), "should be a weighted config error"),
+                    Ok(_) => panic!("should error on NaN weight"),
+                }
+            });
+    }
+
+    #[test]
+    fn weighted_random_strategy_errors_on_all_zero_weights() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let p1 = StubProvider::new("a", &["model-x"]);
+                let p2 = StubProvider::new("b", &["model-x"]);
+                let router = FallbackRouter::new(
+                    vec![p1.clone(), p2.clone()],
+                    RoutingStrategy::WeightedRandom(vec![0.0, 0.0]),
+                );
+
+                let result = router.select(&request("model-x")).await;
+                match result {
+                    Err(e) => assert!(e.is_weighted_config_error(), "should be a weighted config error"),
+                    Ok(_) => panic!("should error on all-zero weights"),
+                }
+            });
+    }
+
+    #[test]
+    fn weighted_random_valid_selection_works() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let p1 = StubProvider::new("a", &["model-x"]);
+                let p2 = StubProvider::new("b", &["model-x"]);
+                let router = FallbackRouter::new(
+                    vec![p1.clone(), p2.clone()],
+                    RoutingStrategy::WeightedRandom(vec![0.7, 0.3]),
+                );
+
+                // Should succeed with valid weights
+                let selected = router.select(&request("model-x")).await.expect("should select");
+                assert!(
+                    selected.id() == &ProviderId::new("a") || selected.id() == &ProviderId::new("b"),
+                    "should select one of the providers"
+                );
+            });
+    }
+
+    #[test]
+    fn weighted_random_post_filter_retains_weights() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let p1 = StubProvider::new("a", &["model-x"]);
+                let p2 = StubProvider::new("b", &["model-y"]); // different model
+                let router = FallbackRouter::new(
+                    vec![p1.clone(), p2.clone()],
+                    RoutingStrategy::WeightedRandom(vec![0.7, 0.3]),
+                );
+
+                // Request model-x — only p1 is eligible
+                let selected = router.select(&request("model-x")).await.expect("should select");
                 assert_eq!(selected.id(), &ProviderId::new("a"));
             });
     }
