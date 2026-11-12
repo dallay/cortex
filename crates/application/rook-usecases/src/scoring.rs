@@ -96,10 +96,10 @@ pub struct CandidateScoreComponents {
     pub cost_output: ScoreComponent,
     /// Provider priority (raw u8 value, lower number = higher priority).
     pub priority: RawEvidence<u8>,
-    /// Quota state observation.
-    pub quota: QuotaObservation,
-    /// Circuit breaker state.
-    pub circuit: CircuitStateSnapshot,
+    /// Quota state observation. None when no quota data is available.
+    pub quota: Option<QuotaObservation>,
+    /// Circuit breaker state. None when no circuit data is available.
+    pub circuit: Option<CircuitStateSnapshot>,
 }
 
 // ============================================================================
@@ -117,10 +117,10 @@ pub struct CandidateSignals {
     pub pricing: Option<CandidatePricing>,
     /// Provider priority from the registry.
     pub priority: u8,
-    /// Quota observation for this candidate.
-    pub quota: QuotaObservation,
-    /// Circuit breaker state for this candidate.
-    pub circuit: CircuitStateSnapshot,
+    /// Quota observation for this candidate. None when unavailable.
+    pub quota: Option<QuotaObservation>,
+    /// Circuit breaker state for this candidate. None when unavailable.
+    pub circuit: Option<CircuitStateSnapshot>,
 }
 
 /// Pricing dimensions for one candidate.
@@ -197,24 +197,35 @@ pub struct SelectionReason {
 /// If all known values are equal (including a single known value), returns 0.5.
 /// If no known values exist, returns None.
 /// Unknowns never enter min/max bounds.
-fn normalize_component(
-    value: RawEvidence<f64>,
-    known_values: &[f64],
-) -> Option<f64> {
-    // If the value itself is unknown, it stays unknown.
+/// Invalid (negative, NaN, Inf) values are treated as Unknown.
+fn normalize_component(value: RawEvidence<f64>, known_values: &[f64]) -> Option<f64> {
+    // Validate the value itself: must be known, non-negative, and finite.
     let value = match value {
         RawEvidence::Known(v) => v,
         RawEvidence::Unknown(_) => return None,
     };
+    if value.is_nan() || value.is_infinite() || value < 0.0 {
+        return None;
+    }
 
-    // No known values means no bounds.
-    if known_values.is_empty() {
+    // Filter known_values to only valid (non-negative, finite) values.
+    let valid_known: Vec<f64> = known_values
+        .iter()
+        .copied()
+        .filter(|&v| v.is_finite() && v >= 0.0)
+        .collect();
+
+    // No valid known values means no bounds.
+    if valid_known.is_empty() {
         return None;
     }
 
     // Single known value or all equal values → neutral 0.5.
-    let min = known_values.iter().copied().fold(f64::INFINITY, f64::min);
-    let max = known_values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let min = valid_known.iter().copied().fold(f64::INFINITY, f64::min);
+    let max = valid_known
+        .iter()
+        .copied()
+        .fold(f64::NEG_INFINITY, f64::max);
     if (max - min).abs() < f64::EPSILON {
         return Some(0.5);
     }
@@ -353,14 +364,13 @@ pub fn build_selection_reason(
 /// circuit breaker state, and quota observations for each eligible candidate.
 /// It is the only place that reads these sources; normalization is pure.
 pub fn build_signals_snapshot(
-    eligible: &[TargetRef],
+    eligible: &[&TargetRef],
     model: &rook_core::ModelId,
     telemetry: &Option<std::sync::Arc<observability::TelemetryTracker>>,
     pricing: &crate::PricingConfig,
     circuit_states: &HashMap<ProviderId, CircuitStateSnapshot>,
     quota_observations: &HashMap<ProviderId, QuotaObservation>,
 ) -> SignalsSnapshot {
-
     let mut candidates = HashMap::new();
     for target in eligible {
         let provider_id = &target.0;
@@ -405,39 +415,16 @@ pub fn build_signals_snapshot(
             },
         });
 
-        // Circuit breaker state
-        let circuit = circuit_states
-            .get(provider_id)
-            .cloned()
-            .unwrap_or_else(|| CircuitStateSnapshot {
-                failures: 0,
-                is_open: false,
-                last_failure: None,
-                cooldown_until: None,
-                rate_limit_reset: None,
-            });
+        // Circuit breaker state: only include if actually available.
+        // Do NOT fabricate a healthy state when data is missing.
+        let circuit = circuit_states.get(provider_id).cloned();
 
-        // Quota observation
-        let quota = quota_observations
-            .get(provider_id)
-            .cloned()
-            .unwrap_or_else(|| QuotaObservation {
-                provider_id: String::new(),
-                provider: provider_id.clone(),
-                connection_id: None,
-                metric: String::new(),
-                source: String::new(),
-                scope: None,
-                window: None,
-                limit: None,
-                remaining: None,
-                reset_at: None,
-                reset_after_milliseconds: None,
-                observed_at: chrono::Utc::now(),
-            });
+        // Quota observation: only include if actually available.
+        // Do NOT fabricate a quota record with Utc::now() when data is missing.
+        let quota = quota_observations.get(provider_id).cloned();
 
         candidates.insert(
-            target.clone(),
+            (**target).clone(),
             CandidateSignals {
                 latency_p50_ms,
                 latency_p95_ms,
@@ -459,34 +446,17 @@ pub fn build_signals_snapshot(
 mod normalization_tests {
     use super::*;
 
-    fn empty_quota() -> QuotaObservation {
-        QuotaObservation {
-            provider_id: String::new(),
-            provider: ProviderId::new("test".to_string()),
-            connection_id: None,
-            metric: String::new(),
-            source: String::new(),
-            scope: None,
-            window: None,
-            limit: None,
-            remaining: None,
-            reset_at: None,
-            reset_after_milliseconds: None,
-            observed_at: Utc::now(),
-        }
+    fn empty_quota() -> Option<QuotaObservation> {
+        None
     }
 
-    fn empty_circuit() -> CircuitStateSnapshot {
-        CircuitStateSnapshot {
-            failures: 0,
-            is_open: false,
-            last_failure: None,
-            cooldown_until: None,
-            rate_limit_reset: None,
-        }
+    fn empty_circuit() -> Option<CircuitStateSnapshot> {
+        None
     }
 
-    fn make_snapshot(values: Vec<(TargetRef, RawEvidence<f64>, RawEvidence<f64>)>) -> SignalsSnapshot {
+    fn make_snapshot(
+        values: Vec<(TargetRef, RawEvidence<f64>, RawEvidence<f64>)>,
+    ) -> SignalsSnapshot {
         let mut candidates = HashMap::new();
         for (target, p50, p95) in values {
             candidates.insert(
@@ -496,8 +466,8 @@ mod normalization_tests {
                     latency_p95_ms: p95,
                     pricing: None,
                     priority: 0,
-                    quota: empty_quota(),
-                    circuit: empty_circuit(),
+                    quota: None,
+                    circuit: None,
                 },
             );
         }
@@ -515,9 +485,21 @@ mod normalization_tests {
     fn inverse_min_max_normalization() {
         // [10, 20, 30] → [1.0, 0.5, 0.0]
         let snapshot = make_snapshot(vec![
-            (target("a"), RawEvidence::Known(10.0), RawEvidence::Known(10.0)),
-            (target("b"), RawEvidence::Known(20.0), RawEvidence::Known(20.0)),
-            (target("c"), RawEvidence::Known(30.0), RawEvidence::Known(30.0)),
+            (
+                target("a"),
+                RawEvidence::Known(10.0),
+                RawEvidence::Known(10.0),
+            ),
+            (
+                target("b"),
+                RawEvidence::Known(20.0),
+                RawEvidence::Known(20.0),
+            ),
+            (
+                target("c"),
+                RawEvidence::Known(30.0),
+                RawEvidence::Known(30.0),
+            ),
         ]);
         let components = build_score_components(&snapshot);
 
@@ -534,9 +516,21 @@ mod normalization_tests {
     fn equal_values_normalize_to_half() {
         // [20, 20, 20] → [0.5, 0.5, 0.5]
         let snapshot = make_snapshot(vec![
-            (target("a"), RawEvidence::Known(20.0), RawEvidence::Known(20.0)),
-            (target("b"), RawEvidence::Known(20.0), RawEvidence::Known(20.0)),
-            (target("c"), RawEvidence::Known(20.0), RawEvidence::Known(20.0)),
+            (
+                target("a"),
+                RawEvidence::Known(20.0),
+                RawEvidence::Known(20.0),
+            ),
+            (
+                target("b"),
+                RawEvidence::Known(20.0),
+                RawEvidence::Known(20.0),
+            ),
+            (
+                target("c"),
+                RawEvidence::Known(20.0),
+                RawEvidence::Known(20.0),
+            ),
         ]);
         let components = build_score_components(&snapshot);
 
@@ -550,9 +544,11 @@ mod normalization_tests {
 
     #[test]
     fn single_known_value_normalizes_to_half() {
-        let snapshot = make_snapshot(vec![
-            (target("a"), RawEvidence::Known(15.0), RawEvidence::Known(15.0)),
-        ]);
+        let snapshot = make_snapshot(vec![(
+            target("a"),
+            RawEvidence::Known(15.0),
+            RawEvidence::Known(15.0),
+        )]);
         let components = build_score_components(&snapshot);
 
         let a = components.get(&target("a")).unwrap();
@@ -590,13 +586,21 @@ mod normalization_tests {
     fn mixed_known_unknown_unknowns_dont_affect_bounds() {
         // Known: [10, 30], Unknown should not affect bounds
         let snapshot = make_snapshot(vec![
-            (target("a"), RawEvidence::Known(10.0), RawEvidence::Known(10.0)),
+            (
+                target("a"),
+                RawEvidence::Known(10.0),
+                RawEvidence::Known(10.0),
+            ),
             (
                 target("b"),
                 RawEvidence::Unknown(UnknownReason::Missing),
                 RawEvidence::Unknown(UnknownReason::Missing),
             ),
-            (target("c"), RawEvidence::Known(30.0), RawEvidence::Known(30.0)),
+            (
+                target("c"),
+                RawEvidence::Known(30.0),
+                RawEvidence::Known(30.0),
+            ),
         ]);
         let components = build_score_components(&snapshot);
 
@@ -614,13 +618,21 @@ mod normalization_tests {
     fn known_zero_vs_unknown() {
         // Known(0) enters bounds, unknown doesn't
         let snapshot = make_snapshot(vec![
-            (target("a"), RawEvidence::Known(0.0), RawEvidence::Known(0.0)),
+            (
+                target("a"),
+                RawEvidence::Known(0.0),
+                RawEvidence::Known(0.0),
+            ),
             (
                 target("b"),
                 RawEvidence::Unknown(UnknownReason::Missing),
                 RawEvidence::Unknown(UnknownReason::Missing),
             ),
-            (target("c"), RawEvidence::Known(20.0), RawEvidence::Known(20.0)),
+            (
+                target("c"),
+                RawEvidence::Known(20.0),
+                RawEvidence::Known(20.0),
+            ),
         ]);
         let components = build_score_components(&snapshot);
 
@@ -638,7 +650,11 @@ mod normalization_tests {
     fn invalid_negative_values_are_unknown() {
         // Negative latency should be treated as unknown
         let snapshot = make_snapshot(vec![
-            (target("a"), RawEvidence::Known(10.0), RawEvidence::Known(10.0)),
+            (
+                target("a"),
+                RawEvidence::Known(10.0),
+                RawEvidence::Known(10.0),
+            ),
             (
                 target("b"),
                 RawEvidence::Unknown(UnknownReason::Invalid),
@@ -661,8 +677,16 @@ mod normalization_tests {
     #[test]
     fn p50_p95_normalized_separately() {
         let snapshot = make_snapshot(vec![
-            (target("a"), RawEvidence::Known(10.0), RawEvidence::Known(50.0)),
-            (target("b"), RawEvidence::Known(30.0), RawEvidence::Known(90.0)),
+            (
+                target("a"),
+                RawEvidence::Known(10.0),
+                RawEvidence::Known(50.0),
+            ),
+            (
+                target("b"),
+                RawEvidence::Known(30.0),
+                RawEvidence::Known(90.0),
+            ),
         ]);
         let components = build_score_components(&snapshot);
 
@@ -682,14 +706,38 @@ mod normalization_tests {
     fn permuted_order_same_normalization() {
         // Same eligible set, permuted order → identical normalization results
         let snapshot1 = make_snapshot(vec![
-            (target("a"), RawEvidence::Known(10.0), RawEvidence::Known(10.0)),
-            (target("b"), RawEvidence::Known(20.0), RawEvidence::Known(20.0)),
-            (target("c"), RawEvidence::Known(30.0), RawEvidence::Known(30.0)),
+            (
+                target("a"),
+                RawEvidence::Known(10.0),
+                RawEvidence::Known(10.0),
+            ),
+            (
+                target("b"),
+                RawEvidence::Known(20.0),
+                RawEvidence::Known(20.0),
+            ),
+            (
+                target("c"),
+                RawEvidence::Known(30.0),
+                RawEvidence::Known(30.0),
+            ),
         ]);
         let snapshot2 = make_snapshot(vec![
-            (target("c"), RawEvidence::Known(30.0), RawEvidence::Known(30.0)),
-            (target("a"), RawEvidence::Known(10.0), RawEvidence::Known(10.0)),
-            (target("b"), RawEvidence::Known(20.0), RawEvidence::Known(20.0)),
+            (
+                target("c"),
+                RawEvidence::Known(30.0),
+                RawEvidence::Known(30.0),
+            ),
+            (
+                target("a"),
+                RawEvidence::Known(10.0),
+                RawEvidence::Known(10.0),
+            ),
+            (
+                target("b"),
+                RawEvidence::Known(20.0),
+                RawEvidence::Known(20.0),
+            ),
         ]);
 
         let comp1 = build_score_components(&snapshot1);

@@ -1930,12 +1930,16 @@ async fn weighted_selection_cannot_reintroduce_key_disallowed_provider() {
     let mut req = request();
     req.restrictions.allowed_providers = vec![ProviderId::new("allowed")];
 
-    let response = usecase
+    // When the only remaining eligible candidate has zero weight, selection
+    // must fail with an explicit weighted config error, not silently select it.
+    let error = usecase
         .execute(req)
         .await
-        .expect("the high-weight rejected target must remain excluded");
-
-    assert_eq!(response.provider, ProviderId::new("allowed"));
+        .expect_err("zero-weight-only remaining candidate must produce a weighted config error");
+    assert!(
+        error.is_weighted_config_error(),
+        "expected weighted config error, got: {error}"
+    );
 }
 
 #[tokio::test]

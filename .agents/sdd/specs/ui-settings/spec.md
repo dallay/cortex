@@ -159,6 +159,26 @@ The system SHALL maintain a working copy of the values for every tab inside the 
 
 <!-- coderabbit-ai-generated:v1 -->
 
+Al pulsar Enter para aplicar, el sistema SHALL capturar la copia de trabajo en
+`UiConfig` e invocar una sola vez por Apply la función de persistencia inyectada
+`Fn(&UiConfig) -> anyhow::Result<()>`, sin bloquear el input. Mientras ese Apply
+esté pendiente, Enter repetido SHALL NOT iniciar otra escritura. Los guardados
+SHALL serializarse para conservar su orden: una escritura serializada SHALL
+incluir procesar su receipt y publicar la revisión resultante guardada antes de
+que comience la siguiente escritura en cola. Un Apply en cola SHALL verificar
+contra esa revisión publicada y rechazar una copia de trabajo obsoleta sin
+invocar persistencia. En éxito SHALL actualizar el snapshot de preferencias
+guardadas para próximas aperturas; solo si el overlay y Apply siguen vigentes
+SHALL cerrar `Overlay::Settings` y mostrar `Settings saved` como `Notification`
+no conversacional. En fallo vigente SHALL mantenerlo abierto, conservar la copia
+enviada y mostrar el error en el cuerpo sin un segundo aviso equivalente. Un
+receipt tardío SHALL consumirse sin reabrir Settings, cerrar o modificar otro
+overlay, recuperar foco ni afectar Approval; un éxito tardío SHALL actualizar
+únicamente el snapshot guardado, no la copia editable de otro Settings ya
+abierto. Un fallo tardío SHALL NOT sustituir el snapshot guardado por valores
+fallidos. SHALL preservar la aplicación conjunta de todos los valores y los
+contratos TOML de REQ-09 a REQ-11; SHALL NOT aplicar tema live.
+
 <!-- coderabbit-ai-generated-section:v1:17ac322e423a66a5421da2a7614fba99186516a48de75a021180837a9058e97b -->
 
 When Enter is pressed for a non-stale Apply, the system SHALL capture the working copy into

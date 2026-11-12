@@ -237,10 +237,7 @@ impl FallbackRouter {
     }
 
     /// Validate weights against the full registry. Returns an error for invalid configurations.
-    fn validate_weights(
-        configured_weights: &[f32],
-        registry_len: usize,
-    ) -> CortexResult<()> {
+    fn validate_weights(configured_weights: &[f32], registry_len: usize) -> CortexResult<()> {
         if configured_weights.len() != registry_len {
             return Err(CortexError::weighted_config_error(format!(
                 "weight count ({}) does not match provider registry size ({})",
@@ -279,29 +276,28 @@ impl FallbackRouter {
         Self::validate_weights(configured_weights, registry_len)?;
 
         // Extract weights for surviving candidates (after eligibility filtering).
-        let weights: Vec<f32> = candidates
-            .iter()
-            .filter_map(|(_, w)| *w)
-            .collect();
+        let weights: Vec<f32> = candidates.iter().filter_map(|(_, w)| *w).collect();
 
         if weights.is_empty() {
             return Ok(None);
         }
 
-        // If all surviving candidates have zero weight, fall back to the first
-        // eligible candidate rather than failing. This is a valid post-filter
-        // scenario, not a configuration error.
+        // If all surviving candidates have zero weight after filtering,
+        // return an explicit error. This is not a valid selection state.
         let total: f32 = weights.iter().sum();
         if total <= 0.0 {
-            return Ok(candidates.first().map(|(provider, _)| provider.clone()));
+            return Err(CortexError::weighted_config_error(
+                "all eligible candidates have zero weight after filtering".to_string(),
+            ));
         }
 
         let mut rng = rand::rng();
-        let index = Self::weighted_provider_index(&weights, rng.random())
-            .ok_or_else(|| CortexError::weighted_config_error(
+        let index = Self::weighted_provider_index(&weights, rng.random()).ok_or_else(|| {
+            CortexError::weighted_config_error(
                 "weighted selection failed with valid weights".to_string(),
-            ))?;
-        
+            )
+        })?;
+
         Ok(candidates.get(index).map(|(provider, _)| provider.clone()))
     }
 
@@ -349,6 +345,15 @@ impl FallbackRouter {
     pub fn reset_circuit(&self, provider_id: &ProviderId) {
         if let Some(mut state) = self.circuits.get_mut(provider_id) {
             state.reset();
+        }
+    }
+
+    /// Return the current selection strategy for explanation purposes.
+    pub fn selection_strategy(&self) -> rook_core::SelectionStrategy {
+        match &self.strategy {
+            RoutingStrategy::Priority => rook_core::SelectionStrategy::Priority,
+            RoutingStrategy::RoundRobin => rook_core::SelectionStrategy::RoundRobin,
+            RoutingStrategy::WeightedRandom(_) => rook_core::SelectionStrategy::WeightedRandom,
         }
     }
 }
@@ -564,6 +569,18 @@ impl RouterPort for FallbackRouter {
                 })
                 .collect(),
         )
+    }
+
+    fn selection_strategy(&self) -> rook_core::SelectionStrategy {
+        match &self.strategy {
+            RoutingStrategy::Priority => rook_core::SelectionStrategy::Priority,
+            RoutingStrategy::RoundRobin => rook_core::SelectionStrategy::RoundRobin,
+            RoutingStrategy::WeightedRandom(_) => rook_core::SelectionStrategy::WeightedRandom,
+        }
+    }
+
+    fn circuit_states(&self) -> Vec<(ProviderId, rook_core::CircuitStateSnapshot)> {
+        FallbackRouter::circuit_states(self)
     }
 
     fn resolve_connection(
@@ -1442,7 +1459,10 @@ mod tests {
 
                 let result = router.select(&request("model-x")).await;
                 match result {
-                    Err(e) => assert!(e.is_weighted_config_error(), "should be a weighted config error"),
+                    Err(e) => assert!(
+                        e.is_weighted_config_error(),
+                        "should be a weighted config error"
+                    ),
                     Ok(_) => panic!("should error on weight mismatch"),
                 }
             });
@@ -1463,7 +1483,10 @@ mod tests {
 
                 let result = router.select(&request("model-x")).await;
                 match result {
-                    Err(e) => assert!(e.is_weighted_config_error(), "should be a weighted config error"),
+                    Err(e) => assert!(
+                        e.is_weighted_config_error(),
+                        "should be a weighted config error"
+                    ),
                     Ok(_) => panic!("should error on negative weight"),
                 }
             });
@@ -1484,7 +1507,10 @@ mod tests {
 
                 let result = router.select(&request("model-x")).await;
                 match result {
-                    Err(e) => assert!(e.is_weighted_config_error(), "should be a weighted config error"),
+                    Err(e) => assert!(
+                        e.is_weighted_config_error(),
+                        "should be a weighted config error"
+                    ),
                     Ok(_) => panic!("should error on NaN weight"),
                 }
             });
@@ -1505,7 +1531,10 @@ mod tests {
 
                 let result = router.select(&request("model-x")).await;
                 match result {
-                    Err(e) => assert!(e.is_weighted_config_error(), "should be a weighted config error"),
+                    Err(e) => assert!(
+                        e.is_weighted_config_error(),
+                        "should be a weighted config error"
+                    ),
                     Ok(_) => panic!("should error on all-zero weights"),
                 }
             });
@@ -1525,9 +1554,13 @@ mod tests {
                 );
 
                 // Should succeed with valid weights
-                let selected = router.select(&request("model-x")).await.expect("should select");
+                let selected = router
+                    .select(&request("model-x"))
+                    .await
+                    .expect("should select");
                 assert!(
-                    selected.id() == &ProviderId::new("a") || selected.id() == &ProviderId::new("b"),
+                    selected.id() == &ProviderId::new("a")
+                        || selected.id() == &ProviderId::new("b"),
                     "should select one of the providers"
                 );
             });
@@ -1547,7 +1580,10 @@ mod tests {
                 );
 
                 // Request model-x — only p1 is eligible
-                let selected = router.select(&request("model-x")).await.expect("should select");
+                let selected = router
+                    .select(&request("model-x"))
+                    .await
+                    .expect("should select");
                 assert_eq!(selected.id(), &ProviderId::new("a"));
             });
     }

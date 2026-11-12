@@ -16,14 +16,14 @@ use shared_kernel::{
 
 use super::{
     ApiFormat, AuditEntry, CacheStats, CompletionRequest, CompletionResponse, CostBreakdown,
-    HealthStatus, Pagination, QuotaObservation, SignatureEntry, StreamChunk, UsageEntry,
-    UsageFilters, UsageSummary,
+    HealthStatus, Pagination, QuotaObservation, SelectionStrategy, SignatureEntry, StreamChunk,
+    UsageEntry, UsageFilters, UsageSummary,
 };
 use super::{
-    ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeySubject, Combo, ComboValidationError,
-    NewSession, NewUser, PasswordHash, ProviderConnection, ProviderConnectionRoutingState,
-    RepositoryError, Session, SessionId, SpendingBudgetReservation, SpendingBudgetReservationError,
-    SpendingReservationOutcome, User, UserId,
+    ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeySubject, CircuitStateSnapshot, Combo,
+    ComboValidationError, NewSession, NewUser, PasswordHash, ProviderConnection,
+    ProviderConnectionRoutingState, RepositoryError, Session, SessionId, SpendingBudgetReservation,
+    SpendingBudgetReservationError, SpendingReservationOutcome, User, UserId,
 };
 
 /// ---------------------------------------------------------------------------
@@ -186,6 +186,18 @@ pub trait RouterPort: Send + Sync {
     /// `None` means this router does not expose a complete candidate snapshot.
     fn eligibility_candidates(&self) -> Option<Vec<RouterCandidateSnapshot>> {
         None
+    }
+
+    /// Return the current selection strategy for explanation purposes.
+    /// Defaults to Priority for routers that don't expose this information.
+    fn selection_strategy(&self) -> SelectionStrategy {
+        SelectionStrategy::Priority
+    }
+
+    /// Return circuit breaker state for all registered providers.
+    /// Returns an empty list by default for routers that don't expose this.
+    fn circuit_states(&self) -> Vec<(ProviderId, CircuitStateSnapshot)> {
+        Vec::new()
     }
 
     /// Resolve an exact adapter without applying request-capability pruning.

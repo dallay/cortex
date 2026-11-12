@@ -27,7 +27,9 @@ use crate::eligibility::{
     evaluate_candidates, AuthState, CandidateFacts, EligibilityResult, RejectionReason, TargetRef,
 };
 use crate::route_selection::is_virtual_model;
-use crate::scoring::{build_selection_reason, build_signals_snapshot, SelectionMethod, SelectionReason};
+use crate::scoring::{
+    build_selection_reason, build_signals_snapshot, SelectionMethod, SelectionReason,
+};
 use crate::PricingConfig;
 
 #[path = "route_request/combo_stream.rs"]
@@ -137,6 +139,7 @@ struct StreamSelection {
     connection_id: Option<ConnectionId>,
     upstream: futures::stream::BoxStream<'static, Result<StreamChunk, CortexError>>,
     trial_permit: rook_core::RouterTrialPermit,
+    #[allow(dead_code)]
     selection_reason: Option<SelectionReason>,
 }
 
@@ -206,6 +209,7 @@ struct EligibleAttempt {
     provider_req: CompletionRequest,
     trial_permit: rook_core::RouterTrialPermit,
     spending_reservation: PendingSpendingAdmission,
+    #[allow(dead_code)]
     selection_reason: Option<SelectionReason>,
 }
 
@@ -817,6 +821,10 @@ impl RouteRequest {
         let scoring_snapshot = self.build_scoring_snapshot(
             context.req,
             eligibility.as_ref().map(|snapshot| &snapshot.result),
+            &selection_excluded,
+            eligibility
+                .as_ref()
+                .map(|snapshot| &snapshot.connections_by_target),
         );
 
         let provider = match self
@@ -839,7 +847,13 @@ impl RouteRequest {
         // Build selection reason from the actual selected provider and scoring evidence.
         let selection_reason = scoring_snapshot.as_ref().and_then(|snapshot| {
             let selected_target = TargetRef(provider_id.clone());
-            build_selection_reason(snapshot, &selected_target, SelectionMethod::Priority)
+            let method = self.router.selection_strategy();
+            let method = match method {
+                rook_core::SelectionStrategy::Priority => SelectionMethod::Priority,
+                rook_core::SelectionStrategy::RoundRobin => SelectionMethod::RoundRobin,
+                rook_core::SelectionStrategy::WeightedRandom => SelectionMethod::WeightedRandom,
+            };
+            build_selection_reason(snapshot, &selected_target, method)
         });
         // Check key authorization before any connection-state lookup so an unavailable
         // repository does not replace the established 403 classification.
@@ -1154,10 +1168,14 @@ impl RouteRequest {
     /// IMPORTANT: This method must NOT call `router.eligibility_candidates()` again,
     /// since the eligibility result was already obtained. Calling it again could trigger
     /// side effects (e.g., registry churn in tests) or return stale data.
+    ///
+    /// `excluded` providers are filtered out so they don't affect normalization bounds.
     fn build_scoring_snapshot(
         &self,
         req: &CompletionRequest,
         eligibility: Option<&EligibilityResult>,
+        excluded: &[ProviderId],
+        connections: Option<&std::collections::HashMap<ProviderId, ProviderConnectionRoutingState>>,
     ) -> Option<crate::scoring::SignalsSnapshot> {
         let result = eligibility?;
         let eligible = &result.eligible;
@@ -1165,24 +1183,56 @@ impl RouteRequest {
             return None;
         }
 
-        // Circuit states are not available here without re-reading the router.
-        // The eligibility stage already assessed circuit state; we leave them default
-        // (closed) in the snapshot. The circuit recheck happens at trial acquisition.
-        let circuit_states: std::collections::HashMap<ProviderId, rook_core::CircuitStateSnapshot> =
-            std::collections::HashMap::new();
+        // Filter out excluded providers from the scoring snapshot.
+        // Only candidates actually considered for this selection should affect normalization.
+        let considered: Vec<_> = eligible
+            .iter()
+            .filter(|t| !excluded.contains(&t.0))
+            .collect();
+        if considered.is_empty() {
+            return None;
+        }
 
-        // No quota observations available at this point; they will be Unknown(Missing).
+        // Gather circuit states from the router for considered candidates.
+        let circuit_states: std::collections::HashMap<ProviderId, rook_core::CircuitStateSnapshot> =
+            self.router
+                .circuit_states()
+                .into_iter()
+                .filter(|(id, _)| considered.iter().any(|t| &t.0 == id))
+                .collect();
+
+        // No quota observations available at this point; they will be None.
         let quota_observations: std::collections::HashMap<ProviderId, rook_core::QuotaObservation> =
             std::collections::HashMap::new();
 
-        Some(build_signals_snapshot(
-            eligible,
+        // Build snapshot with real priority from connection routing state.
+        let snapshot = build_signals_snapshot(
+            &considered,
             &req.model,
             &self.telemetry.clone(),
             &self.pricing,
             &circuit_states,
             &quota_observations,
-        ))
+        );
+
+        // Inject real priority from connection routing state into the snapshot.
+        Some(self.inject_priorities(snapshot, connections))
+    }
+
+    /// Look up each candidate's priority from connection routing state and inject it into the snapshot.
+    fn inject_priorities(
+        &self,
+        mut snapshot: crate::scoring::SignalsSnapshot,
+        connections: Option<&std::collections::HashMap<ProviderId, ProviderConnectionRoutingState>>,
+    ) -> crate::scoring::SignalsSnapshot {
+        if let Some(conns) = connections {
+            for (target, signals) in snapshot.candidates.iter_mut() {
+                if let Some(conn) = conns.get(&target.0) {
+                    signals.priority = conn.priority;
+                }
+            }
+        }
+        snapshot
     }
 
     /// Read quota series per connection under one deadline; unavailable or capped evidence stays eligible.
@@ -1735,6 +1785,10 @@ impl RouteRequest {
             let scoring_snapshot = self.build_scoring_snapshot(
                 req,
                 eligibility.as_ref().map(|snapshot| &snapshot.result),
+                &selection_excluded,
+                eligibility
+                    .as_ref()
+                    .map(|snapshot| &snapshot.connections_by_target),
             );
 
             let provider = match self.router.select_excluding(req, &selection_excluded).await {
@@ -1748,7 +1802,13 @@ impl RouteRequest {
             // Build selection reason from the actual selected provider.
             let selection_reason = scoring_snapshot.as_ref().and_then(|snapshot| {
                 let selected_target = TargetRef(provider_id.clone());
-                build_selection_reason(snapshot, &selected_target, SelectionMethod::Priority)
+                let method = self.router.selection_strategy();
+                let method = match method {
+                    rook_core::SelectionStrategy::Priority => SelectionMethod::Priority,
+                    rook_core::SelectionStrategy::RoundRobin => SelectionMethod::RoundRobin,
+                    rook_core::SelectionStrategy::WeightedRandom => SelectionMethod::WeightedRandom,
+                };
+                build_selection_reason(snapshot, &selected_target, method)
             });
             if !req.restrictions.allowed_providers.is_empty()
                 && !req.restrictions.allowed_providers.contains(&provider_id)
