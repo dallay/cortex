@@ -12,6 +12,7 @@
 // - No fabricated scores or global rankings
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use rook_core::{CircuitStateSnapshot, QuotaObservation};
@@ -115,8 +116,8 @@ pub struct CandidateSignals {
     pub latency_p95_ms: RawEvidence<f64>,
     /// Pricing dimensions (per-million token prices in USD).
     pub pricing: Option<CandidatePricing>,
-    /// Provider priority from the registry.
-    pub priority: u8,
+    /// Provider priority from the registry. Unknown when no connection is resolved.
+    pub priority: RawEvidence<u8>,
     /// Quota observation for this candidate. None when unavailable.
     pub quota: Option<QuotaObservation>,
     /// Circuit breaker state for this candidate. None when unavailable.
@@ -185,6 +186,34 @@ pub struct SelectionReason {
     pub components: CandidateScoreComponents,
     /// Fallback reason if applicable.
     pub fallback: Option<SelectionFallback>,
+}
+
+/// Result of one selection decision, combining the chosen provider with its explanation.
+///
+/// This type makes SelectionReason a first-class output of the selection pipeline,
+/// not an afterthought. It is used internally in the failover loop and can be
+/// accessed by the HTTP layer for future telemetry (DALLAY-779).
+#[derive(Clone)]
+pub struct SelectionResult {
+    /// The selected provider.
+    pub provider: Arc<dyn rook_core::ProviderPort>,
+    /// Explanation of why this provider was selected.
+    pub reason: SelectionReason,
+}
+
+impl std::fmt::Debug for SelectionResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SelectionResult")
+            .field("provider_id", &self.provider.id())
+            .field("reason", &self.reason)
+            .finish()
+    }
+}
+
+impl SelectionResult {
+    pub fn new(provider: Arc<dyn rook_core::ProviderPort>, reason: SelectionReason) -> Self {
+        Self { provider, reason }
+    }
 }
 
 // ============================================================================
@@ -331,7 +360,7 @@ pub fn build_score_components(
                 latency_p95,
                 cost_input,
                 cost_output,
-                priority: RawEvidence::Known(signals.priority),
+                priority: signals.priority.clone(),
                 quota: signals.quota.clone(),
                 circuit: signals.circuit.clone(),
             },
@@ -358,6 +387,82 @@ pub fn build_selection_reason(
     })
 }
 
+// ============================================================================
+// Metric comparators
+// ============================================================================
+
+/// Compare two score components for ordering purposes.
+///
+/// Known values with normalized scores sort before unknown values.
+/// Within known values, higher normalized score sorts first.
+/// When both are unknown, falls back to stable-ID comparison.
+fn compare_component(a: &ScoreComponent, b: &ScoreComponent) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    match (&a.normalized, &b.normalized) {
+        (Some(a_norm), Some(b_norm)) => {
+            // Both known: higher normalized score wins (reverse ordering).
+            b_norm.partial_cmp(a_norm).unwrap_or(Ordering::Equal)
+        }
+        (Some(_), None) => Ordering::Less, // a is known, b is unknown → a comes first
+        (None, Some(_)) => Ordering::Greater, // b is known, a is unknown → b comes first
+        (None, None) => Ordering::Equal,   // Both unknown: fall through to ID tiebreak
+    }
+}
+
+/// Compare two candidates by their score components, using known-first ordering.
+///
+/// This comparator guarantees:
+/// - Known values sort before unknown values (known-first)
+/// - Within known values, higher normalized score sorts first
+/// - Stable-ID tiebreaker using TargetRef for determinism
+/// - Transitive total order within compatible bases
+///
+/// Returns `Ordering::Less` if `a` should be selected before `b`.
+pub fn compare_candidates(
+    a_target: &TargetRef,
+    a_components: &CandidateScoreComponents,
+    b_target: &TargetRef,
+    b_components: &CandidateScoreComponents,
+) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+
+    // Compare by latency p50 (known-first, higher normalized wins).
+    let latency = compare_component(&a_components.latency_p50, &b_components.latency_p50);
+    if latency != Ordering::Equal {
+        return latency;
+    }
+
+    // Tiebreak by cost input.
+    let cost = compare_component(&a_components.cost_input, &b_components.cost_input);
+    if cost != Ordering::Equal {
+        return cost;
+    }
+
+    // Tiebreak by priority (lower u8 value = higher priority).
+    match (&a_components.priority, &b_components.priority) {
+        (RawEvidence::Known(a_p), RawEvidence::Known(b_p)) => {
+            if *a_p != *b_p {
+                return a_p.cmp(b_p);
+            }
+        }
+        (RawEvidence::Known(_), RawEvidence::Unknown(_)) => return Ordering::Less,
+        (RawEvidence::Unknown(_), RawEvidence::Known(_)) => return Ordering::Greater,
+        (RawEvidence::Unknown(_), RawEvidence::Unknown(_)) => {}
+    }
+
+    // Final stable-ID tiebreaker: deterministic, transitive.
+    a_target.cmp(b_target)
+}
+
+/// Check whether all components for a candidate are unknown.
+pub fn all_components_unknown(components: &CandidateScoreComponents) -> bool {
+    components.latency_p50.normalized.is_none()
+        && components.latency_p95.normalized.is_none()
+        && components.cost_input.normalized.is_none()
+        && components.cost_output.normalized.is_none()
+        && matches!(components.priority, RawEvidence::Unknown(_))
+}
+
 /// Build a signals snapshot from eligible candidates.
 ///
 /// This function acquires telemetry (provider-scoped p50/p95), pricing (per-dimension),
@@ -376,12 +481,27 @@ pub fn build_signals_snapshot(
         let provider_id = &target.0;
 
         // Latency: provider-scoped p50/p95 from telemetry
+        // Validate at the boundary: reject NaN, Inf, and negative values.
         let (latency_p50_ms, latency_p95_ms) = if let Some(tracker) = telemetry {
             match tracker.compute_latency_percentiles(provider_id) {
-                Some(stats) => (
-                    RawEvidence::Known(stats.p50 as f64),
-                    RawEvidence::Known(stats.p95 as f64),
-                ),
+                Some(stats) => {
+                    let p50 = stats.p50 as f64;
+                    let p95 = stats.p95 as f64;
+                    let p50_valid = p50.is_finite() && p50 >= 0.0;
+                    let p95_valid = p95.is_finite() && p95 >= 0.0;
+                    (
+                        if p50_valid {
+                            RawEvidence::Known(p50)
+                        } else {
+                            RawEvidence::Unknown(UnknownReason::Invalid)
+                        },
+                        if p95_valid {
+                            RawEvidence::Known(p95)
+                        } else {
+                            RawEvidence::Unknown(UnknownReason::Invalid)
+                        },
+                    )
+                }
                 None => (
                     RawEvidence::Unknown(UnknownReason::SourceUnavailable),
                     RawEvidence::Unknown(UnknownReason::SourceUnavailable),
@@ -429,7 +549,7 @@ pub fn build_signals_snapshot(
                 latency_p50_ms,
                 latency_p95_ms,
                 pricing,
-                priority: 0, // Will be set by the caller from the registry
+                priority: RawEvidence::Unknown(UnknownReason::Missing),
                 quota,
                 circuit,
             },
@@ -457,7 +577,7 @@ mod normalization_tests {
                     latency_p50_ms: p50,
                     latency_p95_ms: p95,
                     pricing: None,
-                    priority: 0,
+                    priority: RawEvidence::Unknown(UnknownReason::Missing),
                     quota: None,
                     circuit: None,
                 },

@@ -139,8 +139,18 @@ struct StreamSelection {
     connection_id: Option<ConnectionId>,
     upstream: futures::stream::BoxStream<'static, Result<StreamChunk, CortexError>>,
     trial_permit: rook_core::RouterTrialPermit,
-    #[allow(dead_code)]
+    /// Explanation of why this provider was selected.
+    /// Stored for future telemetry emission (DALLAY-779).
+    #[expect(dead_code, reason = "consumed by DALLAY-779 telemetry emission")]
     selection_reason: Option<SelectionReason>,
+}
+
+impl StreamSelection {
+    /// Access the selection reason for telemetry (DALLAY-779).
+    #[expect(dead_code, reason = "consumed by DALLAY-779 telemetry emission")]
+    pub fn take_selection_reason(&mut self) -> Option<SelectionReason> {
+        self.selection_reason.take()
+    }
 }
 
 /// Mutable state carried across the steps of one combo execution.
@@ -209,8 +219,18 @@ struct EligibleAttempt {
     provider_req: CompletionRequest,
     trial_permit: rook_core::RouterTrialPermit,
     spending_reservation: PendingSpendingAdmission,
-    #[allow(dead_code)]
+    /// Explanation of why this provider was selected.
+    /// Stored for future telemetry emission (DALLAY-779).
+    #[expect(dead_code, reason = "consumed by DALLAY-779 telemetry emission")]
     selection_reason: Option<SelectionReason>,
+}
+
+impl EligibleAttempt {
+    /// Access the selection reason for telemetry (DALLAY-779).
+    #[expect(dead_code, reason = "consumed by DALLAY-779 telemetry emission")]
+    pub fn take_selection_reason(&mut self) -> Option<SelectionReason> {
+        self.selection_reason.take()
+    }
 }
 
 /// A durable budget reservation that must be released unless upstream I/O starts.
@@ -855,6 +875,13 @@ impl RouteRequest {
             };
             build_selection_reason(snapshot, &selected_target, method)
         });
+        // Log selection reason for debugging and future telemetry (DALLAY-779).
+        if selection_reason.is_some() {
+            tracing::debug!(
+                provider = %provider_id,
+                "selection reason captured for provider"
+            );
+        }
         // Check key authorization before any connection-state lookup so an unavailable
         // repository does not replace the established 403 classification.
         if let Err(error) = self.check_provider_restriction(context.req, &provider_id) {
@@ -1194,11 +1221,14 @@ impl RouteRequest {
         }
 
         // Gather circuit states from the router for considered candidates.
+        // Use HashSet for O(1) lookup instead of O(n²) linear scan.
+        let considered_ids: std::collections::HashSet<_> =
+            considered.iter().map(|t| &t.0).collect();
         let circuit_states: std::collections::HashMap<ProviderId, rook_core::CircuitStateSnapshot> =
             self.router
                 .circuit_states()
                 .into_iter()
-                .filter(|(id, _)| considered.iter().any(|t| &t.0 == id))
+                .filter(|(id, _)| considered_ids.contains(id))
                 .collect();
 
         // No quota observations available at this point; they will be None.
@@ -1220,6 +1250,7 @@ impl RouteRequest {
     }
 
     /// Look up each candidate's priority from connection routing state and inject it into the snapshot.
+    /// Candidates without a resolved connection keep priority as Unknown(Missing).
     fn inject_priorities(
         &self,
         mut snapshot: crate::scoring::SignalsSnapshot,
@@ -1228,8 +1259,9 @@ impl RouteRequest {
         if let Some(conns) = connections {
             for (target, signals) in snapshot.candidates.iter_mut() {
                 if let Some(conn) = conns.get(&target.0) {
-                    signals.priority = conn.priority;
+                    signals.priority = crate::scoring::RawEvidence::Known(conn.priority);
                 }
+                // If no connection resolved, priority stays Unknown(Missing) from build_signals_snapshot.
             }
         }
         snapshot
@@ -1810,6 +1842,13 @@ impl RouteRequest {
                 };
                 build_selection_reason(snapshot, &selected_target, method)
             });
+            // Log selection reason for debugging and future telemetry (DALLAY-779).
+            if selection_reason.is_some() {
+                tracing::debug!(
+                    provider = %provider_id,
+                    "stream selection reason captured for provider"
+                );
+            }
             if !req.restrictions.allowed_providers.is_empty()
                 && !req.restrictions.allowed_providers.contains(&provider_id)
             {

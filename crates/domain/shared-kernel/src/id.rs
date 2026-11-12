@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 
 /// Provider identifier, e.g. "openai-primary", "anthropic-fs"
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ProviderId(pub SmolStr);
 
 impl ProviderId {

@@ -43,9 +43,10 @@ pub use route_request::RouteRequest;
 pub use route_selection::{classify_route, is_virtual_model, RouteError, RouteSelection};
 pub use router_impl::{FallbackRouter, RoutingStrategy};
 pub use scoring::{
-    build_score_components, build_selection_reason, build_signals_snapshot, CandidatePricing,
-    CandidateScoreComponents, CandidateSignals, RawEvidence, ScoreComponent, SelectionFallback,
-    SelectionMethod, SelectionReason, SignalsSnapshot, UnknownReason,
+    all_components_unknown, build_score_components, build_selection_reason, build_signals_snapshot,
+    compare_candidates, CandidatePricing, CandidateScoreComponents, CandidateSignals, RawEvidence,
+    ScoreComponent, SelectionFallback, SelectionMethod, SelectionReason, SelectionResult,
+    SignalsSnapshot, UnknownReason,
 };
 
 pub mod authenticate_client_api;

@@ -24,6 +24,9 @@ const FAILURE_THRESHOLD: u32 = 3;
 /// Duration to keep circuit open before attempting recovery
 const CIRCUIT_COOLDOWN: Duration = Duration::from_secs(30);
 
+/// A candidate provider with an optional configured weight attached.
+type WeightedCandidate = (Arc<dyn ProviderPort>, Option<f32>);
+
 #[derive(Clone)]
 pub enum RoutingStrategy {
     Priority,
@@ -205,21 +208,22 @@ impl FallbackRouter {
         }
     }
 
-    /// Returns providers that are available (circuit closed) and support the model
-    fn available_providers(
-        &self,
-        req: &CompletionRequest,
-    ) -> Vec<(Arc<dyn ProviderPort>, Option<f32>)> {
+    /// Returns providers that are available (circuit closed) and support the model.
+    /// Also returns the registry length captured at the same time as the candidates,
+    /// so WeightedRandom validation uses a consistent view even during registry refresh.
+    fn available_providers(&self, req: &CompletionRequest) -> (Vec<WeightedCandidate>, usize) {
         let required = rook_core::RequiredCapabilities::from_request(req);
         let now = self.clock.now();
         let guard = self.providers.read();
+        // Capture registry length while holding the read guard — same view as candidates.
+        let registry_len = guard.len();
         let weights = match &self.strategy {
-            RoutingStrategy::WeightedRandom(weights) if weights.len() == guard.len() => {
+            RoutingStrategy::WeightedRandom(weights) if weights.len() == registry_len => {
                 Some(weights)
             }
             _ => None,
         };
-        guard
+        let candidates = guard
             .iter()
             .enumerate()
             // Attach configured weights before any eligibility filtering.
@@ -233,7 +237,8 @@ impl FallbackRouter {
                     && required.check(&p.model_capabilities(&req.model)).is_ok()
             })
             .map(|(provider, weight)| (provider.clone(), weight))
-            .collect()
+            .collect();
+        (candidates, registry_len)
     }
 
     /// Validate weights against the full registry. Returns an error for invalid configurations.
@@ -268,7 +273,7 @@ impl FallbackRouter {
     }
 
     fn select_weighted(
-        candidates: &[(Arc<dyn ProviderPort>, Option<f32>)],
+        candidates: &[WeightedCandidate],
         configured_weights: &[f32],
         registry_len: usize,
     ) -> CortexResult<Option<Arc<dyn ProviderPort>>> {
@@ -404,7 +409,7 @@ impl ProviderRegistryPort for FallbackRouter {
 #[async_trait]
 impl RouterPort for FallbackRouter {
     async fn select(&self, req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>> {
-        let candidates = self.available_providers(req);
+        let (candidates, registry_len) = self.available_providers(req);
 
         if candidates.is_empty() {
             return Err(CortexError::all_providers_exhausted());
@@ -422,7 +427,7 @@ impl RouterPort for FallbackRouter {
                 candidates.get(idx).map(|(provider, _)| provider.clone())
             }
             RoutingStrategy::WeightedRandom(weights) => {
-                let registry_len = self.providers.read().len();
+                // Use the registry_len captured by available_providers() — same consistent view.
                 match Self::select_weighted(&candidates, weights, registry_len)? {
                     Some(provider) => return Ok(provider),
                     None => return Err(CortexError::all_providers_exhausted()),
@@ -440,7 +445,7 @@ impl RouterPort for FallbackRouter {
     ) -> CortexResult<Arc<dyn ProviderPort>> {
         use std::collections::HashSet;
         let excluded_set: HashSet<_> = excluded.iter().collect();
-        let candidates = self.available_providers(req);
+        let (candidates, registry_len) = self.available_providers(req);
         // Filter out excluded providers and those with open circuit breaker.
         // Keep provider-weight pairs attached while excluding providers.
         let available: Vec<_> = candidates
@@ -465,7 +470,7 @@ impl RouterPort for FallbackRouter {
                 available.get(idx).map(|(provider, _)| provider.clone())
             }
             RoutingStrategy::WeightedRandom(weights) => {
-                let registry_len = self.providers.read().len();
+                // Use the registry_len captured by available_providers() — same consistent view.
                 match Self::select_weighted(&available, weights, registry_len)? {
                     Some(provider) => return Ok(provider),
                     None => return Err(CortexError::all_providers_exhausted()),
@@ -1383,9 +1388,9 @@ mod tests {
         let mut req = make_test_request("model");
         req.tools = Some(serde_json::json!([{"type":"function"}]));
         let candidates = router.available_providers(&req);
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].0.id().as_str(), "eligible");
-        assert_eq!(candidates[0].1, Some(0.1));
+        assert_eq!(candidates.0.len(), 1);
+        assert_eq!(candidates.0[0].0.id().as_str(), "eligible");
+        assert_eq!(candidates.0[0].1, Some(0.1));
         assert_eq!(
             FallbackRouter::weighted_provider_index(&[0.0, 1.0], 0.0),
             Some(1)
