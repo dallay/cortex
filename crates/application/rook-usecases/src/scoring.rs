@@ -220,6 +220,45 @@ impl SelectionResult {
 // Pure normalization
 // ============================================================================
 
+/// Pre-computed normalization bounds for a single metric.
+struct NormBounds {
+    min: f64,
+    max: f64,
+    /// `true` when all known values are equal (min == max), so every candidate
+    /// gets a neutral 0.5 instead of a division-by-zero result.
+    all_equal: bool,
+}
+
+impl NormBounds {
+    fn from_known_values(values: &[f64]) -> Option<Self> {
+        // Filter to only valid (non-negative, finite) values.
+        let valid: Vec<f64> = values
+            .iter()
+            .copied()
+            .filter(|&v| v.is_finite() && v >= 0.0)
+            .collect();
+        if valid.is_empty() {
+            return None;
+        }
+        let min = valid.iter().copied().fold(f64::INFINITY, f64::min);
+        let max = valid.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let all_equal = min == max;
+        Some(NormBounds {
+            min,
+            max,
+            all_equal,
+        })
+    }
+
+    fn normalize(&self, value: f64) -> Option<f64> {
+        if self.all_equal {
+            Some(0.5)
+        } else {
+            Some((self.max - value) / (self.max - self.min))
+        }
+    }
+}
+
 /// Normalize a single component using inverse min-max normalization.
 ///
 /// For comparable known values, `(max - value) / (max - min)`.
@@ -227,7 +266,7 @@ impl SelectionResult {
 /// If no known values exist, returns None.
 /// Unknowns never enter min/max bounds.
 /// Invalid (negative, NaN, Inf) values are treated as Unknown.
-fn normalize_component(value: RawEvidence<f64>, known_values: &[f64]) -> Option<f64> {
+fn normalize_component(value: RawEvidence<f64>, bounds: &NormBounds) -> Option<f64> {
     // Validate the value itself: must be known, non-negative, and finite.
     let value = match value {
         RawEvidence::Known(v) => v,
@@ -236,38 +275,14 @@ fn normalize_component(value: RawEvidence<f64>, known_values: &[f64]) -> Option<
     if value.is_nan() || value.is_infinite() || value < 0.0 {
         return None;
     }
-
-    // Filter known_values to only valid (non-negative, finite) values.
-    let valid_known: Vec<f64> = known_values
-        .iter()
-        .copied()
-        .filter(|&v| v.is_finite() && v >= 0.0)
-        .collect();
-
-    // No valid known values means no bounds.
-    if valid_known.is_empty() {
-        return None;
-    }
-
-    // Single known value or all equal values → neutral 0.5.
-    let min = valid_known.iter().copied().fold(f64::INFINITY, f64::min);
-    let max = valid_known
-        .iter()
-        .copied()
-        .fold(f64::NEG_INFINITY, f64::max);
-    if (max - min).abs() < f64::EPSILON {
-        return Some(0.5);
-    }
-
-    // Inverse min-max: (max - value) / (max - min)
-    // Higher value → lower normalized score (for latency/cost, lower is better)
-    Some((max - value) / (max - min))
+    bounds.normalize(value)
 }
 
 /// Build score components for all candidates in the snapshot.
 ///
 /// This is a pure function: it reads the snapshot and produces components
 /// without side effects. Normalization is independent per metric.
+/// Bounds are computed once per metric (O(N) total), not once per candidate.
 pub fn build_score_components(
     snapshot: &SignalsSnapshot,
 ) -> HashMap<TargetRef, CandidateScoreComponents> {
@@ -305,17 +320,29 @@ pub fn build_score_components(
         })
         .collect();
 
+    // Pre-compute normalization bounds once per metric (O(N) total, not O(N²)).
+    let p50_bounds = NormBounds::from_known_values(&latency_p50_known);
+    let p95_bounds = NormBounds::from_known_values(&latency_p95_known);
+    let cost_input_bounds = NormBounds::from_known_values(&cost_input_known);
+    let cost_output_bounds = NormBounds::from_known_values(&cost_output_known);
+
     // Build components for each candidate.
     let mut components = HashMap::new();
     for (target, signals) in &snapshot.candidates {
         let latency_p50 = ScoreComponent {
             raw: signals.latency_p50_ms.clone(),
-            normalized: normalize_component(signals.latency_p50_ms.clone(), &latency_p50_known),
+            normalized: match &p50_bounds {
+                Some(b) => normalize_component(signals.latency_p50_ms.clone(), b),
+                None => None,
+            },
             unit: "ms".to_string(),
         };
         let latency_p95 = ScoreComponent {
             raw: signals.latency_p95_ms.clone(),
-            normalized: normalize_component(signals.latency_p95_ms.clone(), &latency_p95_known),
+            normalized: match &p95_bounds {
+                Some(b) => normalize_component(signals.latency_p95_ms.clone(), b),
+                None => None,
+            },
             unit: "ms".to_string(),
         };
 
@@ -323,18 +350,18 @@ pub fn build_score_components(
         let (cost_input, cost_output) = if let Some(ref pricing) = signals.pricing {
             let input = ScoreComponent {
                 raw: pricing.input_per_million.clone(),
-                normalized: normalize_component(
-                    pricing.input_per_million.clone(),
-                    &cost_input_known,
-                ),
+                normalized: match &cost_input_bounds {
+                    Some(b) => normalize_component(pricing.input_per_million.clone(), b),
+                    None => None,
+                },
                 unit: "usd_per_million_input".to_string(),
             };
             let output = ScoreComponent {
                 raw: pricing.output_per_million.clone(),
-                normalized: normalize_component(
-                    pricing.output_per_million.clone(),
-                    &cost_output_known,
-                ),
+                normalized: match &cost_output_bounds {
+                    Some(b) => normalize_component(pricing.output_per_million.clone(), b),
+                    None => None,
+                },
                 unit: "usd_per_million_output".to_string(),
             };
             (input, output)
