@@ -461,8 +461,7 @@ async fn rejected_frame_retains_usage_without_publishing_invalid_arguments() {
         let error = results[0].as_ref().unwrap_err();
         assert!(error.is_retryable());
         assert!(!error.is_invalid_request());
-        let usage =
-            rook_core::StreamValidationError::usage(error).expect("uso del frame rechazado");
+        let usage = rook_core::StreamValidationError::usage(error).expect("frame usage rejected");
         assert_eq!(usage.prompt_tokens, 3);
         assert_eq!(usage.completion_tokens, 2);
         assert_eq!(usage.total_tokens, 5);

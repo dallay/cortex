@@ -58,12 +58,12 @@ Example request:
 ```json
 {
   "model": "gpt-4o",
-  "input": "Busca el archivo README",
+  "input": "Search the README file",
   "store": false,
   "tools": [{
     "type": "function",
     "name": "lookup",
-    "description": "Busca un archivo",
+    "description": "Search for a file",
     "parameters": {"type": "object", "properties": {"name": {"type": "string"}}},
     "strict": false
   }]

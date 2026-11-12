@@ -77,7 +77,7 @@ async fn chat_request_reaches_the_declared_physical_model_with_its_own_credentia
             "id": "chatcmpl-1",
             "model": "physical-model-a",
             "choices": [{
-                "message": { "role": "assistant", "content": "respuesta" },
+                "message": { "role": "assistant", "content": "response" },
                 "finish_reason": "stop"
             }],
             "usage": { "prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7 }
@@ -98,7 +98,7 @@ async fn chat_request_reaches_the_declared_physical_model_with_its_own_credentia
         .await
         .expect("compatible chat request succeeds");
 
-    assert_eq!(response.content, "respuesta");
+    assert_eq!(response.content, "response");
     assert_eq!(response.model, ModelId::new("physical-model-a"));
 
     let requests = server.received_requests().await.expect("recorded requests");

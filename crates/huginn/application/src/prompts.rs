@@ -119,7 +119,7 @@ pub fn render(body: &str, input: &str) -> Result<String, String> {
                     }
                     out.push_str(
                         args.get(d as usize - '1' as usize)
-                            .ok_or_else(|| format!("Falta el argumento ${d}"))?,
+                            .ok_or_else(|| format!("Missing argument ${d}"))?,
                     );
                 }
                 Some('A'..='Z') => {
@@ -136,7 +136,7 @@ pub fn render(body: &str, input: &str) -> Result<String, String> {
                         out.push_str(
                             named
                                 .get(key.as_str())
-                                .ok_or_else(|| format!("Falta el argumento {key}=valor"))?,
+                                .ok_or_else(|| format!("Missing argument {key}=value"))?,
                         );
                     }
                 }
@@ -144,7 +144,7 @@ pub fn render(body: &str, input: &str) -> Result<String, String> {
             }
         }
         if out.len() > MAX_RENDERED_BYTES {
-            return Err("Resultado de plantilla demasiado grande".into());
+            return Err("Template result is too large".into());
         }
     }
     Ok(out)

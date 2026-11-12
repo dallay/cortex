@@ -40,7 +40,7 @@ jobs:
           filters: .github/ci-path-filters.json
 
   ci-contract:
-    name: Test (Contrato CI)
+    name: Test (CI Contract)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: always()
@@ -51,7 +51,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 26
-      - name: Probar contratos CI
+      - name: Test CI contracts
         run: node --test .github/scripts/ci-*.test.cjs
 
   # === Reusable dashboard build (cached artifact) ===
