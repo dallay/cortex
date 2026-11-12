@@ -324,3 +324,54 @@ async fn legacy_router_does_not_call_managed_provider_without_a_connection() {
         "a managed provider without a stored connection must not reach the upstream"
     );
 }
+
+#[tokio::test]
+async fn scoring_preserves_preflight_quota_without_another_read() {
+    let connection_id = ConnectionId::new();
+    let runtime_id = ProviderId::new("quota-evidence-runtime");
+    let target = ProviderId::new(connection_id.to_string());
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![connection_bound_provider(
+            ordinary_provider(target.as_str()),
+            connection_id,
+        )],
+        crate::RoutingStrategy::Priority,
+    ));
+    let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(QuotaAwareProviderRepository {
+        connections: HashMap::from([(
+            connection_id,
+            test_connection(connection_id, runtime_id.clone(), true),
+        )]),
+        runtime_connections: HashMap::new(),
+    });
+    let now = Utc::now();
+    let observation = quota_observation(
+        connection_id,
+        runtime_id,
+        10.0,
+        now,
+        Some(now + chrono::Duration::seconds(60)),
+    );
+    let store = Arc::new(FakeQuotaStore::new(vec![observation.clone()]));
+    let usecase = usecase_with_router_and_provider_repository(router, repository)
+        .with_quota_observation_reader(store.clone());
+    let req = request();
+    let eligibility = usecase.eligibility_result(&req).await.unwrap().unwrap();
+    let snapshot = usecase
+        .build_scoring_snapshot(
+            &req,
+            Some(&eligibility.result),
+            &[],
+            &eligibility.quota_observations,
+            Some(&eligibility.connections_by_target),
+        )
+        .unwrap();
+    let reason = crate::scoring::build_selection_reason(
+        &snapshot,
+        &crate::TargetRef(target),
+        crate::scoring::SelectionMethod::Priority,
+    )
+    .unwrap();
+    assert_eq!(reason.components.quota, Some(observation));
+    assert_eq!(store.queries.lock().unwrap().len(), 1);
+}

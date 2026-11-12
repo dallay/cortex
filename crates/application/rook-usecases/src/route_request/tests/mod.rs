@@ -1930,12 +1930,16 @@ async fn weighted_selection_cannot_reintroduce_key_disallowed_provider() {
     let mut req = request();
     req.restrictions.allowed_providers = vec![ProviderId::new("allowed")];
 
-    let response = usecase
+    // When the only remaining eligible candidate has zero weight, selection
+    // must fail with an explicit weighted config error, not silently select it.
+    let error = usecase
         .execute(req)
         .await
-        .expect("the high-weight rejected target must remain excluded");
-
-    assert_eq!(response.provider, ProviderId::new("allowed"));
+        .expect_err("zero-weight-only remaining candidate must produce a weighted config error");
+    assert!(
+        error.is_weighted_config_error(),
+        "expected weighted config error, got: {error}"
+    );
 }
 
 #[tokio::test]
@@ -4636,7 +4640,7 @@ async fn eligibility_quota_reads_are_concurrent_bounded_and_deduplicated() {
     .with_quota_observation_reader(reader.clone());
     let connections: Vec<_> = states.iter().chain(states.iter()).collect();
 
-    let exhausted = usecase.exhausted_connection_ids(&connections).await;
+    let (exhausted, _) = usecase.exhausted_connection_ids(&connections).await;
 
     assert_eq!(exhausted, states.iter().map(|state| state.id).collect());
     let queries = reader.queries.lock().unwrap();
