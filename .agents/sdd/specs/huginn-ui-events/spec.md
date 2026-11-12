@@ -68,10 +68,14 @@ a distinct identity. A suppressed error MUST NOT produce another equivalent
 notice on a different UI surface. This rule MUST NOT remove conversational
 results.
 
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:e39ffd7ce76aeebb2b39300e0bbeea81eb8006df5c8b9b60efd9a5f082ba1d92 -->
+
 #### Scenario: EVT-03-A — Temporal boundaries without real waits
 
 - GIVEN a visible error of operation A at t=0 and a controlled clock
-- WHEN the same error of A arrives at t=1,999 seconds and at t=2 seconds
+- WHEN the same error of A arrives at t=1.999 seconds and at t=2 seconds
 - THEN the first repetition does not generate a second presentation of the error
 - AND the second is presented once outside the conversation
 - AND the suppressed repetition has not shifted the expiry
@@ -79,9 +83,11 @@ results.
 #### Scenario: EVT-03-B — Distinct and interleaved operations
 
 - GIVEN an error M of A visible at t=0
-- WHEN at t=0,5 M of B arrives and at t=1 M of A arrives
+- WHEN at t=0.5 M of B arrives and at t=1 M of A arrives
 - THEN M of B is presented because B is independent
 - AND M of A stays suppressed even though B was interleaved
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 #### Scenario: EVT-03-C — Collision and different message
 

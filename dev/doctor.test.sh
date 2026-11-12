@@ -64,7 +64,7 @@ assert_eq "0" "$DOCTOR_FAILURES" "a successful version probe does not increment 
 # Colors are resolved on every write, so redirected output never carries ANSI codes
 # even when the surrounding shell is attached to a terminal.
 DOCTOR_FAILURES=0
-PATH="$restricted_path:$PATH" DOCTOR_COLOR=always check_command "Required tool" "required-tool" \
+PATH="$restricted_path:$PATH" NO_COLOR= DOCTOR_COLOR=always check_command "Required tool" "required-tool" \
     > "$test_root/color-always.out" 2>&1
 case "$(cat "$test_root/color-always.out")" in
     *$'\033'*)

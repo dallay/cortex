@@ -157,22 +157,39 @@ The system SHALL maintain a working copy of the values for every tab inside the 
 
 ### REQ-07 — Apply on Enter
 
-When Enter is pressed to apply, the system SHALL capture the working copy into
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:17ac322e423a66a5421da2a7614fba99186516a48de75a021180837a9058e97b -->
+
+When Enter is pressed for a non-stale Apply, the system SHALL capture the working copy into
 `UiConfig` and invoke the injected persistence function
 `Fn(&UiConfig) -> anyhow::Result<()>` exactly once per Apply, without blocking
 input. While that Apply is pending, repeated Enter SHALL NOT start another
-write. Saves SHALL be serialized to preserve their order. On success it SHALL
+write. Editing SHALL remain available while Apply is pending; completion SHALL
+preserve any newer edits in the working copy. Saves SHALL be serialized to
+preserve their order. Each Settings instance SHALL track the saved snapshot
+revision on which its working copy is based. Before accepting Apply and again
+before starting its write, the system SHALL reject a copy whose base revision
+is stale, without invoking persistence, and show an error in the body while
+preserving its edits. Reopening Settings SHALL load the latest saved snapshot.
+On success it SHALL
 update the snapshot of saved preferences for later openings; only if the
-overlay and the Apply are still current SHALL it close `Overlay::Settings` and
-show `Settings saved` as a non-conversational `Notification`. On a current
-failure it SHALL keep it open, preserve the submitted copy, and show the error
-in the body without a second equivalent notice. A late receipt SHALL be
+overlay and the Apply are still current and the working copy has no newer
+edits SHALL it close `Overlay::Settings` and
+show `Settings saved` as a non-conversational `Notification`. If the overlay and Apply are still current and newer edits
+exist, it SHALL keep Settings open without that notice, preserve those edits,
+and advance that instance's base revision to the successful saved snapshot so
+the next Apply can save them. On a current failure it SHALL keep it open, preserve the working copy including newer edits,
+and show the error in the body without a second equivalent notice. A late receipt SHALL be
 consumed without reopening Settings, closing or modifying another overlay,
 recovering focus, or affecting Approval; a late success SHALL update only the
-saved snapshot, not the editable copy of another Settings already open. A late
+saved snapshot and its revision, not the editable copy or base revision of
+another Settings already open. A late
 failure SHALL NOT replace the saved snapshot with failed values. It SHALL
 preserve the joint application of all values and the TOML contracts of REQ-09
 to REQ-11; it SHALL NOT apply the live theme.
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 Previously: standalone modal with a success notice; now integrated as an overlay
 and with an explicit non-conversational destination.
@@ -209,7 +226,31 @@ and with an explicit non-conversational destination.
 - AND the success updates the saved snapshot used in a later opening
 - AND the error does not replace the saved snapshot nor insert an error in the new Settings
 
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:270a98dcded4de20dfbdae565def97750037c9fcffed3ce2caf4d2035db12468 -->
+
+#### Scenario: SET-07-E — Edits during Apply survive completion
+
+- GIVEN a current Apply with controlled persistence pending
+- WHEN the user changes the working copy after submission and the write succeeds
+- THEN the saved snapshot contains the submitted values
+- AND Settings stays open with the newer edits and without `Settings saved`
+- AND a subsequent Enter can apply those newer edits against the updated snapshot
+- AND in a separate failure case, Settings preserves the newer edits and shows the error in the body
+
+#### Scenario: SET-07-F — Late success makes another Settings copy stale
+
+- GIVEN a started Apply, its Settings closed, and another Settings opened before its receipt arrives
+- WHEN the earlier write succeeds and updates the saved snapshot
+- THEN the open Settings keeps its editable copy and original base revision
+- AND Enter is rejected with an error in the body and no persistence invocation
+- AND any Apply accepted before that receipt is rejected before its write starts if its base revision is now stale
+- AND reopening Settings loads the successful saved snapshot and allows Apply
+
 ### REQ-08 — Discard on Esc
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 When Esc is pressed outside an incomplete paste, the system SHALL close
 `Overlay::Settings`, discard its editable copy, and revoke the lease without
