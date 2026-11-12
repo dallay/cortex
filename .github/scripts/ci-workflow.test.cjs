@@ -18,6 +18,47 @@ function jobBlock(id) {
   return block[1];
 }
 
+// Extrae el bloque YAML que empieza en la cabecera `header` y continúa con
+// líneas más indentadas. Aislar la sección evita que una aserción dependa
+// de un valor duplicado en otra parte del archivo.
+function yamlBlock(text, header) {
+  const lines = text.split('\n');
+  const start = lines.findIndex((line) => header.test(line));
+  if (start === -1) return null;
+  const indent = lines[start].length - lines[start].trimStart().length;
+  const block = [lines[start]];
+  for (let i = start + 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (line.trim() === '') {
+      block.push(line);
+      continue;
+    }
+    if (line.length - line.trimStart().length <= indent) break;
+    block.push(line);
+  }
+  return block.join('\n');
+}
+
+// Devuelve el bloque YAML en la ruta de claves indicada, por ejemplo
+// ['coverage', 'status', 'project', 'backend'].
+function yamlPath(text, keys) {
+  let current = text;
+  for (const key of keys) {
+    current = yamlBlock(current, new RegExp(`^\\s*${key}:\\s*$`));
+    if (current === null) return null;
+  }
+  return current;
+}
+
+// Extrae los valores capturados de una lista YAML, por ejemplo `- "apps/**"`.
+function yamlListItems(block, item) {
+  if (block === null) return null;
+  return block.split('\n')
+      .map((line) => item.exec(line))
+      .filter((match) => match !== null)
+      .map((match) => match[1]);
+}
+
 const gitleaksConfig = fs.readFileSync(
     path.join(__dirname, '../../.gitleaks.toml'), 'utf8');
 
@@ -580,37 +621,64 @@ it('define componentes de cobertura por producto con estados informativos', () =
   const codecovConfig = fs.readFileSync(
       path.join(__dirname, '../../codecov.yml'), 'utf8');
 
-  assert.match(codecovConfig, /^component_management:$/m);
+  const components = yamlPath(codecovConfig,
+      ['component_management', 'individual_components']);
+  assert.ok(components, 'bloque individual_components');
 
-  // Los componentes se identifican por producto y no pisan los flags.
-  for (const componentId of ['rook', 'huginn', 'dashboard']) {
-    assert.match(codecovConfig,
-        new RegExp(`^    - component_id: ${componentId}$`, 'm'));
+  // Cada componente declara las rutas de su producto. Las rutas se validan
+  // dentro del bloque del componente: los flags pueden compartir rutas y un
+  // match global no detectaría una atribución equivocada.
+  const expectedPaths = {
+    rook: [
+      'apps/rook/src/**',
+      'apps/rook/tests/**',
+      'crates/domain/**',
+      'crates/application/**',
+      'crates/infrastructure/**',
+      'crates/test-support/**',
+    ],
+    huginn: [
+      'apps/huginn/src/**',
+      'apps/huginn/tests/**',
+      'crates/huginn/**',
+    ],
+    dashboard: [
+      'apps/rook/dashboard/**',
+    ],
+  };
+
+  for (const [componentId, paths] of Object.entries(expectedPaths)) {
+    const component = yamlBlock(components,
+        new RegExp(`^\\s*- component_id: ${componentId}$`));
+    assert.ok(component, `componente ${componentId}`);
+    const declared = yamlListItems(component, /^\s*-\s+"(.*)"$/m);
+    assert.deepEqual(declared, paths, `rutas del componente ${componentId}`);
   }
 
-  // Rutas de cada producto, derivadas de la estructura del workspace.
-  assert.match(codecovConfig, /^        - "apps\/rook\/src\/\*\*"$/m);
-  assert.match(codecovConfig, /^        - "apps\/rook\/tests\/\*\*"$/m);
-  assert.match(codecovConfig, /^        - "crates\/domain\/\*\*"$/m);
-  assert.match(codecovConfig, /^        - "crates\/application\/\*\*"$/m);
-  assert.match(codecovConfig, /^        - "crates\/infrastructure\/\*\*"$/m);
-  assert.match(codecovConfig, /^        - "apps\/huginn\/src\/\*\*"$/m);
-  assert.match(codecovConfig, /^        - "apps\/huginn\/tests\/\*\*"$/m);
-  assert.match(codecovConfig, /^        - "crates\/huginn\/\*\*"$/m);
-  assert.match(codecovConfig, /^        - "apps\/rook\/dashboard\/\*\*"$/m);
-
   // Los estados por componente son informativos: no bloquean el merge.
-  const componentBlock = codecovConfig.match(
-      /^component_management:$\n([\s\S]*?)(?=^\S)/m);
-  assert.ok(componentBlock, 'bloque component_management');
-  const componentStatuses = componentBlock[1].match(
-      /- type: (project|patch)\n\s+target: [^\n]+\n\s+informational: true/g);
-  assert.equal(componentStatuses?.length, 2,
-      'un status project y un status patch informativos');
+  const statuses = yamlPath(codecovConfig,
+      ['component_management', 'default_rules', 'statuses']);
+  assert.ok(statuses, 'bloque statuses de component_management');
+  for (const type of ['project', 'patch']) {
+    const status = yamlBlock(statuses, new RegExp(`^\\s*- type: ${type}$`));
+    assert.ok(status, `status ${type} del componente`);
+    assert.match(status, /^\s*informational: true$/m,
+        `el status ${type} del componente es informativo`);
+  }
 
-  // Los gates de cobertura existentes no cambian.
-  assert.match(codecovConfig, /^      backend:$/m);
-  assert.match(codecovConfig, /^        target: 85%$/m);
-  assert.match(codecovConfig, /^      frontend:$/m);
-  assert.match(codecovConfig, /^        target: 80%$/m);
+  // Los gates de cobertura por producto no cambian. Cada target se valida
+  // dentro de su bloque: project y patch declaran umbrales distintos.
+  const expectedTargets = {
+    'coverage/status/project/backend': '85%',
+    'coverage/status/project/frontend': '80%',
+    'coverage/status/patch/backend': '85%',
+    'coverage/status/patch/frontend': '75%',
+  };
+
+  for (const [blockPath, target] of Object.entries(expectedTargets)) {
+    const block = yamlPath(codecovConfig, blockPath.split('/'));
+    assert.ok(block, `bloque ${blockPath}`);
+    assert.match(block, new RegExp(`^\\s*target: ${target}$`, 'm'),
+        `target de ${blockPath}`);
+  }
 });
