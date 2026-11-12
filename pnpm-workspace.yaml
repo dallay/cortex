@@ -1,6 +1,8 @@
 minimumReleaseAge: 4320
 blockExoticSubdeps: true
-trustPolicy: off
+trustPolicy: no-downgrade
+trustPolicyExclude:
+  - 'lefthook@2.2.2'
 
 allowBuilds:
   esbuild: true
