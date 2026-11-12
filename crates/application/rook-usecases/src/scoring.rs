@@ -446,14 +446,6 @@ pub fn build_signals_snapshot(
 mod normalization_tests {
     use super::*;
 
-    fn empty_quota() -> Option<QuotaObservation> {
-        None
-    }
-
-    fn empty_circuit() -> Option<CircuitStateSnapshot> {
-        None
-    }
-
     fn make_snapshot(
         values: Vec<(TargetRef, RawEvidence<f64>, RawEvidence<f64>)>,
     ) -> SignalsSnapshot {
@@ -534,7 +526,7 @@ mod normalization_tests {
         ]);
         let components = build_score_components(&snapshot);
 
-        for (_, comp) in &components {
+        for comp in components.values() {
             assert!(
                 (comp.latency_p50.normalized.unwrap() - 0.5).abs() < f64::EPSILON,
                 "equal values should normalize to 0.5"
@@ -574,7 +566,7 @@ mod normalization_tests {
         ]);
         let components = build_score_components(&snapshot);
 
-        for (_, comp) in &components {
+        for comp in components.values() {
             assert!(
                 comp.latency_p50.normalized.is_none(),
                 "no known values should remain unknown"
