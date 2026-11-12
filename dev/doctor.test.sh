@@ -61,6 +61,34 @@ PATH="$restricted_path:$PATH" check_command "Required tool" "required-tool" > "$
 assert_eq "[OK] Required tool: tool 1.2.3" "$(cat "$test_root/version.out")" "a successful version probe reports only the first line"
 assert_eq "0" "$DOCTOR_FAILURES" "a successful version probe does not increment failures"
 
+# Colors are resolved on every write, so redirected output never carries ANSI codes
+# even when the surrounding shell is attached to a terminal.
+DOCTOR_FAILURES=0
+PATH="$restricted_path:$PATH" DOCTOR_COLOR=always check_command "Required tool" "required-tool" \
+    > "$test_root/color-always.out" 2>&1
+case "$(cat "$test_root/color-always.out")" in
+    *$'\033'*)
+        printf 'PASS: DOCTOR_COLOR=always keeps ANSI codes in redirected output\n'
+        ;;
+    *)
+        printf 'FAIL: DOCTOR_COLOR=always did not colorize the redirected output\n' >&2
+        exit 1
+        ;;
+esac
+
+DOCTOR_FAILURES=0
+PATH="$restricted_path:$PATH" NO_COLOR=1 DOCTOR_COLOR=always check_command "Required tool" "required-tool" \
+    > "$test_root/no-color.out" 2>&1
+case "$(cat "$test_root/no-color.out")" in
+    *$'\033'*)
+        printf 'FAIL: NO_COLOR did not remove the ANSI codes\n' >&2
+        exit 1
+        ;;
+    *)
+        printf 'PASS: NO_COLOR removes the ANSI codes\n'
+        ;;
+esac
+
 set +e
 PATH="$restricted_path:$PATH" check_command "Required tool" "required-tool" "--broken-version" > "$test_root/version.out" 2>&1
 version_status=$?

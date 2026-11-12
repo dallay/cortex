@@ -31,6 +31,8 @@ just --list
 
 `just doctor` does not install or modify anything. It fails when a required tool is missing or when Node.js or pnpm do not meet the repository requirements. Docker, dashboard dependencies, and Cargo tools used by specialized recipes are reported as optional warnings.
 
+Doctor output uses ANSI colors only when it is written to a terminal. Redirected output stays plain text. Set `NO_COLOR=1` to disable colors explicitly, or `DOCTOR_COLOR=always` to force them in files and logs.
+
 GNU Make is an optional alternative:
 
 ```bash

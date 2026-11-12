@@ -5,21 +5,63 @@ ROOT_DIR="$(cd "$DOCTOR_DIR/.." && pwd)"
 PACKAGE_JSON="$ROOT_DIR/package.json"
 RUST_TOOLCHAIN_FILE="$ROOT_DIR/rust-toolchain.toml"
 
-if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
-    C_GREEN=$'\033[0;32m'
-    C_RED=$'\033[0;31m'
-    C_YELLOW=$'\033[0;33m'
-    C_CYAN=$'\033[0;36m'
-    C_BOLD=$'\033[1m'
-    C_RESET=$'\033[0m'
-else
-    C_GREEN=''
-    C_RED=''
-    C_YELLOW=''
-    C_CYAN=''
-    C_BOLD=''
-    C_RESET=''
-fi
+# Colors are resolved on every write instead of once when this file is sourced,
+# so redirected output (files, pipes, CI logs) never receives ANSI escape codes.
+# Contract:
+#   NO_COLOR=1        -> never colorize.
+#   DOCTOR_COLOR=always -> always colorize.
+#   DOCTOR_COLOR=never  -> never colorize.
+#   DOCTOR_COLOR=auto (default) -> colorize only when stdout is a terminal.
+C_GREEN=''
+C_RED=''
+C_YELLOW=''
+C_CYAN=''
+C_BOLD=''
+C_RESET=''
+
+doctor_refresh_colors() {
+    local mode="${DOCTOR_COLOR:-auto}"
+
+    if [[ -n "${NO_COLOR:-}" ]]; then
+        mode=never
+    fi
+
+    case "$mode" in
+        never)
+            C_GREEN=''
+            C_RED=''
+            C_YELLOW=''
+            C_CYAN=''
+            C_BOLD=''
+            C_RESET=''
+            ;;
+        always)
+            C_GREEN=$'\033[0;32m'
+            C_RED=$'\033[0;31m'
+            C_YELLOW=$'\033[0;33m'
+            C_CYAN=$'\033[0;36m'
+            C_BOLD=$'\033[1m'
+            C_RESET=$'\033[0m'
+            ;;
+        *)
+            if [[ -t 1 ]]; then
+                C_GREEN=$'\033[0;32m'
+                C_RED=$'\033[0;31m'
+                C_YELLOW=$'\033[0;33m'
+                C_CYAN=$'\033[0;36m'
+                C_BOLD=$'\033[1m'
+                C_RESET=$'\033[0m'
+            else
+                C_GREEN=''
+                C_RED=''
+                C_YELLOW=''
+                C_CYAN=''
+                C_BOLD=''
+                C_RESET=''
+            fi
+            ;;
+    esac
+}
 
 read_node_minimum() {
     local manifest="${1:-$PACKAGE_JSON}"
@@ -101,16 +143,19 @@ version_at_least() {
 }
 
 doctor_ok() {
+    doctor_refresh_colors
     printf '%s[OK]%s %s\n' "$C_GREEN" "$C_RESET" "$1"
 }
 
 doctor_fail() {
     DOCTOR_FAILURES=$((DOCTOR_FAILURES + 1))
+    doctor_refresh_colors
     printf '%s[MISSING]%s %s\n' "$C_RED" "$C_RESET" "$1"
 }
 
 doctor_warn() {
     DOCTOR_WARNINGS=$((DOCTOR_WARNINGS + 1))
+    doctor_refresh_colors
     printf '%s[WARN]%s %s\n' "$C_YELLOW" "$C_RESET" "$1"
 }
 
@@ -153,6 +198,7 @@ main() {
     local node_minimum pnpm_expected rust_channel rust_components component installed_components
     local node_actual
 
+    doctor_refresh_colors
     printf '%s%sCortex local environment diagnostics (does not install or modify anything)%s\n\n' "$C_BOLD" "$C_CYAN" "$C_RESET"
     printf '%sCore tools%s\n' "$C_BOLD" "$C_RESET"
     check_command "just" "just" || true
