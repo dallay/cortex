@@ -14,6 +14,7 @@ use huginn_core::{
 use huginn_plugin_api::v1::{CommandResult, DialogHandle, ToolResult, View};
 use std::collections::{BTreeMap, HashSet};
 use std::ops::Range;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use tokio::sync::{mpsc, oneshot, Notify};
 
@@ -243,6 +244,9 @@ pub struct UiState {
     pub current_operation: crate::event::OperationId,
     next_operation_id: u64,
     saved_ui_config: Option<UiConfig>,
+    /// Revision of `saved_ui_config`. Shared with queued writers so they can
+    /// re-check it after the previous write has been published.
+    saved_ui_revision: Arc<AtomicU64>,
     settings_apply: Option<crate::overlay::OverlayId>,
     settings_receipts: Vec<SettingsReceipt>,
     settings_write_tail: Option<oneshot::Receiver<()>>,
@@ -251,7 +255,12 @@ struct SettingsReceipt {
     id: crate::overlay::OverlayId,
     config: UiConfig,
     result: oneshot::Receiver<std::result::Result<(), String>>,
+    /// Released only after the receipt is processed and its snapshot is
+    /// published, so the next queued write starts from the published revision.
+    finished: Option<oneshot::Sender<()>>,
 }
+const STALE_SETTINGS: &str =
+    "Settings changed since this copy was opened; close and reopen Settings";
 /// Ordinary selection only. It has no approval reply channel or policy access.
 pub struct PluginDialog {
     pub handle: DialogHandle,
@@ -961,14 +970,17 @@ impl Ui {
                     (OverlayKind::Help, Payload::Help, origin)
                 }
                 huginn_plugin_api::v1::OverlayKind::Settings => {
-                    let config = self
-                        .lock()
-                        .saved_ui_config
-                        .clone()
-                        .unwrap_or_else(|| (*self.ui_config).clone());
+                    let (config, revision) = {
+                        let state = self.lock();
+                        (
+                            state.saved_ui_config.clone(),
+                            state.saved_ui_revision.load(Ordering::Acquire),
+                        )
+                    };
+                    let config = config.unwrap_or_else(|| (*self.ui_config).clone());
                     (
                         OverlayKind::Settings,
-                        Payload::Settings(SettingsDialog::new(&config)),
+                        Payload::Settings(SettingsDialog::with_base_revision(&config, revision)),
                         origin,
                     )
                 }
@@ -1560,7 +1572,7 @@ impl Ui {
         self.apply_settings_at(ticket)
     }
     pub(crate) fn apply_settings_at(&self, ticket: TransitionTicket) -> bool {
-        let (config, sender, previous, finished) = {
+        let (config, sender, previous, published, base_revision) = {
             let mut state = self.lock();
             if !state.overlays.accepts(ticket, state.overlays.focus()) || self.stop.is_cancelled() {
                 return false;
@@ -1571,29 +1583,41 @@ impl Ui {
             if state.settings_apply == Some(active.id) {
                 return false;
             }
+            let published = state.saved_ui_revision.clone();
             let Some(dialog) = state.settings_mut() else {
                 return false;
             };
+            let base_revision = dialog.base_revision;
+            if base_revision != published.load(Ordering::Acquire) {
+                dialog.last_error = Some(STALE_SETTINGS.into());
+                return false;
+            }
             let config = dialog.projected_ui_config();
             let (sender, result) = oneshot::channel();
+            let (finished, tail) = oneshot::channel();
             state.settings_apply = Some(active.id);
             state.settings_receipts.push(SettingsReceipt {
                 id: active.id,
                 config: config.clone(),
                 result,
+                finished: Some(finished),
             });
             // A dependency chain records submission order synchronously; task
             // scheduling cannot reorder durable writes.
-            let previous = state.settings_write_tail.take();
-            let (finished, tail) = oneshot::channel();
-            state.settings_write_tail = Some(tail);
+            let previous = state.settings_write_tail.replace(tail);
             drop(state);
-            (config, sender, previous, finished)
+            (config, sender, previous, published, base_revision)
         };
         let save = self.save_ui_config.clone();
         tokio::spawn(async move {
             if let Some(previous) = previous {
                 let _ = previous.await;
+            }
+            // The previous write is published before this point. A copy that
+            // it made stale must not overwrite it.
+            if published.load(Ordering::Acquire) != base_revision {
+                let _ = sender.send(Err(STALE_SETTINGS.into()));
+                return;
             }
             let result = tokio::task::spawn_blocking(move || {
                 save(&config).map_err(|error| safe(&error.to_string()))
@@ -1601,7 +1625,6 @@ impl Ui {
             .await;
             let result = result.unwrap_or_else(|_| Err("Settings persistence failed".into()));
             let _ = sender.send(result);
-            let _ = finished.send(());
         });
         true
     }
@@ -1621,7 +1644,7 @@ impl Ui {
                         Err("Settings persistence failed".into())
                     }
                 };
-                let receipt = state.settings_receipts.remove(0);
+                let mut receipt = state.settings_receipts.remove(0);
                 let current = state
                     .overlays
                     .snapshot()
@@ -1632,11 +1655,20 @@ impl Ui {
                 }
                 match result {
                     Ok(()) => {
-                        state.saved_ui_config = Some(receipt.config);
+                        let revision = state.saved_ui_revision.fetch_add(1, Ordering::AcqRel) + 1;
                         if current {
-                            retired.push(state.overlays.close(receipt.id));
-                            state.notification("Settings saved".into());
+                            let unchanged = state.settings().is_none_or(|dialog| {
+                                dialog.projected_ui_config() == receipt.config
+                            });
+                            if unchanged {
+                                retired.push(state.overlays.close(receipt.id));
+                                state.notification("Settings saved".into());
+                            } else if let Some(dialog) = state.settings_mut() {
+                                dialog.base_revision = revision;
+                                dialog.last_error = None;
+                            }
                         }
+                        state.saved_ui_config = Some(receipt.config);
                     }
                     Err(error) => {
                         if current {
@@ -1645,6 +1677,10 @@ impl Ui {
                             }
                         }
                     }
+                }
+                // Publication is complete: release the next queued write.
+                if let Some(finished) = receipt.finished.take() {
+                    let _ = finished.send(());
                 }
                 changed = true;
             }

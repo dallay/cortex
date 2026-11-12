@@ -217,6 +217,9 @@ pub struct SettingsDialog {
     pub selections: [TabSelection; 5],
     pub working: WorkingCopy,
     pub last_error: Option<String>,
+    /// Saved-snapshot revision this working copy is based on. Apply is
+    /// rejected once the saved snapshot moves past it.
+    pub base_revision: u64,
     /// Values loaded when the dialog opened. Untouched fields project from
     /// here, so an out-of-set value survives a save the user never intended
     /// to change.
@@ -235,6 +238,11 @@ pub enum ApplyError {
 impl SettingsDialog {
     /// Build from a freshly-loaded `UiConfig`. Selections start at index 0.
     pub fn new(current: &UiConfig) -> Self {
+        Self::with_base_revision(current, 0)
+    }
+
+    /// Build from the saved snapshot at `base_revision`.
+    pub fn with_base_revision(current: &UiConfig, base_revision: u64) -> Self {
         let name_index = THEME_NAMES
             .iter()
             .position(|name| *name == current.theme.name)
@@ -286,6 +294,7 @@ impl SettingsDialog {
                 integrations,
             },
             last_error: None,
+            base_revision,
             baseline: current.clone(),
             baseline_theme: name_index,
             baseline_level: level,

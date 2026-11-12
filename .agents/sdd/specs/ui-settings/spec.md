@@ -198,8 +198,10 @@ When Enter is pressed for a non-stale Apply, the system SHALL capture the workin
 input. While that Apply is pending, repeated Enter SHALL NOT start another
 write. Editing SHALL remain available while Apply is pending; completion SHALL
 preserve any newer edits in the working copy. Saves SHALL be serialized to
-preserve their order. Each Settings instance SHALL track the saved snapshot
-revision on which its working copy is based. Before accepting Apply and again
+preserve their order. A serialized write SHALL include processing the receipt
+of the previous write and publishing its saved revision before the next queued
+write starts. Each Settings instance SHALL track the saved snapshot revision on
+which its working copy is based. Before accepting Apply and again
 before starting its write, the system SHALL reject a copy whose base revision
 is stale, without invoking persistence, and show an error in the body while
 preserving its edits. Reopening Settings SHALL load the latest saved snapshot.
