@@ -156,6 +156,7 @@ def scanner_controls(output):
                                     capture_output=True, text=True, check=False)
             (output / f"{name}.json").write_text(result.stdout)
             (output / f"{name}.stderr").write_text(result.stderr)
+            require(result.stdout.strip(), (name, "semgrep produced no output", result.stderr))
             data = json.loads(result.stdout)
             scanned = {(fixtures / p).resolve() for p in data["paths"]["scanned"]}
             # 1.126 re-emits the result with --disable-nosem, but retains
