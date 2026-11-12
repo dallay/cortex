@@ -723,3 +723,8 @@ ci-muninn-c1:
     PYTHONPATH=dev/muninn python3 -m unittest discover -s dev/muninn/tests -p "test_product_chain_fixture_lifecycle.py"
     PYTHONPATH=dev/muninn python3 -m unittest discover -s dev/muninn/tests -p "test_normative_tck.py"
     PYTHONPATH=dev/muninn python3 -m unittest discover -s dev/muninn/tests -p "test_api_baseline_profiles.py"
+
+# Unit tests of the OpenCode + Muninn memory benchmark harness. No inference,
+# no database, no Docker.
+ci-muninn-opencode:
+    PYTHONPATH=dev/muninn/opencode python3 -m unittest discover -s dev/muninn/opencode/tests -p "test_*.py"
