@@ -12,7 +12,7 @@ pub struct CortexError {
 }
 
 impl CortexError {
-    /// Permite recuperar contexto tipado sin acoplar el kernel a sus consumidores.
+    /// Allows recovering typed context without coupling the kernel to its consumers.
     pub fn downcast_ref<E: std::error::Error + 'static>(&self) -> Option<&E> {
         self.source.downcast_ref()
     }

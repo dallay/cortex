@@ -143,14 +143,14 @@ impl ResponsesStream {
                 || !chunk.tool_calls.is_empty()
                 || chunk.finish_reason.is_some())
         {
-            return Err("Contenido recibido después del estado final upstream");
+            return Err("Content received after the upstream final state");
         }
         if let Some(usage) = chunk.usage {
             self.usage = Some(usage);
         }
         self.output_bytes = self.output_bytes.saturating_add(chunk.delta.len());
         if self.output_bytes > MAX_OUTPUT_BYTES {
-            return Err("Se superó el límite de salida Responses");
+            return Err("Responses output limit exceeded");
         }
         let mut events = vec![];
         if !chunk.delta.is_empty() {
@@ -207,7 +207,7 @@ impl ResponsesStream {
         events: &mut Vec<Value>,
     ) -> Result<(), &'static str> {
         if !self.tools.contains_key(&delta.index) && self.tools.len() >= MAX_TOOLS {
-            return Err("Se superó el límite de 64 llamadas de función");
+            return Err("The 64 function call limit was exceeded");
         }
         let tool = self.tools.entry(delta.index).or_default();
         let coherent_id = delta
@@ -218,20 +218,20 @@ impl ResponsesStream {
             if !super::responses_adapter::valid_id(&id)
                 || tool.id.as_ref().is_some_and(|previous| previous != &id)
             {
-                return Err("El proveedor cambió la identidad de una función");
+                return Err("The provider changed the identity of a function");
             }
             tool.id = Some(id);
         }
         if let Some(name) = delta.function.name.filter(|name| !name.is_empty()) {
-            // Anthropic repite la identidad completa en su resumen terminal.
+            // Anthropic repeats the full identity in its terminal summary.
             let summary =
                 finishing && coherent_id && tool.name == name && delta.function.arguments.is_none();
             if !summary {
                 if tool.output_index.is_some() {
-                    return Err("El proveedor cambió el nombre de una función anunciada");
+                    return Err("The provider changed the name of an announced function");
                 }
                 if tool.name.len().saturating_add(name.len()) > 64 {
-                    return Err("Nombre de función demasiado largo");
+                    return Err("Function name too long");
                 }
                 tool.name.push_str(&name);
             }
@@ -240,7 +240,7 @@ impl ResponsesStream {
             self.argument_bytes = self.argument_bytes.saturating_add(arguments.len());
             self.output_bytes = self.output_bytes.saturating_add(arguments.len());
             if self.argument_bytes > MAX_ARGUMENT_BYTES || self.output_bytes > MAX_OUTPUT_BYTES {
-                return Err("Se superó el límite de argumentos Responses");
+                return Err("Responses argument limit exceeded");
             }
             tool.arguments.push_str(&arguments);
         }
@@ -282,19 +282,19 @@ impl ResponsesStream {
         events: &mut Vec<Value>,
     ) -> Result<(), &'static str> {
         if let Some(tool) = self.tools.get_mut(&tool_index) {
-            // Esperar al primer argumento permite ensamblar nombres fragmentados.
+            // Waiting for the first argument allows assembling fragmented names.
             if tool.output_index.is_none()
                 && !tool.name.is_empty()
                 && (!tool.arguments.is_empty() || finalizing)
             {
                 if !super::responses_adapter::valid_name(&tool.name) {
-                    return Err("Nombre de función inválido");
+                    return Err("Invalid function name");
                 }
                 let call_id = tool
                     .id
                     .get_or_insert_with(|| format!("call_{}_{}", self.context.id, tool_index));
                 if !self.call_ids.insert(call_id.clone()) {
-                    return Err("Identidad de función duplicada");
+                    return Err("Duplicate function identity");
                 }
                 let index = self.output.len();
                 tool.output_index = Some(index);
@@ -327,7 +327,7 @@ impl ResponsesStream {
         self.validate_finish()?;
         let finish = self
             .finish_reason
-            .ok_or("El stream terminó sin estado final upstream")?;
+            .ok_or("The stream ended without an upstream final state")?;
         let status = finish_status(Some(finish));
         for tool in self.tools.values() {
             if let Some(index) = tool.output_index {
@@ -368,23 +368,23 @@ impl ResponsesStream {
     fn validate_finish(&self) -> Result<(), &'static str> {
         let finish = self
             .finish_reason
-            .ok_or("El stream terminó sin estado final upstream")?;
+            .ok_or("The stream ended without an upstream final state")?;
         let status = finish_status(Some(finish));
         if finish == FinishReason::ToolCalls && self.tools.is_empty() {
-            return Err("Estado tool_calls sin funciones");
+            return Err("tool_calls state without functions");
         }
         if finish == FinishReason::Stop && !self.tools.is_empty() {
-            return Err("Estado stop con funciones");
+            return Err("stop state with functions");
         }
         // Validate everything before publishing done events: a failure must not announce success.
         for tool in self.tools.values() {
             let Some(_) = tool.output_index else {
-                return Err("Llamada de función incompleta");
+                return Err("Incomplete function call");
             };
             if status == "completed"
                 && !serde_json::from_str::<Value>(&tool.arguments).is_ok_and(|v| v.is_object())
             {
-                return Err("Argumentos de función inválidos");
+                return Err("Invalid function arguments");
             }
         }
         Ok(())

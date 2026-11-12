@@ -121,7 +121,7 @@ fn validate_replay(id: &Option<String>, status: &Option<String>) -> Result<(), S
             .as_deref()
             .is_some_and(|s| !matches!(s, "completed" | "incomplete"))
     {
-        return Err("Identidad o estado de entrada no soportado".into());
+        return Err("Unsupported input identity or state".into());
     }
     Ok(())
 }
@@ -129,14 +129,14 @@ fn validate_replay(id: &Option<String>, status: &Option<String>) -> Result<(), S
 impl ResponsesRequest {
     pub fn into_domain(self) -> Result<CompletionRequest, String> {
         if self.model.trim().is_empty() || self.model.len() > 256 || self.store == Some(true) {
-            return Err("Se requiere model y no se admite store:true".into());
+            return Err("model is required and store:true is not allowed".into());
         }
         if self.max_output_tokens == Some(0)
             || self
                 .temperature
                 .is_some_and(|t| !t.is_finite() || !(0.0..=2.0).contains(&t))
         {
-            return Err("max_output_tokens o temperature fuera del rango admitido".into());
+            return Err("max_output_tokens or temperature outside the allowed range".into());
         }
         let mut messages = vec![];
         if let Some(instructions) = self.instructions {
@@ -148,7 +148,7 @@ impl ResponsesRequest {
             Input::Text(text) => messages.push(text_message("user", text)),
             Input::Items(items) => {
                 if items.is_empty() || items.len() > 1024 {
-                    return Err("input requiere entre 1 y 1024 elementos".into());
+                    return Err("input requires between 1 and 1024 items".into());
                 }
                 for item in items {
                     push_input_item(&mut messages, item, &mut calls, &mut results)?;
@@ -200,17 +200,17 @@ fn push_replayed_message(
             "user" | "assistant" | "system" | "developer"
         )
     {
-        return Err("Tipo o rol de mensaje no soportado".into());
+        return Err("Unsupported message type or role".into());
     }
     let text = message_text(&message.role, message.content)?;
-    // Una llamada pendiente y su texto intercalado pertenecen
-    // al mismo turno; resultados u otros roles lo delimitan.
+    // A pending call and its interleaved text belong
+    // to the same turn; results or other roles delimit it.
     if message.role == "assistant"
         && messages
             .last()
             .is_some_and(|m| m.role == "assistant" && !m.tool_calls.is_empty())
     {
-        let pending = messages.last_mut().ok_or("Falta el mensaje assistant")?;
+        let pending = messages.last_mut().ok_or("Missing assistant message")?;
         if let Value::String(content) = &mut pending.content {
             content.push_str(&text);
         }
@@ -232,7 +232,7 @@ fn message_text(role: &str, content: TextContent) -> Result<String, String> {
                     || part.annotations.is_some_and(|a| !a.is_empty())
                     || part.logprobs.is_some_and(|a| !a.is_empty())
                 {
-                    return Err("Solo se admiten partes de texto sin anotaciones".into());
+                    return Err("Only text parts without annotations are accepted".into());
                 }
                 text.push_str(&part.text);
             }
@@ -248,14 +248,14 @@ fn push_replayed_call(
 ) -> Result<(), String> {
     validate_replay(&call.id, &call.status)?;
     let arguments: Value = serde_json::from_str(&call.arguments)
-        .map_err(|_| "Los argumentos de función deben ser un objeto JSON".to_string())?;
+        .map_err(|_| "Function arguments must be a JSON object".to_string())?;
     if call.kind != "function_call"
         || !valid_id(&call.call_id)
         || !valid_name(&call.name)
         || !arguments.is_object()
         || !calls.insert(call.call_id.clone())
     {
-        return Err("Llamada de función inválida o duplicada".into());
+        return Err("Invalid or duplicate function call".into());
     }
     if !messages
         .last()
@@ -263,7 +263,7 @@ fn push_replayed_call(
     {
         messages.push(text_message("assistant", String::new()));
     }
-    let message = messages.last_mut().ok_or("Falta el mensaje assistant")?;
+    let message = messages.last_mut().ok_or("Missing assistant message")?;
     message.tool_calls.push(OpenAIToolCall {
         id: call.call_id,
         call_type: "function".into(),
@@ -286,7 +286,7 @@ fn push_replayed_result(
         || !calls.contains(&result.call_id)
         || !results.insert(result.call_id.clone())
     {
-        return Err("Resultado de función sin llamada previa o duplicado".into());
+        return Err("Function result without a prior call, or duplicate".into());
     }
     let mut message = text_message("tool", result.output);
     message.tool_call_id = Some(result.call_id);
@@ -303,7 +303,7 @@ fn normalize_tools(
         return Ok((None, names));
     };
     if tools.len() > 64 {
-        return Err("Se admiten hasta 64 funciones".into());
+        return Err("At most 64 functions are accepted".into());
     }
     let mut normalized = vec![];
     for tool in tools {
@@ -315,7 +315,7 @@ fn normalize_tools(
             || !names.insert(tool.name.clone())
         {
             return Err(
-                "Función no soportada: requiere nombre único, parameters de objeto y strict:false"
+                "Unsupported function: requires a unique name, object parameters and strict:false"
                     .into(),
             );
         }
@@ -337,7 +337,7 @@ fn normalize_tool_choice(
         None => Ok(None),
         Some(Value::String(choice)) if matches!(choice.as_str(), "auto" | "none" | "required") => {
             if choice == "required" && names.is_empty() {
-                return Err("tool_choice requiere funciones".into());
+                return Err("tool_choice requires functions".into());
             }
             Ok(Some(json!(choice)))
         }
@@ -347,13 +347,13 @@ fn normalize_tool_choice(
             let name = choice
                 .get("name")
                 .and_then(Value::as_str)
-                .ok_or("tool_choice inválido")?;
+                .ok_or("invalid tool_choice")?;
             if !names.contains(name) {
-                return Err("tool_choice debe seleccionar una función declarada".into());
+                return Err("tool_choice must select a declared function".into());
             }
             Ok(Some(json!({"type":"function", "function":{"name":name}})))
         }
-        _ => Err("tool_choice no soportado".into()),
+        _ => Err("unsupported tool_choice".into()),
     }
 }
 
@@ -366,7 +366,7 @@ fn text_message(role: &str, text: String) -> OpenAIMessage {
     }
 }
 
-/// Metadatos estables de la respuesta, independientes de los IDs del proveedor.
+/// Stable response metadata, independent of the provider IDs.
 #[derive(Clone)]
 pub struct ResponseContext {
     pub id: String,
@@ -428,7 +428,7 @@ impl ResponseContext {
 
     pub fn response_body(&self, response: &CompletionResponse) -> Result<Value, String> {
         if response.finish_reason.is_none() {
-            return Err("Respuesta sin estado final upstream".into());
+            return Err("Response without an upstream final state".into());
         }
         let status = finish_status(response.finish_reason);
         if response.content.len() > MAX_OUTPUT_BYTES
@@ -441,7 +441,7 @@ impl ResponseContext {
                     .count()
                     > MAX_TOOLS)
         {
-            return Err("Se superó el límite de salida Responses".into());
+            return Err("Responses output limit exceeded".into());
         }
         let mut output = vec![];
         if !response.content.is_empty() {
@@ -452,7 +452,7 @@ impl ResponseContext {
             ));
         }
         let mut calls = response.tool_calls.clone();
-        // Anthropic conserva las llamadas en ambas representaciones del dominio.
+        // Anthropic keeps the calls in both domain representations.
         if calls.is_empty() {
             calls.extend(response.content_blocks.iter().filter_map(|b| match b {
                 MessageContent::ToolUse { id, name, input } => Some(rook_core::MessageToolCall {
@@ -464,10 +464,10 @@ impl ResponseContext {
             }));
         }
         if response.finish_reason == Some(FinishReason::ToolCalls) && calls.is_empty() {
-            return Err("Estado tool_calls sin funciones".into());
+            return Err("tool_calls state without functions".into());
         }
         if response.finish_reason == Some(FinishReason::Stop) && !calls.is_empty() {
-            return Err("Estado stop con funciones".into());
+            return Err("stop state with functions".into());
         }
         let mut ids = HashSet::new();
         let mut argument_bytes = 0usize;
@@ -477,18 +477,18 @@ impl ResponseContext {
                 .clone()
                 .unwrap_or_else(|| format!("call_{}_{}", self.id, index));
             if !valid_id(&call_id) || !valid_name(&call.name) || !ids.insert(call_id.clone()) {
-                return Err("El proveedor devolvió una llamada de función inválida".into());
+                return Err("The provider returned an invalid function call".into());
             }
             let arguments = match &call.arguments {
                 Value::Object(_) => call.arguments.to_string(),
                 Value::String(raw) if status == "incomplete" => raw.clone(),
-                _ => return Err("El proveedor devolvió argumentos de función inválidos".into()),
+                _ => return Err("The provider returned invalid function arguments".into()),
             };
             argument_bytes = argument_bytes.saturating_add(arguments.len());
             if argument_bytes > MAX_ARGUMENT_BYTES
                 || argument_bytes.saturating_add(response.content.len()) > MAX_OUTPUT_BYTES
             {
-                return Err("Se superó el límite de argumentos Responses".into());
+                return Err("Responses argument limit exceeded".into());
             }
             output.push(
                 json!({"type":"function_call", "id":format!("fc_{}_{}",self.id,index),

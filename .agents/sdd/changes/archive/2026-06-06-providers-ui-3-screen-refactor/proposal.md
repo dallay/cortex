@@ -10,7 +10,7 @@
 
 The current `/providers` view is a flat table that does not scale beyond a handful of connections. The product vision — "an AI Provider Control Plane" with many providers and many connections per provider — requires a navigable hierarchy, not a single dense grid.
 
-User intent (paraphrased): *"A futuro vamos a tener muchos providers"* and *"este es el AI Provider Control Plane."* The backend domain model (`Provider → Connection`, 5 `ProviderKind` values, `Credentials::ApiKey | OAuth`) is already correct and stable. The gap is purely in the dashboard UX.
+User intent (paraphrased): *"We will have many providers in the future"* and *"this is the AI Provider Control Plane."* The backend domain model (`Provider → Connection`, 5 `ProviderKind` values, `Credentials::ApiKey | OAuth`) is already correct and stable. The gap is purely in the dashboard UX.
 
 This refactor lands the navigation skeleton and a per-kind details view, so adding the 6th, 7th, 8th provider later is a metadata entry, not a UI rewrite.
 

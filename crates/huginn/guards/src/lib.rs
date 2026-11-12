@@ -1,4 +1,4 @@
-//! Protecciones restrictivas para herramientas nativas; no constituyen un sandbox.
+//! Restrictive guardrails for native tools; they do not constitute a sandbox.
 mod paths;
 
 /// Classifies a path as sensitive using the shared Huginn path policy.
@@ -23,8 +23,8 @@ struct Configuration {
     block_paths: Vec<String>,
 }
 impl Guardrails {
-    /// Construye restricciones aditivas desde texto; no lee un archivo de proyecto.
-    /// Acepta `block_paths` y `block_commands`; los campos desconocidos producen un error.
+    /// Builds additive restrictions from text; it does not read a project file.
+    /// Accepts `block_paths` and `block_commands`; unknown fields produce an error.
     pub fn from_toml(text: &str) -> std::result::Result<Self, &'static str> {
         if text.len() > 65_536 {
             return Err("guardrails: configuration exceeds 64 KiB");

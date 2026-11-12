@@ -1,257 +1,256 @@
-# Diseño: sistema de overlays de Huginn
+# Design: Huginn overlay system
 
-## Enfoque técnico
+## Technical approach
 
-Un slot `Option<Overlay>` gobierna foco, input y render. Se conserva la
-implementación de formularios y servicios, no se sustituye por etiquetas vacías.
-La proyección separa conversación, overlays, notificaciones, estado y diagnósticos.
-El router publica observabilidad de selección local, no disponibilidad remota.
-Alcance y precedencia: propuesta aprobada y los cuatro delta specs de este cambio.
+A `Option<Overlay>` slot governs focus, input and render. The implementation of
+forms and services is preserved, it is not replaced by empty labels.
+The projection separates conversation, overlays, notifications, status and diagnostics.
+The router publishes local selection observability, not remote availability.
+Scope and precedence: the approved proposal and the four delta specs of this change.
 
-Lectura comprobada: `state.rs`, `terminal.rs`, `workflow.rs`, `settings.rs`,
-`providers.rs`, `contributions.rs` de presentation; contratos core/plugin-api;
-conexiones/router de application; cableado app y manifests/tests relacionados.
-Esta fase no ejecuta compilación, pruebas ni QA y no acredita gates anteriores.
+Verified reading: `state.rs`, `terminal.rs`, `workflow.rs`, `settings.rs`,
+`providers.rs`, `contributions.rs` of presentation; core/plugin-api contracts;
+application connections/router; app wiring and related manifests/tests.
+This phase runs no compilation, tests nor QA and does not certify previous gates.
 
-## Decisiones de arquitectura
+## Architecture decisions
 
-### D1. Profundizar el módulo de overlays, no añadir handlers con acceso a Ui
+### D1. Deepen the overlay module, do not add handlers with access to Ui
 
-**Elección:** `overlay.rs` concentra transición, snapshot e input puro; devuelve
-efectos que `Ui` ejecuta fuera del mutex. Eliminar los cuatro slots y leases
-incompatibles al terminar. `Overlay` no recibe `&Ui` en sus métodos mutables. **Alternativa:** trait de handlers que vuelven a bloquear `Ui` o mantener slots
-con prioridades. **Razón:** evita reentrancia bajo lock y concentra las garantías
-de foco en un módulo testeable. No se reestructura el kernel ni el router de turnos.
+**Choice:** `overlay.rs` concentrates the transition, the snapshot and pure input; it returns
+effects that `Ui` executes outside the mutex. Remove the four incompatible slots and leases
+when finished. `Overlay` does not receive `&Ui` in its mutable methods. **Alternative:** a handler trait that locks `Ui` again or keep slots
+with priorities. **Reason:** it avoids reentrancy under lock and concentrates the focus
+guarantees in a testable module. Neither the kernel nor the turn router is restructured.
 
-### D2. Etiqueta de superficie no es payload ni autoridad
+### D2. The surface tag is neither payload nor authority
 
-**Elección:** añadir `CommandResult::Overlay(OverlayKind)`; nunca existe
-`OverlayKind::Approval`. Conservar `Workflow(Workflow)` y `Dialog(String)`.
-Añadir metadatos de superficie al workflow, preservando su definición, callback,
-registration exacta, campos y secretos. No reconstruir un workflow por título,
-prefijo, nombre de comando ni lookup de una generación sustituta. **Alternativa:** devolver solo `OverlayKind::Login` en lugar del workflow actual. **Razón:** esa sustitución pierde callbacks, contexto y continuación asíncrona.
+**Choice:** add `CommandResult::Overlay(OverlayKind)`; `OverlayKind::Approval` never exists.
+Keep `Workflow(Workflow)` and `Dialog(String)`.
+Add surface metadata to the workflow, preserving its definition, callback,
+exact registration, fields and secrets. Do not rebuild a workflow by title,
+prefix, command name nor by lookup of a substitute generation. **Alternative:** return only `OverlayKind::Login` instead of the current workflow. **Reason:** that substitution loses callbacks, context and asynchronous continuation.
 
-### D3. Un solo destino visible por error UI
+### D3. A single visible destination per UI error
 
-**Elección:** categoría explícita antes de dedup; errores de formulario en su
-cuerpo y otros errores en la zona de avisos. Sin toasts ni `notice` universal.
-`CommandResult::Notice(View)` sigue siendo un resultado plugin compatible,
-pero significa exclusivamente Notification, nunca conversación. **Alternativa:** clasificar texto o deduplicar historial. **Razón:** ocultaría
-mensajes legítimos y permitiría contaminar historial al expirar una ventana.
+**Choice:** explicit category before dedup; form errors in their
+body and other errors in the notice zone. No toasts nor a universal `notice`.
+`CommandResult::Notice(View)` remains a compatible plugin result,
+but it means Notification exclusively, never conversation. **Alternative:** classify text or deduplicate history. **Reason:** it would hide
+legitimate messages and allow history contamination when a window expires.
 
-### D4. Fuente versionada en el punto de serialización del router
+### D4. Versioned source at the router serialization point
 
-**Elección:** el servicio de conexiones publica un snapshot completo y versionado
-bajo su mutex de selección; `ConnectionManager` lo reenvía y la barra consume ese
-canal. `UiState` no consulta el estado remoto. **Alternativa:** consultas periódicas
-o texto emitido por comandos. **Razón:** ordena selección, ausencia y revocación
-sin afirmar conectividad, y permite reflejar cambios de todos los caminos.
+**Choice:** the connections service publishes a complete versioned snapshot
+under its selection mutex; `ConnectionManager` forwards it and the bar consumes that
+channel. `UiState` does not query the remote state. **Alternative:** periodic queries
+or text emitted by commands. **Reason:** it orders selection, absence and revocation
+without asserting connectivity, and it allows reflecting changes from every path.
 
-### D5. Vistas declarativas sin autoridad de ejecución
+### D5. Declarative views without execution authority
 
-**Elección:** la proyección `UiView`/snapshot incluye categorías explícitas,
-`OverlaySnapshot` y estado observable de la barra; no serializa capacidades,
-handlers, callbacks ni secretos. La superficie activa se presenta como overlay,
-no como contenido conversacional. **Alternativa:** emitir avisos y reconstruir la
-vista desde texto. **Razón:** mantiene una frontera comprobable entre interacción,
-conversación y datos de observabilidad.
+**Choice:** the `UiView`/snapshot projection includes explicit categories,
+`OverlaySnapshot` and the observable state of the bar; it does not serialize capabilities,
+handlers, callbacks nor secrets. The active surface is presented as an overlay,
+not as conversational content. **Alternative:** emit notices and rebuild the
+view from text. **Reason:** it keeps a verifiable boundary between interaction,
+conversation and observability data.
 
-### D6. Errores deduplicados por contenido, operación y tiempo
+### D6. Errors deduplicated by content, operation and time
 
-**Elección:** aplicar dedup solo a errores de presentación ya clasificados, con
-hash y comparación de mensaje, reloj inyectable, operación y ventana aprobada. **Alternativa:** dedup global o basada en prefijo. **Razón:** evita suprimir fallos
-independientes o alterar el historial; la política exacta permanece definida por
-los specs existentes.
+**Choice:** apply dedup only to already classified presentation errors, with
+hash and message comparison, injectable clock, operation and approved window. **Alternative:** global or prefix based dedup. **Reason:** it avoids suppressing
+independent failures or altering the history; the exact policy remains defined by
+the existing specs.
 
-### D7. UI conserva eventos acotados, sesión conserva conversación completa
+### D7. UI keeps bounded events, session keeps the full conversation
 
-**Elección:** limitar a 256 entradas el buffer de proyección de eventos UI; la
-persistencia de `Session.events` y los mensajes relevantes de conversación no se
-truncan. **Alternativa:** aplicar el límite al registro durable. **Razón:** el
-límite controla memoria de UI sin cambiar recuperación de sesión.
+**Choice:** limit the UI event projection buffer to 256 entries; the
+persistence of `Session.events` and the relevant conversation messages are not
+truncated. **Alternative:** apply the limit to the durable record. **Reason:** the
+limit controls UI memory without changing session recovery.
 
-### D8. Integración progresiva de estado, sin doble autoridad
+### D8. Progressive state integration, without dual authority
 
-**Elección:** migrar primero la propiedad del estado activo al `UiState` host-owned;
-durante la transición, los objetos legacy pueden ser adaptadores/payload exactos
-dentro de `Overlay`, pero sus slots dejan de decidir visibilidad, foco o dispatch.
-Snapshot/render y terminal input consultan ese mismo estado. **Alternativa:**
-conservar cuatro slots y sincronizarlos con `ActiveOverlay<T>`. **Razón:** sincronizar
-copias no permite garantizar orden ni lease único; una máquina aislada que no dirige
-input/render tampoco completa OVL-01. Esta decisión precisa D1: eliminar slots
-independientes implica migrarlos por adaptadores, no descartar sus flujos.
+**Choice:** migrate first the ownership of the active state to the host-owned `UiState`;
+during the transition, legacy objects can be adapters/exact payloads
+inside `Overlay`, but their slots stop deciding visibility, focus or dispatch.
+Snapshot/render and terminal input consult that same state. **Alternative:**
+keep four slots and synchronize them with `ActiveOverlay<T>`. **Reason:** synchronizing
+copies does not allow guaranteeing order nor a single lease; an isolated machine that does not drive
+input/render does not complete OVL-01 either. This decision refines D1: removing independent
+slots implies migrating them through adapters, not discarding their flows.
 
-### D9. Precedencia sin pila y autorización separada
+### D9. Precedence without a stack and with separate authorization
 
-**Elección:** `Approval` solo se crea por la autoridad host, preempta y descarta
-el overlay ordinario sin restaurarlo, cancela su tarea local si procede; una apertura
-ordinaria durante Approval se rechaza. No hay pila. **Alternativa:** prioridad con
-restauración o permitir que plugins reemplacen Approval. **Razón:** conserva
-exclusividad de permiso y evita resucitar estado/foco revocados.
+**Choice:** `Approval` is only created by the host authority, it preempts and discards
+the ordinary overlay without restoring it, it cancels its local task if applicable; an ordinary opening
+during Approval is rejected. There is no stack. **Alternative:** priority with
+restoration or allowing plugins to replace Approval. **Reason:** it preserves
+permission exclusivity and avoids resurrecting revoked state/focus.
 
 ## Data Flow
 
 ```text
-CommandResult / evento async
-        │ validar origin + ticket + operation + revision
+CommandResult / async event
+        │ validate origin + ticket + operation + revision
         ▼
 UiState.active_overlay ──→ snapshot/render
         ▲                         │
         └──── terminal input ─────┘
-                   │ lease/revision vigente
+                   │ current lease/revision
                    ▼
-             transición + efectos
-                   │ desbloquear antes de ejecutar
-                   └── I/O / callbacks / cancelación / Drop
+             transition + effects
+                   │ unlock before executing
+                   └── I/O / callbacks / cancellation / Drop
 ```
 
-El snapshot es una proyección segura, no una serialización del payload de View.
-Debe ocultar valores secretos y buffers de formulario, senders/receivers, callbacks,
-handles de recursos, closures, referencias de renderer/servicio y tokens de
-cancelación. La autoridad host retiene esos elementos hasta completar o invalidar
-la operación; no salen a eventos JSON, logs, diagnósticos o conversación.
+The snapshot is a safe projection, not a serialization of the View payload.
+It must hide secret values and form buffers, senders/receivers, callbacks,
+resource handles, closures, renderer/service references and cancellation
+tokens. The host authority keeps those elements until the operation completes or is invalidated;
+they do not reach JSON events, logs, diagnostics or conversation.
 
-## Revisión de integración (2026-10-19)
+## Integration review (2026-10-19)
 
-### Estado y adaptadores
+### State and adapters
 
-La autoridad activa vive en un único campo host-owned dentro de `UiState`. La
-máquina conserva overlay, origen exacto, operación, revisión/ticket y `FocusLease`.
-No existe estado activo paralelo en `modal`, `plugin_dialog`, `workflow` ni
-`settings`. `FocusLease` y revisión avanzan con `checked_add`; agotamiento falla
-cerrado, nunca hace wrap ni reutiliza una identidad. Cada evento de terminal se
-enruta al estado activo y lleva el lease/revisión capturados al comienzo. La
-aplicación de una tecla valida ambos contra el estado vigente; si hubo cierre,
-reemplazo o preemption, se descarta. Esc consumido para cerrar no se reinserta.
-Paste conserva epoch fresco por lease; fragmentos de un epoch revocado se descartan.
+The active authority lives in a single host-owned field inside `UiState`. The
+machine keeps the overlay, the exact origin, the operation, revision/ticket and `FocusLease`.
+There is no parallel active state in `modal`, `plugin_dialog`, `workflow` nor
+`settings`. `FocusLease` and revision advance with `checked_add`; exhaustion fails
+closed, it never wraps nor reuses an identity. Every terminal event is
+routed to the active state and carries the lease/revision captured at the start. The
+application of a key validates both against the current state; if there was a close,
+replacement or preemption, it is discarded. Esc consumed to close is not reinserted.
+Paste keeps a fresh epoch per lease; fragments of a revoked epoch are discarded.
 
-| Origen actual                           | Adaptación dentro de Overlay                                                                                                                   | Retención host / cierre                                                                                        |
+| Current origin                         | Adaptation inside Overlay                                                                                                                   | Host retention / close                                                                                        |
 |-----------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------|
-| Modal/Approval                          | payload exacto de Approval, `oneshot` y epoch propios; nunca `OverlayKind` solicitado por plugin                                               | Solo host crea/resuelve; cerrar/shutdown invalida epoch y resuelve cancelado, sin concesión                    |
-| `plugin_dialog` / `DialogHandle`        | `Dialog(String)` conserva exactamente handle, registration y renderer/callback asociado; superficies tipadas usan variante y payload propios   | Revocación cancela trabajo local; no se busca contribución sustituta por nombre                                |
-| `workflow` / `HostWorkflow` / `Pending` | `Workflow` conserva definición registrada, campos, callback, continuation y contexto; superficie opcional no reemplaza workflow                | Pending/cancel/abort permanecen bajo host; receipt aplica solo si ticket de origen y operación siguen vigentes |
-| `SettingsDialog`                        | se adapta a `Overlay::Settings` con copia editable exacta, sin una segunda autoridad                                                           | persistencia usa snapshot capturado; receipt tardío no cierra/edita overlay actual ni afecta Approval          |
-| Widgets                                 | widgets que representan interacción modal se integran como payload de variante; widgets puramente informativos siguen en su región de `UiView` | ningún widget informativo posee foco/estado activo overlay                                                     |
+| Modal/Approval                          | exact Approval payload, own `oneshot` and epoch; never a plugin requested `OverlayKind`                                                       | Only the host creates/resolves; close/shutdown invalidates the epoch and resolves as cancelled, with no concession                    |
+| `plugin_dialog` / `DialogHandle`        | `Dialog(String)` keeps exactly handle, registration and associated renderer/callback; typed surfaces use their own variant and payload   | Revocation cancels local work; no substitute contribution is looked up by name                                |
+| `workflow` / `HostWorkflow` / `Pending` | `Workflow` keeps the registered definition, fields, callback, continuation and context; an optional surface does not replace the workflow                | Pending/cancel/abort stay under the host; a receipt applies only if the origin ticket and operation are still current |
+| `SettingsDialog`                        | adapts to `Overlay::Settings` with an exact editable copy, without a second authority                                                           | persistence uses the captured snapshot; a late receipt does not close/edit the current overlay nor affect Approval          |
+| Widgets                                 | widgets that represent modal interaction are integrated as variant payload; purely informative widgets stay in their `UiView` region | no informative widget owns focus/active overlay state                                                     |
 
-La definición tipada puede ser `Overlay { kind, payload }` con payloads que
-conserven sus tipos legacy durante esta migración; `OverlaySnapshot` solo expone
-kind, texto/campos no secretos y estado de presentación necesarios para render.
-No copiar handlers al snapshot ni convertir callbacks en strings.
+The typed definition can be `Overlay { kind, payload }` with payloads that
+keep their legacy types during this migration; `OverlaySnapshot` only exposes
+kind, non-secret text/fields and the presentation state needed for render.
+Do not copy handlers to the snapshot nor turn callbacks into strings.
 
-### Transacciones y efectos externos
+### Transactions and external effects
 
-Bajo lock se valida autoridad/origen/revisión y se realiza una transición atómica:
-se retira el overlay anterior, se instala el nuevo si la política lo permite, se
-incrementan revisión y lease, se invalida ticket anterior y se extraen recursos
-que deban finalizar. No se llama renderer, callback, I/O, cancel/abort ni destructor
-bajo lock. Después de soltarlo se procesan efectos de forma determinista: primero
-invalidación lógica ya publicada, luego cancelación/abort local y destrucción de
-payload retirado; después callbacks/renderers o I/O asociados a la nueva operación.
-Cada callback reentrante vuelve a validar origin/ticket/revision al intentar
-publicar resultado; no conserva derecho implícito a reabrir. Approval preempta
-atómicamente, extrae overlay ordinario, invalida su lease/ticket y cancela trabajo
-local fuera lock. Ordinario durante Approval no muta estado. Al cerrar workflow,
-se invalida ticket y se cancela ejecución local; completion tardía se consume y
-descarta sin reabrir ni mutar overlay posterior.
+Under the lock, the authority/origin/revision is validated and an atomic transition is performed:
+the previous overlay is removed, the new one is installed if the policy allows it,
+revision and lease are incremented, the previous ticket is invalidated and the resources
+that must end are extracted. No renderer, callback, I/O, cancel/abort nor destructor
+is called under the lock. After releasing it, effects are processed deterministically: first
+the logical invalidation already published, then local cancellation/abort and the destruction of the
+removed payload; then callbacks/renderers or I/O associated with the new operation.
+Every reentrant callback revalidates origin/ticket/revision when it tries to
+publish a result; it does not keep an implicit right to reopen. Approval preempts
+atomically, extracts the ordinary overlay, invalidates its lease/ticket and cancels local
+work outside the lock. An ordinary opening during Approval does not mutate state. When closing a workflow,
+the ticket is invalidated and the local execution is cancelled; a late completion is consumed and
+discarded without reopening nor mutating a later overlay.
 
-Resultados async solo aplican si coinciden ticket, origin exacto, operation y
-revision esperados. La identidad incluye registration/handle original, no nombre
-de plugin. Un Apply de Settings iniciado puede terminar según SET-07: éxito vigente
-actualiza snapshot persistido y cierra solo Settings/Apply aún vigentes; éxito
-obsoleto puede actualizar únicamente el snapshot guardado, y fallos obsoletos no
-alteran estado visible ni snapshot. Nada de ello restaura foco o desplaza Approval.
+Async results apply only if the expected ticket, exact origin, operation and
+revision match. The identity includes the original registration/handle, not the plugin
+name. A Settings Apply that started can end according to SET-07: a current success
+updates the persisted snapshot and closes only the still current Settings/Apply; a stale success
+can update only the saved snapshot, and stale failures do not
+alter the visible state nor the snapshot. None of that restores focus or displaces Approval.
 
-### Aceptación vertical propuesta para 2.2
+### Proposed vertical acceptance for 2.2
 
-Pruebas host, no solo unitarias de la máquina aislada, deben demostrar como mínimo:
+Host tests, not only unit tests of the isolated machine, must demonstrate at minimum:
 
-1. `CommandResult::Overlay(Help)` abre una vista real y no una notificación, y la
-   apertura/cierre no añade entradas de conversación.
-2. Settings completo (edición, Apply pendiente, éxito/fallo) conserva su flujo real
-   integrado y los receipts obsoletos no modifican overlay actual.
-3. Snapshot y render, así como input terminal, reflejan el mismo `UiState`; el input
-   requiere lease/revisión vigente, y Esc de cierre nunca llega al editor.
-4. Ticket obsoleto, workflow cerrado, approval preemption y completion tardía se
-   descartan; approval host-only no puede ser reemplazado por solicitudes plugin.
-5. Workflow mantiene continuación/callback/registration exactos; cancelación local
-   ocurre ante cierre/revocación y no declara rollback durable/remoto.
-6. Renderer/callback reentrante y destructor de Pending/payload que consulta Ui no
-   bloquean ni deadlockean: se invocan fuera del mutex.
-7. Más de 256 eventos de UI no trunca la sesión persistida ni hace reaparecer una
-   interacción UI en conversación, incluso después de expirar dedup.
+1. `CommandResult::Overlay(Help)` opens a real view and not a notification, and the
+   open/close adds no conversation entries.
+2. Full Settings (editing, pending Apply, success/failure) keeps its real integrated
+   flow and stale receipts do not modify the current overlay.
+3. Snapshot and render, as well as terminal input, reflect the same `UiState`; the input
+   requires a current lease/revision, and a closing Esc never reaches the editor.
+4. Stale ticket, closed workflow, approval preemption and late completion are
+   discarded; a host-only approval cannot be replaced by plugin requests.
+5. The workflow keeps its exact continuation/callback/registration; local cancellation
+   happens on close/revocation and does not declare a durable/remote rollback.
+6. A reentrant renderer/callback and a Pending/payload destructor that queries Ui do not
+   lock nor deadlock: they are invoked outside the mutex.
+7. More than 256 UI events do not truncate the persisted session nor make a UI
+   interaction reappear in conversation, even after the dedup expires.
 
-Estos son criterios verificables derivados de OVL-01/02/03/04/05, SET-07/12 y
-EVT-01/02; no agregan capacidades de producto.
+These are verifiable criteria derived from OVL-01/02/03/04/05, SET-07/12 and
+EVT-01/02; they do not add product capabilities.
 
-### Cortes dependency-ordered y brecha de tareas
+### Dependency-ordered cuts and the task gap
 
-La tarea 2.2 actual combina máquina y snapshots pero exige no integración vertical;
-2.3–2.5 migran flujo/render/input después, lo que deja sin propietario único el
-estado y hace imposible aceptar OVL-01 durante el intervalo. Se propone conservar
-la numeración y la autorización global, pero ordenar los paquetes de revisión así:
+The current task 2.2 combines the machine and the snapshots but requires no vertical integration;
+2.3–2.5 migrate flow/render/input afterwards, which leaves the state without a single owner
+and makes accepting OVL-01 impossible during the interval. It is proposed to keep
+the numbering and the global authorization, but order the review packages as follows:
 
-1. **2.2a — autoridad host integrada:** `UiState` pasa a poseer `ActiveOverlay`,
-   transiciones, tickets/leases y snapshot seguro; conectar dispatch de resultados
-   y apertura/cierre básicos de todas las superficies sin quitar los payloads.
-2. **2.2b — adaptadores y lifecycle:** migrar Dialog/Handle, HostWorkflow/Pending,
-   Approval/oneshot+epoch, SettingsDialog y widgets al payload; extraer efectos y
-   cerrar/revocar/cancelar fuera lock, manteniendo callbacks y receipts exactos.
-3. **2.2c — input/render vertical y aceptación:** terminal y renderer leen/escriben
-   por la autoridad compartida; eliminar ownership activo legacy; ejecutar pruebas
-   host de la lista anterior antes de avanzar.
-4. Las tareas 2.3–2.5 existentes contienen parte de esas mismas migraciones (workflow/dialog, Approval y input/paste). El dueño de tasks debe rebaselinizarlas
-   como endurecimiento/cobertura restante después de 2.2c, quitando duplicación y
-   conservando sus contratos y gates; no pueden ser precondición para integrar la
-   autoridad en 2.2. 2.6 conserva los flujos Provider reales, pero depende de la
-   autoridad/adaptadores de 2.2c y del endurecimiento necesario de input, no de
-   introducir un segundo dueño. 3.1 adapta Settings visual/funcional sobre esa misma
-   autoridad; no reintroduce `SettingsDialog` como slot.
+1. **2.2a, integrated host authority:** `UiState` takes ownership of `ActiveOverlay`,
+   transitions, tickets/leases and the safe snapshot; connect the result dispatch
+   and the basic open/close of all surfaces without removing the payloads.
+2. **2.2b, adapters and lifecycle:** migrate Dialog/Handle, HostWorkflow/Pending,
+   Approval/oneshot+epoch, SettingsDialog and widgets to the payload; extract the effects and
+   close/revoke/cancel outside the lock, keeping exact callbacks and receipts.
+3. **2.2c, vertical input/render and acceptance:** terminal and renderer read/write
+   through the shared authority; remove the legacy active ownership; run the host
+   tests of the previous list before advancing.
+4. The existing tasks 2.3–2.5 contain part of those same migrations (workflow/dialog, Approval and input/paste). The tasks owner must rebaseline
+   them as remaining hardening/coverage after 2.2c, removing duplication and
+   keeping their contracts and gates; they cannot be a precondition to integrate the
+   authority in 2.2. 2.6 keeps the real Provider flows, but depends on the
+   authority/adapters of 2.2c and on the required input hardening, not on
+   introducing a second owner. 3.1 adapts Settings visually/functionally over that same
+   authority; it does not reintroduce `SettingsDialog` as a slot.
 
-Los subcortes 2.2a–c y la re-baselina de dependencias/tareas son propuestas para el
-dueño de ese artefacto; aquí no se marca ninguna tarea como completa ni se cambia
-`tasks.md`, `state.yaml` o progreso. 2.2 debe permanecer bloqueada para apply global
-hasta que el orquestador actualice el desglose y apruebe el orden/dependencias.
-No implica una capa de toast: avisos y diagnósticos siguen en superficies no
-conversacionales especificadas.
+The 2.2a–c subcuts and the re-baseline of dependencies/tasks are proposals for the
+owner of that artifact; here no task is marked as complete nor `tasks.md`, `state.yaml` or progress is changed. 2.2 must remain blocked for global apply
+until the orchestrator updates the breakdown and approves the order/dependencies.
+It does not imply a toast layer: notices and diagnostics stay in the specified
+non-conversational surfaces.
 
-## Interfaces / Contratos
+## Interfaces / Contracts
 
 ```rust
 enum OverlayKind { Settings, Provider, Login, ModelPicker, Help, Confirm }
-// Approval se origina exclusivamente en el host y no está en OverlayKind.
+// Approval originates exclusively in the host and is not in OverlayKind.
 struct OverlayTicket { operation: OperationId, revision: Revision }
 struct FocusLease { id: FocusId, paste_epoch: PasteEpoch }
 struct OverlaySnapshot { kind: OverlayKind, revision: Revision, view: SafeOverlayView }
 ```
 
-`open/close` validan origen y ticket; devuelven transición y efectos tipados,
-no ejecutan efectos externos. Un `Overlay` puede alojar temporalmente el payload
-tipado legacy, pero `UiState` es su único propietario activo. El snapshot omite
-callbacks, senders, recursos y secretos. Ninguna interfaz ofrece a plugins una
-capacidad de input/render ni resolución de Approval.
+`open/close` validate origin and ticket; they return a transition and typed effects,
+they do not execute external effects. An `Overlay` can temporarily host the legacy typed
+payload, but `UiState` is its only active owner. The snapshot omits
+callbacks, senders, resources and secrets. No interface gives plugins an
+input/render capability nor Approval resolution.
 
-## Estrategia de pruebas
+## Test strategy
 
-| Capa             | Qué probar                                                                                                   | Enfoque                                                           |
-|------------------|--------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------|
-| Unit             | autorización, ticket/origin/revision, monotonía, lease/paste, transiciones y snapshot redacted               | reloj/canales controlados, overflow falla cerrado                 |
-| Integración host | apertura real, settings, workflows, preemption, cancelación, callbacks/Drop reentrantes y resultados tardíos | harness `UiState`/terminal/render, barreras para ordenar carreras |
-| Contratos        | comandos declarativos, Approval inaccesible, registration exacta                                             | tests plugin-api y dispatch host                                  |
-| Persistencia/PTY | categorías fuera de conversación, cierre sin tecla reinyectada, >256 sin truncar sesión                      | tests projection/session y PTY existentes                         |
-| Selección/barra  | snapshot local versionado y eventos de conexión                                                              | unitarias de application/core y consumidor UI                     |
+| Layer              | What to test                                                                                                   | Approach                                                           |
+|-------------------|--------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------|
+| Unit             | authorization, ticket/origin/revision, monotonicity, lease/paste, transitions and redacted snapshot               | controlled clock/channels, overflow fails closed                 |
+| Host integration | real opening, settings, workflows, preemption, cancellation, reentrant callbacks/Drop and late results | `UiState`/terminal/render harness, barriers to order races |
+| Contracts        | declarative commands, unreachable Approval, exact registration                                             | plugin-api tests and host dispatch                                  |
+| Persistence/PTY | categories outside conversation, close without a reinjected key, >256 without truncating the session                      | existing projection/session and PTY tests                         |
+| Selection/bar    | versioned local snapshot and connection events                                                              | application/core unit tests and the UI consumer                     |
 
-## Migración / Despliegue
+## Migration / Deployment
 
-No requiere migración de datos ni feature flag. Es un cambio de contratos compilados
-que debe integrar consumidores y fixtures en la misma entrega autorizada.
-La integración se hace por paquetes de revisión dependency-ordered, sin afirmar
-que fases futuras estén completas.
+It requires no data migration nor feature flag. It is a change of compiled contracts
+that must integrate consumers and fixtures in the same authorized delivery.
+The integration is done by dependency-ordered review packages, without claiming
+that future phases are complete.
 
-## Preguntas abiertas
+## Open questions
 
-- [ ] El contrato técnico de snapshot admite `SafeOverlayView` sugerido; concretar
-  campos no secretos contra tipos reales al implementar, sin ampliar datos visibles.
-- [ ] El dueño de tasks debe decidir cómo formalizar 2.2a–c y las dependencias nuevas
-  respecto de 2.3–2.6 antes de reanudar apply global.
-- [ ] Verificar durante implementación si el destino de avisos existente cubre
-  todos los errores de formularios sin una superficie adicional (no toast layer).
+- [ ] The technical snapshot contract admits the suggested `SafeOverlayView`; specify
+  the non-secret fields against the real types at implementation time, without widening the visible data.
+- [ ] The tasks owner must decide how to formalize 2.2a–c and the new dependencies
+  with respect to 2.3–2.6 before resuming the global apply.
+- [ ] Verify during implementation whether the existing notice destination covers
+  all form errors without an additional surface (no toast layer).

@@ -22,14 +22,14 @@ fn conversation(ui: &Ui) -> Vec<String> {
 #[tokio::test]
 async fn the_user_turn_is_visible_before_the_model_answers_and_is_not_repeated() {
     let (ui, prompts) = ui();
-    prompts.send("hola como estas".into()).await.unwrap();
+    prompts.send("hello how are you".into()).await.unwrap();
 
     // The app takes the prompt; the echo is already queued for the next paint.
     let text = ui.prompt().await.expect("the prompt is delivered");
-    assert_eq!(text, "hola como estas");
+    assert_eq!(text, "hello how are you");
     let shown = conversation(&ui);
     assert!(
-        shown.iter().any(|line| line.contains("hola como estas")),
+        shown.iter().any(|line| line.contains("hello how are you")),
         "the sent turn is shown immediately: {shown:?}"
     );
 
@@ -37,12 +37,12 @@ async fn the_user_turn_is_visible_before_the_model_answers_and_is_not_repeated()
     let mut session = Session::new(".".into());
     session
         .messages
-        .push(Message::text(Role::User, "hola como estas"));
+        .push(Message::text(Role::User, "hello how are you"));
     ui.synchronize(&session);
     let shown = conversation(&ui);
     let repeated = shown
         .iter()
-        .filter(|line| line.contains("hola como estas"))
+        .filter(|line| line.contains("hello how are you"))
         .count();
     assert_eq!(repeated, 1, "{shown:?}");
 }

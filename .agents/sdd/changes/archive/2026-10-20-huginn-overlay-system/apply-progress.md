@@ -1,142 +1,142 @@
-# Apply progress — huginn-overlay-system
+# Apply progress, huginn-overlay-system
 
-## Corrección V-01 tras Verify fallido (2026-10-20)
+## V-01 fix after failed Verify (2026-10-20)
 
-Estado acumulado: se conservan las 21/21 tareas y toda su evidencia histórica.
-Este bloque sustituye el cierre anterior para el candidato modificado: Verify
-detectó V-01 real en SET-05; no se infiere conformidad de las suites anteriores.
-Alcance autorizado: corregir V-01 y añadir regresión host, sin ampliar diseño.
-Entrega `size-exception` previamente aprobada, base/HEAD `main`, sin cadena ni PR.
-El worktree sucio es el candidato explícitamente recibido para esta corrección;
-no se restauró ni sustituyó trabajo previo. Solo se editan `overlay.rs`,
-`tests/state.rs`, este artifact y `apply-validation.md`.
+Accumulated state: the 21/21 tasks and all their historical evidence are preserved.
+This block replaces the previous closure for the modified candidate: Verify
+detected a real V-01 in SET-05; conformance is not inferred from the previous suites.
+Authorized scope: fix V-01 and add a host regression, without widening the design.
+Previously approved `size-exception` delivery, base/HEAD `main`, without chain nor PR.
+The dirty worktree is the candidate explicitly received for this fix;
+no prior work was restored nor replaced. Only `overlay.rs`,
+`tests/state.rs`, this artifact and `apply-validation.md` are edited.
 
-- Leídos completos `verify-report.md`, spec base ui-settings, delta ui-settings,
-  diseño, tareas y progreso previo. REQ-05 es la excepción específica a REQ-03:
-  las flechas horizontales editan los dos pickers de toasts; en las otras pestañas
-  navegan secciones. Tab/BackTab siempre navegan. Se elige la opción contractual
-  de avanzar también con Left; no se cambia footer, spec ni valores de ciclo.
-- RED real en repo: `settings_horizontal_arrows_cycle_toasts_without_leaving_the_row`
-  vía `/settings` → input host con ticket/focus real → Tab×3 → Right, exit 101,
-  nivel observado 0 frente a 1. GREEN del mismo comando exit 0. Comprueba ambos
-  ciclos completos, ambas flechas, labels, selección y permanencia en tab 3.
-- Fix mínimo: siete líneas en el match Settings de `overlay.rs`, antes de la
-  navegación genérica. No cambia leases, receipts, Approval, streaming ni I/O.
-  Refactor de pruebas libera explícitamente guardias tras las aserciones;
-  no cambia expectativas ni añade supresiones de lint.
-- Caracterización adicional por host: `settings_section_keys_preserve_noncycle_values_and_escape_toasts`
-  conserva flechas, wrap y Tab/BackTab sin cambiar valores; async
-  `settings_cycle_arrows_only_persist_displayed_values_on_enter` comprueba cero
-  writes durante edición/descarte, Enter único con warn/5s, receipt y reapertura,
-  sin conversación/editor ni cancelación del turno activo.
-- Diez tests Settings PASS antes y después del refactor; siete paquetes Huginn
-  con all-features: 391 PASS reportados en 57 bloques (incluyen subprocesos),
-  2 ignored, 0 failed. Presentation 158 PASS, incluidos state 35 y PTY 39.
-- Primera `just ci-local` nueva falla en 3/9, Clippy: tres guardias de los tests
-  nuevos requerían liberación explícita (`significant_drop_tightening`). Se añaden
-  `drop(state)` tras las mismas aserciones; Settings 10/10 y Clippy focal
-  all-features/all-targets PASS. Segunda CI completa terminada: `just ci-local`
-  exit 0, 9/9, 477 s (`ci-local-final.log` y `ci-summary.txt`); Rust workspace
-  all-features PASS, incluidos state 35 y PTY 39 con paralelismo del runner,
-  Vitest 24 archivos/210 tests y E2E 90/90 en tres browsers (2.7 min).
-  No se usa la CI histórica para acreditar este candidato ni se cambia el runner.
-- Corrida adicional de siete paquetes tras el refactor (`focused-final.log`),
-  simultánea a CI, exit 101 en PTY (38 PASS/1 FAIL): el helper `approval_code`
-  observó "Type " sin ocho caracteres disponibles. No se modifica Approval ni
-  se atribuye causa definitiva a entorno/concurrencia. Repetición exacta del
-  caso sin cambios exit 0, 1 PASS (`approval-recheck.log`); se conserva el riesgo.
-  Repetición completa posterior sin cambios (`focused-recheck.log`) exit 0,
-  incluidos state 35/35 y PTY 39/39; no se omite el caso ni se cambia su timeout.
-  El mismo caso también pasa en la CI completa final. `cargo audit --no-fetch`
-  directo y fmt/diff-check/lint de artifacts exit 0. Código final cubierto por
-  estos gates; cambios posteriores limitados al cierre de estos dos artifacts.
-- Logs y comandos exactos en `apply-validation.md`, directorio aprobado
-  `opencode/huginn-fix-v01/`. Staging inicial coincide con SHA-256 recibido
+- `verify-report.md`, the ui-settings base spec, the ui-settings delta,
+  the design, the tasks and the previous progress were read in full. REQ-05 is the specific exception to REQ-03:
+  the horizontal arrows edit the two toast pickers; on the other tabs
+  they navigate sections. Tab/BackTab always navigate. The contractual option
+  of advancing also with Left is chosen; the footer, the spec nor the cycle values are changed.
+- Real RED in the repo: `settings_horizontal_arrows_cycle_toasts_without_leaving_the_row`
+  via `/settings` → real host input with ticket/focus → Tab×3 → Right, exit 101,
+  observed level 0 against 1. GREEN from the same command exit 0. It checks both
+  full cycles, both arrows, labels, selection and staying on tab 3.
+- Minimal fix: seven lines in the Settings match of `overlay.rs`, before the
+  generic navigation. It does not change leases, receipts, Approval, streaming nor I/O.
+  The test refactor explicitly releases guards after the assertions;
+  it does not change expectations nor add lint suppressions.
+- Additional host characterization: `settings_section_keys_preserve_noncycle_values_and_escape_toasts`
+  preserves arrows, wrap and Tab/BackTab without changing values; the async
+  `settings_cycle_arrows_only_persist_displayed_values_on_enter` checks zero
+  writes during editing/discarding, a single Enter with warn/5s, receipt and reopening,
+  without conversation/editor nor cancellation of the active turn.
+- Ten Settings tests PASS before and after the refactor; the seven Huginn packages
+  with all-features: 391 PASS reported in 57 blocks (they include subprocesses),
+  2 ignored, 0 failed. Presentation 158 PASS, including state 35 and PTY 39.
+- The first new `just ci-local` fails in 3/9, Clippy: three guards of the new
+  tests required explicit release (`significant_drop_tightening`). `drop(state)`
+  is added after the same assertions; Settings 10/10 and focused Clippy
+  all-features/all-targets PASS. Second full CI completed: `just ci-local`
+  exit 0, 9/9, 477 s (`ci-local-final.log` and `ci-summary.txt`); Rust workspace
+  all-features PASS, including state 35 and PTY 39 with the runner parallelism,
+  Vitest 24 files/210 tests and E2E 90/90 in three browsers (2.7 min).
+  The historical CI is not used to certify this candidate and the runner is not changed.
+- Additional run of the seven packages after the refactor (`focused-final.log`),
+  simultaneous with CI, exit 101 in PTY (38 PASS/1 FAIL): the `approval_code`
+  helper observed "Type " without eight available characters. Approval is not modified nor
+  is a definitive cause attributed to environment/concurrency. Exact repetition of the
+  case without changes exit 0, 1 PASS (`approval-recheck.log`); the risk is preserved.
+  Later full repetition without changes (`focused-recheck.log`) exit 0,
+  including state 35/35 and PTY 39/39; the case is not omitted and its timeout is not changed.
+  The same case also passes in the final full CI. `cargo audit --no-fetch`
+  direct and fmt/diff-check/artifact lint exit 0. The final code is covered by
+  these gates; later changes are limited to the closure of these two artifacts.
+- Exact logs and commands in `apply-validation.md`, approved directory
+  `opencode/huginn-fix-v01/`. The initial staging matches the received SHA-256
   `180ff411c3b36a8699b8986dd543e8237cf83fdebe946e6f052722fea4471c54`.
-- Pendiente: nueva verificación independiente `sdd-verify`; no se modifica su
-  FAIL anterior, `state.yaml`, QA ni Archive. No staging/unstaging/reset/checkout,
-  commit/push/merge/PR ni reset de datos. Skill resolution: `none` (sin registry
-  del proyecto); procedimientos comunes y reglas compactas SDD consultados.
+- Pending: new independent verification `sdd-verify`; its previous FAIL is not modified,
+  nor `state.yaml`, QA nor Archive. No staging/unstaging/reset/checkout,
+  commit/push/merge/PR nor data reset. Skill resolution: `none` (without a project
+  registry); common procedures and SDD compact rules consulted.
 
-## Reanudación Apply 6.2–6.3 (2026-10-20)
+## Apply 6.2–6.3 resumption (2026-10-20)
 
-**Cierre verificado:** 6.2 y 6.3 completas; estado acumulado 21/21 tareas.
-`just ci-local` final exit 0, 9/9, 431 s; código final sin cambios posteriores.
-Los párrafos de comandos en curso de esta sección son históricos y quedan
-sustituidos por este cierre, sin borrar sus fallos ni resultados.
+**Verified closure:** 6.2 and 6.3 complete; accumulated state 21/21 tasks.
+Final `just ci-local` exit 0, 9/9, 431 s; final code without later changes.
+The in-progress command paragraphs of this section are historical and are
+replaced by this closure, without deleting their failures nor results.
 
-- Estado acumulado: 1.1–1.3, 2.1–2.6, 3.1–3.3, 4.1–4.4, 5.1–5.2 y 6.1 se conservan completas; sus pruebas y decisiones permanecen en `tasks.md` y en el histórico siguiente. No se repitió su implementación.
-- 6.2 completa como aceptación técnica dirigida de Apply; no equivale a Verify ni QA independientes. Se añadió cobertura propia de scrollback PTY y comandos repetidos con reloj fake, conservando la matriz anterior.
-- RED/GREEN de harness: `cargo test -p huginn-presentation --features test-driver --test pty support::screen_line_feed_at_bottom_scrolls_instead_of_overwriting -- --exact`: RED exit 101 (`FIRST` en lugar de `SECOND`); GREEN exit 0, 1 PASS. El observador conserva las filas desplazadas por LF inferior y mantiene scrollback al redimensionar.
-- RED/GREEN productivo: `cargo test -p huginn-presentation --features test-driver --test pty overlays_during_streaming_never_commit_ui_or_secrets_to_scrollback -- --exact`: RED exit 101, falta `┌Help` durante streaming retenido. Causa raíz: Enter y completion exigían `!busy` incluso para comandos UI. GREEN exit 0, 1 PASS tras permitir dispatch UI y conservar la barrera busy para prompts conversacionales. Sin rebajar aserciones ni cancelar el streaming para abrir overlays.
-- `cargo test -p huginn-presentation --test providers_ui repeated_ui_commands_after_dedup_expiry_preserve_stream_and_conversation -- --exact`: 1 PASS, avance fake de 2001 ms; Help/Providers/Login/Model/Settings/Logout conservan conversación, stream y turno. Caracterización sin RED ficticio.
-- `cargo test -p huginn-presentation --features test-driver -- --test-threads=1`: 155 PASS, incluidos 39 PTY, 32 state, 13 workflows, 10 parser y 8 providers_ui. `cargo test -p huginn --test tui --test providers_flow -- --test-threads=1`: 8 + 6 PASS.
-- Revisión exhaustiva: `Output` enumera los eventos ignorados, command/workflow validan las seis variantes OverlayKind explícitamente y el wrapper PublicationFault distingue Select/StageSelection de las otras cuatro acciones sin wildcard. Refactor sin cambio de comportamiento, apoyado en suites existentes y nueva consolidación.
-- Requisitos leídos: `docs/development.md`, `dev/README.md`, manifiestos y recetas reales. Docker disponible, dependencias/browsers presentes, `just test-e2e-build` exit 0. Primera `just ci-local` terminó exit 0 (479 s, 90 E2E + 210 Vitest); corresponde al estado previo al fix y no acredita por sí sola el candidato final. Segunda ejecución completa en curso sobre el código final.
-- Directorio de logs completos: `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/opencode/huginn-apply6/`. Detalle por comando y REQ en `apply-validation.md`.
-- Se conserva `size-exception` aprobada. Ninguna operación de staging, commit, push, branch, merge, PR ni archive. Hash del index sigue `180ff411c3b36a8699b8986dd543e8237cf83fdebe946e6f052722fea4471c54`; no se modificó `state.yaml` ni se resetearon datos.
-- Consolidación de siete paquetes (`huginn-all-final.log`) terminada exit 0: core, application, runtime, presentation, plugin-api, reference-extension y app, con `--all-features -- --test-threads=1`; dos pruebas opt-in ignoradas (binario legacy y Keychain/Secret Service), no acreditadas.
-- Segunda CI (`ci-local-final.log`) terminó exit 1 en 5/9: PTY resize veía título nuevo antes de que el watch actualizara la barra. Causa de harness: dos tareas asíncronas no sincronizadas por ese título. Se conserva expectativa exacta y se espera `Idle|fixture/Bar-Provider` antes de afirmarla; focal exacto exit 0 en `resize-watch-green.log`. Tercera CI completa en curso, `ci-local-verified.log`; no se usa la primera corrida como sustituta.
-- `cargo audit --no-fetch` sin máscara exit 0 (`audit-unmasked.log`), sin advisories reportadas. `just doctor` exit 1 porque la receta documentada no existe (`doctor.log`); tooling se verificó mediante comandos reales, sin tocar runners ni Rook. fmt/diff-check propios exit 0 tras los cambios.
-- Corrida PTY adicional con paralelismo por defecto (`pty-concurrent-green.log`, nombre no implica éxito): 38 PASS/1 FAIL, exit 101 por `failed to openpty`, OS -6, antes de ejecutar el caso de refresh. Coincidía con CI completa; posible interferencia de recursos, no causa definitiva demostrada. Se conserva fallo y diagnóstico (`pty-resource-diagnostic.log`, límite PTY 511); no se cambia el runner ni se reduce paralelismo de CI.
-- Clippy adicional de los siete paquetes Huginn con `--all-features --all-targets -- -D warnings`: exit 0 (`huginn-clippy-allfeatures.log`), incluido test-driver/fixture/PTY. Ejemplo offline `providers_headless`: exit 0. Lint de tasks/progress/reporte: exit 0 tras corregir un code span histórico sin cambiar su literal.
-- Gate final leído completo y resumido en `ci-summary.txt`: `just ci-local` exit 0, nueve etapas PASS, 431 s; cargo test workspace/all-features PASS, incluidos 39 PTY (paralelismo por defecto), providers_ui 8, state 32, workflows 13 y app tui 8. Vitest 24 archivos/210 tests; E2E 90/90 en Chromium/Firefox/WebKit, 3.2 min. Logs `ci-local-verified.log`, copia `dashboard-dev.log`. Se conserva la corrida extra con fallo openpty OS -6; el caso refresh pasó en el gate final, sin cambiar runner ni afirmar causa definitiva del fallo de asignación.
-- `apply-validation.md` contiene REQ→prueba/evidencia, RED/GREEN, gates reales, fallos previos/UNTESTED y revisión de consumidores exhaustivos. No hay tareas Apply pendientes. Handoff a `sdd-verify` y después `sdd-qa`; no se crean informes de esas fases ni se hace Archive. El orquestador conserva la transición de state.
+- Accumulated state: 1.1–1.3, 2.1–2.6, 3.1–3.3, 4.1–4.4, 5.1–5.2 and 6.1 are preserved as complete; their tests and decisions remain in `tasks.md` and in the history below. Their implementation was not repeated.
+- 6.2 complete as directed technical acceptance of Apply; it does not equal independent Verify nor QA. Own PTY scrollback coverage and repeated commands with a fake clock were added, preserving the previous matrix.
+- Harness RED/GREEN: `cargo test -p huginn-presentation --features test-driver --test pty support::screen_line_feed_at_bottom_scrolls_instead_of_overwriting -- --exact`: RED exit 101 (`FIRST` instead of `SECOND`); GREEN exit 0, 1 PASS. The observer keeps the rows scrolled by the bottom LF and keeps the scrollback when resizing.
+- Product RED/GREEN: `cargo test -p huginn-presentation --features test-driver --test pty overlays_during_streaming_never_commit_ui_or_secrets_to_scrollback -- --exact`: RED exit 101, `┌Help` missing during retained streaming. Root cause: Enter and completion required `!busy` even for UI commands. GREEN exit 0, 1 PASS after allowing UI dispatch and keeping the busy barrier for conversational prompts. Without lowering assertions nor cancelling the streaming to open overlays.
+- `cargo test -p huginn-presentation --test providers_ui repeated_ui_commands_after_dedup_expiry_preserve_stream_and_conversation -- --exact`: 1 PASS, fake advance of 2001 ms; Help/Providers/Login/Model/Settings/Logout preserve conversation, stream and turn. Characterization without a fake RED.
+- `cargo test -p huginn-presentation --features test-driver -- --test-threads=1`: 155 PASS, including 39 PTY, 32 state, 13 workflows, 10 parser and 8 providers_ui. `cargo test -p huginn --test tui --test providers_flow -- --test-threads=1`: 8 + 6 PASS.
+- Exhaustive review: `Output` enumerates the ignored events, command/workflow validate the six OverlayKind variants explicitly and the PublicationFault wrapper distinguishes Select/StageSelection from the other four actions without a wildcard. Refactor without behavior change, supported by the existing suites and the new consolidation.
+- Requirements read: `docs/development.md`, `dev/README.md`, manifests and the real recipes. Docker available, dependencies/browsers present, `just test-e2e-build` exit 0. The first `just ci-local` ended exit 0 (479 s, 90 E2E + 210 Vitest); it corresponds to the state before the fix and does not certify the final candidate by itself. A second full execution is in progress over the final code.
+- Full logs directory: `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/opencode/huginn-apply6/`. Detail per command and REQ in `apply-validation.md`.
+- The approved `size-exception` is preserved. No staging, commit, push, branch, merge, PR nor archive operation. The index hash is still `180ff411c3b36a8699b8986dd543e8237cf83fdebe946e6f052722fea4471c54`; `state.yaml` was not modified and no data was reset.
+- Consolidation of seven packages (`huginn-all-final.log`) finished exit 0: core, application, runtime, presentation, plugin-api, reference-extension and app, with `--all-features -- --test-threads=1`; two opt-in tests ignored (legacy binary and Keychain/Secret Service), not certified.
+- Second CI (`ci-local-final.log`) ended exit 1 in 5/9: the PTY resize saw the new title before the watch updated the bar. Harness cause: two async tasks not synchronized by that title. The exact expectation is preserved and `Idle|fixture/Bar-Provider` is awaited before asserting it; focused exact exit 0 in `resize-watch-green.log`. A third full CI is in progress, `ci-local-verified.log`; the first run is not used as a substitute.
+- `cargo audit --no-fetch` without a mask exit 0 (`audit-unmasked.log`), with no reported advisories. `just doctor` exit 1 because the documented recipe does not exist (`doctor.log`); the tooling was verified through real commands, without touching runners nor Rook. Own fmt/diff-check exit 0 after the changes.
+- Additional PTY run with the default parallelism (`pty-concurrent-green.log`, the name does not imply success): 38 PASS/1 FAIL, exit 101 due to `failed to openpty`, OS -6, before running the refresh case. It coincided with the full CI; possible resource interference, no definitive cause demonstrated. The failure and the diagnostic are preserved (`pty-resource-diagnostic.log`, PTY limit 511); the runner is not changed and the CI parallelism is not reduced.
+- Additional Clippy of the seven Huginn packages with `--all-features --all-targets -- -D warnings`: exit 0 (`huginn-clippy-allfeatures.log`), including test-driver/fixture/PTY. Offline example `providers_headless`: exit 0. Lint of tasks/progress/report: exit 0 after correcting a historical code span without changing its literal.
+- The final gate was read in full and summarized in `ci-summary.txt`: `just ci-local` exit 0, nine stages PASS, 431 s; cargo test workspace/all-features PASS, including 39 PTY (default parallelism), providers_ui 8, state 32, workflows 13 and app tui 8. Vitest 24 files/210 tests; E2E 90/90 in Chromium/Firefox/WebKit, 3.2 min. Logs `ci-local-verified.log`, copy `dashboard-dev.log`. The extra run with the openpty OS -6 failure is preserved; the refresh case passed in the final gate, without changing the runner nor asserting a definitive cause of the allocation failure.
+- `apply-validation.md` contains REQ→test/evidence, RED/GREEN, real gates, previous failures/UNTESTED and the exhaustive consumer review. There are no pending Apply tasks. Handoff to `sdd-verify` and then `sdd-qa`; no reports of those phases are created and Archive is not done. The orchestrator keeps the state transition.
 
-## Estado actual (2026-10-20, continuación fase 5)
+## Current state (2026-10-20, phase 5 continuation)
 
-- Confirmé scope con tasks 5.1–5.2, cuatro delta specs relevantes y diseño; no modifiqué `state.yaml`, git staging ni branch.
-- RED: agregué prueba PTY fixture Approval en terminal 20x8; falló porque el footer largo no cabía/ni aparecía como texto completo en screen model. RED adicional detectó el helper `wait_for("Permission #")` podía observar borde del panel antes de que pintara el footer; la prueba inspecciona el screen model y espera challenge/campo antes del cierre.
-- GREEN: Approval estrecho usa instrucciones compactas `Approve: <challenge>` y `Code: <typed>` en las dos líneas disponibles. Prueba afirma challenge (que incluye el código fresco de ocho chars) y campo.
+- I confirmed the scope with tasks 5.1–5.2, the four relevant delta specs and the design; I did not modify `state.yaml`, git staging nor the branch.
+- RED: I added a PTY fixture Approval test in a 20x8 terminal; it failed because the long footer did not fit nor appeared as complete text in the screen model. An additional RED detected that the `wait_for("Permission #")` helper could observe the panel border before the footer was painted; the test inspects the screen model and awaits the challenge/field before the close.
+- GREEN: narrow Approval uses the compact instructions `Approve: <challenge>` and `Code: <typed>` in the two available lines. The test asserts the challenge (which includes the fresh eight-character code) and the field.
 - `cargo test -p huginn-presentation --features test-driver --test pty minimum_terminal_approval_shows_challenge_and_code_field -- --exact` — 1 passed.
-- `cargo test -p huginn-presentation --features test-driver --test pty -- --test-threads=1` — 35 passed, 0 failed; log completo: `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-pty-phase5-verified.log`. Evidencia PTY existente incluye `dropping_connection_restores_synchronously` y salida normal/cancel con termios restaurado, bracketed-paste disable, sin alt screen.
-- `cargo test -p huginn-presentation status_bar::tests --lib` — 5 passed (ausencia/no false Connected, actividad, diagnóstico, clipping unicode).
-- `cargo test -p huginn-presentation --test state` — 32 passed (Approval arm/disarm/lease y estados asociados).
-- `cargo fmt --all -- --check` y `git diff --check` pasan; inicialmente fmt detectó formato de test nuevo, se aplicó rustfmt y ambos checks repitieron en verde.
-- Sigue incompleto: matrix PTY real de todos los overlays y no-overlay a tamaño habitual/20x8, resize PTY real (incluido resize bajo mínimo→recuperación y re-arm solo post-redraw con identidad vigente), draw zero-size con backend real y prueba de panel largo no conversacional/resumen y barra conectada/no seleccionada. No cierro 5.1/5.2 ni inicio fase 6 hasta aportar evidencia focal de estos criterios.
+- `cargo test -p huginn-presentation --features test-driver --test pty -- --test-threads=1` — 35 passed, 0 failed; full log: `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-pty-phase5-verified.log`. Existing PTY evidence includes `dropping_connection_restores_synchronously` and normal exit/cancel with restored termios, bracketed-paste disable, no alt screen.
+- `cargo test -p huginn-presentation status_bar::tests --lib` — 5 passed (absence/no false Connected, activity, diagnostic, unicode clipping).
+- `cargo test -p huginn-presentation --test state` — 32 passed (Approval arm/disarm/lease and associated states).
+- `cargo fmt --all -- --check` and `git diff --check` pass; at first fmt detected the format of the new test, rustfmt was applied and both checks repeated green.
+- Still incomplete: real PTY matrix of all the overlays and no-overlay at the usual size/20x8, real PTY resize (including resize below the minimum→recovery and re-arm only after redraw with current identity), zero-size draw with a real backend and a test of a long non-conversational panel/summary and connected/unselected bar. I do not close 5.1/5.2 nor start phase 6 until I provide focused evidence for these criteria.
 
-## Estado actual verificado (2026-10-20, continuación PTY)
+## Verified current state (2026-10-20, PTY continuation)
 
-- Reproduje la suite serial y los cinco casos del registro anterior. Resultado previo al ajuste de pruebas: 29/34, con los cinco fallos históricos.
-- Causa por caso: `stale_and_paste_confirmation_cannot_approve_then_fresh_code_can` usaba `wait_for("END_OF_DIFF")`, aunque el render limita el preview al viewport visible; el texto de marcador existía en el buffer lógico, no en la pantalla. Corregido el criterio a `PREVIEW_FIRST`, elemento que sí es visible, conservando los asserts de código fresco/denegación.
-- Los tres casos de selección revocada sí procesaban el flujo de entrada y mostraban Help, pero el helper enviaba Ctrl+C inmediatamente después de encontrar Help; eso cerraba el turno de render/UI, sin garantizar cierre del overlay y salida antes del timeout. Ahora se envía Esc y se espera a que Help desaparezca antes de Ctrl+C. No hay evidencia de regresión productiva en esos tres casos; se conservan las aserciones contra `NEW_COMMAND_EXECUTED`.
-- `resizing_during_incomplete_secret_paste_does_not_start_another_reader`: el test dependía de buscar `Form discarded.` en el transcript ANSI bruto, cuyo texto está segmentado por movimientos de cursor. Se cambió a observar el screen buffer reconstruido. Se usa `Pty::resize` para actualizar también la grilla de observación al nuevo tamaño. La aserción de un único cursor query y el descarte de ambos fragmentos se mantienen.
-- Resultado fresco: `cargo test -p huginn-presentation --features test-driver --test pty -- --test-threads=1` — **34 passed, 0 failed**. Log completo reproducido por segunda vez: `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-pty-final-verified.log` (34/34); corrida previa también verde: `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-pty-rerun.log`. Log de reproducción base (29/34): `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-pty-current.log`; log anterior de referencia: `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-pty-final.log`.
-- No se modificó código productivo: evidencia señala criterios/observación/race en el harness, no comportamiento defectuoso. No hice stage/unstage ni otras operaciones Git; `state.yaml` no se tocó. Las tareas 5.1–5.2 siguen abiertas y sin marcar; no se inició fase 6.
+- I reproduced the serial suite and the five cases of the previous record. Result before the test adjustment: 29/34, with the five historical failures.
+- Cause per case: `stale_and_paste_confirmation_cannot_approve_then_fresh_code_can` used `wait_for("END_OF_DIFF")`, although the render limits the preview to the visible viewport; the marker text existed in the logical buffer, not on the screen. The criterion was corrected to `PREVIEW_FIRST`, an element that is indeed visible, preserving the fresh code/denial assertions.
+- The three revoked selection cases did process the input flow and showed Help, but the helper sent Ctrl+C immediately after finding Help; that closed the render/UI turn, without guaranteeing the overlay close and the exit before the timeout. Now Esc is sent and Help is awaited to disappear before Ctrl+C. There is no evidence of a product regression in those three cases; the assertions against `NEW_COMMAND_EXECUTED` are preserved.
+- `resizing_during_incomplete_secret_paste_does_not_start_another_reader`: the test depended on looking for `Form discarded.` in the raw ANSI transcript, whose text is segmented by cursor movements. It was changed to observe the reconstructed screen buffer. `Pty::resize` is used to also update the observation grid to the new size. The assertion of a single cursor query and the discard of both fragments are preserved.
+- Fresh result: `cargo test -p huginn-presentation --features test-driver --test pty -- --test-threads=1` — **34 passed, 0 failed**. Full log reproduced a second time: `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-pty-final-verified.log` (34/34); the previous run was also green: `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-pty-rerun.log`. Base reproduction log (29/34): `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-pty-current.log`; previous reference log: `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-pty-final.log`.
+- No product code was modified: the evidence points to criteria/observation/race in the harness, not to defective behavior. I did not stage/unstage nor perform other Git operations; `state.yaml` was not touched. Tasks 5.1–5.2 remain open and unmarked; phase 6 was not started.
 
-## Histórico de continuación PTY (2026-10-20; hipótesis y fallos supersedidos por el estado verificado arriba)
+## PTY continuation history (2026-10-20; hypotheses and failures superseded by the verified state above)
 
-- Reanudé sobre el worktree con staging preexistente intacto; no hice operaciones de stage/unstage, no toqué `state.yaml` ni código externo de Rook/Settings.
-- Investigué la matriz real. El render identifica Help/Settings por su título, pero workflows de Provider/Login/ModelPicker/Confirm se presentan como formulario genérico (p. ej. título real `Bar Provider`, credencial), y las notificaciones al cerrar ayudan a los casos inferiores. La PTY tiene limitación importante: su modelo de pantalla es una grilla de dimensiones iniciales; su `resize()` reinicializa el modelo y esa configuración de test driver no coincide necesariamente con la fila inferior inline de la aplicación. Observé salidas reales contradictorias al interpretar la posición con `status_line()`, por lo que no consolidé una prueba engañosa. La prueba temporal reportó status bar vacía bajo Help; el transcript PTY sí mostraba `Idle|fixture/alpha` en fila 13, lo que confirmó limitación del observador. Eliminé esas pruebas temporales.
-- Validé la suite PTY serial completa tras los intentos: 29/34 pasan. Cinco fallan: `approval_does_not_erase_a_revoked_selection` y `revoked_palette_selection_cannot_fall_back_to_replacement_dispatch` completan el cierre de Approval, abren Help y luego el fixture no termina; `ctrl_enter_cannot_execute_a_revoked_selection` queda con `REPLACEMENT_READY` tras Help y no termina; `resizing_during_incomplete_secret_paste_does_not_start_another_reader` falla esperando que la cancelación ocurra durante resize; `stale_and_paste_confirmation_cannot_approve_then_fresh_code_can` no ve `END_OF_DIFF` en el buffer visible (preview recortado, puede ser mal criterio de PTY visible). Log: `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-pty-final.log`. Reproduje en serie las cinco individualmente; no puedo atribuirlas al cambio ni afirmar flakiness: suite no queda verde y requieren triage.
-- `cargo fmt --check` pasa. `cargo test -p huginn-presentation --lib status_bar::tests` y `cargo test -p huginn-presentation --test state` pasan (resultados focales consultados; el output quedó truncado por el wrapper).
-- No logré implementar/validar una matriz final, un `TestBackend(0,0)` con renderer real y recovery/disarm, ni lifecycle PTY dedicado con bracketed-paste/termios después de shutdown. No se modificó producción ni se cambió el código de pruebas permanente en esta reanudación.
-- Por evidencia insuficiente, 5.1 y 5.2 siguen pendientes en `tasks.md`. Esta continuación no está PR-ready. Siguiente paso técnico: aislar los cinco timeouts de PTY y ajustar/crear un harness que pueda comprobar el status de la fila inferior en ambas dimensiones sin depender de stale cells ni de una dimensión de grilla equivocada; luego cubrir el renderer real de tamaño cero y shutdown antes de reconsiderar el checklist.
+- I resumed on the worktree with the preexisting staging intact; I did not perform stage/unstage operations, I did not touch `state.yaml` nor external Rook/Settings code.
+- I investigated the real matrix. The render identifies Help/Settings by their title, but Provider/Login/ModelPicker/Confirm workflows are presented as a generic form (for example real title `Bar Provider`, credential), and the notifications on close help the lower cases. The PTY has an important limitation: its screen model is a grid of the initial dimensions; its `resize()` resets the model and that test driver setup does not necessarily match the inline bottom row of the application. I observed contradictory real outputs when interpreting the position with `status_line()`, so I did not consolidate a misleading test. The temporary test reported an empty status bar under Help; the PTY transcript did show `Idle|fixture/alpha` at row 13, which confirmed an observer limitation. I removed those temporary tests.
+- I validated the full serial PTY suite after the attempts: 29/34 pass. Five fail: `approval_does_not_erase_a_revoked_selection` and `revoked_palette_selection_cannot_fall_back_to_replacement_dispatch` complete the Approval close, open Help and then the fixture does not finish; `ctrl_enter_cannot_execute_a_revoked_selection` stays with `REPLACEMENT_READY` after Help and does not finish; `resizing_during_incomplete_secret_paste_does_not_start_another_reader` fails waiting for the cancellation to happen during the resize; `stale_and_paste_confirmation_cannot_approve_then_fresh_code_can` does not see `END_OF_DIFF` in the visible buffer (cropped preview, it may be a bad visible PTY criterion). Log: `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-pty-final.log`. I reproduced the five individually in series; I cannot attribute them to the change nor assert flakiness: the suite does not go green and they require triage.
+- `cargo fmt --check` passes. `cargo test -p huginn-presentation --lib status_bar::tests` and `cargo test -p huginn-presentation --test state` pass (consulted focused results; the output was truncated by the wrapper).
+- I did not manage to implement/validate a final matrix, a `TestBackend(0,0)` with a real renderer and recovery/disarm, nor a dedicated PTY lifecycle with bracketed-paste/termios after shutdown. Neither production nor the permanent test code was modified in this resumption.
+- Due to insufficient evidence, 5.1 and 5.2 remain pending in `tasks.md`. This continuation is not PR-ready. Next technical step: isolate the five PTY timeouts and adjust/create a harness that can check the bottom row status in both dimensions without depending on stale cells nor on a wrong grid dimension; then cover the real zero-size renderer and shutdown before reconsidering the checklist.
 
-## Continuación de aviso accionable/status (2026-10-20)
+## Actionable/status continuation (2026-10-20)
 
-- Causa confirmada en código: `cancel_workflow_at` publica `Notification` (`Form discarded.`), que antes se proyectaba al único `status.notice`; `start_file_index` escribe después `Partial file index...` con `set_notice`, sustituyéndolo. El render de status bar lee ese mismo slot, así que la notificación se veía en un frame y luego desaparecía al refrescar completion/index.
-- TDD: agregué primero `status_bar::tests::actionable_notification_survives_informational_completion_refresh`; RED confirmado (recibía `Partial file index...` en vez de `Form discarded.`). GREEN con slot separado de feedback accionable (`feedback`, diagnostic asociado) y notice informativo. Notificación/diagnóstico actualizan feedback y el nuevo `begin()` limpia feedback previo; refrescos informativos no lo borran. Mantiene tipos/eventos/APIs existentes.
-- Unitarias focales `cargo test -p huginn-presentation status_bar::tests --lib`: 5 passed. `cargo test -p huginn-presentation --test state`: 31 passed. `cargo test -p huginn-presentation --test workflows`: 13 passed.
-- PTY serial independiente posterior: `cargo test -p huginn-presentation --features test-driver --test pty -- --test-threads=1`, 40 passed, log `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-overlay-pty-1792479397.log` (13.51s). Un run serial anterior, `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-overlay-pty-serial-20261020.log`, falló 6/40 en 72.77s, incluyendo `long_plugin_dialog_window_keeps_selection_visible` y cinco tests de cancelación/secretos. El run repetido completo pasa, señal de flakiness/timeout transitorio compatible; no se atribuye causa definitiva ni se ocultan fallos.
-- No añadí PTY de persistencia aviso + refresco: el fixture actual no controla/invoca el scanner/index parcial
+- Cause confirmed in code: `cancel_workflow_at` publishes `Notification` (`Form discarded.`), which previously was projected to the single `status.notice`; `start_file_index` then writes `Partial file index...` with `set_notice`, replacing it. The status bar render reads that same slot, so the notification was visible in one frame and then disappeared when refreshing the completion/index.
+- TDD: I added `status_bar::tests::actionable_notification_survives_informational_completion_refresh` first; RED confirmed (it received `Partial file index...` instead of `Form discarded.`). GREEN with a separate actionable feedback slot (`feedback`, associated diagnostic) and an informative notice. Notification/diagnostic update the feedback and the new `begin()` clears the previous feedback; informative refreshes do not erase it. It keeps the existing types/events/APIs.
+- Focused unit tests `cargo test -p huginn-presentation status_bar::tests --lib`: 5 passed. `cargo test -p huginn-presentation --test state`: 31 passed. `cargo test -p huginn-presentation --test workflows`: 13 passed.
+- Later independent serial PTY: `cargo test -p huginn-presentation --features test-driver --test pty -- --test-threads=1`, 40 passed, log `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-overlay-pty-1792479397.log` (13.51s). A previous serial run, `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-overlay-pty-serial-20261020.log`, failed 6/40 in 72.77s, including `long_plugin_dialog_window_keeps_selection_visible` and five cancellation/secret tests. The full repeated run passes, a sign of flakiness/transient timeout compatibility; no definitive cause is attributed and no failure is hidden.
+- I did not add a PTY of notice persistence plus refresh: the current fixture does not control/invoke the partial scanner/index
 
-## Reanudación Apply 5.1–5.2 (2026-10-20)
+## Apply 5.1–5.2 resumption (2026-10-20)
 
-- Se mantuvo intacto el staging; no se ejecutaron operaciones git.
-- Añadí `actionable_feedback_and_diagnostic_reset_on_new_operation` a `tests/state.rs`: verifica que el diagnóstico accionable de error se proyecta y que `begin()` limpia tanto contenido como flag diagnóstico.
-- Expandí `overlays_keep_status_visible_at_minimum_inline_size` para ciclo de apertura/cierre e inspección de barra con Help, Settings, Provider, Login, ModelPicker y Confirm a 20x8; además el Approval se verifica a tamaño normal con Challenge/código real. No añadí cobertura extensa de cada overlay a ambos tamaños: queda pendiente para 5.2.
-- `cargo test -p huginn-presentation --features test-driver --test pty -- --test-threads=1`: **40 passed**, log completo `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-overlay-pty-followup-final3.log` (13.49s). Incluye `approval_preview_scrolls_to_both_ends_at_minimum_inline_size`, `approval_resize_below_minimum_disarms_until_a_fresh_draw`, `inline_stream_composer_cancel_and_normal_exit_restore_termios`, `dropping_connection_restores_synchronously`, y pruebas de panic/restauración.
-- También se ejecutaron `cargo test -p huginn-presentation status_bar::tests --lib` (5 passed), `cargo test -p huginn-presentation --test state` (32 passed), y `cargo fmt --all -- --check` (pasa).
-- **Gaps que impiden completar 5.1/5.2**: la matriz completa de *cada* variante de `Overlay` y no-overlay en ambos tamaños no está demostrada; el nuevo chequeo cubre las variantes públicas principales en 20x8 y el Approval normal, complementado por PTYs existentes, pero no una matriz completa. La vista 20x8 no demuestra que el challenge de Approval esté visible (el cuerpo/footer se recortan); PgUp/PgDn de preview sí está cubierto independientemente. Sin test viable de `Rect::default()`/draw zero-size; no se validó recovery y re-arm explícito después de zero-size. Unicode cell clipping ya está en unitarias existente. Bracketed-paste/termios se verifica en salida/cancelación/drop y panic de suite, pero no un caso independiente de shutdown explícito.
-- En consecuencia, 5.1 y 5.2 permanecen `[ ]`; no iniciar fase 6. No se afirma aceptación, verify/QA ni cierre de tareas.
+- The staging was kept intact; no git operations were executed.
+- I added `actionable_feedback_and_diagnostic_reset_on_new_operation` to `tests/state.rs`: it verifies that the actionable error diagnostic is projected and that `begin()` clears both the content and the diagnostic flag.
+- I expanded `overlays_keep_status_visible_at_minimum_inline_size` for the open/close cycle and the bar inspection with Help, Settings, Provider, Login, ModelPicker and Confirm at 20x8; in addition, Approval is verified at normal size with a real Challenge/code. I did not add extensive coverage of each overlay at both sizes: it remains pending for 5.2.
+- `cargo test -p huginn-presentation --features test-driver --test pty -- --test-threads=1`: **40 passed**, full log `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-overlay-pty-followup-final3.log` (13.49s). It includes `approval_preview_scrolls_to_both_ends_at_minimum_inline_size`, `approval_resize_below_minimum_disarms_until_a_fresh_draw`, `inline_stream_composer_cancel_and_normal_exit_restore_termios`, `dropping_connection_restores_synchronously`, and panic/restoration tests.
+- `cargo test -p huginn-presentation status_bar::tests --lib` (5 passed), `cargo test -p huginn-presentation --test state` (32 passed), and `cargo fmt --all -- --check` (passes) were also executed.
+- **Gaps that prevent completing 5.1/5.2**: the complete matrix of *each* `Overlay` variant and no-overlay at both sizes is not demonstrated; the new check covers the main public variants at 20x8 and the normal Approval, complemented by the existing PTYs, but not a complete matrix. The 20x8 view does not prove that the Approval challenge is visible (the body/footer are cropped); the preview PgUp/PgDn is covered independently. There is no viable test of `Rect::default()`/zero-size draw; recovery and explicit re-arm after zero-size were not validated. Unicode cell clipping is already in the existing unit tests. Bracketed-paste/termios is verified in exit/cancellation/drop and in the suite panic, but not in an independent explicit shutdown case.
+- Consequently, 5.1 and 5.2 remain `[ ]`; phase 6 is not started. No acceptance, verify/QA nor task closure is claimed.
 
-## Continuación de Apply fase 5 (2026-10-20; cierre por evidencia)
+## Apply phase 5 continuation (2026-10-20; closure by evidence)
 
-- Se auditaron test source y logs históricos. El checkpoint anterior estaba desactualizado: ya existían matriz en ambos tamaños, TestBackend zero-area, matriz status bar, Approval 20x8 y pruebas terminales de cancel/drop.
-- RED/GREEN: amplié `approval_resize_below_minimum_disarms_until_a_fresh_draw` para capturar el código vigente en 8x20, cambiar a 1x1, enviar el código válido sin obtener aprobación y recuperar 8x20; el mismo código se acepta tras el redraw. El intento inicial falló al buscar `"Type "` que no cabe en el viewport pequeño y luego al asumir que el submit desarmado debía resolver la solicitud; ajusté el test a su contrato observado: no aceptación bajo mínimo y autorización post-redraw.
-- `dropping_connection_restores_synchronously` abre el fixture `drop`; fixture descarta la conexión y afirma que `is_raw_mode_enabled()` es falso antes de salir. No inspecciona ICANON/ECHO. `inline_stream_composer_cancel_and_normal_exit_restore_termios` sí verifica ICANON/ECHO después de cancelación + salida normal, bracketed-paste disable y ausencia de alternate screen.
-- Ejecuté filtros exactos de resize, drop y cancel/salida (1/1 cada uno). PTY serial `cargo test -p huginn-presentation --features test-driver --test pty -- --test-threads=1`: 37/37, log completo `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-pty-apply-phase5-final.log`.
+- The test source and the historical logs were audited. The previous checkpoint was outdated: a matrix at both sizes, the zero-area TestBackend, the status bar matrix, Approval 20x8 and the cancel/drop terminal tests already existed.
+- RED/GREEN: I extended `approval_resize_below_minimum_disarms_until_a_fresh_draw` to capture the current code at 8x20, switch to 1x1, send the valid code without obtaining approval and recover 8x20; the same code is accepted after the redraw. The initial attempt failed while looking for `"Type "` which does not fit in the small viewport and later while assuming that the disarmed submit should resolve the request; I adjusted the test to its observed contract: no acceptance below the minimum and authorization post-redraw.
+- `dropping_connection_restores_synchronously` opens the `drop` fixture; the fixture discards the connection and asserts that `is_raw_mode_enabled()` is false before exiting. It does not inspect ICANON/ECHO. `inline_stream_composer_cancel_and_normal_exit_restore_termios` does verify ICANON/ECHO after cancellation plus normal exit, bracketed-paste disable and the absence of the alternate screen.
+- I ran the exact filters for resize, drop and cancel/exit (1/1 each). Serial PTY `cargo test -p huginn-presentation --features test-driver --test pty -- --test-threads=1`: 37/37, full log `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-pty-apply-phase5-final.log`.
 - `cargo test -p huginn-presentation status_bar::tests --lib`: 5/5, log `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-statusbar-phase5-final.log`; `cargo test -p huginn-presentation --test state`: 32/32, log `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-state-phase5-final.log`.
-- `cargo fmt --all -- --check` y `git diff --check` pasan tras rustfmt; logs `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-fmt-phase5-final.log` y `huginn-diffcheck-phase5-final.log`.
-- Evidencia combinada cierra 5.1/5.2 y corrige sus checkpoints, sin atribuir cobertura termios explícita al caso drop.
+- `cargo fmt --all -- --check` and `git diff --check` pass after rustfmt; logs `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-fmt-phase5-final.log` and `huginn-diffcheck-phase5-final.log`.
+- The combined evidence closes 5.1/5.2 and corrects their checkpoints, without attributing explicit termios coverage to the drop case.

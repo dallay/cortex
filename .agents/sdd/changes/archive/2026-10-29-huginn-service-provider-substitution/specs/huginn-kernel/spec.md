@@ -1,4 +1,4 @@
-# Especificación del kernel de Huginn
+# Huginn Kernel Specification
 
 > **Domain**: `huginn-kernel`<br>
 > **Change**: `huginn-service-provider-substitution`<br>
@@ -7,103 +7,103 @@
 
 ## Purpose
 
-Kernel genérico; model y session se prueban en aplicación.
+Generic kernel; model and session are tested in the application.
 
 ## Requirements
 
-### Requirement: Identidad y composición
+### Requirement: Identity and composition
 
-El kernel MUST identificar servicios por nombre y major explícita, resolver determinísticamente y rechazar ambigüedad o ciclos.
+The kernel MUST identify services by name and explicit major, resolve deterministically, and reject ambiguity or cycles.
 
-#### Scenario: Identificadores y composición inválidos
+#### Scenario: Invalid identifiers and composition
 
-- GIVEN `agent:model@2` requiere un proveedor `agent:model@1`, o hay proveedor duplicado/ciclo
-- WHEN se resuelve o activa
-- THEN falla explícitamente e identifica servicio o conflicto
+- GIVEN `agent:model@2` requires an `agent:model@1` provider, or there is a duplicated provider/cycle
+- WHEN it is resolved or activated
+- THEN it fails explicitly and identifies the service or conflict
 
-### Requirement: Activación transaccional
+### Requirement: Transactional activation
 
-El kernel MUST publicar tras activación válida, limpiar efectos parciales, asignar una generación y revocarla con sus recursos al retirar o cerrar.
+The kernel MUST publish after a valid activation, clean up partial effects, assign a generation, and revoke it together with its resources on removal or shutdown.
 
-#### Scenario: Activación fallida
+#### Scenario: Failed activation
 
-- GIVEN un plugin que registra y falla
-- WHEN termina la activación
-- THEN no publica el servicio y limpia efectos
+- GIVEN a plugin that registers and fails
+- WHEN the activation ends
+- THEN it does not publish the service and cleans up the effects
 
-### Requirement: Ownership y dependientes
+### Requirement: Ownership and dependents
 
-El kernel MUST exponer consultas de solo lectura de proveedor, generación y dependientes; tras commit MUST informar nuevo ownership.
+The kernel MUST expose read-only queries for provider, generation, and dependents; after the commit it MUST report the new ownership.
 
-#### Scenario: Consulta tras commit
+#### Scenario: Query after commit
 
-- GIVEN una sustitución confirmada
-- WHEN se consulta el servicio
-- THEN devuelve proveedor/generación nuevos y dependientes vigentes
+- GIVEN a confirmed substitution
+- WHEN the service is queried
+- THEN it returns the new provider/generation and the current dependents
 
-### Requirement: Sustitución transaccional
+### Requirement: Transactional substitution
 
-El kernel MUST sustituir sin reiniciar, conservar servicios previos y evitar ownership ambiguo, doble o ausente. Fallo pre-commit MUST conservar anterior y limpiar alternativa. Diagnóstico MUST identificar servicio, proveedores y resultado; ante fallo, motivo.
+The kernel MUST substitute without restarting, preserve previous services, and avoid ambiguous, double, or absent ownership. A pre-commit failure MUST preserve the previous one and clean up the alternative. Diagnostics MUST identify the service, the providers, and the outcome; on failure, the reason.
 
-#### Scenario: Sustitución exitosa o fallida
+#### Scenario: Successful or failed substitution
 
-- GIVEN alternativa compatible, incompatible o con fallo de activación
-- WHEN se solicita sustituir
-- THEN el commit publica la alternativa; si falla, conserva el anterior y elimina registros parciales
-- AND el diagnóstico identifica ambos proveedores y el resultado o motivo
+- GIVEN a compatible alternative, an incompatible one, or one with an activation failure
+- WHEN substitution is requested
+- THEN the commit publishes the alternative; if it fails, it preserves the previous one and removes partial records
+- AND the diagnostic identifies both providers and the outcome or reason
 
-### Requirement: Leases cooperativas con plazo
+### Requirement: Cooperative leases with a deadline
 
-El consumidor MUST mantener lease durante operación protegida. La sustitución MUST cerrar admisión y esperar leases con plazo finito; MUST NOT cancelar operaciones válidas. Timeout MUST abortar, conservar anterior publicado y no revocado, y reabrir admisión.
+The consumer MUST hold the lease during the protected operation. The substitution MUST close admission and wait for leases with a finite deadline; it MUST NOT cancel valid operations. A timeout MUST abort, preserve the previously published and non-revoked service, and reopen admission.
 
-#### Scenario: Operación en vuelo o timeout
+#### Scenario: In-flight operation or timeout
 
-- GIVEN operación con lease anterior, incluso al vencer el plazo
-- WHEN se cierra admisión o se aborta por timeout
-- THEN no se cancela; el timeout conserva anterior y reabre admisión
-- AND durante el cierre se rechazan leases nuevas
+- GIVEN an operation with the previous lease, even after the deadline expires
+- WHEN admission is closed or the operation is aborted by timeout
+- THEN it is not cancelled; the timeout preserves the previous one and reopens admission
+- AND during the close, new leases are rejected
 
-### Requirement: Drenaje y reanudación
+### Requirement: Drain and resumption
 
-`RequireFullDrain` MUST rechazar dependientes sin hook antes del cierre. `ReportUndrained` MAY registrarlos y continuar, pero MUST esperar quiescencia. Abort MUST reanudar intentados contra anterior; commit MUST reanudarlos contra nuevo.
+`RequireFullDrain` MUST reject dependents without a hook before the close. `ReportUndrained` MAY record them and continue, but MUST wait for quiescence. An abort MUST resume the attempted ones against the previous service; a commit MUST resume them against the new one.
 
-#### Scenario: Política y resultado del drenaje
+#### Scenario: Drain policy and outcome
 
-- GIVEN un dependiente sin hook o cuyo drenaje se intentó
-- WHEN se sustituye con `RequireFullDrain`/`ReportUndrained`, y se aborta o confirma
-- THEN la primera política rechaza; la segunda registra y espera; la reanudación usa anterior en abort y nuevo en commit
+- GIVEN a dependent without a hook or one whose drain was attempted
+- WHEN it is substituted with `RequireFullDrain`/`ReportUndrained`, and it is aborted or confirmed
+- THEN the first policy rejects; the second records and waits; resumption uses the previous one on abort and the new one on commit
 
-### Requirement: Rebind de consumidores de aplicación
+### Requirement: Rebinding of application consumers
 
-Los builders productivos de application/runtime —`huginn_runtime::composition::build_native`, `huginn_runtime::composition::build_native_with_connections`, `huginn_runtime::composition::build_native_with_connections_and_guards` y `huginn_application::composition::build`— MUST garantizar que el mismo `LoopService` retenido por la aplicación use los providers vigentes en la siguiente operación `run` o `compact` que comience tras un commit, sin reconstruirse. Cada operación activa MUST conservar sus generaciones anteriores y sus leases hasta completarse; la sustitución MUST NOT cancelarla ni cambiar sus providers a mitad de operación. Todas las llamadas de session `save` de una operación MUST usar una única generación y un único store; la siguiente operación tras el commit MUST usar el store nuevo. El sistema MUST NOT migrar estado entre stores.
+The productive application/runtime builders (`huginn_runtime::composition::build_native`, `huginn_runtime::composition::build_native_with_connections`, `huginn_runtime::composition::build_native_with_connections_and_guards` and `huginn_application::composition::build`) MUST guarantee that the same `LoopService` retained by the application uses the current providers in the next `run` or `compact` operation that starts after a commit, without rebuilding it. Each active operation MUST keep its previous generations and its leases until it completes; the substitution MUST NOT cancel it nor change its providers halfway through the operation. All session `save` calls of an operation MUST use a single generation and a single store; the next operation after the commit MUST use the new store. The system MUST NOT migrate state between stores.
 
-Esta garantía MUST NOT aplicarse al `LoopPlugin(pub LoopConfig)` legacy ni a composiciones personalizadas que solo capturan servicios con `resolve() -> Arc<T>`. Una composición personalizada que requiera rebind dinámico MUST optar por `PluginContext::service_slot_handle`, leases y hooks de ciclo de vida.
+This guarantee MUST NOT apply to the legacy `LoopPlugin(pub LoopConfig)` nor to custom compositions that only capture services with `resolve() -> Arc<T>`. A custom composition that requires dynamic rebinding MUST opt for `PluginContext::service_slot_handle`, leases, and lifecycle hooks.
 
-#### Scenario: Rebind de model
+#### Scenario: Model rebinding
 
-- GIVEN la aplicación retiene un `LoopService` creado por uno de los builders productivos application/runtime enumerados en este requisito, y hay un `run` o `compact` activo que usa el model de la generación anterior
-- WHEN la sustitución espera a que termine la operación activa, confirma el provider nuevo y comienza otra operación en el mismo `LoopService`
-- THEN la operación activa termina sin cancelación con el model anterior y la nueva usa el model nuevo sin reconstruir el `LoopService`
+- GIVEN the application retains a `LoopService` created by one of the productive application/runtime builders listed in this requirement, and an active `run` or `compact` uses the model of the previous generation
+- WHEN the substitution waits for the active operation to finish, confirms the new provider, and starts another operation on the same `LoopService`
+- THEN the active operation ends without cancellation using the previous model, and the new one uses the new model without rebuilding the `LoopService`
 
-#### Scenario: Rebind de session
+#### Scenario: Session rebinding
 
-- GIVEN la aplicación retiene un `LoopService` creado por uno de los builders productivos application/runtime enumerados en este requisito, y un `run` o `compact` activo realiza varias llamadas `save` en el store A, que contiene un registro identificable ausente del store B
-- WHEN la sustitución espera a que termine la operación activa, confirma el store B y comienza otra operación en el mismo `LoopService`
-- THEN todas las llamadas `save` de la primera operación usan la misma generación y el store A, y la operación termina sin cancelación con el provider anterior
-- AND la siguiente operación usa el store B y el registro de A no aparece en B por efecto de la sustitución
+- GIVEN the application retains a `LoopService` created by one of the productive application/runtime builders listed in this requirement, and an active `run` or `compact` performs several `save` calls in store A, which contains an identifiable record absent from store B
+- WHEN the substitution waits for the active operation to finish, confirms store B, and starts another operation on the same `LoopService`
+- THEN all `save` calls of the first operation use the same generation and store A, and the operation ends without cancellation with the previous provider
+- AND the next operation uses store B, and the record from A does not appear in B as a result of the substitution
 
-#### Scenario: Composición legacy o personalizada
+#### Scenario: Legacy or custom composition
 
-- GIVEN `LoopPlugin(pub LoopConfig)` o una composición personalizada conserva un `Arc<T>` obtenido con `resolve()`
-- WHEN se confirma una sustitución y comienza una operación posterior
-- THEN el `Arc<T>` conservado sigue siendo la referencia capturada y no se garantiza rebind dinámico; una composición personalizada que lo requiera usa `PluginContext::service_slot_handle`, leases y hooks de ciclo de vida
+- GIVEN `LoopPlugin(pub LoopConfig)` or a custom composition retains an `Arc<T>` obtained with `resolve()`
+- WHEN a substitution is confirmed and a later operation starts
+- THEN the retained `Arc<T>` remains the captured reference and dynamic rebinding is not guaranteed; a custom composition that requires it uses `PluginContext::service_slot_handle`, leases, and lifecycle hooks
 
-### Requirement: Genericidad y compatibilidad
+### Requirement: Genericity and compatibility
 
-El kernel MUST NOT conocer `ModelProvider` ni `SessionStore`. `resolve() -> Arc<T>` queda fuera de garantía: MUST NOT afirmarse revocación arbitraria. `huginn-plugin-api::v1` MUST seguir compatible.
+The kernel MUST NOT know `ModelProvider` nor `SessionStore`. `resolve() -> Arc<T>` is outside the guarantee: arbitrary revocation MUST NOT be asserted. `huginn-plugin-api::v1` MUST remain compatible.
 
-#### Scenario: Referencias y API existentes
+#### Scenario: Existing references and API
 
-- GIVEN consumidor que conserva un `Arc<T>` de `resolve()` y consumidores de `huginn-plugin-api::v1`
-- WHEN se sustituye el proveedor
-- THEN no se garantiza revocar el `Arc` y los contratos existentes siguen válidos
+- GIVEN a consumer that retains an `Arc<T>` from `resolve()` and consumers of `huginn-plugin-api::v1`
+- WHEN the provider is substituted
+- THEN revoking the `Arc` is not guaranteed and the existing contracts remain valid

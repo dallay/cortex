@@ -37,7 +37,7 @@ Keep this aligned with the workspace lints in `Cargo.toml`.
 
 ## Key Rules
 
-### 1. lint-deny-correctness ⚠️ CRÍTICO
+### 1. lint-deny-correctness ⚠️ CRITICAL
 
 > `#![deny(clippy::correctness)]`
 

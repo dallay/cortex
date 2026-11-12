@@ -57,11 +57,11 @@ describe('local CI contract', () => {
     const workflowThreshold = workflow.match(
         /--fail-under-lines\s+(\d+(?:\.\d+)?)(?=\s|$)/);
     assert.ok(localThreshold,
-        'ci-coverage-rust debe declarar un umbral de cobertura de líneas');
+        'ci-coverage-rust must declare a line coverage threshold');
     assert.ok(workflowThreshold,
-        'el workflow debe declarar un umbral de cobertura de líneas');
+        'the workflow must declare a line coverage threshold');
     assert.equal(localThreshold[1], workflowThreshold[1],
-        'los umbrales de cobertura Rust deben coincidir');
+        'the Rust coverage thresholds must match');
     assert.match(workflow, /vitest run --coverage/);
   });
 

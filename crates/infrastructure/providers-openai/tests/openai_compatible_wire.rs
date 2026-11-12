@@ -29,7 +29,7 @@ fn request(model: &str) -> CompletionRequest {
         model: ModelId::new(model),
         messages: vec![Message {
             role: Role::User,
-            content: MessageContent::Text("hola".to_string()),
+            content: MessageContent::Text("hello".to_string()),
             tool_calls: vec![],
         }],
         stream: false,
@@ -173,8 +173,8 @@ async fn tool_definitions_and_tool_choice_reach_the_upstream() {
 async fn streaming_reaches_the_upstream_and_returns_chunks() {
     let server = wiremock::MockServer::start().await;
     let sse = concat!(
-    "data: {\"id\":\"chatcmpl-3\",\"model\":\"physical-model-a\",\"choices\":[{\"delta\":{\"content\":\"ho\"},\"index\":0}]}\n\n",
-    "data: {\"id\":\"chatcmpl-3\",\"model\":\"physical-model-a\",\"choices\":[{\"delta\":{\"content\":\"la\"},\"index\":0}]}\n\n",
+    "data: {\"id\":\"chatcmpl-3\",\"model\":\"physical-model-a\",\"choices\":[{\"delta\":{\"content\":\"he\"},\"index\":0}]}\n\n",
+    "data: {\"id\":\"chatcmpl-3\",\"model\":\"physical-model-a\",\"choices\":[{\"delta\":{\"content\":\"llo\"},\"index\":0}]}\n\n",
     "data: {\"id\":\"chatcmpl-3\",\"model\":\"physical-model-a\",\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5}}\n\n",
     "data: [DONE]\n\n"
     );
@@ -207,7 +207,7 @@ async fn streaming_reaches_the_upstream_and_returns_chunks() {
         let chunk = chunk.expect("stream chunk is valid");
         text.push_str(&chunk.delta);
     }
-    assert_eq!(text, "hola");
+    assert_eq!(text, "hello");
 
     let requests = server.received_requests().await.expect("recorded requests");
     let body: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("json body");
