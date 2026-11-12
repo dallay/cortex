@@ -38,7 +38,7 @@ pub fn invocation(input: &str) -> Result<Option<(&str, &str)>, String> {
     let split = rest.find(char::is_whitespace).unwrap_or(rest.len());
     let (name, args) = rest.split_at(split);
     if !valid_name(name) {
-        return Err("Nombre de plantilla inválido".into());
+        return Err("Invalid template name".into());
     }
     Ok(Some((name, args.trim_start())))
 }
@@ -115,11 +115,11 @@ pub fn render(body: &str, input: &str) -> Result<String, String> {
                 Some(d @ '1'..='9') => {
                     chars.next();
                     if chars.peek().is_some_and(char::is_ascii_digit) {
-                        return Err("Solo se admiten posiciones $1 a $9".into());
+                        return Err("Only positions $1 to $9 are accepted".into());
                     }
                     out.push_str(
                         args.get(d as usize - '1' as usize)
-                            .ok_or_else(|| format!("Falta el argumento ${d}"))?,
+                            .ok_or_else(|| format!("Missing argument ${d}"))?,
                     );
                 }
                 Some('A'..='Z') => {
@@ -136,7 +136,7 @@ pub fn render(body: &str, input: &str) -> Result<String, String> {
                         out.push_str(
                             named
                                 .get(key.as_str())
-                                .ok_or_else(|| format!("Falta el argumento {key}=valor"))?,
+                                .ok_or_else(|| format!("Missing argument {key}=value"))?,
                         );
                     }
                 }
@@ -144,7 +144,7 @@ pub fn render(body: &str, input: &str) -> Result<String, String> {
             }
         }
         if out.len() > MAX_RENDERED_BYTES {
-            return Err("Resultado de plantilla demasiado grande".into());
+            return Err("Template result is too large".into());
         }
     }
     Ok(out)
@@ -172,7 +172,7 @@ pub fn metadata(text: &str) -> Result<(String, String, &str), String> {
         }
         let (key, value) = line
             .split_once(':')
-            .ok_or("Metadatos inválidos: se esperaba clave: valor")?;
+            .ok_or("Invalid metadata: expected key: value")?;
         let value = value.trim();
         let value = if value.starts_with(['\'', '"']) {
             if value.len() < 2 || !value.ends_with(value.chars().next().unwrap()) {

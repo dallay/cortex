@@ -6,176 +6,176 @@
 
 <!-- coderabbit-ai-generated-section:v1:255efca5789786ff78ad02486fd9b8af6ee7fafdeccf9ce89176d709f1208792 -->
 
-# Delta Specification: Permisos autónomos del espacio de trabajo
+# Delta Specification: Autonomous workspace permissions
 
 ## MODIFIED Requirements
 
-### Requirement: Aislamiento de comandos de shell en macOS
+### Requirement: Shell command isolation on macOS
 
-En macOS, Huginn MUST ejecutar `run_shell` con aislamiento del sistema operativo activo por defecto. La política MUST denegar por defecto, permitir únicamente el acceso necesario al workspace y a los recursos requeridos para ejecutar el shell, y denegar el acceso a la red. El proceso shell y sus descendientes MUST permanecer sujetos a la misma política. Si el aislamiento no está disponible o no puede aplicarse, Huginn MUST impedir la ejecución y MUST NOT reintentarla sin aislamiento.
+On macOS, Huginn MUST run `run_shell` with the active operating system isolation by default. The policy MUST deny by default, allow only the access needed to the workspace and the resources required to run the shell, and deny network access. The shell process and its descendants MUST remain subject to the same policy. If isolation is not available or cannot be applied, Huginn MUST prevent execution and MUST NOT retry it without isolation.
 
-La política MUST generarse dinámicamente en formato SBPL e imponerse mediante `/usr/bin/sandbox-exec`. Los datos de rutas no confiables MUST NOT permitir ampliar la política.
+The policy MUST be generated dynamically in SBPL format and enforced through `/usr/bin/sandbox-exec`. Untrusted path data MUST NOT allow widening the policy.
 
-El mecanismo depende de interfaces Seatbelt de Apple que están deprecadas. Huginn MUST comunicar esta limitación y MUST NOT presentar su disponibilidad o comportamiento futuro como garantizado ni como avalado por Apple. El comportamiento debe verificarse por separado en las versiones de macOS soportadas. Este requisito no declara soporte de aislamiento para Linux o Windows.
+The mechanism depends on Apple's Seatbelt interfaces, which are deprecated. Huginn MUST communicate this limitation and MUST NOT present their availability or future behavior as guaranteed nor as endorsed by Apple. The behavior must be verified separately on the supported macOS versions. This requirement does not declare isolation support for Linux or Windows.
 
-#### Scenario: Shell permitido dentro del workspace
+#### Scenario: Shell allowed inside the workspace
 
-- GIVEN `run_shell` solicita una operación dentro de los permisos efectivos del workspace
-- WHEN Huginn ejecuta el comando en macOS
-- THEN el comando se ejecuta bajo la política restrictiva activa
-- AND los procesos que descienden del shell permanecen confinados por esa política
+- GIVEN `run_shell` requests an operation within the effective workspace permissions
+- WHEN Huginn runs the command on macOS
+- THEN the command runs under the active restrictive policy
+- AND the processes descending from the shell stay confined by that policy
 
-#### Scenario: Acceso fuera del workspace denegado
+#### Scenario: Access outside the workspace denied
 
-- GIVEN un comando intenta leer o modificar un archivo fuera del workspace y de las excepciones de lectura de runtime bajo `/bin` y `/usr/lib` y metadatos del padre inmediato
-- WHEN el proceso shell o uno de sus descendientes solicita el acceso
-- THEN el sistema operativo deniega el acceso
-- AND el comando no obtiene permisos adicionales por cambiar su directorio de trabajo
+- GIVEN a command attempts to read or modify a file outside the workspace and outside the runtime read exceptions under `/bin` and `/usr/lib` and the immediate parent's metadata
+- WHEN the shell process or one of its descendants requests the access
+- THEN the operating system denies the access
+- AND the command gains no additional permissions by changing its working directory
 
-#### Scenario: Rutas manipuladas no amplían permisos
+#### Scenario: Manipulated paths do not widen permissions
 
-- GIVEN el workspace o una ruta solicitada contiene metacaracteres, secuencias con significado en SBPL o enlaces simbólicos hacia el exterior
-- WHEN Huginn genera y aplica la política
-- THEN la política no otorga acceso fuera de las rutas autorizadas
-- AND Huginn deniega la ejecución si no puede determinar el alcance de forma segura
+- GIVEN the workspace or a requested path contains metacharacters, sequences with meaning in SBPL, or symbolic links to the outside
+- WHEN Huginn generates and applies the policy
+- THEN the policy grants no access outside the authorized paths
+- AND Huginn denies execution if it cannot determine the scope safely
 
-#### Scenario: Red y sockets denegados
+#### Scenario: Network and sockets denied
 
-- GIVEN un comando o descendiente intenta abrir una conexión de red o un socket
-- WHEN la operación se evalúa bajo la política de shell
-- THEN el acceso se deniega
+- GIVEN a command or descendant attempts to open a network connection or a socket
+- WHEN the operation is evaluated under the shell policy
+- THEN the access is denied
 
-#### Scenario: Descendiente intenta eludir la política
+#### Scenario: Descendant attempts to evade the policy
 
-- GIVEN un comando inicia un descendiente o una ejecución alternativa
-- WHEN ese proceso intenta acceder a archivos fuera de las rutas autorizadas (workspace, lectura bajo `/bin` y `/usr/lib` y metadatos del padre inmediato) o a la red
-- THEN el sistema operativo deniega el acceso bajo la misma política
+- GIVEN a command starts a descendant or an alternative execution
+- WHEN that process attempts to access files outside the authorized paths (workspace, reads under `/bin` and `/usr/lib` and the immediate parent's metadata) or the network
+- THEN the operating system denies the access under the same policy
 
-#### Scenario: Fallo del launcher o de la política
+#### Scenario: Launcher or policy failure
 
-- GIVEN `/usr/bin/sandbox-exec` no está disponible, o la política no puede generarse, validarse o aplicarse
-- WHEN Huginn recibe una solicitud `run_shell`
-- THEN no inicia el comando
-- AND devuelve un resultado observable de fallo
-- AND no intenta ejecutar el comando sin aislamiento
+- GIVEN `/usr/bin/sandbox-exec` is not available, or the policy cannot be generated, validated, or applied
+- WHEN Huginn receives a `run_shell` request
+- THEN it does not start the command
+- AND it returns an observable failure result
+- AND it does not attempt to run the command without isolation
 
-#### Scenario: Interfaz Seatbelt deprecada
+#### Scenario: Deprecated Seatbelt interface
 
-- GIVEN una versión de macOS cambia, restringe o elimina `sandbox-exec` o una interfaz Seatbelt requerida
-- WHEN Huginn no puede confirmar y aplicar la política
-- THEN Huginn informa que el aislamiento no está disponible
-- AND no ejecuta el comando sin aislamiento como alternativa automática
+- GIVEN a macOS version changes, restricts, or removes `sandbox-exec` or a required Seatbelt interface
+- WHEN Huginn cannot confirm and apply the policy
+- THEN Huginn reports that isolation is not available
+- AND it does not run the command without isolation as an automatic alternative
 
-#### Scenario: No se declara paridad en otras plataformas
+#### Scenario: No parity is declared on other platforms
 
-- GIVEN `run_shell` se solicita en Linux o Windows
-- WHEN Huginn aplica este cambio
-- THEN este requisito no atribuye aislamiento a esa ejecución
-- AND Huginn no declara que el comportamiento de esa plataforma sea equivalente al de macOS
+- GIVEN `run_shell` is requested on Linux or Windows
+- WHEN Huginn applies this change
+- THEN this requirement does not attribute isolation to that execution
+- AND Huginn does not declare that the behavior of that platform is equivalent to macOS
 
-### Requirement: Aprobación, política y aislamiento son controles independientes
+### Requirement: Approval, policy, and isolation are independent controls
 
-Huginn MUST conservar las semánticas de política y aprobación de fase 1. Las reglas de usuario y globales, las restricciones administradas y las decisiones de aprobación determinan si una operación está autorizada; no conceden ni amplían el aislamiento del sistema operativo. Las restricciones administradas prevalecen y solo pueden restringir. `Deny` MUST impedir la operación, y `Allow once` MUST autorizar únicamente la operación presentada. Huginn MUST NOT introducir grants persistentes, ni cargarlos, crearlos u honrarlos. Huginn MUST NOT introducir modos YOLO, Exit ni nuevos modos de acceso total. El perfil de autorización `full-access` existente sigue disponible; no desactiva ni amplía el sandbox obligatorio de `run_shell` en macOS.
+Huginn MUST preserve the phase 1 policy and approval semantics. User and global rules, managed restrictions, and approval decisions determine whether an operation is authorized; they neither grant nor widen the operating system isolation. Managed restrictions prevail and can only restrict. `Deny` MUST prevent the operation, and `Allow once` MUST authorize only the presented operation. Huginn MUST NOT introduce persistent grants, nor load, create, or honor them. Huginn MUST NOT introduce YOLO, Exit, nor new full-access modes. The existing `full-access` authorization profile remains available; it does not disable nor widen the mandatory `run_shell` sandbox on macOS.
 
-#### Scenario: Aprobación ordinaria no retira el aislamiento
+#### Scenario: Ordinary approval does not remove the isolation
 
-- GIVEN una operación de shell requiere aprobación y el usuario la concede
-- WHEN Huginn ejecuta la operación
-- THEN la aprobación se limita a la operación autorizada
-- AND el comando permanece sujeto al aislamiento activo y a la política efectiva
-- AND la aprobación ordinaria de `HostPolicy` no se interpreta como consentimiento separado para ejecutar sin sandbox
-- AND Huginn no ofrece una configuración, exclusión ni bypass para ejecutar `run_shell` sin sandbox
+- GIVEN a shell operation requires approval and the user grants it
+- WHEN Huginn runs the operation
+- THEN the approval is limited to the authorized operation
+- AND the command remains subject to the active isolation and the effective policy
+- AND the ordinary `HostPolicy` approval is not interpreted as separate consent to run without sandbox
+- AND Huginn offers no configuration, exclusion, or bypass to run `run_shell` without sandbox
 
-#### Scenario: Restricción administrada prevalece
+#### Scenario: Managed restriction prevails
 
-- GIVEN una operación permitida por una regla de usuario está denegada por una restricción administrada
-- WHEN Huginn resuelve la operación
-- THEN Huginn no la ejecuta
-- AND la aprobación del usuario no anula la restricción administrada
+- GIVEN an operation allowed by a user rule is denied by a managed restriction
+- WHEN Huginn resolves the operation
+- THEN Huginn does not run it
+- AND the user approval does not override the managed restriction
 
-#### Scenario: Denegación y aprobación de una sola vez
+#### Scenario: Denial and one-time approval
 
-- GIVEN el usuario elige `Deny` o `Allow once` para una operación
-- WHEN Huginn procesa la decisión
-- THEN `Deny` impide esa operación y no se convierte en autorización
-- AND `Allow once` no autoriza operaciones posteriores ni crea estado persistente
+- GIVEN the user chooses `Deny` or `Allow once` for an operation
+- WHEN Huginn processes the decision
+- THEN `Deny` prevents that operation and does not become an authorization
+- AND `Allow once` does not authorize later operations nor create persistent state
 
-#### Scenario: No hay grants persistentes
+#### Scenario: No persistent grants
 
-- GIVEN un archivo de proyecto, configuración o estado previo contiene una solicitud o dato de grant persistente
-- WHEN Huginn resuelve permisos para una operación
-- THEN no crea, carga ni honra un grant persistente a partir de ese dato
+- GIVEN a project file, configuration, or previous state contains a persistent grant request or data
+- WHEN Huginn resolves permissions for an operation
+- THEN it does not create, load, or honor a persistent grant from that data
 
-### Requirement: El aislamiento de shell no cubre herramientas nativas ni MCP
+### Requirement: Shell isolation does not cover native tools nor MCP
 
-Huginn MUST limitar la garantía de este aislamiento a los procesos iniciados por `run_shell` y sus descendientes. Las herramientas nativas de archivos MUST seguir sujetas a sus propios controles de política y autorización. Las llamadas MCP MUST conservar su política de aprobación específica. Huginn MUST NOT afirmar que esas operaciones están confinadas por el sandbox de shell.
+Huginn MUST limit the guarantee of this isolation to the processes started by `run_shell` and its descendants. Native file tools MUST remain subject to their own policy and authorization controls. MCP calls MUST keep their specific approval policy. Huginn MUST NOT assert that those operations are confined by the shell sandbox.
 
-#### Scenario: Herramienta nativa fuera de alcance
+#### Scenario: Native tool out of scope
 
-- GIVEN una herramienta nativa solicita una operación de archivo
-- WHEN Huginn autoriza o deniega esa operación
-- THEN aplica los controles propios de la herramienta nativa
-- AND no usa el sandbox de `run_shell` como prueba de autorización o confinamiento
+- GIVEN a native tool requests a file operation
+- WHEN Huginn authorizes or denies that operation
+- THEN it applies the native tool's own controls
+- AND it does not use the `run_shell` sandbox as proof of authorization or confinement
 
-#### Scenario: Llamada MCP fuera de alcance
+#### Scenario: MCP call out of scope
 
-- GIVEN un servidor MCP recibe una llamada
-- WHEN Huginn aplica la política de aprobación MCP
-- THEN conserva las reglas específicas del servidor y la herramienta
-- AND no atribuye a la llamada el aislamiento de `run_shell`
+- GIVEN an MCP server receives a call
+- WHEN Huginn applies the MCP approval policy
+- THEN it keeps the server specific and tool specific rules
+- AND it does not attribute the `run_shell` isolation to the call
 
-### Requirement: Ciclo de vida de `run_shell`
+### Requirement: `run_shell` lifecycle
 
-La aplicación del aislamiento MUST preservar las garantías existentes del ciclo de vida de `run_shell`: entorno seleccionado, directorio de trabajo, entrada y salida, timeout, cancelación y limpieza del grupo de procesos. El launcher y la política MUST NOT permitir que la cancelación o el timeout dejen procesos descendientes activos fuera del control de Huginn.
+Applying the isolation MUST preserve the existing `run_shell` lifecycle guarantees: selected environment, working directory, input and output, timeout, cancellation, and process group cleanup. The launcher and the policy MUST NOT allow cancellation or timeout to leave active descendant processes outside Huginn's control.
 
-En cada salida controlada que retorna como `Result` —éxito, salida no-cero, rechazo o error de spawn, timeout y cancelación— el runtime MUST intentar el cleanup explícito de los recursos del launcher y MUST propagar cualquier error de cleanup. Si el shell pudo ejecutarse, un error de cleanup MUST NOT afirmar que el shell no se ejecutó. Si la preparación, creación o escritura de recursos falla antes de iniciar el launcher, Huginn MUST NOT iniciar el shell; MUST intentar cleanup explícito de los recursos ya creados y MUST hacer observables tanto el error primario como cualquier error de cleanup, sin ocultar este último.
+On every controlled exit that returns as `Result` (success, non-zero exit, rejection, or spawn error, timeout, and cancellation), the runtime MUST attempt the explicit cleanup of the launcher resources and MUST propagate any cleanup error. If the shell was able to run, a cleanup error MUST NOT assert that the shell did not run. If the preparation, creation, or writing of resources fails before starting the launcher, Huginn MUST NOT start the shell; it MUST attempt the explicit cleanup of the resources already created and MUST make observable both the primary error and any cleanup error, without hiding the latter.
 
-Si se descarta abruptamente el future o su owner y solo se ejecuta `Drop`, el cleanup MUST ser de mejor esfuerzo. El contrato MUST NOT garantizar la eliminación del recurso si el sistema operativo falla. La escritura de recursos MUST completar mediante `write_all`. El cierre de `std::fs::File` no es un escenario exigido independiente: su error no es observable mediante la API safe de ese tipo. Esta limitación no reduce los requisitos de seguridad del launcher.
+If the future or its owner is abruptly dropped and only `Drop` runs, the cleanup MUST be best effort. The contract MUST NOT guarantee the removal of the resource if the operating system fails. Writing resources MUST complete through `write_all`. Closing `std::fs::File` is not an independently required scenario: its error is not observable through the safe API of that type. This limitation does not reduce the launcher security requirements.
 
-**Rationale:** `std::fs::File` no expone un error de cierre a través de su API safe, por lo que exigir o probar de forma independiente ese error no sería verificable. El runtime sí puede exigir `write_all`, cleanup explícito en salidas controladas y propagación de errores observables. La limitación de observabilidad del cierre no autoriza a omitir cleanup, relajar el launcher ni ejecutar sin sandbox.
+**Rationale:** `std::fs::File` does not expose a close error through its safe API, so requiring or testing that error independently would not be verifiable. The runtime can require `write_all`, explicit cleanup on controlled exits, and propagation of observable errors. The close observability limitation does not authorize omitting cleanup, relaxing the launcher, or running without sandbox.
 
-#### Scenario: Ejecución conserva los parámetros seleccionados
+#### Scenario: Execution preserves the selected parameters
 
-- GIVEN una solicitud válida especifica entorno, directorio de trabajo e entrada
-- WHEN Huginn ejecuta `run_shell` bajo aislamiento
-- THEN el proceso recibe esos parámetros según la solicitud
-- AND Huginn entrega la salida conforme al contrato existente de `run_shell`
+- GIVEN a valid request specifies environment, working directory, and input
+- WHEN Huginn runs `run_shell` under isolation
+- THEN the process receives those parameters as requested
+- AND Huginn delivers the output according to the existing `run_shell` contract
 
-#### Scenario: Timeout o cancelación limpia descendientes
+#### Scenario: Timeout or cancellation cleans up descendants
 
-- GIVEN un comando crea uno o más procesos descendientes
-- WHEN la ejecución alcanza el timeout o se cancela
-- THEN Huginn detiene el proceso shell y limpia su grupo de procesos según las garantías existentes
-- AND ningún descendiente continúa ejecutándose como resultado de una limpieza incompleta
+- GIVEN a command creates one or more descendant processes
+- WHEN the execution reaches the timeout or is canceled
+- THEN Huginn stops the shell process and cleans its process group according to the existing guarantees
+- AND no descendant keeps running as a result of an incomplete cleanup
 
-#### Scenario: Cleanup explícito en salidas controladas
+#### Scenario: Explicit cleanup on controlled exits
 
-- GIVEN el launcher ha sido preparado y `run_shell` termina con éxito, salida no-cero, rechazo, error de spawn, timeout o cancelación retornada como `Result`
-- WHEN el runtime devuelve el resultado de `run_shell`
-- THEN el runtime intenta cleanup explícito de los recursos del launcher
-- AND propaga cualquier error de cleanup
-- AND si el shell pudo ejecutarse, el error devuelto no afirma que el shell no se ejecutó
+- GIVEN the launcher has been prepared and `run_shell` ends with success, non-zero exit, rejection, spawn error, timeout, or cancellation returned as `Result`
+- WHEN the runtime returns the result of `run_shell`
+- THEN the runtime attempts the explicit cleanup of the launcher resources
+- AND it propagates any cleanup error
+- AND if the shell was able to run, the returned error does not assert that the shell did not run
 
-#### Scenario: Fallo de preparación antes del launcher
+#### Scenario: Preparation failure before the launcher
 
-- GIVEN la preparación, creación o escritura de un recurso del launcher falla antes de iniciarlo
-- WHEN Huginn procesa el fallo
-- THEN no inicia el launcher ni el shell
-- AND intenta cleanup explícito de los recursos ya creados
-- AND el resultado hace observables el error primario y cualquier error de cleanup, sin ocultar el error de cleanup
+- GIVEN the preparation, creation, or writing of a launcher resource fails before starting it
+- WHEN Huginn processes the failure
+- THEN it does not start the launcher nor the shell
+- AND it attempts the explicit cleanup of the resources already created
+- AND the result makes observable the primary error and any cleanup error, without hiding the cleanup error
 
-#### Scenario: Drop abrupto usa cleanup de mejor esfuerzo
+#### Scenario: Abrupt drop uses best-effort cleanup
 
-- GIVEN se descarta abruptamente el future o su owner antes de que `run_shell` retorne un `Result`
-- WHEN solo puede ejecutarse el cleanup de `Drop`
-- THEN Huginn intenta eliminar el recurso como mejor esfuerzo
-- AND el contrato no garantiza la eliminación si falla el sistema operativo
+- GIVEN the future or its owner is abruptly dropped before `run_shell` returns a `Result`
+- WHEN only the `Drop` cleanup can run
+- THEN Huginn attempts to remove the resource on a best-effort basis
+- AND the contract does not guarantee the removal if the operating system fails
 
-#### Scenario: Escritura completa sin requisito independiente de error de cierre
+#### Scenario: Complete write without an independent close error requirement
 
-- GIVEN Huginn escribe el recurso privado del launcher
-- WHEN la escritura se completa
-- THEN Huginn usa una operación que escribe todos los bytes o informa un error de escritura
-- AND la conformidad no depende de inducir un error de cierre de `std::fs::File` mediante su API safe
+- GIVEN Huginn writes the private launcher resource
+- WHEN the write completes
+- THEN Huginn uses an operation that writes all bytes or reports a write error
+- AND compliance does not depend on inducing a close error of `std::fs::File` through its safe API
 
 <!-- /coderabbit-ai-generated:v1 --><!-- /coderabbit-ai-generated:v1 -->

@@ -32,28 +32,28 @@ is_protected() {
 
 require_clean_tree() {
     if ! git diff --quiet || ! git diff --cached --quiet || [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
-        fail "El working tree tiene cambios sin commitear. Haz commit o stash antes de limpiar."
+        fail "The working tree has uncommitted changes. Commit or stash before cleaning."
         exit 1
     fi
 }
 
 cleanup_worktrees() {
-    info "==> Limpiando worktrees obsoletos"
+    info "==> Cleaning stale worktrees"
     local removed=0
     while IFS= read -r worktree_path; do
         [[ -z "$worktree_path" ]] && continue
         if git -C "$worktree_path" diff --quiet 2>/dev/null && git -C "$worktree_path" diff --cached --quiet 2>/dev/null; then
             git worktree remove "$worktree_path" 2>/dev/null && removed=$((removed + 1))
         else
-            warn "    omitido (tiene cambios): $worktree_path"
+            warn "    skipped (has changes): $worktree_path"
         fi
     done < <(git worktree list --porcelain | awk '/^worktree /{print $2}' | grep -v "^$ROOT_DIR$")
     git worktree prune
-    info "    worktrees eliminados: $removed"
+    info "    worktrees removed: $removed"
 }
 
 cleanup_merged_branches() {
-    info "==> Eliminando ramas locales ya mergeadas"
+    info "==> Deleting already merged local branches"
     local removed=0
     local branch
     while IFS= read -r branch; do
@@ -64,28 +64,28 @@ cleanup_merged_branches() {
             removed=$((removed + 1))
         fi
     done < <(git branch --format='%(refname:short)' --merged)
-    info "    ramas eliminadas: $removed"
+    info "    branches removed: $removed"
 }
 
 report_unmerged_branches() {
     local unmerged
     unmerged="$(git branch --format='%(refname:short)' --no-merged | grep -v '^main$' || true)"
     if [[ -n "$unmerged" ]]; then
-        warn "==> Ramas con trabajo sin mergear (NO se tocaron):"
+        warn "==> Branches with unmerged work (NOT touched):"
         printf '%s\n' "$unmerged" | sed 's/^/    /'
     fi
 }
 
 cleanup_remote_refs() {
-    info "==> Podando referencias remotas obsoletas"
-    git fetch --prune --quiet origin 2>/dev/null || warn "    no se pudo hacer fetch --prune (sin red?)"
+    info "==> Pruning stale remote references"
+    git fetch --prune --quiet origin 2>/dev/null || warn "    could not run fetch --prune (offline?)"
     local stale
     stale="$(git branch -r | grep -c '\[gone\]' || true)"
-    info "    referencias remotas obsoletas restantes: ${stale:-0}"
+    info "    remaining stale remote references: ${stale:-0}"
 }
 
 cleanup_git_objects() {
-    info "==> Limpiando reflogs y objetos inalcanzables"
+    info "==> Cleaning reflogs and unreachable objects"
     # `git reflog expire --all` also expires refs/stash, and --expire-unreachable
     # prunes stash entries that are not ancestors of the current stash tip.
     # The following `git gc --prune=now` would then delete the stashed commits,
@@ -108,7 +108,7 @@ cleanup_git_objects() {
         mkdir -p "$(dirname "$stash_log")"
         cp "$stash_backup" "$stash_log"
         rm -f "$stash_backup"
-        info "    pila de stashes preservada"
+        info "    stash stack preserved"
     fi
 
     # If refs/stash holds a stash but its reflog is missing or empty, the stash
@@ -121,11 +121,11 @@ cleanup_git_objects() {
         stash_commit="$(git rev-parse refs/stash)"
         git update-ref -d refs/stash
         git update-ref --create-reflog -m "clean-git: restore stash reflog" "refs/stash" "$stash_commit"
-        info "    reflog de refs/stash restaurado"
+        info "    refs/stash reflog restored"
     fi
 
     git gc --prune=now --quiet
-    info "    gc completado"
+    info "    gc completed"
 }
 
 main() {
@@ -136,7 +136,7 @@ main() {
     cleanup_remote_refs
     cleanup_git_objects
     info ""
-    info "Limpieza de Git completada."
+    info "Git cleanup completed."
     git worktree list
 }
 

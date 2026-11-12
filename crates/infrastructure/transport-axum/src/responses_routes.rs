@@ -33,7 +33,7 @@ pub(crate) async fn create(
             return failure(
                 status,
                 "invalid_request_error",
-                "Solicitud Responses inválida o con campos no soportados",
+                "Invalid Responses request or unsupported fields",
             );
         }
     };
@@ -76,7 +76,7 @@ pub(crate) async fn create(
                             if let Some(usage) = rook_core::StreamValidationError::usage(&error) {
                                 encoder.observe_usage(usage.clone());
                             }
-                            (encoder.fail("El stream upstream falló"), None)
+                            (encoder.fail("The upstream stream failed"), None)
                         }
                         None => (
                             match encoder.finish() {
@@ -110,7 +110,7 @@ pub(crate) async fn create(
             Err(_) => failure(
                 StatusCode::BAD_GATEWAY,
                 "upstream_error",
-                "Respuesta de función inválida",
+                "Invalid function response",
             ),
         },
         Err(error) => route_failure(&error),
@@ -168,7 +168,7 @@ fn route_failure(error: &shared_kernel::CortexError) -> Response {
     } else {
         (StatusCode::BAD_GATEWAY, "upstream_error")
     };
-    let mut response = failure(status, code, "No se pudo completar la solicitud");
+    let mut response = failure(status, code, "The request could not be completed");
     if error.is_rate_limited() {
         if let Ok(value) = error.retry_after_secs().unwrap_or(60).to_string().parse() {
             response.headers_mut().insert("retry-after", value);

@@ -191,10 +191,7 @@ async fn prompt_metadata_is_available_in_completion_without_a_plugin_handle() {
         Arc::new(|_| Ok(())),
     )
     .0;
-    ui.set_prompt_templates(vec![(
-        "/prompts:review".into(),
-        "Revisión [proyecto]".into(),
-    )]);
+    ui.set_prompt_templates(vec![("/prompts:review".into(), "Review [project]".into())]);
     {
         let mut state = ui.state.lock().unwrap();
         state.editor.text = "/prompts:rev".into();
@@ -206,6 +203,6 @@ async fn prompt_metadata_is_available_in_completion_without_a_plugin_handle() {
         .completion
         .items
         .iter()
-        .any(|item| item.label == "/prompts:review" && item.description == "Revisión [proyecto]"));
+        .any(|item| item.label == "/prompts:review" && item.description == "Review [project]"));
     drop(state);
 }

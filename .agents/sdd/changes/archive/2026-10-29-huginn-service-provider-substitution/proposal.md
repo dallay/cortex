@@ -1,68 +1,68 @@
-# Propuesta: Sustitución de proveedores de Huginn
+# Proposal: Huginn Provider Substitution
 
 > **Slice**: Huginn EPIC 01 · **Issue**: #509 · **Epic**: #442 / DALLAY-718<br>
-> **Change**: `huginn-service-provider-substitution` · **Fase**: Propuesta<br>
+> **Change**: `huginn-service-provider-substitution` · **Phase**: Proposal<br>
 > **Artifact store**: `.agents/sdd/`
 
-## Intención
+## Intent
 
-Permitir sustituir servicios sin reiniciar Huginn, con garantías para consumidores y ciclo de vida. Hoy retirar y registrar plugins por separado bloquea dependientes e impide restaurar el provider previo ante fallos.
+Allow replacing services without restarting Huginn, with guarantees for consumers and lifecycle. Today, removing and registering plugins separately blocks dependents and prevents restoring the previous provider on failure.
 
-## Alcance
+## Scope
 
-### Incluye
+### Includes
 
-- Sustitución transaccional en `huginn-core`, con publicación y rollback.
-- Ownership, dependientes y leases cooperativas con drenaje acotado.
-- Rebind del loop productivo; tests para model y session store.
+- Transactional substitution in `huginn-core`, with publication and rollback.
+- Ownership, dependents, and cooperative leases with bounded draining.
+- Rebind of the productive loop; tests for model and session store.
 
-### Excluye
+### Excludes
 
-- Catálogo, carga dinámica, hot reload, ABI estable, WASM o component model.
-- Migración de plugins o datos; cambios TUI/UX o de aprobación.
+- Catalog, dynamic loading, hot reload, stable ABI, WASM, or component model.
+- Migration of plugins or data; TUI/UX or approval changes.
 
-## Capacidades
+## Capabilities
 
-- **Nueva** `huginn-kernel`: sustitución transaccional, leases y rebind productivo.
-- **Modificadas**: ninguna.
+- **New** `huginn-kernel`: transactional substitution, leases, and productive rebind.
+- **Modified**: none.
 
-## Enfoque
+## Approach
 
-Extender el kernel: mantener ownership/generaciones, activar alternativas mediante `Plugin` y publicar tras drenaje. El timeout aborta sin cancelar trabajo válido.
+Extend the kernel: keep ownership/generations, activate alternatives through `Plugin`, and publish after draining. The timeout aborts without cancelling valid work.
 
-`huginn_application::composition::build` registra el adapter leased. `huginn_runtime::composition::build_native`, `build_native_with_connections` y `build_native_with_connections_and_guards` comparten la ruta de `leased_loop_plugin` mediante el helper privado `build_native_plugin`; el builder público `huginn_runtime::composition::build` delega en la composición application. El `LoopService` retenido lee slots vigentes en el siguiente `run`/`compact`; operaciones activas mantienen sus leases. No se garantiza rebind para `LoopPlugin(pub LoopConfig)` legacy ni composiciones personalizadas que solo capturan `Arc` con `resolve()`. No se migran datos: `SqliteSessions::lease/load/list` siguen fuera de `SessionsService`.
+`huginn_application::composition::build` registers the leased adapter. `huginn_runtime::composition::build_native`, `build_native_with_connections`, and `build_native_with_connections_and_guards` share the `leased_loop_plugin` path through the private helper `build_native_plugin`; the public builder `huginn_runtime::composition::build` delegates to the application composition. The retained `LoopService` reads current slots on the next `run`/`compact`; active operations keep their leases. Rebind is not guaranteed for the legacy `LoopPlugin(pub LoopConfig)` nor for custom compositions that only capture `Arc` through `resolve()`. No data is migrated: `SqliteSessions::lease/load/list` remain outside `SessionsService`.
 
-## Áreas afectadas
+## Affected areas
 
-| Área                                           | Impacto                                                                                                                                             |
+| Area                                           | Impact                                                                                                                                             |
 |------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------|
-| `crates/huginn/core/src/{kernel.rs,lib.rs}`    | Slots y sustitución.                                                                                                                                |
-| `crates/huginn/application/src/composition.rs` | `huginn_application::composition::build` y adapter leased.                                                                                          |
-| `crates/huginn/runtime/src/composition.rs`     | Builders públicos `build`, `build_native`, `build_native_with_connections` y `build_native_with_connections_and_guards`; helper compartido privado. |
-| `apps/huginn/src/main.rs`                      | Composición y readiness.                                                                                                                            |
-| Tests Huginn; arquitectura/ADR-0003            | Rebind y límites.                                                                                                                                   |
+| `crates/huginn/core/src/{kernel.rs,lib.rs}`    | Slots and substitution.                                                                                                                                |
+| `crates/huginn/application/src/composition.rs` | `huginn_application::composition::build` and leased adapter.                                                                                          |
+| `crates/huginn/runtime/src/composition.rs`     | Public builders `build`, `build_native`, `build_native_with_connections`, and `build_native_with_connections_and_guards`; shared private helper. |
+| `apps/huginn/src/main.rs`                      | Composition and readiness.                                                                                                                            |
+| Huginn tests; architecture/ADR-0003            | Rebind and limits.                                                                                                                                   |
 
-## Riesgos
+## Risks
 
-| Riesgo                        | Mitigación                                 |
-|-------------------------------|--------------------------------------------|
-| `Arc` retenidos no se revocan | Garantía solo con leases.                  |
-| Drenaje/rollback incorrectos  | Definir orden y probar dos servicios.      |
-| Conflicto con PR #508         | No tocar catálogo ni carga de componentes. |
+| Risk                               | Mitigation                                |
+|------------------------------------|-------------------------------------------|
+| Retained `Arc` values are not revoked | Guarantee only with leases.               |
+| Incorrect draining/rollback         | Define the order and test two services.   |
+| Conflict with PR #508               | Do not touch the catalog or component loading. |
 
-## Plan de rollback
+## Rollback plan
 
-Revertir restaura el comportamiento previo; no hay dependencias ni migración de esquema.
+Reverting restores the previous behavior; there are no dependencies and no schema migration.
 
-## Dependencias
+## Dependencies
 
-Sin dependencias externas nuevas; evitar conflictos con PR #508.
+No new external dependencies; avoid conflicts with PR #508.
 
-## Criterios de éxito
+## Success criteria
 
-- [ ] Sustituir sin reinicio; rollback limpio e introspección actualizada.
-- [ ] Drenaje con timeout que no cancela operaciones activas.
-- [ ] El `LoopService` retenido por `huginn_application::composition::build` o por los builders públicos de `huginn_runtime::composition` (`build_native`, `build_native_with_connections`, `build_native_with_connections_and_guards`) usa slots nuevos en el siguiente `run`/`compact`, sin reconstrucción; la operación activa termina con sus leases.
-- [ ] Sin garantía para `LoopPlugin(pub LoopConfig)` legacy ni composiciones que retienen `Arc` de `resolve()`.
-- [ ] Tests model/session; sin migrar `SqliteSessions::lease/load/list`.
-- [ ] API v1 compatible; pasan arquitectura y suites focalizadas, con evidencia.
+- [ ] Substitute without restart; clean rollback and updated introspection.
+- [ ] Draining with a timeout that does not cancel active operations.
+- [ ] The `LoopService` retained by `huginn_application::composition::build` or by the public builders of `huginn_runtime::composition` (`build_native`, `build_native_with_connections`, `build_native_with_connections_and_guards`) uses the new slots on the next `run`/`compact`, without reconstruction; the active operation ends with its leases.
+- [ ] No guarantee for the legacy `LoopPlugin(pub LoopConfig)` nor for compositions that retain `Arc` from `resolve()`.
+- [ ] Model/session tests; no migration of `SqliteSessions::lease/load/list`.
+- [ ] Compatible v1 API; architecture and focused suites pass, with evidence.

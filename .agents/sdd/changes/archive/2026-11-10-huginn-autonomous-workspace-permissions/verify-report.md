@@ -1,107 +1,107 @@
-# Informe de verificación: huginn-autonomous-workspace-permissions
+# Verification report: huginn-autonomous-workspace-permissions
 
-**Versión:** N/A (delta OpenSpec)  
-**Fecha:** 2026-11-09  
-**Resultado actual:** PASS WITH WARNINGS  
-**Alcance:** verificación técnica de la implementación y del contrato revisado; no es aceptación QA.
+**Version:** N/A (OpenSpec delta)  
+**Date:** 2026-11-09  
+**Current result:** PASS WITH WARNINGS  
+**Scope:** technical verification of the implementation and of the reviewed contract; it is not QA acceptance.
 
-## Resumen ejecutivo
+## Executive summary
 
-La fuente actual satisface los criterios revisados de las tareas 2.1–2.2. Cada salida controlada de `run_shell_with_seatbelt_profile` obtiene un resultado de ejecución y llama a `SeatbeltProfileFile::cleanup`; la composición conserva el error primario y el de cleanup cuando ambos existen. Para fallos de apertura/escritura previos al spawn, se intenta eliminar lo creado y se conserva el error primario junto con los errores de cleanup observables. El flujo no afirma que el shell no se ejecutó cuando pudo ejecutarse. `Drop` permanece best-effort, y no se exige un error de cierre no observable mediante la API safe de `std::fs::File`.
+The current source satisfies the reviewed criteria of tasks 2.1–2.2. Every controlled exit of `run_shell_with_seatbelt_profile` obtains an execution result and calls `SeatbeltProfileFile::cleanup`; the composition preserves the primary error and the cleanup one when both exist. For open/write failures prior to the spawn, the deletion of what was created is attempted and the primary error is preserved along with the observable cleanup errors. The flow does not claim that the shell did not run when it could have run. `Drop` remains best-effort, and no unobservable close error is required through the safe API of `std::fs::File`.
 
-La suite actual del paquete pasó en macOS 27.3/build 26C5035r, y también pasaron clippy, formato, diff-check y los tests de contratos CI. El resultado lleva advertencias porque el enforcement real solo se observó en esa configuración, CI remoto y `just ci-local` no se ejecutaron, y los tests de composición/cleanup aislados no equivalen a inyectar una falla arbitraria del sistema operativo a través del launcher completo. Ese límite no contradice el diseño aprobado, que contempla probar la composición mediante helper y el cleanup explícito directamente.
+The current package suite passed on macOS 27.3/build 26C5035r, and clippy, formatting, diff-check and the CI contract tests also passed. The result carries warnings because real enforcement was only observed in that configuration, remote CI and `just ci-local` were not run, and the isolated composition/cleanup tests are not equivalent to injecting an arbitrary operating system failure through the full launcher. That limit does not contradict the approved design, which contemplates testing the composition through a helper and the explicit cleanup directly.
 
-El FAIL anterior se conserva como histórico. La nota histórica temprana de 3.2 ya está seguida por el cierre fechado más reciente que documenta la evidencia posterior y marca la tarea; no se alteró el historial.
+The previous FAIL is kept as historical. The early historical note of 3.2 is already followed by the most recent dated close that documents the later evidence and marks the task; the history was not altered.
 
-## Completitud
+## Completeness
 
-| Métrica            | Valor |
+| Metric            | Value |
 |--------------------|------:|
-| Entradas checklist |    23 |
-| Completas          |    23 |
-| Incompletas        |     0 |
+| Checklist entries |    23 |
+| Complete          |    23 |
+| Incomplete        |     0 |
 
-Las entradas agrupadas (por ejemplo, 1.1–1.13) cuentan como una entrada de checklist, conforme al texto de `tasks.md`. Las tareas 2.1 y 2.2 están marcadas `[x]` y coinciden con el contrato aprobado. No se detectaron tareas pendientes.
+The grouped entries (for example, 1.1–1.13) count as one checklist entry, as stated in `tasks.md`. Tasks 2.1 and 2.2 are marked `[x]` and match the approved contract. No pending tasks were detected.
 
-## Build, pruebas y validaciones
+## Build, tests and validations
 
-### Ejecutadas en esta verificación
+### Run in this verification
 
-- `cargo test -p huginn-runtime` — **exit 0** en macOS 27.3/build 26C5035r; `/usr/bin/sandbox-exec` existe y es ejecutable. Resultados: lib 60/60; `adapter_security` 3/3; `approval_resource` 44/44; `coding_workflow` 34/34; `connections` 4 pasaron y 1 se ignoró por requerir Keychain/D-Bus externo; `guardrails` 8/8; `host_secrets` 1/1; `inference_adapters` 31/31; `mcp_lifecycle` 2/2; `providers_integration` 9/9; `session_locks` 6/6; `sessions_persistence` 5/5; `skill_loading` 10/10; `skills_catalog` 9/9; `stream_persistence` 4/4; `tool_authoring` 4/4; `tool_lifecycle` 12/12; `transports` 6/6; targets WASM y doc-tests sin casos. Cero fallos.
+- `cargo test -p huginn-runtime` — **exit 0** on macOS 27.3/build 26C5035r; `/usr/bin/sandbox-exec` exists and is executable. Results: lib 60/60; `adapter_security` 3/3; `approval_resource` 44/44; `coding_workflow` 34/34; `connections` 4 passed and 1 ignored for requiring external Keychain/D-Bus; `guardrails` 8/8; `host_secrets` 1/1; `inference_adapters` 31/31; `mcp_lifecycle` 2/2; `providers_integration` 9/9; `session_locks` 6/6; `sessions_persistence` 5/5; `skill_loading` 10/10; `skills_catalog` 9/9; `stream_persistence` 4/4; `tool_authoring` 4/4; `tool_lifecycle` 12/12; `transports` 6/6; WASM targets and doc-tests without cases. Zero failures.
 - `cargo clippy -p huginn-runtime --all-targets -- -D warnings` — **exit 0**.
 - `cargo fmt --all -- --check` — **exit 0**.
 - `git diff --check` — **exit 0**.
 - `node --test .github/scripts/ci-*.test.cjs` — **exit 0**, 309/309.
-- Inspección de la fuente actual: `run_shell`, `run_shell_with_seatbelt_profile`, `combine_shell_cleanup`, `cleanup_before_spawn`, `SeatbeltProfileFile::{cleanup,drop}`, creación/escritura del perfil, builder Seatbelt, workflow CI, spec, diseño, propuesta y tareas.
+- Inspection of the current source: `run_shell`, `run_shell_with_seatbelt_profile`, `combine_shell_cleanup`, `cleanup_before_spawn`, `SeatbeltProfileFile::{cleanup,drop}`, profile creation/writing, the Seatbelt builder, the CI workflow, the spec, the design, the proposal and the tasks.
 
-### Evidencia de apply revisada
+### Reviewed apply evidence
 
-`apply-progress.md`, sección “Reapertura de 2.1–2.2 bajo el contrato aprobado”, registra RED conductual real al reconstruir temporalmente la conducta anterior y restaurar la implementación: la composición pre-spawn perdió el error secundario de cleanup, y la post-spawn perdió el timeout y la posibilidad de que el shell hubiera corrido. Los tests de composición y de resultado exitoso con cleanup fallido pasaron después. El registro también informa 29 tests focalizados Seatbelt en lib y el mismo módulo en `approval_resource`, `cargo test -p huginn-runtime` exit 0 (60 lib, 44 `approval_resource`, demás suites pasaron, una prueba ignorada por requisito externo), clippy `-D warnings`, fmt y diff-check exitosos. Esta evidencia de apply se distingue de los comandos que se reejecutaron aquí.
+`apply-progress.md`, section "Reopen of 2.1–2.2 under the approved contract", records a real behavioral RED by temporarily reconstructing the previous behavior and restoring the implementation: the pre-spawn composition lost the secondary cleanup error, and the post-spawn one lost the timeout and the possibility that the shell had run. The composition tests and the successful result with failed cleanup passed afterwards. The record also reports 29 focused Seatbelt tests in lib and the same module in `approval_resource`, `cargo test -p huginn-runtime` exit 0 (60 lib, 44 `approval_resource`, the rest of the suites passed, one test ignored for an external requirement), clippy `-D warnings`, fmt and a successful diff-check. This apply evidence is distinguished from the commands re-run here.
 
-### Omisiones y adaptadores
+### Omissions and adapters
 
-- No se ejecutó un build separado: `.agents/sdd/config.yaml` no configura `build_command`; no se presenta como pase.
-- Coverage no está configurado (`coverage_threshold: 0`); no aplicable.
-- `.agents/sdd/quality-runner.json` no existe: `fallback`; no hay enforcement determinista ni envelope del runner.
-- No se ejecutaron `just ci-local` ni un run remoto de GitHub Actions. Los tests locales del workflow pasaron y el job macOS `test-huginn-seatbelt` aparece conectado al evaluador `CI / Required`; no se afirma que el job remoto haya pasado.
-- No se ejecutó QA ni archive.
+- No separate build was run: `.agents/sdd/config.yaml` does not configure `build_command`; it is not presented as a pass.
+- Coverage is not configured (`coverage_threshold: 0`); not applicable.
+- `.agents/sdd/quality-runner.json` does not exist: `fallback`; there is no deterministic enforcement nor a runner envelope.
+- Neither `just ci-local` nor a remote GitHub Actions run was executed. The local workflow tests passed and the macOS job `test-huginn-seatbelt` appears connected to the `CI / Required` evaluator; it is not claimed that the remote job passed.
+- Neither QA nor archive was run.
 
-## Matriz de conformidad
+## Compliance matrix
 
-| Requisito / escenario                                                      | Evidencia y resultado                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Requirement / scenario                                                      | Evidence and result                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 |----------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 2.1: RED para composición pre-spawn y post-spawn                           | **CONFORME.** Evidencia RED conductual registrada en apply: al restaurar temporalmente la composición previa, cada test falló por la información que debía conservar; la implementación corregida se restauró y los tests pasaron. No es una inferencia basada solo en la existencia de tests.                                                                                                                                                                       |
-| 2.2: cleanup explícito para cada retorno controlado                        | **CONFORME.** El fuente obtiene el `Result` de `run_shell_with_launcher`, invoca `profile_file.cleanup()` y compone ambos. Cubre éxito, status no-cero/rechazo representado como salida observable, error de spawn, timeout, cancelación y errores de lectura/ejecución que retorna el helper. El test focalizado corre dentro de `cargo test -p huginn-runtime` y los tests de composición de helper pasaron.                                                       |
-| Post-spawn: propagar error cleanup sin afirmar que el shell no corrió      | **CONFORME.** `combine_shell_cleanup` mantiene el error primario más cleanup failure; en resultado exitoso con cleanup error y en el caso combinado emite “may have run”. Tests `post_spawn_error_composition_preserves_primary_and_possible_execution` y `post_spawn_success_with_cleanup_error_does_not_claim_shell_was_skipped` pasaron.                                                                                                                          |
-| Pre-spawn: no iniciar shell; cleanup y conservar error primario/secundario | **CONFORME.** La creación del directorio, apertura y escritura preceden al launcher. `open` y `write_all` fallidos invocan cleanup explícito de recursos creados y `cleanup_before_spawn` conserva ambos errores; fallo de mkdir no deja recursos creados. Tests cubren fallo de creación por padre no-directorio, writer fallido, tamaño, composición de errores y spawn fallido sin marcador. No se afirma haber inyectado una falla arbitraria del OS end-to-end. |
-| Drop abrupto                                                               | **CONFORME.** `Drop` intenta `remove_file`/`remove_dir` y descarta sus errores, coherente con best-effort y sin garantía ante fallo OS. No se convierte este camino en salida controlada ni se exige unlink exitoso.                                                                                                                                                                                                                                                 |
-| Escritura y cierre de archivo                                              | **CONFORME.** La escritura productiva usa `write_all`; test de writer fallido pasa. No se exige error independiente de `close` de `std::fs::File`, que no expone ese error mediante API safe.                                                                                                                                                                                                                                                                        |
-| Aislamiento macOS, política deny-default y launcher obligatorio            | **PARCIAL / alcance observado.** Tests reales ejecutados por `run_shell` usan `/usr/bin/sandbox-exec`; el perfil inspeccionado importa `dyld-support.sb`, luego aplica `(deny default)`, limita rutas y no permite red/socket. La suite de enforcement real pasó en este host. No se generaliza a otras versiones/macOS futuros.                                                                                                                                     |
-| Fallos de launcher/perfil y no ejecución pre-spawn                         | **CONFORME para casos probados.** Casos de perfil inválido, launcher ausente/no ejecutable, creación/escritura y tamaño tienen pruebas que pasan; marcadores ausentes en los casos correspondientes. No se extrapola a todos los fallos OS posibles.                                                                                                                                                                                                                 |
-| Política/aprobación, no grants/bypass                                      | **CONFORME según inspección y evidencia apply.** No hay opt-out, fallback ni bypass en macOS; no se crean/leen grants. Tests de aplicación `Deny` y `Allow once` constan en apply-progress. No se atribuye a esos tests enforcement del kernel.                                                                                                                                                                                                                      |
-| Herramientas nativas/MCP fuera de garantía                                 | **CONFORME según scope y documentación inspeccionados.** La garantía está limitada a `run_shell` y descendientes.                                                                                                                                                                                                                                                                                                                                                    |
-| No paridad Linux/Windows                                                   | **CONFORME según inspección.** Launcher Seatbelt se condiciona a macOS y no se declara aislamiento equivalente en otras plataformas.                                                                                                                                                                                                                                                                                                                                 |
-| Ciclo de vida y CI                                                         | **CONFORME en casos probados, limitado por entorno.** Suite actual incluye cwd/PATH/stdin/streams, límites, timeout/cancelación, descendientes, rutas y protocolos; tests CI locales 309/309. Enforcement observado solo en macOS 27.3/build 26C5035r, sin CI remoto.                                                                                                                                                                                                |
+| 2.1: RED for the pre-spawn and post-spawn composition                        | **COMPLIANT.** Behavioral RED evidence recorded in apply: when temporarily restoring the previous composition, each test failed on the information it had to preserve; the corrected implementation was restored and the tests passed. It is not an inference based only on the existence of tests.                                                                                                                                                                       |
+| 2.2: explicit cleanup for every controlled return                            | **COMPLIANT.** The source obtains the `Result` of `run_shell_with_launcher`, invokes `profile_file.cleanup()` and composes both. It covers success, a non-zero status/rejection represented as an observable output, a spawn error, timeout, cancellation and the read/execution errors returned by the helper. The focused test runs inside `cargo test -p huginn-runtime` and the helper composition tests passed.                                                       |
+| Post-spawn: propagate the cleanup error without claiming that the shell did not run | **COMPLIANT.** `combine_shell_cleanup` keeps the primary error plus the cleanup failure; on a successful result with a cleanup error and in the combined case it emits "may have run". The tests `post_spawn_error_composition_preserves_primary_and_possible_execution` and `post_spawn_success_with_cleanup_error_does_not_claim_shell_was_skipped` passed.                                                                                                                          |
+| Pre-spawn: do not start the shell; cleanup and preserve the primary/secondary error | **COMPLIANT.** The directory creation, the open and the write precede the launcher. A failed `open` and `write_all` invoke the explicit cleanup of the created resources and `cleanup_before_spawn` preserves both errors; an mkdir failure leaves no created resources. The tests cover a creation failure due to a non-directory parent, a failing writer, the size, the error composition and a failed spawn without a marker. It is not claimed that an arbitrary OS failure was injected end-to-end. |
+| Abrupt Drop                                                               | **COMPLIANT.** `Drop` attempts `remove_file`/`remove_dir` and discards their errors, consistent with best-effort and without a guarantee on OS failure. This path is not turned into a controlled exit nor is a successful unlink required.                                                                                                                                                                                                                                                 |
+| File write and close                                                      | **COMPLIANT.** The production write uses `write_all`; the failing writer test passes. No independent `close` error of `std::fs::File` is required, since it does not expose that error through the safe API.                                                                                                                                                                                                                                                                        |
+| macOS isolation, deny-default policy and mandatory launcher                  | **PARTIAL / observed scope.** The real tests executed by `run_shell` use `/usr/bin/sandbox-exec`; the inspected profile imports `dyld-support.sb`, then applies `(deny default)`, limits the paths and does not allow network/socket. The real enforcement suite passed on this host. It is not generalized to other/future macOS versions.                                                                                                                                     |
+| Launcher/profile failures and no pre-spawn execution                         | **COMPLIANT for the tested cases.** The invalid profile, the missing/not executable launcher, the creation/writing and the size cases have tests that pass; the markers are absent in the corresponding cases. It is not extrapolated to all possible OS failures.                                                                                                                                                                                                                 |
+| Policy/approval, no grants/bypass                                          | **COMPLIANT according to inspection and apply evidence.** There is no opt-out, fallback nor bypass on macOS; no grants are created/read. The application tests `Deny` and `Allow once` are recorded in apply-progress. Kernel enforcement is not attributed to those tests.                                                                                                                                                                                                                      |
+| Native tools/MCP outside the guarantee                                     | **COMPLIANT according to the inspected scope and documentation.** The guarantee is limited to `run_shell` and its descendants.                                                                                                                                                                                                                                                                                                                                                    |
+| No Linux/Windows parity                                                    | **COMPLIANT according to inspection.** The Seatbelt launcher is conditioned on macOS and equivalent isolation is not declared on other platforms.                                                                                                                                                                                                                                                                                                                                 |
+| Lifecycle and CI                                                          | **COMPLIANT in the tested cases, limited by the environment.** The current suite includes cwd/PATH/stdin/streams, limits, timeout/cancellation, descendants, paths and protocols; local CI tests 309/309. Enforcement observed only on macOS 27.3/build 26C5035r, without remote CI.                                                                                                                                                                                                |
 
-**Resumen:** los escenarios 2.1–2.2 cumplen el contrato revisado con tests runtime/helper y revisión del cableado productivo. El uso de helper para probar composición, y el test directo de cleanup, están explícitamente previstos por el diseño; no se exige una falla arbitraria de unlink inyectada end-to-end. La evidencia no afirma que tal fallo OS se haya probado por el launcher completo.
+**Summary:** scenarios 2.1–2.2 comply with the reviewed contract with runtime/helper tests and a review of the production wiring. The use of a helper to test the composition, and the direct cleanup test, are explicitly foreseen by the design; an arbitrary injected unlink failure end-to-end is not required. The evidence does not claim that such an OS failure was tested through the full launcher.
 
-## Corrección estructural y coherencia con diseño
+## Structural correction and consistency with the design
 
-| Decisión                                                         | Estado                           | Evidencia                                                                                                                                 |
+| Decision                                                         | Status                           | Evidence                                                                                                                                 |
 |------------------------------------------------------------------|----------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------|
-| Builder puro y privado; preparación runtime de la raíz           | Conforme                         | `seatbelt.rs` separa generación/política del flujo runtime; `run_shell` usa raíz canónica para el perfil y `current_dir`.                 |
-| `/usr/bin/sandbox-exec` fijo, `-f`, argv separados; fail-closed  | Conforme                         | Callsite macOS fija launcher y argumentos. No existe fallback sin sandbox para macOS.                                                     |
-| Perfil temporal privado, permisos restrictivos, límite y cleanup | Conforme                         | Directorio `0700`, archivo `0600`, `create_new`, límite 64 KiB, `write_all`, cleanup explícito en salida controlada y `Drop` best-effort. |
-| Seguridad del perfil                                             | Conforme en la evidencia probada | `(deny default)`, sin reglas de red/socket ni raíces amplias añadidas. Enforcement real solo en los probes y host indicados.              |
-| Grupo/procesos descendientes                                     | Conforme en los casos observados | `ProcessGroup::leader`, `KillOnDrop`; tests timeout/cancelación pasan. No se amplía el claim más allá de esos casos.                      |
-| Archivos y CI previstos                                          | Conforme                         | Runtime, docs, config de ejemplo, ADR y workflow corresponden al diseño. Los tests locales de workflow pasaron; no hubo ejecución remota. |
+| Pure and private builder; runtime preparation of the root           | Compliant                         | `seatbelt.rs` separates generation/policy from the runtime flow; `run_shell` uses the canonical root for the profile and `current_dir`.                 |
+| Fixed `/usr/bin/sandbox-exec`, `-f`, separate argv; fail-closed   | Compliant                         | The macOS callsite fixes the launcher and the arguments. There is no sandbox-free fallback for macOS.                                                     |
+| Private temporary profile, restrictive permissions, limit and cleanup | Compliant                         | Directory `0700`, file `0600`, `create_new`, 64 KiB limit, `write_all`, explicit cleanup on a controlled exit and best-effort `Drop`. |
+| Profile security                                                  | Compliant in the proven evidence | `(deny default)`, without network/socket rules nor broad roots added. Real enforcement only on the indicated probes and host.              |
+| Group/descendant processes                                     | Compliant in the observed cases | `ProcessGroup::leader`, `KillOnDrop`; timeout/cancellation tests pass. The claim is not widened beyond those cases.                      |
+| Expected files and CI                                          | Compliant                         | Runtime, docs, example config, ADR and workflow correspond to the design. The local workflow tests passed; there was no remote execution. |
 
-## Auditoría TDD
+## TDD audit
 
-| Métrica                         | Estado                                                                                                                                                                                                |
+| Metric                         | Status                                                                                                                                                                                                |
 |---------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Aplicabilidad                   | Comportamiento de runtime: aplica TDD.                                                                                                                                                                |
-| RED→GREEN                       | Confirmado en apply para composición de errores pre/post-spawn mediante reconstrucción temporal de conducta previa; los asserts fallaron por la conducta incorrecta y pasaron restaurada la solución. |
-| Refactor / validación posterior | Suite Seatbelt focalizada y suite completa del paquete pasaron; el código centraliza composición en helpers privados compartidos.                                                                     |
-| Evidencia persistida            | Sí, en `apply-progress.md`; el informe distingue la ejecución registrada de las ejecuciones nuevas de verify.                                                                                         |
+| Applicability                   | Runtime behavior: TDD applies.                                                                                                                                                                |
+| RED→GREEN                       | Confirmed in apply for the pre/post-spawn error composition through a temporary reconstruction of the previous behavior; the asserts failed because of the incorrect behavior and passed once the solution was restored. |
+| Refactor / later validation     | The focused Seatbelt suite and the full package suite passed; the code centralizes the composition in private shared helpers.                                                                     |
+| Persisted evidence              | Yes, in `apply-progress.md`; the report distinguishes the recorded run from the new verify runs.                                                                                         |
 
-## Hallazgos
+## Findings
 
-### CRÍTICOS
+### CRITICAL
 
-Ninguno para el contrato revisado de 2.1–2.2.
+None for the reviewed contract of 2.1–2.2.
 
-### ADVERTENCIAS
+### WARNINGS
 
-1. Enforcement real verificado solo en macOS 27.3/build 26C5035r. La interfaz Seatbelt está deprecada y la importación `dyld-support.sb` depende de Apple; no se afirma compatibilidad futura ni con otras versiones.
-2. Los tests de composición sintetizan errores para verificar la preservación de errores; el test de cleanup comprueba propagación directamente. No se ha provocado un fallo arbitrario del OS de unlink dentro de una ejecución completa del launcher. El diseño revisado permite esta separación de pruebas, y la implementación inspeccionada conecta cleanup a cada retorno controlado.
-3. No hubo CI remoto, `just ci-local`, build separado ni runner determinista. El resultado no equivale a CI completo.
-4. Una prueba se ignora por requisito externo de Keychain o D-Bus. No corresponde al área modificada.
+1. Real enforcement verified only on macOS 27.3/build 26C5035r. The Seatbelt interface is deprecated and the `dyld-support.sb` import depends on Apple; no future compatibility nor compatibility with other versions is claimed.
+2. The composition tests synthesize errors to verify the error preservation; the cleanup test checks propagation directly. An arbitrary OS unlink failure within a full launcher run has not been provoked. The reviewed design allows this test separation, and the inspected implementation wires cleanup to every controlled return.
+3. There was no remote CI, no `just ci-local`, no separate build nor deterministic runner. The result is not equivalent to a full CI.
+4. One test is ignored for an external Keychain or D-Bus requirement. It does not correspond to the modified area.
 
-### SUGERENCIAS
+### SUGGESTIONS
 
-Ninguna.
+None.
 
-## Veredicto
+## Verdict
 
-**PASS WITH WARNINGS** — 2.1–2.2 satisfacen el contrato revisado y las 23 entradas de checklist están completas. Las advertencias limitan el alcance de plataforma y la evidencia operacional; no invalidan la conformidad de esas tareas. Este informe no sustituye aceptación QA independiente ni autoriza archive por sí mismo.
+**PASS WITH WARNINGS** — 2.1–2.2 satisfy the reviewed contract and the 23 checklist entries are complete. The warnings limit the platform scope and the operational evidence; they do not invalidate the compliance of those tasks. This report does not replace independent QA acceptance nor authorize archive by itself.

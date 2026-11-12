@@ -87,12 +87,12 @@ describe('required coverage checks', () => {
       });
 });
 
-describe('resultados aplicables', () => {
+describe('applicable results', () => {
   const allChanges = Object.fromEntries(categories.map((key) => [key, 'true']));
   for (const job of Object.keys(successResults)) {
     for (const status of
         ['failure', 'cancelled', 'missing', 'skipped', 'neutral', undefined]) {
-      it(`bloquea ${job}: ${String(status)}`, () => {
+      it(`blocks ${job}: ${String(status)}`, () => {
         const results = {...successResults, [job]: status};
         if (status === undefined) {
           delete results[job];
@@ -106,13 +106,13 @@ describe('resultados aplicables', () => {
   }
 });
 
-describe('Sonar obligatorio en toda PR', () => {
+describe('Sonar required in every PR', () => {
   for (const changes of [{docs: 'true'}, {}]) {
     for (const identity of
         [{actor: 'developer', fork: false}, {actor: 'developer', fork: true},
           {actor: 'dependabot[bot]', fork: false}]) {
       for (const job of ['sonar', 'build-dashboard']) {
-        it(`bloquea ${job} omitido: ${JSON.stringify({changes, ...identity})}`,
+        it(`blocks omitted ${job}: ${JSON.stringify({changes, ...identity})}`,
             () => {
               const candidate = {
                 ...input(changes,
@@ -124,7 +124,7 @@ describe('Sonar obligatorio en toda PR', () => {
                   `${job}: expected success, got skipped`));
             });
       }
-      it(`bloquea token ausente: ${JSON.stringify({changes, ...identity})}`,
+      it(`blocks missing token: ${JSON.stringify({changes, ...identity})}`,
           () => {
             const candidate = {
               ...input(changes), ...identity,
@@ -138,7 +138,7 @@ describe('Sonar obligatorio en toda PR', () => {
     }
   }
 
-  it('permite skips de Sonar y dashboard en push de documentación', () => {
+  it('allows Sonar and dashboard skips on a documentation push', () => {
     const candidate = input({docs: 'true'},
         {...successResults, sonar: 'skipped', 'build-dashboard': 'skipped'});
     candidate.eventName = 'push';
@@ -147,11 +147,11 @@ describe('Sonar obligatorio en toda PR', () => {
   });
 });
 
-describe('contrato de categorías', () => {
+describe('category contract', () => {
   for (const category of categories) {
     for (const value of
         [undefined, '', true, false, 'TRUE', 'False', '0', null]) {
-      it(`bloquea ${category} con valor ${String(value)} (${typeof value})`,
+      it(`blocks ${category} with value ${String(value)} (${typeof value})`,
           () => {
             const candidate = input({[category]: value});
             if (value === undefined) {
@@ -165,7 +165,7 @@ describe('contrato de categorías', () => {
     }
   }
 
-  it('no convierte salidas ausentes del entorno a false', () => {
+  it('does not convert missing environment entries to false', () => {
     const env = {
       PATH: process.env.PATH,
       EVENT_NAME: 'push',

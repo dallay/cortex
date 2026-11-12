@@ -15,7 +15,7 @@ impl Tool for Echo {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "author.echo".into(),
-            description: "Efecto de prueba que requiere aprobación".into(),
+            description: "Test effect that requires approval".into(),
             input_schema: Default::default(),
         }
     }

@@ -1,138 +1,141 @@
-# huginn-overlays — Especificación
+# huginn-overlays — Specification
 
-## Propósito
+## Purpose
 
-Unificar las interacciones de la TUI sin ampliar autoridad de plugins ni perder
-los flujos existentes. No incluye onboarding, capa de toasts ni tema live.
+Unify the TUI interactions without expanding plugin authority or losing the
+existing flows. It does not include onboarding, the toast layer, or the live
+theme.
 
 ## Requirements
 
-### Requirement: OVL-01 — Un único overlay activo
+### Requirement: OVL-01 — Single active overlay
 
-El sistema MUST representar los overlays mediante un enum `Overlay` unificado
-que incluya `Settings`, `Provider`, `Login`, `ModelPicker`, `Help`, `Confirm`
-y `Approval`, y aloje los diálogos/workflows existentes. Render e input MUST
-referirse al mismo overlay activo. Un overlay MUST consumir sus teclas sin
-enviarlas al editor ni a completion. Cerrar MUST devolver el foco al editor
-sin reenviar la tecla de cierre. La migración MUST terminar sin slots legacy
-paralelos `modal`, `plugin_dialog`, `workflow` o `settings`.
+The system MUST represent the overlays through a unified `Overlay` enum that
+includes `Settings`, `Provider`, `Login`, `ModelPicker`, `Help`, `Confirm`
+and `Approval`, and hosts the existing dialogs/workflows. Render and input MUST
+refer to the same active overlay. An overlay MUST consume its keys without
+sending them to the editor or to completion. Closing MUST return the focus to
+the editor without resending the closing key. The migration MUST finish without
+parallel legacy slots `modal`, `plugin_dialog`, `workflow` or `settings`.
 
-#### Scenario: OVL-01-A — Ayuda y retorno al editor
+#### Scenario: OVL-01-A — Help and return to the editor
 
-- GIVEN el editor disponible y sin overlay
-- WHEN se ejecuta `/help` y después se cierra `Help`
-- THEN la ayuda se presenta en `Help`, no en conversación
-- AND durante su apertura las teclas pertenecen a `Help`
-- AND al cerrar se recupera el editor sin insertar ni enviar la tecla de cierre
+- GIVEN the editor is available and there is no overlay
+- WHEN `/help` runs and then `Help` is closed
+- THEN the help is presented in `Help`, not in the conversation
+- AND during its opening the keys belong to `Help`
+- AND on closing the editor is recovered without inserting or sending the closing key
 
-### Requirement: OVL-02 — Solicitudes declarativas autorizadas
+### Requirement: OVL-02 — Authorized declarative requests
 
-`CommandResult::Overlay(OverlayKind)` MUST permitir a comandos solicitar overlays
-autorizados del host sin otorgar capacidades de input, render o permisos.
-Los plugins MUST NOT crear ni resolver `Approval`, obtener su `oneshot` ni
-usar `Confirm` como aprobación de herramientas. Solicitudes no autorizadas,
-inválidas o revocadas MUST rechazarse sin efectos ni apertura alternativa.
+`CommandResult::Overlay(OverlayKind)` MUST allow commands to request authorized
+host overlays without granting input, render, or permission capabilities.
+Plugins MUST NOT create or resolve `Approval`, obtain its `oneshot`, or use
+`Confirm` as tool approval. Unauthorized, invalid, or revoked requests MUST be
+rejected without effects or an alternative opening.
 
-#### Scenario: OVL-02-A — Solicitud permitida
+#### Scenario: OVL-02-A — Allowed request
 
-- GIVEN un comando vigente autorizado para solicitar `Help`
-- WHEN devuelve `CommandResult::Overlay(OverlayKind)` para `Help`
-- THEN el host abre `Help` con sus controles y foco propios
-- AND no se añade conversación ni se concede autorización
+- GIVEN a current command authorized to request `Help`
+- WHEN it returns `CommandResult::Overlay(OverlayKind)` for `Help`
+- THEN the host opens `Help` with its own controls and focus
+- AND no conversation is added and no authorization is granted
 
-#### Scenario: OVL-02-B — Sin autoridad de aprobación
+#### Scenario: OVL-02-B — Without approval authority
 
-- GIVEN un plugin que solicita un overlay no permitido o muestra `Confirm`
-- WHEN se procesa la solicitud o se acepta esa confirmación ordinaria
-- THEN ninguna acción pendiente obtiene aprobación de herramientas
-- AND la solicitud no permitida deja un error no conversacional y no reemplaza el overlay activo
+- GIVEN a plugin that requests a disallowed overlay or shows `Confirm`
+- WHEN the request is processed or that ordinary confirmation is accepted
+- THEN no pending action obtains tool approval
+- AND the disallowed request leaves a non-conversational error and does not replace the active overlay
 
-### Requirement: OVL-03 — Approval exclusivo y fail-closed
+### Requirement: OVL-03 — Exclusive Approval and fail-closed
 
-Solo el host MUST abrir `Approval` y poseer su respuesta `oneshot`, separada
-de `Confirm`. `Approval` MUST preemptar cualquier overlay ordinario, descartarlo
-y revocar su foco sin restaurarlo después. Mientras esté pendiente, solicitudes
-ordinarias MUST NOT reemplazarlo. Solo una aceptación explícita válida de la
-solicitud vigente MUST conceder permiso. Cierre, cancelación, pérdida de canal,
-revocación y shutdown MUST finalizar sin concederlo; callbacks obsoletos MUST
-NOT resolver una solicitud posterior ni causar dobles respuestas.
-Preemptar Settings antes de iniciar Apply MUST NOT escribir; si Apply ya inició
-escritura, la preemption MUST NOT iniciar otra ni prometer rollback. Su receipt
-MUST seguir REQ-07 de `ui-settings` sin reabrir Settings ni alterar Approval.
+Only the host MUST open `Approval` and own its `oneshot` response, separate
+from `Confirm`. `Approval` MUST preempt any ordinary overlay, discard it,
+and revoke its focus without restoring it afterwards. While it is pending,
+ordinary requests MUST NOT replace it. Only a valid explicit acceptance of the
+current request MUST grant permission. Closing, cancellation, channel loss,
+revocation, and shutdown MUST end without granting it; stale callbacks MUST
+NOT resolve a later request nor cause double responses. Preempting Settings
+before starting an Apply MUST NOT write; if the Apply already started a write,
+the preemption MUST NOT start another one nor promise a rollback. Its receipt
+MUST still follow REQ-07 of `ui-settings` without reopening Settings nor
+altering Approval.
 
-#### Scenario: OVL-03-A — Preemption y aceptación vigente
+#### Scenario: OVL-03-A — Preemption and current acceptance
 
-- GIVEN `Settings` con cambios sin guardar, sin Apply iniciado y una solicitud de aprobación del host
-- WHEN se abre `Approval` y el usuario completa su aceptación explícita válida
-- THEN `Settings` se descarta sin persistir y su foco queda revocado
-- AND solo la solicitud vigente recibe una aceptación, una sola vez
-- AND `Settings` no reaparece al terminar
+- GIVEN `Settings` with unsaved changes, no Apply started, and a host approval request
+- WHEN `Approval` opens and the user completes its valid explicit acceptance
+- THEN `Settings` is discarded without persisting and its focus is revoked
+- AND only the current request receives an acceptance, a single time
+- AND `Settings` does not reappear when it ends
 
-#### Scenario: OVL-03-B — Cierre y shutdown
+#### Scenario: OVL-03-B — Closing and shutdown
 
-- GIVEN una `Approval` pendiente
-- WHEN ocurre cierre, cancelación, pérdida del canal o shutdown, en casos separados
-- THEN la espera termina sin permiso y sin quedar bloqueada
-- AND entrada o callbacks posteriores no conceden permiso ni reabren el overlay
+- GIVEN a pending `Approval`
+- WHEN closing, cancellation, channel loss, or shutdown occurs, in separate cases
+- THEN the wait ends without permission and without remaining blocked
+- AND later input or callbacks grant no permission and do not reopen the overlay
 
-#### Scenario: OVL-03-C — Reemplazo ordinario bloqueado y respuesta tardía
+#### Scenario: OVL-03-C — Blocked ordinary replacement and late response
 
-- GIVEN una `Approval` vigente y una respuesta tardía de una solicitud anterior
-- WHEN llega esa respuesta y un comando solicita `Help`
-- THEN `Approval` sigue activa y sin resolver
-- AND ni el callback anterior ni el comando alteran su autoridad o foco
+- GIVEN a current `Approval` and a late response from an earlier request
+- WHEN that response arrives and a command requests `Help`
+- THEN `Approval` stays active and unresolved
+- AND neither the earlier callback nor the command alters its authority or focus
 
-### Requirement: OVL-04 — Revocación, secretos y leases
+### Requirement: OVL-04 — Revocation, secrets, and leases
 
-Cerrar, reemplazar, cancelar o revocar un overlay MUST invalidar su lease de
-input, descartar sus buffers editables y cancelar su tarea local cuando sea
-cancelable. Una escritura de Settings ya iniciada MAY completar: MUST conservarse
-solo lo necesario para consumir su receipt según REQ-07 de `ui-settings`, sin
-restaurar foco ni retener secretos de formularios. Cerrar MUST NOT iniciar una
-escritura adicional ni afirmar que la iniciada fue deshecha. El sistema MUST NOT buscar
-una contribución sustituta por nombre para continuar una acción revocada.
-Secretos MUST permanecer en campos secretos con máscara constante y MUST NOT
-pasar por editor conversacional, historial, eventos JSON, logs o diagnósticos.
-Paste y teclas capturados por un lease revocado MUST NOT cruzar al siguiente
-overlay o al editor. Cancelar localmente MUST NOT afirmar rollback remoto o durable.
+Closing, replacing, canceling, or revoking an overlay MUST invalidate its
+input lease, discard its editable buffers, and cancel its local task when it is
+cancelable. A Settings write already started MAY complete: only what is needed
+to consume its receipt according to REQ-07 of `ui-settings` MUST be kept,
+without restoring focus nor retaining form secrets. Closing MUST NOT start an
+additional write nor assert that the started one was undone. The system MUST NOT
+look for a substitute contribution by name to continue a revoked action.
+Secrets MUST stay in secret fields with constant masking and MUST NOT pass
+through the conversational editor, history, JSON events, logs, or diagnostics.
+Pastes and keys captured by a revoked lease MUST NOT cross to the next overlay
+or to the editor. Canceling locally MUST NOT assert a remote or durable
+rollback.
 
-#### Scenario: OVL-04-A — Paste incompleto y cambio de foco
+#### Scenario: OVL-04-A — Incomplete paste and focus change
 
-- GIVEN `Login` con un secreto centinela y paste incompleto bajo su lease
-- WHEN se cancela con Ctrl+C y se abre otro overlay antes de llegar el resto del paste
-- THEN ningún fragmento llega al nuevo overlay ni al editor
-- AND el secreto no aparece en conversación, capturas de terminal, JSON ni logs
-- AND Esc dentro del paste incompleto sigue tratándose como delimitador, no como aceptación
+- GIVEN `Login` with a sentinel secret and an incomplete paste under its lease
+- WHEN it is canceled with Ctrl+C and another overlay opens before the rest of the paste arrives
+- THEN no fragment reaches the new overlay nor the editor
+- AND the secret does not appear in the conversation, terminal captures, JSON, or logs
+- AND Esc inside the incomplete paste is still treated as a delimiter, not as an acceptance
 
-#### Scenario: OVL-04-B — Contribución revocada durante operación
+#### Scenario: OVL-04-B — Contribution revoked during operation
 
-- GIVEN un formulario pendiente de una contribución registrada
-- WHEN se revoca y registra otra del mismo nombre y después llega el resultado anterior
-- THEN se cierra el formulario, revoca el foco y cancela su tarea local
-- AND no se ejecuta la sustituta ni se aplica el resultado tardío a la nueva UI
-- AND cualquier aviso de cancelación no promete deshacer efectos ya realizados
+- GIVEN a pending form from a registered contribution
+- WHEN it is revoked and another one of the same name is registered, and then the earlier result arrives
+- THEN the form is closed, the focus is revoked, and its local task is canceled
+- AND the substitute is not executed and the late result is not applied to the new UI
+- AND any cancellation notice does not promise to undo effects already performed
 
-### Requirement: OVL-05 — Flujos de conexión funcionales
+### Requirement: OVL-05 — Functional connection flows
 
-`Provider`, `Login`, `ModelPicker` y las confirmaciones MUST conservar las
-operaciones existentes de `/providers`, `/login`, `/model` y `/logout`, no
-placeholders. MUST conservar validación, errores recuperables, cancelación,
-selección para el siguiente turno, revocación local y tratamiento de credenciales.
-Fallo del almacenamiento seguro MUST NOT seleccionar almacenamiento efímero
-implícitamente. OAuth no soportado MUST seguir comunicado como no soportado.
+`Provider`, `Login`, `ModelPicker` and the confirmations MUST preserve the
+existing operations of `/providers`, `/login`, `/model` and `/logout`, not
+placeholders. They MUST preserve validation, recoverable errors, cancellation,
+selection for the next turn, local revocation, and credential handling. A
+failure of the secure storage MUST NOT implicitly select ephemeral storage.
+Unsupported OAuth MUST remain reported as unsupported.
 
-#### Scenario: OVL-05-A — Configurar y seleccionar sin reiniciar
+#### Scenario: OVL-05-A — Configure and select without restarting
 
-- GIVEN un servicio de conexiones controlado con un proveedor y modelo válidos
-- WHEN se completa `/login`, se inspecciona `/providers` y se selecciona otro modelo con `/model`
-- THEN se realizan las operaciones reales del servicio y el siguiente turno usa la selección confirmada
-- AND un turno iniciado conserva su conexión/modelo salvo los bloqueos por revocación existentes
-- AND ningún paso requiere un placeholder ni introduce conversación UI
+- GIVEN a controlled connections service with a valid provider and model
+- WHEN `/login` completes, `/providers` is inspected, and another model is selected with `/model`
+- THEN the real service operations are performed and the next turn uses the confirmed selection
+- AND a started turn keeps its connection/model except for the existing revocation blocks
+- AND no step requires a placeholder nor introduces UI conversation
 
-#### Scenario: OVL-05-B — Error seguro y logout
+#### Scenario: OVL-05-B — Secure error and logout
 
-- GIVEN almacenamiento seguro que falla y una conexión existente en casos separados
-- WHEN se intenta guardar credenciales o se confirma `/logout`, respectivamente
-- THEN el fallo se muestra fuera de conversación sin fallback efímero implícito
-- AND logout conserva revocación local y limpieza de credenciales sin afirmar invalidación remota
-- AND cancelar cualquiera de los formularios no confirma la operación
+- GIVEN secure storage that fails and an existing connection, in separate cases
+- WHEN saving credentials is attempted or `/logout` is confirmed, respectively
+- THEN the failure is shown outside the conversation without an implicit ephemeral fallback
+- AND logout preserves local revocation and credential cleanup without asserting remote invalidation
+- AND canceling any of the forms does not confirm the operation

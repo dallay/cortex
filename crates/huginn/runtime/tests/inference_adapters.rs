@@ -556,7 +556,7 @@ async fn discovery_accepts_large_catalog_and_enforces_entry_limit() {
                 .unwrap();
             if count <= 16_384 {
                 let ModelCatalog::Available(models) = catalog else {
-                    panic!("se esperaba un catálogo de {count} modelos; ollama={ollama}");
+                    panic!("expected a catalog of {count} models; ollama={ollama}");
                 };
                 assert_eq!(models.len(), count);
                 assert!(models.iter().any(|model| model.id == "coding"));
@@ -600,7 +600,7 @@ async fn discovery_accepts_large_catalog_with_realistic_metadata() {
         .await
         .unwrap();
     let ModelCatalog::Available(models) = catalog else {
-        panic!("se esperaba un catálogo con metadatos grandes");
+        panic!("expected a catalog with large metadata");
     };
     assert_eq!(models.len(), 3182);
     assert!(models.iter().any(|model| model.id == "coding"));

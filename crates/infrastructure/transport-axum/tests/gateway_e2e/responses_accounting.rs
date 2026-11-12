@@ -950,7 +950,7 @@ async fn responses_anthropic_missing_or_unknown_finish_never_succeeds() {
                     },
                 )
                 .await;
-                let request = json!({"model":if combo {"rook/anthropic-first"} else {"claude-e2e"},"input":"hola","stream":stream});
+                let request = json!({"model":if combo {"rook/anthropic-first"} else {"claude-e2e"},"input":"hello","stream":stream});
                 if stream {
                     let (_, _, body) = post_sse(g.app, "/v1/responses", request).await;
                     assert_failed_terminal_usage(&body, &g.accounting);
@@ -1015,7 +1015,7 @@ async fn responses_anthropic_malformed_and_pending_sse_preserve_prior_usage() {
                     UpstreamMock::Sse(prefix + suffix),
                 )
                 .await;
-                let (_, _, body) = post_sse(g.app, "/v1/responses", json!({"model":if combo {"rook/anthropic-first"} else {"claude-e2e"},"input":"hola","stream":true})).await;
+                let (_, _, body) = post_sse(g.app, "/v1/responses", json!({"model":if combo {"rook/anthropic-first"} else {"claude-e2e"},"input":"hello","stream":true})).await;
                 if !prior && combo {
                     assert!(body.contains("response.completed"), "{body}");
                     assert!(body.contains("fallback"));
@@ -1093,7 +1093,7 @@ async fn responses_anthropic_no_upstream_id_publishes_one_stable_call() {
         let sse = super::responses::initial_anthropic_tool_stream(json!({}))
             .replace("\"id\":\"call_initial\",", "");
         let g = build_gateway_planned(vec![], UpstreamMock::Fail500, UpstreamMock::Sse(sse)).await;
-        let (_, _, body) = post_sse(g.app, "/v1/responses", json!({"model":if combo {"rook/anthropic-first"} else {"claude-e2e"},"input":"hola","stream":true})).await;
+        let (_, _, body) = post_sse(g.app, "/v1/responses", json!({"model":if combo {"rook/anthropic-first"} else {"claude-e2e"},"input":"hello","stream":true})).await;
         let events = sse_json(&body);
         let terminal = events.last().unwrap();
         assert_eq!(terminal["type"], "response.completed", "{body}");
@@ -1137,7 +1137,7 @@ async fn responses_anthropic_clean_eof_ignores_ping_and_comments() {
             + &anthropic_text_stream(json!({"stop_reason":"end_turn"}))
             + ": after finish\n\ndata: {\"type\":\"ping\"}\n\n";
         let g = build_gateway_planned(vec![], UpstreamMock::Fail500, UpstreamMock::Sse(sse)).await;
-        let (_, _, body) = post_sse(g.app, "/v1/responses", json!({"model":if combo {"rook/anthropic-first"} else {"claude-e2e"},"input":"hola","stream":true})).await;
+        let (_, _, body) = post_sse(g.app, "/v1/responses", json!({"model":if combo {"rook/anthropic-first"} else {"claude-e2e"},"input":"hello","stream":true})).await;
         assert_eq!(
             sse_json(&body).last().unwrap()["type"],
             "response.completed",
@@ -1267,8 +1267,8 @@ fn assert_failure(records: &Records, combo: bool) {
 fn assert_failure_tokens(records: &Records, combo: bool, prompt: u64, completion: u64) {
     let audit = records.audit.lock().unwrap();
     let usage = records.usage.lock().unwrap();
-    assert_eq!(audit.len(), 1, "un solo resultado definitivo");
-    assert_eq!(usage.len(), 1, "un solo uso definitivo");
+    assert_eq!(audit.len(), 1, "a single final result");
+    assert_eq!(usage.len(), 1, "a single final usage");
     assert_eq!(audit[0].status, RequestStatus::Failure);
     assert_eq!(usage[0].status, RequestStatus::Failure);
     assert_eq!(
@@ -1326,7 +1326,7 @@ async fn responses_terminal_nonobject_frame_is_rejected_before_delivery() {
             let (_, _, body) = post_sse(
                 g.app,
                 "/v1/responses",
-                json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hola","stream":true}),
+                json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hello","stream":true}),
             )
             .await;
             assert!(body.contains("response.failed"), "{body}");
@@ -1391,7 +1391,7 @@ async fn anthropic_stop_with_functions_records_one_failure_before_done() {
         let (status, _, body) = post_sse(
             g.app,
             "/v1/responses",
-            json!({"model":if combo {"rook/e2e"} else {"claude-e2e"},"input":"hola","stream":true}),
+            json!({"model":if combo {"rook/e2e"} else {"claude-e2e"},"input":"hello","stream":true}),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
@@ -1445,7 +1445,7 @@ async fn anthropic_stop_with_functions_records_one_failure_before_done() {
 async fn provider_validation_error_keeps_usage_from_the_rejected_frame() {
     for observe_error in [false, true] {
         for combo in [false, true] {
-            let first = json!({"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"hola"},"finish_reason":null}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}});
+            let first = json!({"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}});
             let invalid = json!({"model":"gpt-4o","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_bad","function":{"name":if observe_error {"x".repeat(4097)} else {"lookup".into()},"arguments":"{"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}});
             let sse = format!("data: {first}\n\ndata: {invalid}\n\ndata: [DONE]\n\n");
             let g =
@@ -1453,7 +1453,7 @@ async fn provider_validation_error_keeps_usage_from_the_rejected_frame() {
             let (_, _, body) = post_sse(
                 g.app,
                 "/v1/responses",
-                json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hola","stream":true}),
+                json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hello","stream":true}),
             )
             .await;
             assert!(body.contains("response.failed"), "{body}");
@@ -1493,7 +1493,7 @@ async fn first_frame_validation_error_preserves_usage_and_combo_fallback() {
         let (_, _, body) = post_sse(
             g.app,
             "/v1/responses",
-            json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hola","stream":true}),
+            json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hello","stream":true}),
         )
         .await;
         if combo {
@@ -1570,7 +1570,7 @@ async fn rejected_nonstream(combo: bool) {
     let (status, response) = post_json(
         g.app,
         "/v1/responses",
-        json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hola"}),
+        json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hello"}),
         &[],
     )
     .await;
@@ -1603,7 +1603,7 @@ async fn rejected_stream(combo: bool, push: bool, prior_frame: bool) {
         json!({"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]});
     let mut sse = String::new();
     if prior_frame {
-        let prior = json!({"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"hola"},"finish_reason":null}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}});
+        let prior = json!({"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}});
         sse.push_str(&format!("data: {prior}\n\n"));
     }
     sse.push_str(&format!("data: {first}\n\ndata: {last}\n\ndata: {{\"model\":\"gpt-4o\",\"choices\":[],\"usage\":{{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5}}}}\n\ndata: [DONE]\n\n"));
@@ -1611,7 +1611,7 @@ async fn rejected_stream(combo: bool, push: bool, prior_frame: bool) {
     let (_, _, body) = post_sse(
         g.app,
         "/v1/responses",
-        json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hola","stream":true}),
+        json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hello","stream":true}),
     )
     .await;
     assert!(body.contains("response.failed"), "{body}");
@@ -1619,7 +1619,7 @@ async fn rejected_stream(combo: bool, push: bool, prior_frame: bool) {
     if push {
         assert_failure(&g.accounting, combo);
     } else {
-        // El rechazo ocurre al recibir finish; no se lee el usage posterior.
+        // The rejection happens on receiving finish; the later usage is not read.
         assert_failure_tokens(&g.accounting, combo, 1, 1);
     }
     assert_failed_terminal_usage(&body, &g.accounting);
@@ -1697,7 +1697,7 @@ async fn repeated_name_fragments_survive_the_http_boundary() {
     let (_, _, body) = post_sse(
         g.app,
         "/v1/responses",
-        json!({"model":"gpt-4o","input":"hola","stream":true}),
+        json!({"model":"gpt-4o","input":"hello","stream":true}),
     )
     .await;
     assert!(body.contains("response.completed"), "{body}");
@@ -1723,7 +1723,7 @@ async fn incoherent_nonstream_terminal_states_fail_at_http_boundary() {
             let (status, _) = post_json(
                 g.app,
                 "/v1/responses",
-                json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hola"}),
+                json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hello"}),
                 &[],
             )
             .await;
@@ -1745,7 +1745,7 @@ async fn nonstream_functions_require_tool_calls_or_incomplete_finish() {
             let (status, response) = post_json(
                 g.app,
                 "/v1/responses",
-                json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hola"}),
+                json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hello"}),
                 &[],
             )
             .await;
@@ -1787,12 +1787,12 @@ async fn nonstream_functions_require_tool_calls_or_incomplete_finish() {
 async fn responses_disconnect_keeps_observed_usage_without_provider_failure() {
     use futures::StreamExt;
     for combo in [false, true] {
-        let first = json!({"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"hola"},"finish_reason":null}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}});
+        let first = json!({"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}});
         let sse = format!("data: {first}\n\ndata: {{\"model\":\"gpt-4o\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"stop\"}}]}}\n\ndata: [DONE]\n\n");
         let g = build_gateway_planned(vec![], UpstreamMock::Sse(sse), UpstreamMock::Fail500).await;
         let response = g.app.oneshot(Request::builder().method(Method::POST).uri("/v1/responses")
             .header("content-type", "application/json").header("authorization", "Bearer e2e-key-1")
-            .body(axum::body::Body::from(json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hola","stream":true}).to_string())).unwrap()).await.unwrap();
+            .body(axum::body::Body::from(json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hello","stream":true}).to_string())).unwrap()).await.unwrap();
         let mut body = response.into_body().into_data_stream();
         loop {
             let frame = body.next().await.unwrap().unwrap();
@@ -1820,7 +1820,7 @@ async fn responses_disconnect_keeps_observed_usage_without_provider_failure() {
 #[tokio::test]
 async fn missing_stream_finish_records_failure_with_usage_before_eof() {
     for combo in [false, true] {
-        let first = json!({"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"hola"},"finish_reason":null}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}});
+        let first = json!({"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}});
         let g = build_gateway_planned(
             vec![],
             UpstreamMock::Sse(format!("data: {first}\n\ndata: [DONE]\n\n")),
@@ -1830,7 +1830,7 @@ async fn missing_stream_finish_records_failure_with_usage_before_eof() {
         let (_, _, body) = post_sse(
             g.app,
             "/v1/responses",
-            json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hola","stream":true}),
+            json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hello","stream":true}),
         )
         .await;
         assert!(body.contains("response.failed"), "{body}");
@@ -1848,13 +1848,13 @@ async fn missing_stream_finish_records_failure_with_usage_before_eof() {
 #[tokio::test]
 async fn concurrent_responses_streams_have_independent_validation_state() {
     let sse = concat!(
-    "data: {\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hola\"},\"finish_reason\":null}]}\n\n",
+    "data: {\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello\"},\"finish_reason\":null}]}\n\n",
     "data: {\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
     "data: [DONE]\n\n"
     );
     let g =
         build_gateway_planned(vec![], UpstreamMock::Sse(sse.into()), UpstreamMock::Fail500).await;
-    let request = json!({"model":"gpt-4o","input":"hola","stream":true});
+    let request = json!({"model":"gpt-4o","input":"hello","stream":true});
     let (first, second) = tokio::join!(
         post_sse(g.app.clone(), "/v1/responses", request.clone()),
         post_sse(g.app, "/v1/responses", request)

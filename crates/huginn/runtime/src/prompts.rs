@@ -56,7 +56,7 @@ impl FilesystemPrompts {
         // Reject relocated roots as well as entries. Scope ancestors are canonical.
         let canonical = root.canonicalize().map_err(|e| e.to_string())?;
         if canonical != root {
-            return Err("El directorio de plantillas no puede ser un symlink".into());
+            return Err("The template directory cannot be a symlink".into());
         }
         let path = root.join(format!("{name}.md"));
         let before = fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
@@ -64,7 +64,7 @@ impl FilesystemPrompts {
             || before.file_type().is_symlink()
             || path.canonicalize().map_err(|e| e.to_string())? != path
         {
-            return Err("La plantilla debe ser un archivo regular dentro de su scope".into());
+            return Err("The template must be a regular file inside its scope".into());
         }
         use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
         let scope_dir = if scope == self.project {
@@ -72,7 +72,7 @@ impl FilesystemPrompts {
         } else {
             self.home_dir
                 .as_ref()
-                .ok_or("Directorio personal no disponible")?
+                .ok_or("Home directory not available")?
         };
         // Descriptor-relative opens pin every directory; no ambient path race can
         // redirect a file read to another scope, including on Windows.
@@ -94,7 +94,7 @@ impl FilesystemPrompts {
             .map_err(|e| e.to_string())?;
         let metadata = file.metadata().map_err(|e| e.to_string())?;
         if !metadata.is_file() || metadata.len() > MAX_TEMPLATE_BYTES as u64 {
-            return Err("Plantilla no regular o demasiado grande".into());
+            return Err("Template is not a regular file or is too large".into());
         }
         let mut bytes = Vec::new();
         file.take(MAX_TEMPLATE_BYTES as u64 + 1)
@@ -106,9 +106,9 @@ impl FilesystemPrompts {
         if root.canonicalize().map_err(|e| e.to_string())? != root
             || path.canonicalize().map_err(|e| e.to_string())? != path
         {
-            return Err("El scope cambió durante la lectura".into());
+            return Err("The scope changed during the read".into());
         }
-        String::from_utf8(bytes).map_err(|_| "La plantilla debe ser UTF-8".into())
+        String::from_utf8(bytes).map_err(|_| "The template must be UTF-8".into())
     }
 }
 impl PromptTemplates for FilesystemPrompts {
@@ -135,7 +135,7 @@ impl PromptTemplates for FilesystemPrompts {
             };
             if paths.len() > MAX_TEMPLATES {
                 catalog.diagnostics.push(format!(
-                    "{}: máximo {MAX_TEMPLATES} entradas",
+                    "{}: at most {MAX_TEMPLATES} entries",
                     root.display()
                 ));
                 continue;
@@ -153,7 +153,7 @@ impl PromptTemplates for FilesystemPrompts {
                 if !prompts::valid_name(name) {
                     catalog
                         .diagnostics
-                        .push(format!("{}: nombre inválido", path.display()));
+                        .push(format!("{}: invalid name", path.display()));
                     continue;
                 }
                 match self.read(&scope, name).and_then(|text| {
@@ -194,9 +194,7 @@ impl PromptTemplates for FilesystemPrompts {
         let scope = if entry.project {
             &self.project
         } else {
-            self.home
-                .as_ref()
-                .ok_or("Directorio personal no disponible")?
+            self.home.as_ref().ok_or("Home directory not available")?
         };
         let text = self.read(scope, name)?;
         let (_, _, body) = prompts::metadata(&text)?;

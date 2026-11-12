@@ -40,7 +40,7 @@ jobs:
           filters: .github/ci-path-filters.json
 
   ci-contract:
-    name: Test (Contrato CI)
+    name: Test (CI Contract)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: always()
@@ -51,7 +51,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 26
-      - name: Probar contratos CI
+      - name: Test CI contracts
         run: node --test .github/scripts/ci-*.test.cjs
 
   # === Reusable dashboard build (cached artifact) ===
@@ -426,7 +426,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: changes
-    # Se analiza todo el rango de la PR, sin límite de commits ni filtros por ruta.
+    # The whole PR range is scanned, with no commit limit and no path filters.
     permissions:
       contents: read
       security-events: write
@@ -440,7 +440,7 @@ jobs:
           curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz \
             | tar -xzf - -C /usr/local/bin gitleaks
           gitleaks --version
-      - name: Analizar historial de commits
+      - name: Analyze commit history
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -465,11 +465,11 @@ jobs:
 
   semgrep-pr:
     name: Security / Semgrep (SAST)
-    # La imagen ubuntu-26.04 usa Python 3.14 y rompe el semgrep==1.126.0 fijado:
-    # el CLI aborta al importar protobuf/opentelemetry y el control de rutas
-    # falla con JSONDecodeError por stdout vacio. Se fija la imagen en la que
-    # el gate paso por ultima vez; actualizar el pin de semgrep requiere
-    # revisar las expectativas del control "disabled" del script.
+    # The ubuntu-26.04 image uses Python 3.14 and breaks the pinned semgrep==1.126.0:
+    # the CLI aborts when importing protobuf/opentelemetry and the path check
+    # fails with JSONDecodeError due to an empty stdout. The image is pinned to the
+    # one where the gate last passed; updating the semgrep pin requires
+    # reviewing the expectations of the "disabled" check in the script.
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs: changes
@@ -482,8 +482,8 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Semgrep CLI
-        # setuptools<81 mantiene pkg_resources, que el semgrep fijado exige al
-        # importar. Debe coincidir con el pin de la recipe just ci-semgrep.
+        # setuptools<81 keeps pkg_resources, which the pinned semgrep requires when
+        # importing. It must match the pin of the just ci-semgrep recipe.
         run: pip install semgrep==1.126.0 'setuptools<81'
       - name: Check exact path exceptions and scanner controls
         env:
@@ -595,8 +595,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     needs: [ changes, test, test-frontend, build-dashboard ]
-    # Toda PR requiere análisis. Los push conservan los filtros por rutas.
-    # Sin credenciales, también se bloquean forks y Dependabot.
+    # Every PR requires analysis. Pushes keep the path filters.
+    # Without credentials, forks and Dependabot are blocked as well.
     if: |
       always() &&
       needs.changes.result == 'success' &&
@@ -611,17 +611,17 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Validar credenciales de SonarCloud
+      - name: Validate SonarCloud credentials
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           if [ -z "$SONAR_TOKEN" ]; then
-            echo "::error::SONAR_TOKEN es obligatorio para el análisis de SonarCloud."
+            echo "::error::SONAR_TOKEN is required for the SonarCloud analysis."
             exit 1
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # Historial completo: lo exige Sonar para blame y decoracion de PRs
+          fetch-depth: 0 # Full history: Sonar requires it for blame and PR decoration
           persist-credentials: false
       - name: Cache SonarQube packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

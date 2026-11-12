@@ -28,7 +28,7 @@ async fn responses_anthropic_initial_input_without_deltas() {
                     )
                     .await;
             }
-            let (_, _, body) = post_sse(g.app, "/v1/responses", json!({"model":if combo {"rook/e2e"} else {"claude-e2e"},"input":"hola","stream":true})).await;
+            let (_, _, body) = post_sse(g.app, "/v1/responses", json!({"model":if combo {"rook/e2e"} else {"claude-e2e"},"input":"hello","stream":true})).await;
             let events = sse_json(&body);
             assert_eq!(
                 events.last().unwrap()["type"],
@@ -120,7 +120,7 @@ async fn responses_empty_name_after_announcement_is_neutral() {
     let (_, _, body) = post_sse(
         g.app,
         "/v1/responses",
-        json!({"model":"gpt-4o","input":"hola","stream":true}),
+        json!({"model":"gpt-4o","input":"hello","stream":true}),
     )
     .await;
     let events = sse_json(&body);
@@ -141,7 +141,7 @@ async fn responses_replay_interleaved_real_sse_output_is_one_turn() {
     let sse = openai_stream_frame(
         json!({"tool_calls":[{"index":0,"id":"a","function":{"name":"lookup","arguments":"{}"}}]}),
         None,
-    ) + &openai_stream_frame(json!({"content":"Buscando"}), None)
+    ) + &openai_stream_frame(json!({"content":"Searching"}), None)
         + &openai_stream_frame(
             json!({"tool_calls":[{"index":1,"id":"b","function":{"name":"lookup","arguments":"{}"}}]}),
             Some("tool_calls"),
@@ -151,7 +151,7 @@ async fn responses_replay_interleaved_real_sse_output_is_one_turn() {
     let (_, _, body) = post_sse(
         g.app,
         "/v1/responses",
-        json!({"model":"gpt-4o","input":"hola","stream":true}),
+        json!({"model":"gpt-4o","input":"hello","stream":true}),
     )
     .await;
     let events = sse_json(&body);
@@ -193,7 +193,7 @@ async fn responses_replay_interleaved_real_sse_output_is_one_turn() {
             .unwrap();
     let messages = sent["messages"].as_array().unwrap();
     assert_eq!(messages.len(), 6, "{sent}");
-    assert_eq!(messages[0]["content"], "Buscando");
+    assert_eq!(messages[0]["content"], "Searching");
     assert_eq!(messages[0]["tool_calls"][0]["id"], "a");
     assert_eq!(messages[0]["tool_calls"][1]["id"], "b");
     assert_eq!(messages[1]["tool_call_id"], "a");
@@ -261,7 +261,7 @@ async fn responses_empty_arguments_with_separate_incomplete_finish() {
                 let g =
                     build_gateway_planned(vec![], UpstreamMock::Sse(sse), UpstreamMock::Fail500)
                         .await;
-                let (_, _, body) = post_sse(g.app, "/v1/responses", json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hola","stream":true})).await;
+                let (_, _, body) = post_sse(g.app, "/v1/responses", json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hello","stream":true})).await;
                 let events = sse_json(&body);
                 let terminal = events.last().unwrap();
                 assert_eq!(terminal["type"], "response.incomplete", "{body}");
@@ -297,7 +297,7 @@ async fn responses_text_uses_existing_gateway() {
     let (status, body) = post_json(
         g.app,
         "/v1/responses",
-        json!({"model":"gpt-4o", "input":"hola", "store":false}),
+        json!({"model":"gpt-4o", "input":"hello", "store":false}),
         &[],
     )
     .await;
@@ -315,27 +315,31 @@ async fn responses_text_uses_existing_gateway() {
 async fn responses_function_round_trip_preserves_calls_and_native_tool_declarations() {
     for anthropic in [false, true] {
         let mut openai = openai_ok_body();
-        openai["choices"][0]["message"] = json!({"role":"assistant", "content":"Buscando",
+        openai["choices"][0]["message"] = json!({"role":"assistant", "content":"Searching",
             "tool_calls":[{"id":"call_real", "type":"function",
                 "function":{"name":"lookup", "arguments":"{\"key\":\"value\"}"}}]});
         openai["choices"][0]["finish_reason"] = json!("tool_calls");
         let g = build_gateway_planned(vec![], UpstreamMock::Json(openai),
                                       UpstreamMock::Json(json!({"id":"msg_real", "model":"claude-e2e", "type":"message",
-                "role":"assistant", "content":[{"type":"text", "text":"Buscando"},
+                "role":"assistant", "content":[{"type":"text", "text":"Searching"},
                     {"type":"tool_use", "id":"call_real", "name":"lookup", "input":{"key":"value"}}],
                 "stop_reason":"tool_use", "usage":{"input_tokens":3,"output_tokens":4}}))).await;
         let model = if anthropic { "claude-e2e" } else { "gpt-4o" };
         let (status, body) = post_json(g.app, "/v1/responses", json!({
-            "model":model, "instructions":"Ayuda", "max_output_tokens":64, "temperature":0.2,
-            "input":[{"role":"user","content":[{"type":"input_text","text":"busca"}]},
+            "model":model, "instructions":"Help", "max_output_tokens":64, "temperature":0.2,
+            "input":[{"role":"user","content":[{"type":"input_text","text":"search"}]},
                 {"type":"function_call","id":"fc_prior","call_id":"call_prior", "name":"lookup", "arguments":"{}"},
-                {"type":"function_call_output", "call_id":"call_prior", "output":"resultado"}],
-            "tools":[{"type":"function", "name":"lookup", "description":"Busca", "parameters":{"type":"object"},"strict":false}],
+                {"type":"function_call_output", "call_id":"call_prior", "output":"result"}],
+            "tools":[{"type":"function", "name":"lookup", "description":"Search", "parameters":{"type":"object"},"strict":false}],
             "tool_choice":{"type":"function","name":"lookup"}
         }), &[]).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let output = body["output"].as_array().unwrap();
-        assert_eq!(output.len(), 2, "no duplicar tool_calls y content_blocks");
+        assert_eq!(
+            output.len(),
+            2,
+            "do not duplicate tool_calls and content_blocks"
+        );
         let call = output
             .iter()
             .find(|item| item["type"] == "function_call")
@@ -397,7 +401,7 @@ async fn responses_stream_preserves_lifecycle_tools_alias_and_trailing_usage() {
         let (status, content_type, body) = post_sse(
             g.app,
             "/v1/responses",
-            json!({"model":"rook/e2e","input":"hola","stream":true}),
+            json!({"model":"rook/e2e","input":"hello","stream":true}),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
@@ -467,15 +471,15 @@ async fn responses_stream_preserves_lifecycle_tools_alias_and_trailing_usage() {
 #[tokio::test]
 async fn responses_text_stream_is_incremental_and_length_is_incomplete() {
     for finish in ["stop", "length", "content_filter"] {
-        let upstream = openai_stream_frame(json!({"content":"Ho"}), None)
-            + &openai_stream_frame(json!({"content":"la"}), Some(finish))
+        let upstream = openai_stream_frame(json!({"content":"He"}), None)
+            + &openai_stream_frame(json!({"content":"llo"}), Some(finish))
             + "data: [DONE]\n\n";
         let g =
             build_gateway_planned(vec![], UpstreamMock::Sse(upstream), UpstreamMock::Fail500).await;
         let (status, _, body) = post_sse(
             g.app,
             "/v1/responses",
-            json!({"model":"gpt-4o","input":"hola","stream":true}),
+            json!({"model":"gpt-4o","input":"hello","stream":true}),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
@@ -486,12 +490,12 @@ async fn responses_text_stream_is_incremental_and_length_is_incomplete() {
                 .filter(|e| e["type"] == "response.output_text.delta")
                 .map(|e| e["delta"].as_str().unwrap())
                 .collect::<Vec<_>>(),
-            ["Ho", "la"]
+            ["He", "llo"]
         );
         let terminal = events.last().unwrap();
         assert_eq!(
             terminal["response"]["output"][0]["content"][0]["text"],
-            "Hola"
+            "Hello"
         );
         assert_eq!(
             terminal["type"],
@@ -528,7 +532,7 @@ async fn responses_partial_tool_finish_preserves_incomplete_and_trailing_usage()
             let (status, _, body) = post_sse(
                 g.app,
                 "/v1/responses",
-                json!({"model":"gpt-4o","input":"hola","stream":true}),
+                json!({"model":"gpt-4o","input":"hello","stream":true}),
             )
             .await;
             assert_eq!(status, StatusCode::OK, "{body}");
@@ -641,7 +645,7 @@ async fn responses_partial_tool_other_finishes_still_fail() {
             let (status, _, body) = post_sse(
                 g.app,
                 "/v1/responses",
-                json!({"model":"gpt-4o","input":"hola","stream":true}),
+                json!({"model":"gpt-4o","input":"hello","stream":true}),
             )
             .await;
             assert_eq!(status, StatusCode::OK, "{body}");
@@ -689,7 +693,7 @@ async fn responses_stream_errors_and_missing_finish_never_complete_or_fallback()
         let (_, _, body) = post_sse(
             g.app,
             "/v1/responses",
-            json!({"model":"rook/e2e","input":"hola","stream":true}),
+            json!({"model":"rook/e2e","input":"hello","stream":true}),
         )
         .await;
         let events = sse_json(&body);
@@ -783,7 +787,7 @@ async fn responses_authentication_scopes_and_restrictions_fail_before_upstream()
             if mode == "provider" || mode == "combo" {
                 *g.key_repo.allowed_providers.lock().unwrap() = vec![ProviderId::new("other")];
             }
-            let (status, body) = post_json(g.app, "/v1/responses", json!({"model":if mode == "combo" {"rook/e2e"} else {"gpt-4o"},"input":"hola","stream":stream}),
+            let (status, body) = post_json(g.app, "/v1/responses", json!({"model":if mode == "combo" {"rook/e2e"} else {"gpt-4o"},"input":"hello","stream":stream}),
                                            &[("x-authz-auth-scopes", "admin"), ("x-authz-allowed-models", "[]"), ("x-authz-allowed-providers", "[]")]).await;
             assert_eq!(
                 status,
@@ -808,8 +812,8 @@ async fn responses_authentication_scopes_and_restrictions_fail_before_upstream()
                 .await
                 .unwrap()
                 .is_empty());
-            // wiremock verifica en Drop con block_on; evitar que agote el
-            // presupuesto cooperativo de Tokio tras muchos casos consecutivos.
+            // wiremock verifies on Drop with block_on; avoid exhausting the
+            // Tokio cooperative budget after many consecutive cases.
             tokio::task::yield_now().await;
         }
     }
@@ -851,7 +855,7 @@ async fn responses_nonstream_finish_state_is_not_reported_as_completed() {
     let (status, body) = post_json(
         g.app,
         "/v1/responses",
-        json!({"model":"gpt-4o","input":"hola"}),
+        json!({"model":"gpt-4o","input":"hello"}),
         &[],
     )
     .await;

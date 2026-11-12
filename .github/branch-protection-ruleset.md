@@ -1,71 +1,71 @@
 # Branch Protection Ruleset - main
 
-Este documento describe la configuración de protección de la rama `main` para asegurar la calidad del código antes del merge.
+This document describes the branch protection configuration of the `main` branch to ensure code quality before merging.
 
-## Reglas Activas
+## Active Rules
 
-> Estado de migración DALLAY-628: el ruleset #17001295 NO se modifica con el cambio de código. Añadir `CI / Required` como required check solo después de validar el gate en ejecuciones reales y probar un fallo bloqueante desde una identidad sin bypass. Mantener intactos los checks actuales durante toda la transición.
+> DALLAY-628 migration status: ruleset #17001295 is NOT changed with the code change. Add `CI / Required` as a required check only after validating the gate in real runs and testing a blocking failure from an identity without bypass. Keep the current checks intact during the whole transition.
 
-### 1. Protección Básica de Rama
+### 1. Basic Branch Protection
 
-- ✅ **Deletion**: No se puede eliminar la rama `main`
-- ✅ **Non-fast-forward**: No se permiten force pushes
-- ✅ **Required linear history**: Historial lineal obligatorio (no merge commits)
+- ✅ **Deletion**: The `main` branch cannot be deleted
+- ✅ **Non-fast-forward**: Force pushes are not allowed
+- ✅ **Required linear history**: Linear history is mandatory (no merge commits)
 
 ### 2. Pull Request Requirements
 
-- **Approvals**: 1 aprobación requerida
-- **Dismiss stale reviews**: Las reviews se descartan al pushear cambios
-- **Last push approval**: Se requiere aprobación después del último push
-- **Thread resolution**: Todos los comentarios deben estar resueltos
+- **Approvals**: 1 approval required
+- **Dismiss stale reviews**: Reviews are dismissed when changes are pushed
+- **Last push approval**: An approval is required after the last push
+- **Thread resolution**: All comments must be resolved
 
-### 3. Required Status Checks (Obligatorios para Merge)
+### 3. Required Status Checks (Mandatory to Merge)
 
-#### Plan de transición — ruleset #17001295 (pendiente de validación)
+#### Transition plan: ruleset #17001295 (pending validation)
 
-1. No retirar ni reemplazar ninguno de los checks ya obligatorios.
-2. Ejecutar PRs representativas (docs, frontend, backend y workflows) hasta confirmar `CI / Required` verde, y una PR controlada con check requerido fallido que deje el gate rojo.
-3. Probar que esa PR no puede fusionarse con una identidad que no esté en bypass.
-4. Solo entonces añadir `CI / Required` a los required checks; mantener los checks existentes al menos durante la transición y retirarlos únicamente en un cambio posterior con evidencia.
-5. Revisar bypass `OrganizationAdmin` y `Integration` ID `915548` (confirmar identidad antes de cambiar); ambos aparecen con `bypass_mode: always`. No eliminarlos hasta resolver el acceso de revisión humana.
-6. El ruleset requiere una aprobación humana y aprobación del último push. Para un solo mantenedor, mantener por ahora la política actual y documentar el bloqueo operativo; alternativa a acordar antes de eliminar bypass: quitar la aprobación obligatoria o designar un reviewer independiente. Nunca simular la aprobación mediante bypass administrativo.
+1. Do not remove or replace any of the checks that are already mandatory.
+2. Run representative PRs (docs, frontend, backend and workflows) until `CI / Required` is green, and one controlled PR with a failing required check that leaves the gate red.
+3. Verify that such a PR cannot be merged with an identity that is not in the bypass list.
+4. Only then add `CI / Required` to the required checks; keep the existing checks at least during the transition and remove them only in a later change with evidence.
+5. Review the `OrganizationAdmin` and `Integration` bypass with ID `915548` (confirm the identity before changing it); both appear with `bypass_mode: always`. Do not remove them until human review access is resolved.
+6. The ruleset requires one human approval and a last push approval. For a single maintainer, keep the current policy for now and document the operational blockage; the alternative to agree on before removing the bypass is to drop the mandatory approval or to designate an independent reviewer. Never simulate the approval through the administrative bypass.
 
 #### Fast Checks (Linting & Formatting)
 
-- ✅ **Format** - Rust formatting con `cargo fmt`
-- ✅ **Markdown** - Linting de archivos `.md`
-- ✅ **Clippy** - Linter de Rust (deny warnings)
-- ✅ **Check** - `cargo check` workspace
+- ✅ **Format** - Rust formatting with `cargo fmt`
+- ✅ **Markdown** - Linting of `.md` files
+- ✅ **Clippy** - Rust linter (deny warnings)
+- ✅ **Check** - `cargo check` on the workspace
 
-#### Tests (Calidad del Código)
+#### Tests (Code Quality)
 
-- ✅ **Test (Rust)** - Tests completos del workspace Rust
-- ✅ **Test (Frontend)** - Tests Vitest del dashboard Vue.js
+- ✅ **Test (Rust)** - Full tests of the Rust workspace
+- ✅ **Test (Frontend)** - Vitest tests of the Vue.js dashboard
 
 #### Security (Merge Blockers)
 
-- ✅ **Security / Trivy** - Escaneo de vulnerabilidades filesystem + deps
-- ✅ **Security / Gitleaks** - Detección de secretos en commits
+- ✅ **Security / Trivy** - Vulnerability scan of the filesystem and dependencies
+- ✅ **Security / Gitleaks** - Secret detection in commits
 - ✅ **Security / Semgrep** - SAST scan (Rust, Docker, GitHub Actions)
-- ✅ **Audit** - `cargo audit` para vulnerabilidades en dependencias
+- ✅ **Audit** - `cargo audit` for vulnerabilities in dependencies
 
-### 4. Checks Opcionales (No Bloquean Merge)
+### 4. Optional Checks (Do Not Block the Merge)
 
-Los siguientes checks corren pero **NO** bloquean el merge:
+The following checks run but do **NOT** block the merge:
 
-- **Doc** - Documentación con `cargo doc`
-- **Test (E2E)** - Tests E2E Playwright (pesados, solo después de tests unitarios)
-- **Coverage (Rust)** - Reporte de cobertura Codecov
-- **Coverage (Frontend)** - Cobertura frontend Codecov
-- **SonarCloud** - Análisis de calidad (informativo)
-- **Build (cross-compile)** - Validación de compilación multiplataforma (solo en push a main)
-- **Test (macOS/Windows)** - Tests en otras plataformas (solo en push a main)
+- **Doc** - Documentation with `cargo doc`
+- **Test (E2E)** - Playwright E2E tests (heavy, only after the unit tests)
+- **Coverage (Rust)** - Codecov coverage report
+- **Coverage (Frontend)** - Codecov frontend coverage
+- **SonarCloud** - Quality analysis (informative)
+- **Build (cross-compile)** - Cross-platform build validation (only on push to main)
+- **Test (macOS/Windows)** - Tests on other platforms (only on push to main)
 
-## Estrategia de Checks
+## Check Strategy
 
 ### Path-Based Execution
 
-Los checks se ejecutan según los archivos modificados:
+The checks run according to the modified files:
 
 ```yaml
 docs-only changes (*.md, docs/**):
@@ -97,66 +97,66 @@ backend changes (crates/**, apps/rook/src/**):
 
 ### Fail-Fast Strategy
 
-1. **Fast checks primero** (fmt, markdown) - 1-2 min
-2. **Linting paralelo** (clippy, check, security) - 10 min
-3. **Tests unitarios** (rust, frontend) - 8 min
-4. **Tests E2E** (solo si unitarios pasan) - 15 min
+1. **Fast checks first** (fmt, markdown) - 1-2 min
+2. **Parallel linting** (clippy, check, security) - 10 min
+3. **Unit tests** (rust, frontend) - 8 min
+4. **E2E tests** (only if the unit tests pass) - 15 min
 
 ## Bypass Actors
 
-Pueden saltarse las reglas:
+They can bypass the rules:
 
 - **Organization Admins** - bypass mode: always
 - **Release Please Bot** (integration_id: 915548) - bypass mode: always
 
-## Aplicar la Ruleset
+## Apply the Ruleset
 
 ```bash
-# Ver ruleset actual
+# View the current ruleset
 gh api repos/dallay/cortex/rulesets/17001295 | jq .
 
-# Actualizar ruleset (requiere permisos de admin)
+# Update the ruleset (requires admin permissions)
 gh api \
   --method PUT \
   repos/dallay/cortex/rulesets/17001295 \
   --input .github/main-ruleset.json
 ```
 
-## Notas Importantes
+## Important Notes
 
-1. **integration_id: 15368** es GitHub Actions
-2. **strict_required_status_checks_policy: true** significa que la rama debe estar actualizada con main antes de mergear
-3. Los nombres de contexts (`Format`, `Clippy`, etc.) deben coincidir **exactamente** con los `name:` en el workflow CI
-4. E2E tests NO bloquean porque son pesados y pueden ser flaky ocasionalmente
-5. Cross-compilation builds NO bloquean porque solo validan targets adicionales
+1. **integration_id: 15368** is GitHub Actions
+2. **strict_required_status_checks_policy: true** means that the branch must be up to date with main before merging
+3. The context names (`Format`, `Clippy`, etc.) must match **exactly** the `name:` values in the CI workflow
+4. E2E tests do NOT block because they are heavy and can be flaky occasionally
+5. Cross-compilation builds do NOT block because they only validate additional targets
 
-## Verificación
+## Verification
 
-Para verificar que un PR cumple con la ruleset:
+To verify that a PR complies with the ruleset:
 
 ```bash
-# Ver checks de un PR
+# View the checks of a PR
 gh pr checks 116
 
-# Ver status detallado
+# View the detailed status
 gh pr view 116 --json statusCheckRollup
 ```
 
-## Filosofía
+## Philosophy
 
-**Bloquean merge:**
+**Block the merge:**
 
-- Formato correcto (fmt, markdown)
-- Compilación exitosa (clippy, check)
-- Tests unitarios pasan (rust, frontend)
-- Sin vulnerabilidades críticas (trivy, gitleaks, semgrep, audit)
+- Correct formatting (fmt, markdown)
+- Successful compilation (clippy, check)
+- Unit tests pass (rust, frontend)
+- No critical vulnerabilities (trivy, gitleaks, semgrep, audit)
 
-**NO bloquean merge:**
+**Do NOT block the merge:**
 
-- E2E tests (pesados, pueden ser flaky)
-- Coverage (informativo)
-- SonarCloud (informativo)
-- Docs generation (no crítico para merge)
-- Multi-platform builds (validación adicional)
+- E2E tests (heavy, can be flaky)
+- Coverage (informative)
+- SonarCloud (informative)
+- Docs generation (not critical for the merge)
+- Multi-platform builds (additional validation)
 
-Esta estrategia mantiene la calidad alta mientras permite iteración rápida.
+This strategy keeps the quality high while allowing fast iteration.

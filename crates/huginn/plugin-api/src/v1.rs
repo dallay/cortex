@@ -89,7 +89,7 @@ pub mod agent {
     };
 }
 
-/// Registro de herramientas de autores nativos confiables; no concede permisos.
+/// Registry of tools from trusted native authors; it grants no permissions.
 pub mod tools {
     pub use huginn_core::{
         tools::{tool_registration_id, ToolRegistration, ToolRegistrationService},

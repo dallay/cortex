@@ -5,7 +5,7 @@ use shared_kernel::RequestId;
 
 fn encoder() -> ResponsesStream {
     let request: ResponsesRequest =
-        serde_json::from_value(json!({"model":"test","input":"hola"})).unwrap();
+        serde_json::from_value(json!({"model":"test","input":"hello"})).unwrap();
     ResponsesStream::new(ResponseContext::new(&request.into_domain().unwrap()))
 }
 
@@ -55,7 +55,7 @@ fn stop_with_complete_functions_fails_before_done_events() {
             vec![tool(0, Some("call_a"), Some("lookup"), None)],
             Some(FinishReason::Stop),
         ))
-        .expect_err("stop con funciones debe fallar");
+        .expect_err("stop with functions must fail");
     let events = encoder.fail(message);
     assert_eq!(events.len(), 2);
     assert_eq!(events[0]["type"], "error");
@@ -150,7 +150,7 @@ fn fragmented_names_sparse_indices_and_interleaved_text_preserve_identity() {
         .is_empty());
     encoder
         .push(chunk(
-            "Hola",
+            "Hello",
             vec![
                 tool(99, None, Some("up"), Some("{\"a\":")),
                 tool(3, Some("call_b"), Some("lookup"), Some("{}")),
@@ -160,14 +160,14 @@ fn fragmented_names_sparse_indices_and_interleaved_text_preserve_identity() {
         .unwrap();
     encoder
         .push(chunk(
-            " mundo",
+            " world",
             vec![tool(99, None, None, Some("1}"))],
             Some(FinishReason::ToolCalls),
         ))
         .unwrap();
     let events = encoder.finish().unwrap();
     let response = &events.last().unwrap()["response"];
-    assert_eq!(response["output"][0]["content"][0]["text"], "Hola mundo");
+    assert_eq!(response["output"][0]["content"][0]["text"], "Hello world");
     assert_eq!(response["output"][1]["call_id"], "call_a");
     assert_eq!(response["output"][1]["name"], "lookup");
     assert_eq!(response["output"][1]["arguments"], "{\"a\":1}");
@@ -250,7 +250,7 @@ fn invalid_upstream_calls_and_late_content_fail_closed() {
         .is_err());
     assert!(malformed.finish().is_err());
     let mut late = encoder();
-    late.push(chunk("Hola", vec![], Some(FinishReason::Stop)))
+    late.push(chunk("Hello", vec![], Some(FinishReason::Stop)))
         .unwrap();
     assert!(late.push(chunk("contenido tardío", vec![], None)).is_err());
     assert!(encoder().finish().is_err());
