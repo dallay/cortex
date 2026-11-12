@@ -161,7 +161,7 @@ test("schema is an actual top-level array with exactly three branches", () => {
   assert.equal(confirmedSchema.remediation.properties.code_changes.items.properties.fixed_code.minLength, undefined);
 });
 
-test("accepts a producer-shaped findings document through the CLI", () => {
+test("accepts a producer-shaped findings document through the CLI", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
   const result = runCli(JSON.stringify(producerShapedFindings()));
   assert.equal(result.status, 0, cliOutput(result));
   assert.match(result.stdout, /PASS: 3 findings valid/);
@@ -372,7 +372,7 @@ test("accepts legitimate Unicode source paths and prose", () => {
   assert.deepEqual(errorsFor([finding]), []);
 });
 
-test("CLI rejects input above the byte limit without an exception trace", () => {
+test("CLI rejects input above the byte limit without an exception trace", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
   const result = runCli(Buffer.alloc(LIMITS.inputBytes + 1, 0x20));
   const output = cliOutput(result);
   assert.equal(result.status, 1, output);
@@ -380,7 +380,7 @@ test("CLI rejects input above the byte limit without an exception trace", () => 
   assert.doesNotMatch(output, /RangeError|Maximum call stack|heap out of memory/i);
 });
 
-test("CLI rejects invalid UTF-8 without replacement or an exception trace", () => {
+test("CLI rejects invalid UTF-8 without replacement or an exception trace", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
   const findings = producerShapedFindings();
   findings[0].execution.payloads = ["INVALID_UTF8"];
   const encoded = Buffer.from(JSON.stringify(findings));
@@ -442,7 +442,7 @@ test("does not reflect controls from a failed CLI input path", () => {
   }
 });
 
-test("CLI rejects lone-surrogate prose without changing payload semantics", () => {
+test("CLI rejects lone-surrogate prose without changing payload semantics", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
   const findings = producerShapedFindings();
   findings[0].title = "\ud800";
   const result = runCli(JSON.stringify(findings));
@@ -452,7 +452,7 @@ test("CLI rejects lone-surrogate prose without changing payload semantics", () =
   assert.doesNotMatch(output, /stack|at validate-findings/i);
 });
 
-test("CLI rejects Unicode format controls in source paths", () => {
+test("CLI rejects Unicode format controls in source paths", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
   const findings = producerShapedFindings();
   findings[0].trace[0].file = "src/file\u202ename.c";
   const result = runCli(JSON.stringify(findings));
@@ -504,7 +504,7 @@ test("CLI rejects a symlink without following it", { skip: process.platform === 
   }
 });
 
-test("CLI rejects input above the nesting-depth limit without an exception trace", () => {
+test("CLI rejects input above the nesting-depth limit without an exception trace", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
   const levels = LIMITS.nestingDepth + 1;
   const result = runCli(`${"[".repeat(levels)}0${"]".repeat(levels)}`);
   const output = cliOutput(result);
@@ -513,7 +513,7 @@ test("CLI rejects input above the nesting-depth limit without an exception trace
   assert.doesNotMatch(output, /RangeError|Maximum call stack|heap out of memory/i);
 });
 
-test("CLI rejects an oversized array without an exception trace", () => {
+test("CLI rejects an oversized array without an exception trace", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
   const result = runCli(JSON.stringify(Array(LIMITS.arrayItems + 1).fill(null)));
   const output = cliOutput(result);
   assert.equal(result.status, 1, output);
@@ -649,4 +649,20 @@ test("keeps shared helpers aligned with the coverage-ledger validator", () => {
       `prose verdict diverges for ${JSON.stringify(value)}`,
     );
   }
+});
+
+test("CLI fails closed without safe input-open flags", () => {
+  const result = spawnSync(process.execPath, ["-e", `
+    const fs = require("node:fs");
+    const constants = {...fs.constants, O_NOFOLLOW: 0, O_NONBLOCK: 0};
+    const Module = require("node:module");
+    const originalLoad = Module._load;
+    Module._load = function(id, ...args) {
+      return id === "node:fs" ? {...fs, constants} : originalLoad.call(this, id, ...args);
+    };
+    process.argv = [process.execPath, ${JSON.stringify(validatorPath)}, "unused.json"];
+    Module._load(${JSON.stringify(validatorPath)}, null, true);
+  `], {encoding: "utf8", timeout: CLI_TIMEOUT_MS});
+  assert.equal(result.status, 1, cliOutput(result));
+  assert.match(cliOutput(result), /input could not be opened or read safely/);
 });

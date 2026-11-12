@@ -621,8 +621,12 @@ function validateAttempts(value, unit, base, errors) {
         if (typeof check.artifact === "string" && priorArtifacts.has(check.artifact)) {
           errors.push(`${attemptBase}.local_checks[${checkIndex}].artifact: artifact from an earlier attempt cannot be reused`);
         }
-        if (check.method === "local" && typeof check.artifact === "string") priorArtifacts.add(check.artifact);
       });
+    }
+    if (Array.isArray(attempt.local_checks)) {
+      for (const check of attempt.local_checks) {
+        if (isObject(check) && check.method === "local" && typeof check.artifact === "string") priorArtifacts.add(check.artifact);
+      }
     }
     if (hasFreshOwner) priorOwners.add(attempt.agent_id);
   });
@@ -693,7 +697,7 @@ function collectUnitErrors(unit, index) {
   validateStringArray(unit.selected_companion_blocks, `${base}.selected_companion_blocks`, errors);
   validateExcludedBlocks(unit.excluded_blocks, `${base}.excluded_blocks`, errors);
   if (Array.isArray(unit.selected_companion_blocks) && Array.isArray(unit.excluded_blocks)) {
-    const selected = new Set(unit.selected_companion_blocks);
+    const selected = new Set([unit.ordinary_attack_class_block, ...unit.selected_companion_blocks]);
     unit.excluded_blocks.forEach((entry, blockIndex) => {
       if (isObject(entry) && selected.has(entry.block)) {
         errors.push(`${base}.excluded_blocks[${blockIndex}].block: block is also selected`);

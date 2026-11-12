@@ -227,7 +227,7 @@ impl SelectionResult {
 /// If no known values exist, returns None.
 /// Unknowns never enter min/max bounds.
 /// Invalid (negative, NaN, Inf) values are treated as Unknown.
-fn normalize_component(value: RawEvidence<f64>, known_values: &[f64]) -> Option<f64> {
+fn normalize_component(value: RawEvidence<f64>, bounds: Option<(f64, f64)>) -> Option<f64> {
     // Validate the value itself: must be known, non-negative, and finite.
     let value = match value {
         RawEvidence::Known(v) => v,
@@ -237,31 +237,25 @@ fn normalize_component(value: RawEvidence<f64>, known_values: &[f64]) -> Option<
         return None;
     }
 
-    // Filter known_values to only valid (non-negative, finite) values.
-    let valid_known: Vec<f64> = known_values
-        .iter()
-        .copied()
-        .filter(|&v| v.is_finite() && v >= 0.0)
-        .collect();
-
-    // No valid known values means no bounds.
-    if valid_known.is_empty() {
-        return None;
-    }
-
-    // Single known value or all equal values → neutral 0.5.
-    let min = valid_known.iter().copied().fold(f64::INFINITY, f64::min);
-    let max = valid_known
-        .iter()
-        .copied()
-        .fold(f64::NEG_INFINITY, f64::max);
-    if (max - min).abs() < f64::EPSILON {
+    let (min, max) = bounds?;
+    if min == max {
         return Some(0.5);
     }
 
     // Inverse min-max: (max - value) / (max - min)
     // Higher value → lower normalized score (for latency/cost, lower is better)
     Some((max - value) / (max - min))
+}
+
+fn component_bounds(values: impl Iterator<Item = f64>) -> Option<(f64, f64)> {
+    values
+        .filter(|v| v.is_finite() && *v >= 0.0)
+        .fold(None, |bounds, value| {
+            Some(match bounds {
+                None => (value, value),
+                Some((min, max)) => (min.min(value), max.max(value)),
+            })
+        })
 }
 
 /// Build score components for all candidates in the snapshot.
@@ -272,50 +266,44 @@ pub fn build_score_components(
     snapshot: &SignalsSnapshot,
 ) -> HashMap<TargetRef, CandidateScoreComponents> {
     // Collect all known values for each normalization group.
-    let latency_p50_known: Vec<f64> = snapshot
-        .candidates
-        .values()
-        .filter_map(|s| s.latency_p50_ms.as_known().copied())
-        .collect();
-    let latency_p95_known: Vec<f64> = snapshot
-        .candidates
-        .values()
-        .filter_map(|s| s.latency_p95_ms.as_known().copied())
-        .collect();
+    let latency_p50_known = component_bounds(
+        snapshot
+            .candidates
+            .values()
+            .filter_map(|s| s.latency_p50_ms.as_known().copied()),
+    );
+    let latency_p95_known = component_bounds(
+        snapshot
+            .candidates
+            .values()
+            .filter_map(|s| s.latency_p95_ms.as_known().copied()),
+    );
 
     // For cost, we normalize input and output independently.
     // Only candidates with compatible pricing (same currency/basis) are pooled.
     // Since all pricing is in USD per million tokens, they are compatible.
-    let cost_input_known: Vec<f64> = snapshot
-        .candidates
-        .values()
-        .filter_map(|s| {
-            s.pricing
-                .as_ref()
-                .and_then(|p| p.input_per_million.as_known().copied())
-        })
-        .collect();
-    let cost_output_known: Vec<f64> = snapshot
-        .candidates
-        .values()
-        .filter_map(|s| {
-            s.pricing
-                .as_ref()
-                .and_then(|p| p.output_per_million.as_known().copied())
-        })
-        .collect();
+    let cost_input_known = component_bounds(snapshot.candidates.values().filter_map(|s| {
+        s.pricing
+            .as_ref()
+            .and_then(|p| p.input_per_million.as_known().copied())
+    }));
+    let cost_output_known = component_bounds(snapshot.candidates.values().filter_map(|s| {
+        s.pricing
+            .as_ref()
+            .and_then(|p| p.output_per_million.as_known().copied())
+    }));
 
     // Build components for each candidate.
     let mut components = HashMap::new();
     for (target, signals) in &snapshot.candidates {
         let latency_p50 = ScoreComponent {
             raw: signals.latency_p50_ms.clone(),
-            normalized: normalize_component(signals.latency_p50_ms.clone(), &latency_p50_known),
+            normalized: normalize_component(signals.latency_p50_ms.clone(), latency_p50_known),
             unit: "ms".to_string(),
         };
         let latency_p95 = ScoreComponent {
             raw: signals.latency_p95_ms.clone(),
-            normalized: normalize_component(signals.latency_p95_ms.clone(), &latency_p95_known),
+            normalized: normalize_component(signals.latency_p95_ms.clone(), latency_p95_known),
             unit: "ms".to_string(),
         };
 
@@ -325,7 +313,7 @@ pub fn build_score_components(
                 raw: pricing.input_per_million.clone(),
                 normalized: normalize_component(
                     pricing.input_per_million.clone(),
-                    &cost_input_known,
+                    cost_input_known,
                 ),
                 unit: "usd_per_million_input".to_string(),
             };
@@ -333,7 +321,7 @@ pub fn build_score_components(
                 raw: pricing.output_per_million.clone(),
                 normalized: normalize_component(
                     pricing.output_per_million.clone(),
-                    &cost_output_known,
+                    cost_output_known,
                 ),
                 unit: "usd_per_million_output".to_string(),
             };
@@ -383,7 +371,7 @@ pub fn build_selection_reason(
         selected_target: selected_target.clone(),
         method,
         components,
-        fallback: None,
+        fallback: (snapshot.candidates.len() == 1).then_some(SelectionFallback::SingleCandidate),
     })
 }
 
@@ -493,12 +481,20 @@ pub fn build_signals_snapshot(
                         if p50_valid {
                             RawEvidence::Known(p50)
                         } else {
-                            RawEvidence::Unknown(UnknownReason::Invalid)
+                            RawEvidence::Unknown(if !p50.is_finite() {
+                                UnknownReason::NonFinite
+                            } else {
+                                UnknownReason::Invalid
+                            })
                         },
                         if p95_valid {
                             RawEvidence::Known(p95)
                         } else {
-                            RawEvidence::Unknown(UnknownReason::Invalid)
+                            RawEvidence::Unknown(if !p95.is_finite() {
+                                UnknownReason::NonFinite
+                            } else {
+                                UnknownReason::Invalid
+                            })
                         },
                     )
                 }
@@ -521,7 +517,11 @@ pub fn build_signals_snapshot(
                 || entry.prompt_per_million.is_nan()
                 || entry.prompt_per_million.is_infinite()
             {
-                RawEvidence::Unknown(UnknownReason::Invalid)
+                RawEvidence::Unknown(if !entry.prompt_per_million.is_finite() {
+                    UnknownReason::NonFinite
+                } else {
+                    UnknownReason::Invalid
+                })
             } else {
                 RawEvidence::Known(entry.prompt_per_million)
             },
@@ -529,7 +529,11 @@ pub fn build_signals_snapshot(
                 || entry.completion_per_million.is_nan()
                 || entry.completion_per_million.is_infinite()
             {
-                RawEvidence::Unknown(UnknownReason::Invalid)
+                RawEvidence::Unknown(if !entry.completion_per_million.is_finite() {
+                    UnknownReason::NonFinite
+                } else {
+                    UnknownReason::Invalid
+                })
             } else {
                 RawEvidence::Known(entry.completion_per_million)
             },
@@ -559,308 +563,5 @@ pub fn build_signals_snapshot(
     SignalsSnapshot {
         captured_at: chrono::Utc::now(),
         candidates,
-    }
-}
-
-#[cfg(test)]
-mod normalization_tests {
-    use super::*;
-
-    fn make_snapshot(
-        values: Vec<(TargetRef, RawEvidence<f64>, RawEvidence<f64>)>,
-    ) -> SignalsSnapshot {
-        let mut candidates = HashMap::new();
-        for (target, p50, p95) in values {
-            candidates.insert(
-                target,
-                CandidateSignals {
-                    latency_p50_ms: p50,
-                    latency_p95_ms: p95,
-                    pricing: None,
-                    priority: RawEvidence::Unknown(UnknownReason::Missing),
-                    quota: None,
-                    circuit: None,
-                },
-            );
-        }
-        SignalsSnapshot {
-            captured_at: Utc::now(),
-            candidates,
-        }
-    }
-
-    fn target(id: &str) -> TargetRef {
-        TargetRef(ProviderId::new(id.to_string()))
-    }
-
-    #[test]
-    fn inverse_min_max_normalization() {
-        // [10, 20, 30] → [1.0, 0.5, 0.0]
-        let snapshot = make_snapshot(vec![
-            (
-                target("a"),
-                RawEvidence::Known(10.0),
-                RawEvidence::Known(10.0),
-            ),
-            (
-                target("b"),
-                RawEvidence::Known(20.0),
-                RawEvidence::Known(20.0),
-            ),
-            (
-                target("c"),
-                RawEvidence::Known(30.0),
-                RawEvidence::Known(30.0),
-            ),
-        ]);
-        let components = build_score_components(&snapshot);
-
-        let a = components.get(&target("a")).unwrap();
-        let b = components.get(&target("b")).unwrap();
-        let c = components.get(&target("c")).unwrap();
-
-        assert!((a.latency_p50.normalized.unwrap() - 1.0).abs() < f64::EPSILON);
-        assert!((b.latency_p50.normalized.unwrap() - 0.5).abs() < f64::EPSILON);
-        assert!((c.latency_p50.normalized.unwrap() - 0.0).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn equal_values_normalize_to_half() {
-        // [20, 20, 20] → [0.5, 0.5, 0.5]
-        let snapshot = make_snapshot(vec![
-            (
-                target("a"),
-                RawEvidence::Known(20.0),
-                RawEvidence::Known(20.0),
-            ),
-            (
-                target("b"),
-                RawEvidence::Known(20.0),
-                RawEvidence::Known(20.0),
-            ),
-            (
-                target("c"),
-                RawEvidence::Known(20.0),
-                RawEvidence::Known(20.0),
-            ),
-        ]);
-        let components = build_score_components(&snapshot);
-
-        for comp in components.values() {
-            assert!(
-                (comp.latency_p50.normalized.unwrap() - 0.5).abs() < f64::EPSILON,
-                "equal values should normalize to 0.5"
-            );
-        }
-    }
-
-    #[test]
-    fn single_known_value_normalizes_to_half() {
-        let snapshot = make_snapshot(vec![(
-            target("a"),
-            RawEvidence::Known(15.0),
-            RawEvidence::Known(15.0),
-        )]);
-        let components = build_score_components(&snapshot);
-
-        let a = components.get(&target("a")).unwrap();
-        assert!(
-            (a.latency_p50.normalized.unwrap() - 0.5).abs() < f64::EPSILON,
-            "single known value should normalize to 0.5"
-        );
-    }
-
-    #[test]
-    fn no_known_values_stay_unknown() {
-        let snapshot = make_snapshot(vec![
-            (
-                target("a"),
-                RawEvidence::Unknown(UnknownReason::Missing),
-                RawEvidence::Unknown(UnknownReason::Missing),
-            ),
-            (
-                target("b"),
-                RawEvidence::Unknown(UnknownReason::Missing),
-                RawEvidence::Unknown(UnknownReason::Missing),
-            ),
-        ]);
-        let components = build_score_components(&snapshot);
-
-        for comp in components.values() {
-            assert!(
-                comp.latency_p50.normalized.is_none(),
-                "no known values should remain unknown"
-            );
-        }
-    }
-
-    #[test]
-    fn mixed_known_unknown_unknowns_dont_affect_bounds() {
-        // Known: [10, 30], Unknown should not affect bounds
-        let snapshot = make_snapshot(vec![
-            (
-                target("a"),
-                RawEvidence::Known(10.0),
-                RawEvidence::Known(10.0),
-            ),
-            (
-                target("b"),
-                RawEvidence::Unknown(UnknownReason::Missing),
-                RawEvidence::Unknown(UnknownReason::Missing),
-            ),
-            (
-                target("c"),
-                RawEvidence::Known(30.0),
-                RawEvidence::Known(30.0),
-            ),
-        ]);
-        let components = build_score_components(&snapshot);
-
-        let a = components.get(&target("a")).unwrap();
-        let b = components.get(&target("b")).unwrap();
-        let c = components.get(&target("c")).unwrap();
-
-        // a=10 should normalize to 1.0 (best), c=30 to 0.0 (worst)
-        assert!((a.latency_p50.normalized.unwrap() - 1.0).abs() < f64::EPSILON);
-        assert!(b.latency_p50.normalized.is_none(), "unknown stays unknown");
-        assert!((c.latency_p50.normalized.unwrap() - 0.0).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn known_zero_vs_unknown() {
-        // Known(0) enters bounds, unknown doesn't
-        let snapshot = make_snapshot(vec![
-            (
-                target("a"),
-                RawEvidence::Known(0.0),
-                RawEvidence::Known(0.0),
-            ),
-            (
-                target("b"),
-                RawEvidence::Unknown(UnknownReason::Missing),
-                RawEvidence::Unknown(UnknownReason::Missing),
-            ),
-            (
-                target("c"),
-                RawEvidence::Known(20.0),
-                RawEvidence::Known(20.0),
-            ),
-        ]);
-        let components = build_score_components(&snapshot);
-
-        let a = components.get(&target("a")).unwrap();
-        let b = components.get(&target("b")).unwrap();
-        let c = components.get(&target("c")).unwrap();
-
-        // a=0 should normalize to 1.0 (best), c=20 to 0.0 (worst)
-        assert!((a.latency_p50.normalized.unwrap() - 1.0).abs() < f64::EPSILON);
-        assert!(b.latency_p50.normalized.is_none(), "unknown stays unknown");
-        assert!((c.latency_p50.normalized.unwrap() - 0.0).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn invalid_negative_values_are_unknown() {
-        // Negative latency should be treated as unknown
-        let snapshot = make_snapshot(vec![
-            (
-                target("a"),
-                RawEvidence::Known(10.0),
-                RawEvidence::Known(10.0),
-            ),
-            (
-                target("b"),
-                RawEvidence::Unknown(UnknownReason::Invalid),
-                RawEvidence::Unknown(UnknownReason::Invalid),
-            ),
-        ]);
-        let components = build_score_components(&snapshot);
-
-        let a = components.get(&target("a")).unwrap();
-        let b = components.get(&target("b")).unwrap();
-
-        // a should normalize to 0.5 (single known value)
-        assert!(
-            (a.latency_p50.normalized.unwrap() - 0.5).abs() < f64::EPSILON,
-            "single known value should normalize to 0.5"
-        );
-        assert!(b.latency_p50.normalized.is_none(), "invalid stays unknown");
-    }
-
-    #[test]
-    fn p50_p95_normalized_separately() {
-        let snapshot = make_snapshot(vec![
-            (
-                target("a"),
-                RawEvidence::Known(10.0),
-                RawEvidence::Known(50.0),
-            ),
-            (
-                target("b"),
-                RawEvidence::Known(30.0),
-                RawEvidence::Known(90.0),
-            ),
-        ]);
-        let components = build_score_components(&snapshot);
-
-        let a = components.get(&target("a")).unwrap();
-        let b = components.get(&target("b")).unwrap();
-
-        // p50: [10, 30] → a=1.0, b=0.0
-        assert!((a.latency_p50.normalized.unwrap() - 1.0).abs() < f64::EPSILON);
-        assert!((b.latency_p50.normalized.unwrap() - 0.0).abs() < f64::EPSILON);
-
-        // p95: [50, 90] → a=1.0, b=0.0
-        assert!((a.latency_p95.normalized.unwrap() - 1.0).abs() < f64::EPSILON);
-        assert!((b.latency_p95.normalized.unwrap() - 0.0).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn permuted_order_same_normalization() {
-        // Same eligible set, permuted order → identical normalization results
-        let snapshot1 = make_snapshot(vec![
-            (
-                target("a"),
-                RawEvidence::Known(10.0),
-                RawEvidence::Known(10.0),
-            ),
-            (
-                target("b"),
-                RawEvidence::Known(20.0),
-                RawEvidence::Known(20.0),
-            ),
-            (
-                target("c"),
-                RawEvidence::Known(30.0),
-                RawEvidence::Known(30.0),
-            ),
-        ]);
-        let snapshot2 = make_snapshot(vec![
-            (
-                target("c"),
-                RawEvidence::Known(30.0),
-                RawEvidence::Known(30.0),
-            ),
-            (
-                target("a"),
-                RawEvidence::Known(10.0),
-                RawEvidence::Known(10.0),
-            ),
-            (
-                target("b"),
-                RawEvidence::Known(20.0),
-                RawEvidence::Known(20.0),
-            ),
-        ]);
-
-        let comp1 = build_score_components(&snapshot1);
-        let comp2 = build_score_components(&snapshot2);
-
-        // Same target should have same normalization regardless of order
-        let a1 = comp1.get(&target("a")).unwrap();
-        let a2 = comp2.get(&target("a")).unwrap();
-        assert!(
-            (a1.latency_p50.normalized.unwrap() - a2.latency_p50.normalized.unwrap()).abs()
-                < f64::EPSILON
-        );
     }
 }

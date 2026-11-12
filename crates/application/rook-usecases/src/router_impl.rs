@@ -208,6 +208,32 @@ impl FallbackRouter {
         }
     }
 
+    /// Positional weights cannot safely survive changes to provider identities or order.
+    fn validate_registry_change(
+        &self,
+        current: &[Arc<dyn ProviderPort>],
+        proposed: &[Arc<dyn ProviderPort>],
+    ) -> Result<(), rook_core::RegistryError> {
+        if let RoutingStrategy::WeightedRandom(weights) = &self.strategy {
+            let invalid = Self::validate_weights(weights, proposed.len()).err();
+            let changed = current.len() != proposed.len()
+                || current.iter().zip(proposed).any(|(a, b)| a.id() != b.id());
+            if invalid.is_some() || changed {
+                return Err(rook_core::RegistryError::ProviderBuildFailed {
+                    provider_id: ProviderId::new("weighted-registry"),
+                    reason: invalid.map_or_else(
+                        || {
+                            "weighted registry membership and order must remain unchanged"
+                                .to_string()
+                        },
+                        |error| error.to_string(),
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// Returns providers that are available (circuit closed) and support the model.
     /// Also returns the registry length captured at the same time as the candidates,
     /// so WeightedRandom validation uses a consistent view even during registry refresh.
@@ -385,23 +411,29 @@ impl ProviderRegistryPort for FallbackRouter {
         new_providers: Vec<Arc<dyn ProviderPort>>,
     ) -> Result<(), rook_core::RegistryError> {
         let mut providers = self.providers.write();
+        self.validate_registry_change(&providers, &new_providers)?;
         *providers = new_providers;
         Ok(())
     }
 
     fn upsert(&self, provider: Arc<dyn ProviderPort>) -> Result<(), rook_core::RegistryError> {
         let mut providers = self.providers.write();
-        if let Some(existing) = providers.iter().position(|p| p.id() == provider.id()) {
-            providers[existing] = provider;
+        let mut proposed = providers.clone();
+        if let Some(existing) = proposed.iter().position(|p| p.id() == provider.id()) {
+            proposed[existing] = provider;
         } else {
-            providers.push(provider);
+            proposed.push(provider);
         }
+        self.validate_registry_change(&providers, &proposed)?;
+        *providers = proposed;
         Ok(())
     }
 
     fn remove(&self, id: &ProviderId) -> Result<(), rook_core::RegistryError> {
         let mut providers = self.providers.write();
-        providers.retain(|p| p.id() != id);
+        let proposed: Vec<_> = providers.iter().filter(|p| p.id() != id).cloned().collect();
+        self.validate_registry_change(&providers, &proposed)?;
+        *providers = proposed;
         Ok(())
     }
 }
@@ -1603,6 +1635,26 @@ mod tests {
         let s3 = RoutingStrategy::WeightedRandom(vec![0.5, 0.5]);
         let s4 = s3.clone();
         assert!(matches!(s4, RoutingStrategy::WeightedRandom(_)));
+    }
+
+    #[test]
+    fn weighted_registry_changes_are_atomic_and_preserve_provider_weights() {
+        let a = StubProvider::new("a", &["model-x"]);
+        let b = StubProvider::new("b", &["model-x"]);
+        let router = FallbackRouter::new(
+            vec![a.clone(), b.clone()],
+            RoutingStrategy::WeightedRandom(vec![1.0, 0.0]),
+        );
+        assert!(router.replace_all(vec![b.clone(), a.clone()]).is_err());
+        assert!(router.replace_all(vec![a.clone()]).is_err());
+        assert!(router.upsert(StubProvider::new("c", &["model-x"])).is_err());
+        assert!(router.remove(&ProviderId::new("a")).is_err());
+        assert_eq!(
+            ProviderRegistryPort::providers(&router),
+            vec![ProviderId::new("a"), ProviderId::new("b")]
+        );
+        assert!(router.upsert(StubProvider::new("a", &["model-x"])).is_ok());
+        assert!(router.replace_all(vec![a, b]).is_ok());
     }
 
     // 5.1 — FallbackRouter::new_empty creates a router with empty registry

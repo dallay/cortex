@@ -738,3 +738,18 @@ test("accepts a canonical ID derived from near-maximum multibyte references", ()
     assert.equal(result.status, 0, cliOutput(result));
   }
 });
+
+test("rejects exclusion of the ordinary attack-class block", () => {
+  const value = unit();
+  value.excluded_blocks = [{ block: value.ordinary_attack_class_block, reason: "Excluded." }];
+  assert(errorsFor([value]).some(error => error.includes("block is also selected")));
+});
+
+test("allows shared artifacts within an archived attempt but rejects later reuse", () => {
+  const attempt = archivedAttempt({local_checks: [localCheck(), localCheck("hunter-1", {invariant: "A second invariant."})]});
+  const value = unit({attempts: [attempt], wave: 2, status: "in_progress", agent_id: "hunter-2"});
+  assert.deepEqual(errorsFor([value]), []);
+  value.local_checks = [localCheck("hunter-2", {artifact: attempt.local_checks[0].artifact})];
+  value.reviewed_paths = ["src/router.ts"];
+  assert(errorsFor([value]).some(error => error.includes("artifact from an archived attempt cannot be reused")));
+});

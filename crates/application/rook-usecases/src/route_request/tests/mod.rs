@@ -4640,7 +4640,7 @@ async fn eligibility_quota_reads_are_concurrent_bounded_and_deduplicated() {
     .with_quota_observation_reader(reader.clone());
     let connections: Vec<_> = states.iter().chain(states.iter()).collect();
 
-    let exhausted = usecase.exhausted_connection_ids(&connections).await;
+    let (exhausted, _) = usecase.exhausted_connection_ids(&connections).await;
 
     assert_eq!(exhausted, states.iter().map(|state| state.id).collect());
     let queries = reader.queries.lock().unwrap();

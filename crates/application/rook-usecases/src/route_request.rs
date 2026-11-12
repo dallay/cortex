@@ -189,6 +189,7 @@ struct AttemptCursor {
 }
 
 struct RoutingEligibility {
+    quota_observations: std::collections::HashMap<ProviderId, rook_core::QuotaObservation>,
     result: EligibilityResult,
     connections_by_target: std::collections::HashMap<ProviderId, ProviderConnectionRoutingState>,
     providers_by_target: std::collections::HashMap<ProviderId, Arc<dyn rook_core::ProviderPort>>,
@@ -842,6 +843,10 @@ impl RouteRequest {
             context.req,
             eligibility.as_ref().map(|snapshot| &snapshot.result),
             &selection_excluded,
+            &eligibility
+                .as_ref()
+                .map(|snapshot| snapshot.quota_observations.clone())
+                .unwrap_or_default(),
             eligibility
                 .as_ref()
                 .map(|snapshot| &snapshot.connections_by_target),
@@ -1149,7 +1154,8 @@ impl RouteRequest {
             })
             .filter(|connection| connection.is_active)
             .collect();
-        let exhausted_connections = self.exhausted_connection_ids(&candidate_connections).await;
+        let (exhausted_connections, quota_by_connection) =
+            self.exhausted_connection_ids(&candidate_connections).await;
         for candidate in &mut facts {
             if !candidate.requires_quota_check() {
                 continue;
@@ -1176,11 +1182,19 @@ impl RouteRequest {
             }
         }
 
+        let quota_observations = connection_states_by_target
+            .iter()
+            .filter_map(|(target, connection)| {
+                let observation = quota_by_connection.get(&connection.as_ref()?.id)?;
+                Some((target.clone(), observation.clone()))
+            })
+            .collect();
         let connections_by_target = connection_states_by_target
             .into_iter()
             .filter_map(|(target, connection)| connection.map(|connection| (target, connection)))
             .collect();
         Ok(Some(RoutingEligibility {
+            quota_observations,
             result: evaluate_candidates(facts),
             connections_by_target,
             providers_by_target,
@@ -1202,6 +1216,7 @@ impl RouteRequest {
         req: &CompletionRequest,
         eligibility: Option<&EligibilityResult>,
         excluded: &[ProviderId],
+        quota_observations: &std::collections::HashMap<ProviderId, rook_core::QuotaObservation>,
         connections: Option<&std::collections::HashMap<ProviderId, ProviderConnectionRoutingState>>,
     ) -> Option<crate::scoring::SignalsSnapshot> {
         let result = eligibility?;
@@ -1231,10 +1246,6 @@ impl RouteRequest {
                 .filter(|(id, _)| considered_ids.contains(id))
                 .collect();
 
-        // No quota observations available at this point; they will be None.
-        let quota_observations: std::collections::HashMap<ProviderId, rook_core::QuotaObservation> =
-            std::collections::HashMap::new();
-
         // Build snapshot with real priority from connection routing state.
         let snapshot = build_signals_snapshot(
             &considered,
@@ -1242,7 +1253,7 @@ impl RouteRequest {
             &self.telemetry.clone(),
             &self.pricing,
             &circuit_states,
-            &quota_observations,
+            quota_observations,
         );
 
         // Inject real priority from connection routing state into the snapshot.
@@ -1271,13 +1282,17 @@ impl RouteRequest {
     async fn exhausted_connection_ids(
         &self,
         connections: &[&ProviderConnectionRoutingState],
-    ) -> std::collections::HashSet<ConnectionId> {
+    ) -> (
+        std::collections::HashSet<ConnectionId>,
+        std::collections::HashMap<ConnectionId, rook_core::QuotaObservation>,
+    ) {
         let mut exhausted = std::collections::HashSet::new();
+        let mut retained = std::collections::HashMap::new();
         let Some(reader) = self.quota_reader.as_ref() else {
-            return exhausted;
+            return (exhausted, retained);
         };
         if connections.is_empty() {
-            return exhausted;
+            return (exhausted, retained);
         }
 
         let mut queried_connections = std::collections::HashSet::new();
@@ -1327,6 +1342,21 @@ impl RouteRequest {
                     now,
                     &self.quota_policy,
                 );
+                if let rook_core::QuotaState::Available(evidence)
+                | rook_core::QuotaState::Exhausted(evidence) = &quota
+                {
+                    if let Some(observation) = observations.iter().find(|observation| {
+                        observation.connection_id == evidence.connection_id
+                            && observation.provider == evidence.provider
+                            && observation.metric == evidence.metric
+                            && observation.source == evidence.source
+                            && observation.scope == evidence.scope
+                            && observation.window == evidence.window
+                            && observation.observed_at == evidence.observed_at
+                    }) {
+                        retained.insert(connection.id, observation.clone());
+                    }
+                }
                 if quota.is_exhausted() {
                     exhausted.insert(connection.id);
                 }
@@ -1342,7 +1372,7 @@ impl RouteRequest {
                 "quota eligibility deadline reached; unread connections remain eligible"
             );
         }
-        exhausted
+        (exhausted, retained)
     }
 
     /// Exclude key-disallowed targets when at least one registered target is allowed.
@@ -1818,6 +1848,10 @@ impl RouteRequest {
                 req,
                 eligibility.as_ref().map(|snapshot| &snapshot.result),
                 &selection_excluded,
+                &eligibility
+                    .as_ref()
+                    .map(|snapshot| snapshot.quota_observations.clone())
+                    .unwrap_or_default(),
                 eligibility
                     .as_ref()
                     .map(|snapshot| &snapshot.connections_by_target),

@@ -67,7 +67,13 @@ An extension package gains host authority beyond its declared scope, a lower-tru
 ## Validation rules (apply before reporting ANY finding here)
 
 1. Name the lower-trust actor, controllable source/cache/artifact/metadata, consuming trusted job or updater, and resulting unauthorized publication, code inclusion, secret disclosure, or privileged execution.
-2. Prove artifact identity across the broken handoff. A different mutable name or unbound digest must reach a real consumer.
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:9e5677734ee3d54e86b38803fbcb7b0cfaf5c252b3d8648e9e1e590b4331af3f -->
+
+2. When the finding involves an artifact handoff, prove artifact identity across that broken handoff: a different mutable name or unbound digest must reach a real consumer. Artifact-identity validation is not a prerequisite for findings without an artifact handoff.
+
+<!-- /coderabbit-ai-generated:v1 -->
 3. Verify built-in package-manager, repository-host, registry, and signing defaults for the pinned version. Unknown hosted controls require `needs_validation`.
 4. Keep local validation bounded: use a harmless fixture repository, dummy credential marker, local registry/config, and non-production artifact namespace. Do not publish or alter a real release.
 5. Return `confirmed` only with a complete source-visible handoff and meaningful result. Return `needs_validation` with the precise branch, runner, registry, signing, or deployment fact an owner must observe.

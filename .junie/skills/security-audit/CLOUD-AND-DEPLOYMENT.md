@@ -8,13 +8,21 @@ Use `SUPPLY-CHAIN-AND-RELEASE.md` for build and promotion trust, `WEB-PROTOCOL-A
 
 ## Core discipline (include in every agent prompt for this domain)
 
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:34ffb13223caaed4b00eb53f5560cadd53fa608afdc7f37b14923891502ba74c -->
+
 ```
 - Do not infer a live exposure from a manifest alone. Establish which environment consumes it, what defaults or overlays modify it, and whether the source path is active.
-- Map each workload's identity to specific operations and resources. Broad policy is a finding only when lower-trust input can reach an unauthorized action.
+
+- Map each workload's identity to specific operations and resources. Established excessive permissions, such as authority over unrelated production buckets, may be reported as security-posture findings without a traceable untrusted-input path. Distinguish that established authority from demonstrated exploitation, which requires a source-backed path from lower-trust input to an unauthorized action.
+
 - Ingress, proxies, service mesh, metadata services, and admission policy are real boundaries, but only count a control when its configuration and attachment are visible.
 - Secret references are not secret disclosure. Require a lower-trust reader, output, artifact, log path, or unsafe fallback.
 - Use `confirmed` for active in-repo configurations and local rendering/policy validation. Use `needs_validation` for account policy, network attachment, runtime admission, hosted metadata, or drift that needs owner observation.
 ```
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 ## Workload identity and IAM attack classes (subagent_type: `general`)
 

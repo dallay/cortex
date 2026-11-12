@@ -8,13 +8,21 @@ Split large targets by primary storage, cache/search, object/blob storage, analy
 
 ## Core discipline (include in every agent prompt for this domain)
 
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:7df13eb16f11a61ca43e4bfcd9e19c33c9c18371fcd91b2e0be77f5d207855cb -->
+
 ```
 - A tenant or owner field on a record is not isolation. Find the query, key, path, policy, or row-level control that enforces it for each read and write path.
 - Trace derived copies. Sanitized primary data can become unsafe in search, cache, analytics, export, previews, logs, replicas, and backups with different ACL and retention rules.
 - Deletion and revocation are lifecycle contracts. Check current, historical, cached, indexed, exported, restored, and queued copies within the product's stated boundary.
-- Privacy or retention preference is not automatically a security vulnerability. Require an explicit data-access boundary or deletion/revocation guarantee and an unauthorized reader or later operation.
+
+- Privacy or retention preferences are not security findings unless they are explicit guarantees. For a data-access boundary finding, require an unauthorized reader or later operation. A demonstrated violation of an explicit deletion, revocation, or retention guarantee may be reported on its own, without an unauthorized reader or later operation.
+
 - Use `confirmed` for complete source-visible lineage and bounded dummy-tenant tests. Use `needs_validation` when external storage policy, retention, CDN behavior, replica lag, or backup access is unavailable.
 ```
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 ## Tenant and object-isolation attack classes (subagent_type: `general`)
 
