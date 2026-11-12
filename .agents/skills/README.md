@@ -45,6 +45,10 @@ Consequences:
 
 Pins GitHub Actions to immutable SHAs and resolves the correct reference (`v4`, `v4.2.2`, annotated tags) with `scripts/resolve-action-sha.sh`.
 
+### [security-audit](security-audit/SKILL.md)
+
+Audits codebases, APIs, and services for vulnerabilities across trust boundaries following Cloudflare's security audit skill methodology.
+
 ### [tui/ratatui-tui](tui/ratatui-tui/SKILL.md)
 
 Operational contracts for the Huginn TUI: single terminal owner, inline Ratatui

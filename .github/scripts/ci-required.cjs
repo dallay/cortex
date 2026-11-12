@@ -12,6 +12,7 @@ const EXPECTED = [
   {job: 'clippy', when: (c) => c.backend || c.github},
   {job: 'check', when: (c) => c.backend || c.github},
   {job: 'test', when: (c) => c.backend || c.github},
+  {job: 'test-huginn-seatbelt', when: (c) => c.backend || c.github},
   {job: 'test-muninn-c1', when: (c) => c.muninnC1},
   {job: 'test-frontend', when: (c) => c.frontendTests},
   {job: 'coverage', when: (c) => c.backend || c.github},

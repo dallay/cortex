@@ -1532,13 +1532,15 @@ async fn denied_mcp_call_never_reaches_the_started_server() {
         env: BTreeMap::from([("MARKER".into(), marker.display().to_string())]),
         env_from: BTreeMap::new(),
     };
+    // The macOS runner spawns the Command Line Tools Python shim, which can take
+    // longer than five seconds to start when the whole suite runs in parallel.
     let mut clients = McpClients::connect(
         &[config],
         workspace.path(),
         &registry,
         &Policy(true),
         CancellationToken::new(),
-        5,
+        30,
     )
     .await
     .unwrap();

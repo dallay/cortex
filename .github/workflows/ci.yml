@@ -75,6 +75,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install
       - name: Build dashboard
+        env:
+          CODECOV_BUNDLE_ANALYSIS: ${{ needs.changes.outputs.frontend == 'true' && github.actor != 'dependabot[bot]' }}
+          CODECOV_TOKEN: ${{ needs.changes.outputs.frontend == 'true' && github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && secrets.CODECOV_TOKEN || '' }}
         run: pnpm --filter @dallay/rook-dashboard run build
       - name: Upload dashboard dist
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -225,12 +228,39 @@ jobs:
       - name: Install D-Bus development libraries
         run: sudo apt-get update && sudo apt-get install --yes libdbus-1-dev pkg-config
       - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
+        with:
+          tool: nextest@0.9.151
       - name: Cache cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
-      - name: Run tests
-        run: |
-          cargo test --workspace --all-features --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn
-          cargo test --locked -p muninn-providers -p muninn
+      - name: Run unit and integration tests
+        run: cargo nextest run --workspace --all-features --profile ci --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn
+      - name: Run default-feature Muninn tests
+        run: cargo test --locked -p muninn-providers -p muninn
+      - name: Run unit and integration tests
+        run: cargo nextest run --workspace --all-features --profile ci --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn
+      - name: Run doctests
+        if: ${{ !cancelled() }}
+        run: cargo test --workspace --all-features --doc
+      - name: Upload Rust test results to Codecov
+        if: ${{ !cancelled() && github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
+        with:
+          files: target/nextest/ci/junit.xml
+          flags: backend
+          report_type: test_results
+          fail_ci_if_error: false
+          disable_search: true
+          token: ${{ secrets.CODECOV_TOKEN }}
+      - name: Retain Rust JUnit report artifact
+        if: ${{ !cancelled() && hashFiles('target/nextest/ci/junit.xml') != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-rust
+          path: target/nextest/ci/junit.xml
+          retention-days: 7
+        continue-on-error: true
 
   test-muninn-c1:
     name: Test (Muninn C1 opt-in)
@@ -346,7 +376,25 @@ jobs:
         run: pnpm exec biome ci .
       - name: Run Vitest tests
         working-directory: apps/rook/dashboard
-        run: pnpm exec vitest run
+        run: pnpm exec vitest run --reporter=default --reporter=junit --outputFile.junit=junit.xml
+      - name: Upload Frontend test results to Codecov
+        if: ${{ !cancelled() && github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
+        with:
+          files: apps/rook/dashboard/junit.xml
+          flags: frontend
+          report_type: test_results
+          fail_ci_if_error: false
+          disable_search: true
+          token: ${{ secrets.CODECOV_TOKEN }}
+      - name: Retain Frontend JUnit report artifact
+        if: ${{ !cancelled() && hashFiles('apps/rook/dashboard/junit.xml') != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-dashboard
+          path: apps/rook/dashboard/junit.xml
+          retention-days: 7
+        continue-on-error: true
 
   test-e2e:
     name: Test (E2E)
@@ -730,6 +778,7 @@ jobs:
       - check
       - test
       - test-muninn-c1
+      - test-huginn-seatbelt
       - test-frontend
       - test-e2e
       - doc
@@ -765,6 +814,7 @@ jobs:
           RESULT_CHECK: ${{ needs.check.result }}
           RESULT_TEST: ${{ needs.test.result }}
           RESULT_TEST_MUNINN_C1: ${{ needs.test-muninn-c1.result }}
+          RESULT_TEST_HUGINN_SEATBELT: ${{ needs.test-huginn-seatbelt.result }}
           RESULT_TEST_FRONTEND: ${{ needs.test-frontend.result }}
           RESULT_COVERAGE: ${{ needs.coverage.result }}
           RESULT_COVERAGE_FRONTEND: ${{ needs.coverage-frontend.result }}
@@ -910,3 +960,41 @@ jobs:
       - name: Run Windows clippy
         if: runner.os == 'Windows'
         run: cargo clippy --workspace --all-targets --exclude huginn-core --exclude huginn-application --exclude huginn-runtime --exclude huginn-presentation --exclude huginn -- -D warnings
+
+  test-huginn-seatbelt:
+    name: Test Huginn Seatbelt (macOS)
+    runs-on: macos-latest
+    needs: [ changes ]
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
+      - name: Require macOS Seatbelt launcher
+        shell: bash
+        run: |
+          test "$RUNNER_OS" = "macOS"
+          sw_vers
+          test -x /usr/bin/sandbox-exec
+      - name: Run unfiltered Huginn runtime tests, including Seatbelt enforcement
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p huginn-runtime 2>&1 | tee huginn-runtime-tests.log
+          for required_test in \
+            run_shell_can_read_and_write_inside_workspace \
+            run_shell_timeout_terminates_descendant_holding_output_pipes \
+            run_shell_cancellation_terminates_descendant_holding_output_pipes \
+            run_shell_cannot_read_external_marker_after_changing_cwd \
+            run_shell_cannot_read_marker_outside_workspace \
+            run_shell_seatbelt_denies_tcp_connect_after_host_control_succeeds \
+            run_shell_seatbelt_denies_udp_datagram_after_host_control_succeeds \
+            run_shell_seatbelt_denies_unix_socket_connect_after_host_control_succeeds
+          do
+            if ! grep -E "^test (.*::)?${required_test} \.\.\. ok$" huginn-runtime-tests.log; then
+              echo "::error::required Seatbelt test did not report ok: ${required_test}" >&2
+              exit 1
+            fi
+          done

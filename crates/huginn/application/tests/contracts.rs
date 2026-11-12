@@ -121,6 +121,239 @@ async fn legacy_action_grants_cannot_authorize_file_mutations() {
     assert_eq!(prompt.grants.load(Ordering::SeqCst), 0);
 }
 
+#[tokio::test]
+async fn on_request_prompts_for_out_of_profile_native_write_without_escalation_list() {
+    use huginn_application::permission_policy::{
+        ApprovalMode, EffectivePolicy, PolicySettings, ProcessProfile, ProjectTrust,
+    };
+    use huginn_core::ApprovalProvenance;
+    use std::collections::BTreeSet;
+
+    struct RecordingPrompt {
+        requests: AtomicUsize,
+    }
+    #[async_trait]
+    impl ApprovalPrompt for RecordingPrompt {
+        async fn request_decision(
+            &self,
+            _: &ApprovalRequest,
+            allowed_decisions: &[ApprovalDecision],
+            _: CancellationToken,
+        ) -> Result<ApprovalDecision> {
+            self.requests.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(
+                allowed_decisions,
+                &[ApprovalDecision::Reject, ApprovalDecision::ApproveOnce]
+            );
+            Ok(ApprovalDecision::ApproveOnce)
+        }
+    }
+
+    let prompt = Arc::new(RecordingPrompt {
+        requests: AtomicUsize::new(0),
+    });
+    let policy = EffectivePolicy::resolve(
+        PolicySettings {
+            profile: ProcessProfile::Restricted,
+            approval_mode: ApprovalMode::OnRequest,
+        },
+        None,
+        ProjectTrust::default(),
+    );
+    let host =
+        HostPolicy::new(prompt.clone(), BTreeSet::new()).with_effective_policy(Arc::new(policy));
+    let request = ApprovalRequest {
+        id: "outside-profile-write".into(),
+        action: "native.write_file".into(),
+        preview: "write one file".into(),
+        resource: Some(huginn_core::ApprovalResource {
+            canonical_path: std::env::temp_dir().join("huginn-outside-profile.txt"),
+            sensitive: false,
+        }),
+        provenance: Some(ApprovalProvenance::NativeFileBuiltin),
+    };
+
+    assert_eq!(
+        host.approve(&request, CancellationToken::new())
+            .await
+            .unwrap(),
+        ApprovalDecision::ApproveOnce
+    );
+    assert_eq!(prompt.requests.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        host.effective_policy().profile(),
+        ProcessProfile::Restricted,
+        "approval must not change the selected profile"
+    );
+}
+
+#[tokio::test]
+async fn managed_denial_of_native_write_is_final_before_host_prompt() {
+    use huginn_application::permission_policy::{
+        ApprovalMode, EffectivePolicy, ManagedRestrictions, PolicySettings, ProcessProfile,
+        ProjectTrust,
+    };
+    use huginn_core::ApprovalProvenance;
+    struct RecordingPrompt(AtomicUsize);
+    #[async_trait]
+    impl ApprovalPrompt for RecordingPrompt {
+        async fn request_decision(
+            &self,
+            _: &ApprovalRequest,
+            _: &[ApprovalDecision],
+            _: CancellationToken,
+        ) -> Result<ApprovalDecision> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(ApprovalDecision::ApproveOnce)
+        }
+    }
+
+    let prompt = Arc::new(RecordingPrompt(AtomicUsize::new(0)));
+    let policy = EffectivePolicy::resolve(
+        PolicySettings {
+            profile: ProcessProfile::Restricted,
+            approval_mode: ApprovalMode::OnRequest,
+        },
+        Some(ManagedRestrictions {
+            denied_capabilities: [huginn_application::permission_policy::Capability::FileWrite]
+                .into(),
+            ..ManagedRestrictions::default()
+        }),
+        ProjectTrust::default(),
+    );
+    let host = HostPolicy::new(prompt.clone(), ["native.write_file".to_owned()].into())
+        .with_effective_policy(Arc::new(policy));
+    let request = ApprovalRequest {
+        id: "managed-denied-write".into(),
+        action: "native.write_file".into(),
+        preview: "write one file".into(),
+        resource: Some(huginn_core::ApprovalResource {
+            canonical_path: std::env::temp_dir().join("huginn-managed-denied.txt"),
+            sensitive: false,
+        }),
+        provenance: Some(ApprovalProvenance::NativeFileBuiltin),
+    };
+
+    assert_eq!(
+        host.approve(&request, CancellationToken::new())
+            .await
+            .unwrap(),
+        ApprovalDecision::Reject
+    );
+    assert_eq!(prompt.0.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn managed_denial_of_native_shell_is_final_before_host_prompt() {
+    use huginn_application::permission_policy::{
+        ApprovalMode, EffectivePolicy, ManagedRestrictions, PolicySettings, ProcessProfile,
+        ProjectTrust,
+    };
+    struct RecordingPrompt(AtomicUsize);
+    #[async_trait]
+    impl ApprovalPrompt for RecordingPrompt {
+        async fn request_decision(
+            &self,
+            _: &ApprovalRequest,
+            _: &[ApprovalDecision],
+            _: CancellationToken,
+        ) -> Result<ApprovalDecision> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(ApprovalDecision::ApproveOnce)
+        }
+    }
+
+    let prompt = Arc::new(RecordingPrompt(AtomicUsize::new(0)));
+    let policy = EffectivePolicy::resolve(
+        PolicySettings {
+            profile: ProcessProfile::Restricted,
+            approval_mode: ApprovalMode::OnRequest,
+        },
+        Some(ManagedRestrictions {
+            denied_capabilities: [huginn_application::permission_policy::Capability::Shell].into(),
+            ..ManagedRestrictions::default()
+        }),
+        ProjectTrust::default(),
+    );
+    let host = HostPolicy::new(prompt.clone(), ["native.shell".to_owned()].into())
+        .with_effective_policy(Arc::new(policy));
+    let mut request = ApprovalRequest {
+        id: "managed-denied-shell".into(),
+        action: "native.shell".into(),
+        preview: "Command: echo ok".into(),
+        resource: None,
+        provenance: None,
+    };
+
+    for action in ["native.shell", "native.shell.exec"] {
+        request.action = action.into();
+        assert_eq!(
+            host.approve(&request, CancellationToken::new())
+                .await
+                .unwrap(),
+            ApprovalDecision::Reject
+        );
+    }
+    assert_eq!(prompt.0.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn user_rule_prohibition_precedes_host_prompt_and_session_grant() {
+    use huginn_application::permission_policy::{
+        ApprovalMode, Capability, EffectivePolicy, GlobalRules, PolicySettings, ProcessProfile,
+        ProjectTrust, UserRules,
+    };
+    use huginn_core::ApprovalProvenance;
+    struct RecordingPrompt(AtomicUsize);
+    #[async_trait]
+    impl ApprovalPrompt for RecordingPrompt {
+        async fn request_decision(
+            &self,
+            _: &ApprovalRequest,
+            _: &[ApprovalDecision],
+            _: CancellationToken,
+        ) -> Result<ApprovalDecision> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(ApprovalDecision::ApproveForSession)
+        }
+    }
+
+    let prompt = Arc::new(RecordingPrompt(AtomicUsize::new(0)));
+    let policy = EffectivePolicy::resolve_with_rules(
+        PolicySettings {
+            profile: ProcessProfile::FullAccess,
+            approval_mode: ApprovalMode::OnRequest,
+        },
+        GlobalRules::default(),
+        UserRules {
+            denied_capabilities: [Capability::FileWrite].into(),
+        },
+        None,
+        ProjectTrust::default(),
+    );
+    let host = HostPolicy::new(prompt.clone(), Default::default())
+        .with_effective_policy(Arc::new(policy))
+        .for_session("user-denial");
+    let request = ApprovalRequest {
+        id: "user-denied-write".into(),
+        action: "native.write_file".into(),
+        preview: "write one file".into(),
+        resource: Some(huginn_core::ApprovalResource {
+            canonical_path: std::env::temp_dir().join("huginn-user-denied.txt"),
+            sensitive: false,
+        }),
+        provenance: Some(ApprovalProvenance::NativeFileBuiltin),
+    };
+
+    assert_eq!(
+        host.approve(&request, CancellationToken::new())
+            .await
+            .unwrap(),
+        ApprovalDecision::Reject
+    );
+    assert_eq!(prompt.0.load(Ordering::SeqCst), 0);
+}
+
 struct SessionGrantPrompt;
 #[async_trait]
 impl ApprovalPrompt for SessionGrantPrompt {
@@ -739,7 +972,113 @@ async fn session_grant_executes_first_and_matching_next_action_without_another_p
 }
 
 #[tokio::test]
+async fn allow_once_authorizes_only_one_prepared_operation_and_keeps_profile_unchanged() {
+    use huginn_application::permission_policy::{
+        ApprovalMode, EffectivePolicy, PolicySettings, ProcessProfile,
+    };
+
+    struct ApproveOnceThenReject(AtomicUsize);
+    #[async_trait]
+    impl ApprovalPrompt for ApproveOnceThenReject {
+        async fn request_decision(
+            &self,
+            _: &ApprovalRequest,
+            allowed: &[ApprovalDecision],
+            _: CancellationToken,
+        ) -> Result<ApprovalDecision> {
+            assert_eq!(
+                allowed,
+                &[ApprovalDecision::Reject, ApprovalDecision::ApproveOnce]
+            );
+            let call = self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(if call == 0 {
+                ApprovalDecision::ApproveOnce
+            } else {
+                ApprovalDecision::Reject
+            })
+        }
+    }
+
+    let executions = Arc::new(AtomicUsize::new(0));
+    let prompt = Arc::new(ApproveOnceThenReject(AtomicUsize::new(0)));
+    let policy = HostPolicy::new(prompt.clone(), Default::default()).with_effective_policy(
+        Arc::new(EffectivePolicy::resolve(
+            PolicySettings {
+                profile: ProcessProfile::Restricted,
+                approval_mode: ApprovalMode::OnRequest,
+            },
+            None,
+            Default::default(),
+        )),
+    );
+    let mut supervisor = composition::build(
+        Arc::new(SessionGrantModel(AtomicUsize::new(0))),
+        Arc::new(SessionGrantRegistry(Arc::new(SessionGrantTool(
+            executions.clone(),
+        )))),
+        Arc::new(Memory::default()),
+        LoopConfig::default(),
+        Arc::new(Instructions),
+    )
+    .await
+    .unwrap();
+    let implementation = supervisor
+        .resolve::<LoopService>(&composition::loop_id())
+        .unwrap();
+    let mut session = Session::new("/workspace".into());
+    let events = Events;
+
+    for prompt_text in ["first operation", "same scoped operation again"] {
+        implementation
+            .0
+            .run(
+                &mut session,
+                prompt_text.into(),
+                &policy,
+                &events,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+    }
+
+    assert_eq!(executions.load(Ordering::SeqCst), 1);
+    assert_eq!(prompt.0.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        policy.effective_policy().profile(),
+        ProcessProfile::Restricted
+    );
+    assert_eq!(
+        session
+            .events
+            .iter()
+            .filter(|event| matches!(event, Event::ApprovalResolved { approved: true, .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        session
+            .events
+            .iter()
+            .filter(|event| matches!(
+                event,
+                Event::ApprovalResolved {
+                    approved: false,
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
+    supervisor.shutdown().await;
+}
+
+#[tokio::test]
 async fn rejected_effect_is_recorded_denied_and_not_executed() {
+    use huginn_application::permission_policy::{
+        ApprovalMode, EffectivePolicy, PolicySettings, ProcessProfile,
+    };
+
     struct RejectSessionGrant;
     #[async_trait]
     impl ApprovalPrompt for RejectSessionGrant {
@@ -754,6 +1093,15 @@ async fn rejected_effect_is_recorded_denied_and_not_executed() {
         }
     }
     let executions = Arc::new(AtomicUsize::new(0));
+    let policy = HostPolicy::new(Arc::new(RejectSessionGrant), Default::default())
+        .with_effective_policy(Arc::new(EffectivePolicy::resolve(
+            PolicySettings {
+                profile: ProcessProfile::Restricted,
+                approval_mode: ApprovalMode::OnRequest,
+            },
+            None,
+            Default::default(),
+        )));
     let store = Arc::new(Memory::default());
     let mut supervisor = composition::build(
         Arc::new(SessionGrantModel(AtomicUsize::new(0))),
@@ -775,7 +1123,7 @@ async fn rejected_effect_is_recorded_denied_and_not_executed() {
         .run(
             &mut session,
             "reject".into(),
-            &HostPolicy::new(Arc::new(RejectSessionGrant), Default::default()),
+            &policy,
             &Events,
             CancellationToken::new(),
         )
@@ -783,6 +1131,10 @@ async fn rejected_effect_is_recorded_denied_and_not_executed() {
         .unwrap();
 
     assert_eq!(executions.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        policy.effective_policy().profile(),
+        ProcessProfile::Restricted
+    );
     assert!(session.events.iter().any(|event| matches!(
         event,
         Event::ApprovalResolved {

@@ -466,7 +466,7 @@ async fn approval_retains_diff_and_requires_armed_visible_choice() {
 }
 
 #[tokio::test]
-async fn approval_rejects_positive_decision_when_no_preview_row_was_rendered() {
+async fn approval_requires_a_preview_row_to_be_rendered() {
     let ui = ui();
     let payload = request();
     let task = {
@@ -627,52 +627,34 @@ async fn approval_paste_cannot_authorize_and_selected_policy_choice_is_traced() 
     );
     let (ticket, focus) = {
         let mut state = ui.lock();
-        state.modal_mut().unwrap().armed = true;
+        let modal = state.modal_mut().unwrap();
+        modal.armed = true;
+        modal.details_rendered = true;
         (state.overlays.ticket(), state.overlays.focus())
     };
     ui.overlay_input(Input::Paste("\r".into()), ticket, focus);
     assert!(!task.is_finished(), "paste must not authorize");
-    ui.overlay_input(
-        Input::Key(crossterm::event::KeyEvent::new(
-            KeyCode::Char('f'),
-            crossterm::event::KeyModifiers::CONTROL,
-        )),
-        ticket,
-        focus,
-    );
-    {
-        let mut state = ui.lock();
-        let modal = state.modal_mut().unwrap();
-        modal.details_rendered = true;
-        modal.last_scroll = 0;
-        modal.scroll = 0;
-        modal.rendered_scroll = 0;
-        drop(state);
-    }
+    overlay_key(&ui, KeyCode::Right);
     overlay_key(&ui, KeyCode::Right);
     overlay_key(&ui, KeyCode::Enter);
 
     assert_eq!(
-        task.await.unwrap().unwrap(),
-        huginn_core::ApprovalDecision::ApproveOnce
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .expect("armed positive choice should resolve directly")
+            .unwrap()
+            .unwrap(),
+        huginn_core::ApprovalDecision::ApproveForSession
     );
     let transcript = ui.lock().conversation.join("\n");
-    assert!(transcript.contains("Approved once · native.write_file · request approval-7"));
+    assert!(transcript.contains("Approved for session · native.write_file · request approval-7"));
     assert!(transcript.contains("/workspace/note.txt"));
     assert!(!transcript.contains("NEVER_TRACE_DIFF"));
 }
 
 #[tokio::test]
-async fn expanded_approval_cannot_resolve_before_details_are_drawn() {
-    let ui = ui();
-    let task = {
-        let ui = ui.clone();
-        tokio::spawn(async move {
-            ui.request_decision(&request(), &APPROVAL_DECISIONS, CancellationToken::new())
-                .await
-        })
-    };
-    pending(&ui).await;
+async fn armed_collapsed_incomplete_approval_stays_open_and_grants_nothing() {
+    let (ui, task) = pending_approval().await;
     {
         let mut state = ui.lock();
         let modal = state.modal_mut().unwrap();
@@ -680,34 +662,8 @@ async fn expanded_approval_cannot_resolve_before_details_are_drawn() {
         modal.selected = 1;
         drop(state);
     }
-    let (ticket, focus) = {
-        let state = ui.lock();
-        (state.overlays.ticket(), state.overlays.focus())
-    };
-    ui.overlay_input(
-        crossterm::event::Event::Key(crossterm::event::KeyEvent::new(
-            crossterm::event::KeyCode::Char('f'),
-            crossterm::event::KeyModifiers::CONTROL,
-        )),
-        ticket,
-        focus,
-    );
     overlay_key(&ui, crossterm::event::KeyCode::Enter);
-    assert!(!task.is_finished(), "unrendered diff must not be approved");
-    assert!(ui.lock().modal().unwrap().expanded);
-
-    {
-        let mut state = ui.lock();
-        let modal = state.modal_mut().unwrap();
-        modal.details_rendered = true;
-        modal.last_scroll = 0; // the complete preview fits in the viewport
-        drop(state);
-    }
-    overlay_key(&ui, crossterm::event::KeyCode::Enter);
-    assert_eq!(
-        task.await.unwrap().unwrap(),
-        huginn_core::ApprovalDecision::ApproveOnce
-    );
+    assert_review_required(&ui, task).await;
 }
 
 #[tokio::test]
@@ -2092,13 +2048,32 @@ async fn public_resolver_rejects_positive_decision_for_unarmed_modal() {
 }
 
 #[tokio::test]
-async fn public_resolver_rejects_collapsed_native_file_approval() {
+async fn public_resolver_rejects_armed_collapsed_native_file_approval() {
     let (ui, task) = pending_approval().await;
     ui.lock().modal_mut().unwrap().armed = true;
     ui.resolve_modal(true);
     assert_eq!(
         task.await.unwrap().unwrap(),
         huginn_core::ApprovalDecision::Reject
+    );
+}
+
+#[tokio::test]
+async fn public_resolver_accepts_renderer_confirmed_complete_summary() {
+    let (ui, task) = pending_approval().await;
+    {
+        let mut state = ui.lock();
+        let modal = state.modal_mut().unwrap();
+        modal.request.action = "native.shell".into();
+        modal.request.preview = "Command: echo ok".into();
+        modal.armed = true;
+        modal.summary_complete = true;
+        drop(state);
+    }
+    ui.resolve_modal(true);
+    assert_eq!(
+        task.await.unwrap().unwrap(),
+        huginn_core::ApprovalDecision::ApproveOnce
     );
 }
 
@@ -2156,8 +2131,38 @@ async fn reject_can_be_confirmed_before_expanded_preview_is_read() {
     );
 }
 
+/// An accepted-but-unreviewed approval must not grant, must not send a reply and
+/// must leave the request open with a visible review notice.
+async fn assert_review_required(
+    ui: &Ui,
+    task: tokio::task::JoinHandle<huginn_core::Result<huginn_core::ApprovalDecision>>,
+) {
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        !task.is_finished(),
+        "an unreviewed acceptance must not resolve the request"
+    );
+    let notice = ui
+        .lock()
+        .modal()
+        .map(|modal| modal.review_notice)
+        .expect("the approval must stay open");
+    assert!(notice, "the reviewer must be told what is missing");
+    // The request is still answerable: Reject closes it and is delivered.
+    ui.lock().modal_mut().unwrap().selected = 0;
+    overlay_key(ui, KeyCode::Enter);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .expect("reject must still resolve the request")
+            .unwrap()
+            .unwrap(),
+        huginn_core::ApprovalDecision::Reject
+    );
+}
+
 #[tokio::test]
-async fn collapsed_native_file_approval_is_blocked_without_disarming_modal() {
+async fn collapsed_native_file_approval_requires_reviewing_preview() {
     let (ui, task) = pending_approval().await;
     {
         let mut state = ui.lock();
@@ -2169,8 +2174,7 @@ async fn collapsed_native_file_approval_is_blocked_without_disarming_modal() {
 
     overlay_key(&ui, KeyCode::Enter);
 
-    assert!(!task.is_finished());
-    assert!(ui.lock().modal().unwrap().armed);
+    assert_review_required(&ui, task).await;
 }
 
 #[tokio::test]
@@ -2187,7 +2191,7 @@ async fn collapsed_native_file_request_can_be_rejected_immediately() {
 }
 
 #[tokio::test]
-async fn approval_waits_for_the_final_preview_page_to_be_painted() {
+async fn approval_requires_final_preview_page_to_be_painted() {
     let (ui, task) = pending_approval().await;
     {
         let mut state = ui.lock();
@@ -2204,11 +2208,11 @@ async fn approval_waits_for_the_final_preview_page_to_be_painted() {
 
     overlay_key(&ui, KeyCode::Enter);
 
-    assert!(!task.is_finished());
+    assert_review_required(&ui, task).await;
 }
 
 #[tokio::test]
-async fn shell_approval_requires_expanding_and_rendering_the_complete_command() {
+async fn multiline_shell_approval_requires_expanding_details() {
     let (ui, task) = pending_approval().await;
     {
         let mut state = ui.lock();
@@ -2222,19 +2226,11 @@ async fn shell_approval_requires_expanding_and_rendering_the_complete_command() 
 
     let enter = KeyCode::Enter;
     overlay_key(&ui, enter);
-    assert!(!task.is_finished());
-
-    let reject = KeyCode::Left;
-    overlay_key(&ui, reject);
-    overlay_key(&ui, enter);
-    assert_eq!(
-        task.await.unwrap().unwrap(),
-        huginn_core::ApprovalDecision::Reject
-    );
+    assert_review_required(&ui, task).await;
 }
 
 #[tokio::test]
-async fn shell_approval_waits_for_sequential_rendering_through_the_last_scroll_position() {
+async fn shell_approval_with_unreached_rendered_scroll_stays_open() {
     let (ui, task) = pending_approval().await;
     {
         let mut state = ui.lock();
@@ -2249,36 +2245,8 @@ async fn shell_approval_waits_for_sequential_rendering_through_the_last_scroll_p
         drop(state);
     }
     let enter = KeyCode::Enter;
-    let end = KeyCode::End;
-
     overlay_key(&ui, enter);
-    assert!(!task.is_finished());
-    overlay_key(&ui, end);
-    assert!(!task.is_finished());
-    overlay_key(&ui, enter);
-    assert!(!task.is_finished());
-
-    {
-        let mut state = ui.lock();
-        let modal = state.modal_mut().unwrap();
-        modal.scroll = 1;
-        modal.rendered_scroll = 1;
-        drop(state);
-    }
-    overlay_key(&ui, enter);
-    assert!(!task.is_finished());
-    {
-        let mut state = ui.lock();
-        let modal = state.modal_mut().unwrap();
-        modal.scroll = 2;
-        modal.rendered_scroll = 2;
-        drop(state);
-    }
-    overlay_key(&ui, enter);
-    assert_eq!(
-        task.await.unwrap().unwrap(),
-        huginn_core::ApprovalDecision::ApproveOnce
-    );
+    assert_review_required(&ui, task).await;
 }
 
 #[tokio::test]
@@ -2317,4 +2285,41 @@ async fn shell_scroll_waits_for_each_frame_while_other_approvals_can_advance() {
             );
         }
     }
+}
+
+#[tokio::test]
+async fn approval_notice_survives_navigation_at_choice_boundaries() {
+    let (ui, task) = pending_approval().await;
+    ui.lock().modal_mut().unwrap().armed = true;
+
+    overlay_key(&ui, KeyCode::Right);
+    overlay_key(&ui, KeyCode::Enter);
+    assert!(ui.lock().modal().unwrap().review_notice);
+    assert!(!task.is_finished());
+
+    // Right at the final choice must preserve the outstanding review notice.
+    overlay_key(&ui, KeyCode::Right);
+    let (selected, notice) = ui
+        .lock()
+        .modal()
+        .map(|modal| (modal.selected, modal.review_notice))
+        .unwrap();
+    assert_eq!(selected, 1);
+    assert!(notice);
+    // A real choice change clears the notice.
+    overlay_key(&ui, KeyCode::Left);
+    let (selected, notice) = ui
+        .lock()
+        .modal()
+        .map(|modal| (modal.selected, modal.review_notice))
+        .unwrap();
+    assert_eq!(selected, 0);
+    assert!(!notice);
+    overlay_key(&ui, KeyCode::Left);
+    assert_eq!(ui.lock().modal().unwrap().selected, 0);
+    overlay_key(&ui, KeyCode::Enter);
+    assert_eq!(
+        task.await.unwrap().unwrap(),
+        huginn_core::ApprovalDecision::Reject
+    );
 }

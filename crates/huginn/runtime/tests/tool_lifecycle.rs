@@ -596,6 +596,205 @@ async fn production_native_file_builtin_classifies_npmrc_and_redacts_approval_me
     supervisor.shutdown().await;
 }
 
+#[tokio::test]
+async fn production_native_edit_file_keeps_session_choice_after_an_once_approval() {
+    struct DecisionCapture(Arc<Mutex<Vec<Vec<huginn_core::ApprovalDecision>>>>);
+    #[async_trait]
+    impl huginn_core::ApprovalPrompt for DecisionCapture {
+        async fn request_decision(
+            &self,
+            _: &ApprovalRequest,
+            allowed: &[huginn_core::ApprovalDecision],
+            _: CancellationToken,
+        ) -> Result<huginn_core::ApprovalDecision> {
+            self.0.lock().unwrap().push(allowed.to_vec());
+            Ok(huginn_core::ApprovalDecision::ApproveOnce)
+        }
+    }
+
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("hi.md"), "old content").unwrap();
+    std::fs::write(workspace.path().join("README.md"), "old content").unwrap();
+    let registry = Registry::default();
+    let sessions = Arc::new(
+        huginn_runtime::sessions::SqliteSessions::open(&workspace.path().join("sessions.db"))
+            .unwrap(),
+    );
+    let mut supervisor = huginn_runtime::composition::build_native(
+        Arc::new(huginn_runtime::model::MockProvider),
+        registry.clone(),
+        sessions,
+        huginn_runtime::loop_engine::LoopConfig::default(),
+        2,
+    )
+    .await
+    .unwrap();
+
+    let decisions = Arc::new(Mutex::new(Vec::new()));
+    let policy = huginn_application::authorization::HostPolicy::new(
+        Arc::new(DecisionCapture(decisions.clone())),
+        Default::default(),
+    )
+    .for_session("readme-session");
+    let tool = registry.get("edit_file").unwrap();
+    for (id, path) in [("edit-hi", "hi.md"), ("edit-readme", "README.md")] {
+        let action = tool
+            .prepare(
+                &ToolCall {
+                    id: id.into(),
+                    name: "edit_file".into(),
+                    arguments: serde_json::json!({
+                        "path": path,
+                        "old_text": "old content",
+                        "new_text": "new content"
+                    }),
+                },
+                &ToolContext {
+                    workspace: workspace.path().into(),
+                    cancellation: CancellationToken::new(),
+                    selected_skills: vec![],
+                },
+            )
+            .await
+            .unwrap();
+        let request = action.approval.unwrap();
+        assert_eq!(
+            request.provenance,
+            Some(huginn_core::ApprovalProvenance::NativeFileBuiltin)
+        );
+        let resource = request.resource.as_ref().unwrap();
+        assert_eq!(
+            resource.canonical_path,
+            workspace.path().join(path).canonicalize().unwrap()
+        );
+        assert!(!resource.sensitive);
+        assert_eq!(
+            policy
+                .approve(&request, CancellationToken::new())
+                .await
+                .unwrap(),
+            huginn_core::ApprovalDecision::ApproveOnce
+        );
+    }
+    assert_eq!(
+        decisions.lock().unwrap().as_slice(),
+        &[
+            vec![
+                huginn_core::ApprovalDecision::Reject,
+                huginn_core::ApprovalDecision::ApproveOnce,
+                huginn_core::ApprovalDecision::ApproveForSession,
+            ],
+            vec![
+                huginn_core::ApprovalDecision::Reject,
+                huginn_core::ApprovalDecision::ApproveOnce,
+                huginn_core::ApprovalDecision::ApproveForSession,
+            ],
+        ]
+    );
+    supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn production_native_edit_file_grants_session_choice_without_prompting_again() {
+    struct DecisionCapture(Arc<Mutex<Vec<Vec<huginn_core::ApprovalDecision>>>>);
+    #[async_trait]
+    impl huginn_core::ApprovalPrompt for DecisionCapture {
+        async fn request_decision(
+            &self,
+            _: &ApprovalRequest,
+            allowed: &[huginn_core::ApprovalDecision],
+            _: CancellationToken,
+        ) -> Result<huginn_core::ApprovalDecision> {
+            self.0.lock().unwrap().push(allowed.to_vec());
+            Ok(huginn_core::ApprovalDecision::ApproveForSession)
+        }
+    }
+
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("README.md"), "old content").unwrap();
+    let registry = Registry::default();
+    let sessions = Arc::new(
+        huginn_runtime::sessions::SqliteSessions::open(&workspace.path().join("sessions.db"))
+            .unwrap(),
+    );
+    let mut supervisor = huginn_runtime::composition::build_native(
+        Arc::new(huginn_runtime::model::MockProvider),
+        registry.clone(),
+        sessions,
+        huginn_runtime::loop_engine::LoopConfig::default(),
+        2,
+    )
+    .await
+    .unwrap();
+
+    let decisions = Arc::new(Mutex::new(Vec::new()));
+    let policy = huginn_application::authorization::HostPolicy::new(
+        Arc::new(DecisionCapture(decisions.clone())),
+        Default::default(),
+    )
+    .for_session("readme-session");
+    let tool = registry.get("edit_file").unwrap();
+    let call = ToolCall {
+        id: "edit-readme".into(),
+        name: "edit_file".into(),
+        arguments: serde_json::json!({
+            "path": "README.md",
+            "old_text": "old content",
+            "new_text": "new content"
+        }),
+    };
+
+    let first_action = tool
+        .prepare(
+            &call,
+            &ToolContext {
+                workspace: workspace.path().into(),
+                cancellation: CancellationToken::new(),
+                selected_skills: vec![],
+            },
+        )
+        .await
+        .unwrap();
+    let first_request = first_action.approval.unwrap();
+    assert_eq!(
+        first_request.provenance,
+        Some(huginn_core::ApprovalProvenance::NativeFileBuiltin)
+    );
+    assert_eq!(
+        policy
+            .approve(&first_request, CancellationToken::new())
+            .await
+            .unwrap(),
+        huginn_core::ApprovalDecision::ApproveForSession
+    );
+
+    let second_action = tool
+        .prepare(
+            &ToolCall {
+                id: "edit-readme-again".into(),
+                ..call
+            },
+            &ToolContext {
+                workspace: workspace.path().into(),
+                cancellation: CancellationToken::new(),
+                selected_skills: vec![],
+            },
+        )
+        .await
+        .unwrap();
+    let second_request = second_action.approval.unwrap();
+    assert_eq!(
+        policy
+            .approve(&second_request, CancellationToken::new())
+            .await
+            .unwrap(),
+        huginn_core::ApprovalDecision::ApproveForSession
+    );
+    assert_eq!(decisions.lock().unwrap().len(), 1);
+
+    supervisor.shutdown().await;
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn production_native_file_builtin_classifies_requested_sensitive_symlink_path() {

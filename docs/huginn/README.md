@@ -21,6 +21,23 @@ Local Rust coding assistant with native tools and MCP integration
 The [Markdown task templates](prompt-templates.md) allow reusing
 prompts with `/prompts:name` in the TUI, line mode, and `huginn run`.
 
+## Shell command isolation
+
+On macOS, every `run_shell` command runs through `/usr/bin/sandbox-exec` with a
+deny-by-default Seatbelt profile. The profile allows access to the selected
+workspace and required shell runtime files. It denies network and socket
+access. `Deny` prevents the operation; `Allow once` authorizes only that
+operation and does not remove the sandbox. Huginn has no shell sandbox opt-out
+or persistent permission grant.
+
+The sandbox applies only to `run_shell` and its child processes. Native tools
+and MCP servers are outside this isolation boundary and retain their separate
+policy controls. Linux and Windows do not receive equivalent isolation from
+this feature. Apple deprecates `sandbox-exec` and Seatbelt interfaces. They can
+change or become unavailable, so Huginn fails the shell operation if it cannot
+apply the profile. Shell commands that need network access or paths outside the
+workspace can fail by design. This mechanism is not an Apple support guarantee.
+
 ## 🎯 What is Huginn?
 
 Huginn is a **local coding agent** built in Rust that works with your codebase. Unlike cloud-based AI assistants, Huginn runs entirely on your machine.

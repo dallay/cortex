@@ -49,7 +49,7 @@ static MODIFY_OTHER_KEYS_ACTIVE: AtomicBool = AtomicBool::new(false);
 static KITTY_KEYBOARD_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Lines the transcript moves per page when scrolling the history.
 const HISTORY_PAGE: usize = 10;
-const HELP: &str = "Enter sends; Shift+Enter (on compatible terminals), Alt+Enter or Ctrl+J inserts a newline. PgUp/PgDn scroll the transcript. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals are inline: Left/Right selects, Enter confirms, Esc rejects, Ctrl+F shows details, and Up/Down or PgUp/PgDn scrolls the complete preview. Enter confirms only after the full preview is rendered and reviewed. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
+const HELP: &str = "Enter sends; Shift+Enter (on compatible terminals), Alt+Enter or Ctrl+J inserts a newline. PgUp/PgDn scroll the transcript. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals are inline: Left/Right selects, Enter confirms the visible choice once the request is armed, Esc rejects, Ctrl+F opens details; incomplete summaries require reviewing details through the end, and Enter on an unreviewed request keeps it open until you do; Up/Down or PgUp/PgDn scrolls the preview. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
 
 #[cfg(unix)]
 fn begin_keyboard_protocol() -> std::io::Result<()> {
@@ -317,6 +317,7 @@ struct Driver {
 struct FrameProgress {
     last_scroll: usize,
     preview_visible: bool,
+    summary_complete: bool,
 }
 
 struct Completion(CancellationToken);
@@ -691,6 +692,8 @@ struct View {
     busy: bool,
     overlay: Option<OverlayView>,
     overlay_identity: Option<crate::overlay::OverlaySnapshot>,
+    /// An acceptance was refused because the approval was not fully reviewed.
+    review_notice: bool,
 }
 impl View {
     fn snapshot(state: &crate::state::UiState) -> Self {
@@ -703,6 +706,7 @@ impl View {
             tail: state.tail.clone(),
             busy: state.busy,
             overlay_identity: state.overlays.snapshot(),
+            review_notice: state.modal().is_some_and(|modal| modal.review_notice),
             overlay: state
                 .overlays
                 .active()
@@ -765,8 +769,6 @@ impl View {
                             .is_some_and(|resource| resource.sensitive)
                         {
                             "sensitive resource".into()
-                        } else if m.request.action == "native.shell" && !m.expanded {
-                            "Shell command · Ctrl+F to review".into()
                         } else {
                             let shell_command = (m.request.action == "native.shell")
                                 .then_some(())
@@ -921,9 +923,13 @@ impl Driver {
             if state.overlays.snapshot() == view.overlay_identity {
                 if let Some(modal) = state.modal_mut() {
                     modal.last_scroll = progress.last_scroll;
+                    modal.summary_complete = progress.summary_complete
+                        && modal.request.preview == safe(&modal.request.preview);
                     modal.details_rendered = *expanded && progress.preview_visible;
                     if *expanded {
-                        if modal.request.action == "native.shell" {
+                        if modal.request.action == "native.shell"
+                            || modal.request.action.starts_with("native.shell.")
+                        {
                             if *preview_scroll <= modal.rendered_scroll.saturating_add(1) {
                                 modal.rendered_scroll = modal.rendered_scroll.max(*preview_scroll);
                             }
@@ -932,6 +938,11 @@ impl Driver {
                         }
                     } else {
                         modal.rendered_scroll = 0;
+                    }
+                    // The notice is only stale once the missing review is done.
+                    if modal.review_notice && modal.review_satisfied() {
+                        modal.review_notice = false;
+                        ui.dirty.notify_one();
                     }
                 }
             }
@@ -1086,13 +1097,9 @@ impl Driver {
             .map(|name| format!("›{name}"))
             .unwrap_or_else(|| "›Reject".into());
         let selector = if narrow { selected_choice } else { selector };
-        let narrow_summary = if action == "native.shell" && !*expanded {
-            "Ctrl+F: review full command"
-        } else {
-            summary
-        };
+        let narrow_summary = summary;
         let mut content = if narrow {
-            format!("#{}\n{}\n{}", id, narrow_summary, selector)
+            format!("{}\n{}\n{}", action, narrow_summary, selector)
         } else if compact {
             format!("{} · {} · #{}\n{}", action, summary, id, selector)
         } else {
@@ -1102,13 +1109,26 @@ impl Driver {
                 summary,
                 id,
                 if *expanded {
-                    "Details (↑↓/PgUp/PgDn; approve after the last line):"
+                    "Review details (↑↓/PgUp/PgDn):"
                 } else {
-                    "Ctrl+F: review details to approve"
+                    "Ctrl+F: review details"
                 },
                 selector
             )
         };
+        // Only a single complete command can be approved from the summary.
+        // Diffs and other payloads require the rendered details through their end.
+        let summary_complete = !*expanded
+            && action == "native.shell"
+            && preview.split_once("Command:").is_some_and(|(_, command)| {
+                let command = command.strip_prefix(' ').unwrap_or(command);
+                !command.contains(['\n', '\r', '\t']) && command == summary
+            })
+            && content.lines().all(|line| {
+                unicode_width::UnicodeWidthStr::width(line)
+                    <= usize::from(panel.width.saturating_sub(2))
+            })
+            && content.lines().count() <= usize::from(panel.height.saturating_sub(2));
         let mut preview_visible = false;
         let last_scroll = if *expanded {
             let lines = wrapped(preview, panel.width.saturating_sub(2));
@@ -1143,7 +1163,15 @@ impl Driver {
             0
         };
         frame.render_widget(
-            Paragraph::new(content).block(Block::bordered().title(if compact {
+            Paragraph::new(content).block(Block::bordered().title(if view.review_notice {
+                if *expanded {
+                    "↓ to the end"
+                } else if compact {
+                    "Ctrl+F: review all details"
+                } else {
+                    "Approval — review all details (Ctrl+F, ↓ to the end) before approving"
+                }
+            } else if compact {
                 "Approval"
             } else {
                 "Approval — ←/→ select · Enter confirm · Esc reject · Ctrl+F details"
@@ -1167,6 +1195,7 @@ impl Driver {
         FrameProgress {
             last_scroll,
             preview_visible,
+            summary_complete,
         }
     }
 
@@ -2353,6 +2382,7 @@ mod tests {
             busy: false,
             overlay: Some(overlay),
             overlay_identity: None,
+            review_notice: false,
             completion: Suggestions::default(),
         }
     }
@@ -2427,6 +2457,59 @@ mod tests {
     }
 
     #[test]
+    fn collapsed_approval_requires_complete_unclipped_command() {
+        for (action, summary, preview, width, expected) in [
+            (
+                "native.shell",
+                "echo ok",
+                "Directory: /workspace\nCommand: echo ok",
+                80,
+                true,
+            ),
+            (
+                "native.shell",
+                "echo ok",
+                "Directory: /workspace\nCommand: echo ok\necho hidden",
+                80,
+                false,
+            ),
+            (
+                "native.shell",
+                "echo a_very_long_command",
+                "Command: echo a_very_long_command",
+                20,
+                false,
+            ),
+            (
+                "native.edit_file",
+                "edit f",
+                "--- f\n+++ f\n+hidden",
+                80,
+                false,
+            ),
+        ] {
+            let view = test_view(OverlayView::Approval(
+                action.into(),
+                "id".into(),
+                summary.into(),
+                preview.into(),
+                vec![
+                    huginn_core::ApprovalDecision::Reject,
+                    huginn_core::ApprovalDecision::ApproveOnce,
+                ],
+                0,
+                false,
+                0,
+            ));
+            assert_eq!(
+                frame_progress(&view, width, 24).summary_complete,
+                expected,
+                "{preview}"
+            );
+        }
+    }
+
+    #[test]
     fn expanded_approval_with_empty_preview_is_not_marked_reviewed() {
         let view = test_view(OverlayView::Approval(
             "native.write_file".into(),
@@ -2483,11 +2566,11 @@ mod tests {
     }
 
     #[test]
-    fn collapsed_shell_approval_explains_that_the_full_command_needs_review() {
+    fn collapsed_shell_approval_shows_command_and_optional_details_hint() {
         let view = test_view(OverlayView::Approval(
             "native.shell".into(),
             "shell-long".into(),
-            "Shell command · Ctrl+F to review".into(),
+            "echo first line".into(),
             "Directory: /workspace\nCommand: echo first line\necho second line".into(),
             vec![
                 huginn_core::ApprovalDecision::Reject,
@@ -2500,7 +2583,10 @@ mod tests {
 
         let text = frame_text(&view, 20, 8);
 
-        assert!(text.contains("Ctrl+F"), "expansion hint missing: {text}");
+        assert!(
+            text.contains("native.shell") && text.contains("echo first line"),
+            "shell action and command summary missing: {text}"
+        );
         assert!(text.contains("Reject"), "Reject is unavailable: {text}");
     }
 
@@ -2511,7 +2597,7 @@ mod tests {
         let first = test_view(OverlayView::Approval(
             "native.shell".into(),
             "shell-long".into(),
-            "Shell command · Ctrl+F to review".into(),
+            "echo x".into(),
             preview.clone(),
             vec![
                 huginn_core::ApprovalDecision::Reject,
@@ -2535,7 +2621,7 @@ mod tests {
         let last = test_view(OverlayView::Approval(
             "native.shell".into(),
             "shell-long".into(),
-            "Shell command · Ctrl+F to review".into(),
+            "echo x".into(),
             preview,
             vec![
                 huginn_core::ApprovalDecision::Reject,
@@ -2674,9 +2760,9 @@ mod tests {
     }
 
     #[test]
-    fn help_explains_that_approval_requires_reviewing_the_full_preview() {
-        assert!(HELP.contains("full preview"));
-        assert!(HELP.contains("rendered and reviewed"));
+    fn help_explains_that_details_are_optional_for_approval() {
+        assert!(HELP.contains("visible choice once the request is armed"));
+        assert!(HELP.contains("incomplete summaries require reviewing details through the end"));
     }
 
     #[test]
@@ -2838,6 +2924,7 @@ mod tests {
             FrameProgress {
                 last_scroll: 7,
                 preview_visible: true,
+                summary_complete: false,
             },
         );
 
@@ -2847,6 +2934,111 @@ mod tests {
         assert_eq!(modal.last_scroll, 7);
         assert!(modal.details_rendered);
         assert_eq!(modal.rendered_scroll, 7);
+    }
+
+    /// A shell preview may only count rows the reviewer reached one at a time.
+    /// A jumped scroll offset must not satisfy the review, so Enter keeps the
+    /// request open and shows the notice; finishing the review clears it.
+    #[tokio::test]
+    async fn shell_review_ignores_jumped_scroll_and_notice_clears_when_reviewed() {
+        use crate::overlay::{OpenRequest, Origin, OverlayKind, Payload};
+        let ui = Ui::new(
+            &Session::new(".".into()),
+            Arc::new(Contributions::default()),
+            CancellationToken::new(),
+            Arc::new(crate::settings::UiConfig::defaults()),
+            Arc::new(|_| Ok(())),
+        )
+        .0;
+        {
+            let mut state = ui.lock();
+            let mut modal = crate::state::Modal::test_stub();
+            modal.request.action = "native.shell".into();
+            modal.request.preview = "Directory: /workspace\nCommand: echo a\necho b".into();
+            modal.expanded = true;
+            modal.armed = true;
+            modal.selected = 1;
+            modal.scroll = 7;
+            modal.rendered_scroll = 0;
+            let ticket = state.overlays.ticket();
+            state.overlays.open(OpenRequest {
+                kind: OverlayKind::Approval,
+                origin: Origin::Host,
+                operation: crate::event::OperationId::default(),
+                payload: Payload::Approval(modal),
+                ticket,
+            });
+        }
+        let view = View::snapshot(&ui.lock());
+        let progress = FrameProgress {
+            last_scroll: 7,
+            preview_visible: true,
+            summary_complete: false,
+        };
+        Driver::update_modal_scroll(&ui, &view, progress);
+        let (rendered, satisfied) = ui
+            .lock()
+            .modal()
+            .map(|modal| (modal.rendered_scroll, modal.review_satisfied()))
+            .unwrap();
+        assert_eq!(rendered, 0, "a jump must not count as rendered");
+        assert!(!satisfied);
+
+        let (ticket, focus) = {
+            let state = ui.lock();
+            (state.overlays.ticket(), state.overlays.focus())
+        };
+        ui.overlay_input(
+            Event::Key(crossterm::event::KeyEvent::new(
+                KeyCode::Enter,
+                KeyModifiers::NONE,
+            )),
+            ticket,
+            focus,
+        );
+        assert!(ui.lock().modal().is_some_and(|modal| modal.review_notice));
+        let noticed = View::snapshot(&ui.lock());
+
+        for (width, height) in [(20, 8), (40, 10), (80, 24), (120, 40)] {
+            assert!(frame_text(&noticed, width, height).contains("↓ to the end"));
+        }
+        while tokio::time::timeout(std::time::Duration::from_millis(1), ui.dirty.notified())
+            .await
+            .is_ok()
+        {}
+
+        // Reading one row at a time reaches the end and retires the notice.
+        for step in 1..=7 {
+            ui.lock().modal_mut().unwrap().scroll = step;
+            let view = View::snapshot(&ui.lock());
+            Driver::update_modal_scroll(&ui, &view, progress);
+        }
+        let (rendered, satisfied, notice) = ui
+            .lock()
+            .modal()
+            .map(|modal| {
+                (
+                    modal.rendered_scroll,
+                    modal.review_satisfied(),
+                    modal.review_notice,
+                )
+            })
+            .unwrap();
+        assert_eq!(rendered, 7);
+        assert!(satisfied);
+        assert!(!notice);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), ui.dirty.notified())
+                .await
+                .is_ok()
+        );
+        let view = View::snapshot(&ui.lock());
+        Driver::update_modal_scroll(&ui, &view, progress);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), ui.dirty.notified())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

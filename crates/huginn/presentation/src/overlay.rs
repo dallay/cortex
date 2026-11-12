@@ -247,8 +247,20 @@ impl Payload {
         }
         let count = modal.allowed_decisions.len();
         match key.code {
-            KeyCode::Left if count > 0 => modal.selected = modal.selected.saturating_sub(1),
-            KeyCode::Right if count > 0 => modal.selected = (modal.selected + 1).min(count - 1),
+            KeyCode::Left if count > 0 => {
+                let selected = modal.selected.saturating_sub(1);
+                if selected != modal.selected {
+                    modal.selected = selected;
+                    modal.review_notice = false;
+                }
+            }
+            KeyCode::Right if count > 0 => {
+                let selected = (modal.selected + 1).min(count - 1);
+                if selected != modal.selected {
+                    modal.selected = selected;
+                    modal.review_notice = false;
+                }
+            }
             KeyCode::PageDown | KeyCode::Down if modal.expanded => {
                 let next = modal.scroll.saturating_add(1).min(modal.last_scroll);
                 modal.scroll = if modal.request.action == "native.shell" {
@@ -263,18 +275,6 @@ impl Payload {
                 modal.scroll = modal.last_scroll
             }
             KeyCode::End if modal.expanded => {}
-            KeyCode::Enter
-                if modal.armed
-                    && modal
-                        .allowed_decisions
-                        .get(modal.selected)
-                        .is_some_and(|decision| {
-                            *decision != huginn_core::ApprovalDecision::Reject
-                        })
-                    && (!modal.expanded
-                        || !modal.details_rendered
-                        || modal.scroll < modal.last_scroll
-                        || modal.rendered_scroll < modal.last_scroll) => {}
             KeyCode::Enter if modal.armed => {
                 return Effect::Resolve(
                     modal
