@@ -70,6 +70,50 @@ flag_management:
         - "apps/rook/dashboard/**"
       carryforward: true
 
+# Component Management - Coverage breakdown by product
+# Components are virtual filters defined only in this file: no extra uploads
+# and no changes to the CI jobs. The Rust upload already covers the whole
+# workspace, so each component slices it by path.
+component_management:
+  default_rules:
+    # Informational by default: components measure, they do not block merges.
+    # Codecov statuses are not in the branch ruleset, so a failing component
+    # status cannot block a pull request.
+    statuses:
+      - type: project
+        target: auto
+        informational: true
+      - type: patch
+        target: 80%
+        informational: true
+
+  individual_components:
+    # Rook: the API proxy and router.
+    - component_id: rook
+      name: rook
+      paths:
+        - "apps/rook/src/**"
+        - "apps/rook/tests/**"
+        - "crates/domain/**"
+        - "crates/application/**"
+        - "crates/infrastructure/**"
+        - "crates/test-support/**"
+
+    # Huginn: the local programming agent. These paths fall outside the
+    # `backend` flag, so the component is the only view that reports them.
+    - component_id: huginn
+      name: huginn
+      paths:
+        - "apps/huginn/src/**"
+        - "apps/huginn/tests/**"
+        - "crates/huginn/**"
+
+    # Dashboard: the Vue.js front end.
+    - component_id: dashboard
+      name: dashboard
+      paths:
+        - "apps/rook/dashboard/**"
+
 # Comment configuration
 comment:
   layout: "header, diff, flags, components, files, footer"
