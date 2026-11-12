@@ -106,7 +106,7 @@ The project uses multiple layers of automated vulnerability scanning:
 | Tool                         | Scope                                    | PR Gate (`ci.yml`)                                                                 | Nightly (`security-deep.yml`)   | SonarCloud                       |
 |------------------------------|------------------------------------------|------------------------------------------------------------------------------------|---------------------------------|----------------------------------|
 | **cargo audit**              | Rust dependencies                        | :white_check_mark: Blocks on vulnerable deps                                       | N/A                             | —                                |
-| **Dependabot**               | `Cargo.lock`, `pnpm-lock.yaml`           | :white_check_mark: Auto-merge for patch/security                                   | N/A                             | —                                |
+| **Renovate**                 | `Cargo.lock`, `pnpm-lock.yaml`           | :white_check_mark: Auto-merge for patch/security via OSV alerts & lock file maintenance | N/A                             | —                                |
 | **Gitleaks** (`gitleaks-pr`) | Secrets in commits                       | :white_check_mark: Blocks on any secret found                                      | Reporting only (full history)   | —                                |
 | **GitGuardian** (`ggshield`) | Secret detection in commits & pre-push   | :white_check_mark: Scans on push/PR (`gitguardian-scan.yml`) & local pre-push hook | —                               | —                                |
 | **Semgrep** (`semgrep-pr`)   | SAST (rust, docker, GH actions, secrets) | :white_check_mark: Blocks on ERROR-severity findings                               | Reporting only (all severities) | —                                |
@@ -115,9 +115,9 @@ The project uses multiple layers of automated vulnerability scanning:
 
 ### Keeping Dependencies Updated
 
-- **GitHub Dependabot** creates PRs for outdated dependencies automatically.
+- **Renovate** creates PRs for outdated dependencies automatically, with OSV vulnerability alerts enabled and lock file maintenance.
 - Security updates are merged quickly; feature/minor updates follow regular review cadence.
-- We enable **automated security updates** for critical CVEs via Dependabot.
+- Renovate runs on a schedule with a minimum release age of 3 days and groups updates by manager and type.
 
 ---
 
@@ -161,7 +161,7 @@ No formal certifications currently (SOC2, ISO 27001, etc.).
 |----------------------------|------------------------------------------------------------------------------------|
 | Report a vulnerability     | [GitHub Security Advisories](https://github.com/dallay/cortex/security/advisories) |
 | Code scanning results      | [GitHub Code Scanning](https://github.com/dallay/cortex/security/code-scanning)    |
-| Dependabot alerts          | [Dependabot Alerts](https://github.com/dallay/cortex/security/dependabot)          |
+| Renovate configuration     | [`renovate.json`](renovate.json)                                                |
 | Secret scanning alerts     | [GitHub Secret Scanning](https://github.com/dallay/cortex/security/secrets)        |
 | CI/CD workflow             | [`.github/workflows/ci.yml`](.github/workflows/ci.yml)                             |
 | Nightly security deep scan | [`.github/workflows/security-deep.yml`](.github/workflows/security-deep.yml)       |

@@ -24,6 +24,11 @@ build/
 .DS_Store
 Thumbs.db
 
+# Environment files
+.env
+.env.local
+.env.*.local
+
 # Docs (not needed for build)
 docs/
 *.md
