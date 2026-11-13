@@ -293,9 +293,9 @@ ci-semgrep:
 	evidence_dir="$$(mktemp -d "$$TMPDIR/semgrep-gate.XXXXXX")"; \
 	trap 'rm -rf "$$evidence_dir"; rm -f "$$report"' EXIT; \
 	TMPDIR="$$TMPDIR" python3 .github/scripts/test-semgrep-path-exceptions.py; \
-	uv run --no-project --with semgrep==1.126.0 --with 'setuptools<81' -- semgrep --version; \
-	uv run --no-project --with semgrep==1.126.0 --with 'setuptools<81' -- python3 .github/scripts/check-semgrep-path-exceptions.py --output-dir "$$evidence_dir"; \
-	uv run --no-project --with semgrep==1.126.0 --with 'setuptools<81' -- semgrep scan --config p/rust --config p/dockerfile --config p/github-actions --severity ERROR --sarif --output "$$report" .; \
+	uv run --no-project --python 3.11 --with semgrep==1.126.0 --with 'setuptools<81' -- semgrep --version; \
+	uv run --no-project --python 3.11 --with semgrep==1.126.0 --with 'setuptools<81' -- python3 .github/scripts/check-semgrep-path-exceptions.py --output-dir "$$evidence_dir"; \
+	uv run --no-project --python 3.11 --with semgrep==1.126.0 --with 'setuptools<81' -- semgrep scan --config p/rust --config p/dockerfile --config p/github-actions --severity ERROR --sarif --output "$$report" .; \
 	jq -e '[.runs[].results[] | select((.suppressions // []) | length == 0)] | length == 0' "$$report"
 
 ci-lint:

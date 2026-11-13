@@ -75,6 +75,7 @@ describe('local CI contract', () => {
         assert.doesNotMatch(recipeBlock('ci-audit'), /\|\|\s*true/);
         assert.match(recipeBlock('ci-audit'), /cargo audit(?:\s|$)/);
         assert.match(recipeBlock('ci-semgrep'), /semgrep==1\.126\.0/);
+        assert.match(recipeBlock('ci-semgrep'), /--python 3\.11/);
         assert.match(workflow, /severity: HIGH,CRITICAL/);
         assert.match(workflow, /--severity ERROR/);
         assert.match(recipeBlock('ci-semgrep'), /jq -e/);
