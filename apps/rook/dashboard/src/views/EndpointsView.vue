@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {Globe, Settings} from "@lucide/vue";
 import {useI18n} from "vue-i18n";
 import CopyButton from "@/components/CopyButton.vue";
@@ -31,24 +31,24 @@ const categories = [
 <template>
   <div class="space-y-6">
     <PageHeader
-      :title="t('endpoints.title')"
       :description="t('endpoints.description')"
+      :title="t('endpoints.title')"
     />
 
     <!-- Base URL Card -->
     <div class="rounded-lg border bg-card text-card-foreground shadow-sm">
       <div class="flex flex-row items-center justify-between p-4">
         <div class="flex items-center gap-2">
-          <Globe class="h-4 w-4 text-muted-foreground" />
+          <Globe class="h-4 w-4 text-muted-foreground"/>
           <span class="text-sm font-medium">Base URL</span>
           <span v-if="isOverridden" class="text-xs text-muted-foreground">(custom)</span>
         </div>
         <button
+          class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
           type="button"
           @click="handleBaseUrlEdit"
-          class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
         >
-          <Settings class="h-3 w-3" />
+          <Settings class="h-3 w-3"/>
           Edit
         </button>
       </div>
@@ -57,7 +57,7 @@ const categories = [
           class="flex items-center justify-between rounded-md border bg-muted/50 px-3 py-2 font-mono text-sm"
         >
           <span class="truncate">{{ fullBaseUrl }}</span>
-          <CopyButton :text="fullBaseUrl" />
+          <CopyButton :text="fullBaseUrl"/>
         </div>
         <p v-if="isOverridden" class="mt-2 text-xs text-muted-foreground">
           Using custom URL. Leave empty and save to revert to auto-detected.
@@ -81,14 +81,14 @@ const categories = [
             class="flex items-center justify-between px-4 py-3 hover:bg-muted/50"
           >
             <div class="flex items-center gap-4 min-w-0 flex-1">
-              <MethodBadge :method="endpoint.method" />
+              <MethodBadge :method="endpoint.method"/>
               <span class="font-mono text-sm truncate">{{ endpoint.path }}</span>
             </div>
             <div class="flex items-center gap-3 shrink-0">
               <span class="text-sm text-muted-foreground hidden sm:block">
                 {{ t(endpoint.descriptionKey) }}
               </span>
-              <CopyButton :text="fullBaseUrl + endpoint.path" />
+              <CopyButton :text="fullBaseUrl + endpoint.path"/>
             </div>
           </div>
         </div>

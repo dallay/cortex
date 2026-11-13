@@ -61,13 +61,41 @@ PATH="$restricted_path:$PATH" check_command "Required tool" "required-tool" > "$
 assert_eq "[OK] Required tool: tool 1.2.3" "$(cat "$test_root/version.out")" "a successful version probe reports only the first line"
 assert_eq "0" "$DOCTOR_FAILURES" "a successful version probe does not increment failures"
 
+# Colors are resolved on every write, so redirected output never carries ANSI codes
+# even when the surrounding shell is attached to a terminal.
+DOCTOR_FAILURES=0
+PATH="$restricted_path:$PATH" NO_COLOR= DOCTOR_COLOR=always check_command "Required tool" "required-tool" \
+    > "$test_root/color-always.out" 2>&1
+case "$(cat "$test_root/color-always.out")" in
+    *$'\033'*)
+        printf 'PASS: DOCTOR_COLOR=always keeps ANSI codes in redirected output\n'
+        ;;
+    *)
+        printf 'FAIL: DOCTOR_COLOR=always did not colorize the redirected output\n' >&2
+        exit 1
+        ;;
+esac
+
+DOCTOR_FAILURES=0
+PATH="$restricted_path:$PATH" NO_COLOR=1 DOCTOR_COLOR=always check_command "Required tool" "required-tool" \
+    > "$test_root/no-color.out" 2>&1
+case "$(cat "$test_root/no-color.out")" in
+    *$'\033'*)
+        printf 'FAIL: NO_COLOR did not remove the ANSI codes\n' >&2
+        exit 1
+        ;;
+    *)
+        printf 'PASS: NO_COLOR removes the ANSI codes\n'
+        ;;
+esac
+
 set +e
 PATH="$restricted_path:$PATH" check_command "Required tool" "required-tool" "--broken-version" > "$test_root/version.out" 2>&1
 version_status=$?
 set -e
 assert_eq "1" "$version_status" "a failed version probe returns failure"
 assert_eq "1" "$DOCTOR_FAILURES" "a failed version probe increments failures"
-assert_eq "[FALTA] Required tool: falló 'required-tool --broken-version': version probe failed." \
+assert_eq "[MISSING] Required tool: 'required-tool --broken-version' failed: version probe failed." \
     "$(cat "$test_root/version.out")" "a failed version probe reports the tool, command and error without success"
 
 fixture_package="$fixture_root/package.json"
@@ -140,7 +168,7 @@ pnpm_unavailable_output="$(cat "$restricted_path/pnpm-unavailable.out")"
 assert_eq "1" "$pnpm_unavailable_status" "an unavailable pinned pnpm version fails the check"
 assert_eq "1" "$DOCTOR_FAILURES" "an unavailable pinned pnpm version increments failures"
 case "$pnpm_unavailable_output" in
-    *"No se pudo verificar pnpm $(read_pnpm_version "$fixture_package")"*"Network access disabled"*)
+    *"Could not verify pnpm $(read_pnpm_version "$fixture_package")"*"Network access disabled"*)
         printf 'PASS: unavailable pnpm reports the blocked Corepack download\n'
         ;;
     *)
@@ -197,7 +225,7 @@ if [[ "$missing_status" -eq 0 ]]; then
     exit 1
 fi
 case "$missing_output" in
-    *"Node.js"*"pnpm"*"Faltan requisitos obligatorios"*)
+    *"Node.js"*"pnpm"*"Missing required tools"*)
         printf 'PASS: doctor reports missing tools and exits non-zero\n'
         ;;
     *)

@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {PaginationListItemProps} from "reka-ui";
 import {PaginationListItem} from "reka-ui";
@@ -25,15 +25,15 @@ const delegatedProps = reactiveOmit(props, "class", "size", "isActive");
 
 <template>
   <PaginationListItem
-    data-slot="pagination-item"
-    v-bind="delegatedProps"
     :class="cn(
       buttonVariants({
         variant: isActive ? 'outline' : 'ghost',
         size,
       }),
       props.class)"
+    data-slot="pagination-item"
+    v-bind="delegatedProps"
   >
-    <slot />
+    <slot/>
   </PaginationListItem>
 </template>

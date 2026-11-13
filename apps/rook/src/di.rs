@@ -23,7 +23,7 @@ use providers_ollama::OllamaProvider;
 use rook_core::{
     ApiKeyRepositoryPort, AuditPort, CachePort, Combo, ComboAliasRepositoryPort,
     ComboRepositoryPort, ComboStep, ComboStrategy, ConnectionId, DecryptedCredentials,
-    ModelAliasRepositoryPort, ModelCatalogPort, PasswordHasher, ProviderId, ProviderKind,
+    ModelAliasRepositoryPort, ModelCatalogPort, PasswordHasher, ProviderDescriptor, ProviderId,
     ProviderPort, ProviderRegistryPort, ProviderRepositoryPort, QuotaObservation,
     QuotaObservationRecorderPort, RouterPort, SessionRepositoryPort, UsageRecorderPort,
 };
@@ -62,8 +62,6 @@ pub struct RookContainer {
     pub api_key_rate_limiter: Arc<transport_axum::ApiKeyRateLimiter>,
     pub csrf_guard: Arc<transport_axum::CsrfGuard>,
     pub rate_limit_store: Option<transport_axum::handlers::rate_limits::RateLimitRuleStore>,
-    /// Format registry for provider wire-format lookup — used in Phase 2 routing.
-    pub format_registry: Arc<transport_axum::format_registry::FormatRegistry>,
     /// Concrete usage repository — used for retention sweep task.
     pub usage_repository: Arc<SqliteUsageRepository>,
     /// Upstream quota observation recorder — kept distinct from local usage history.
@@ -128,6 +126,7 @@ pub fn build_manage_connections(
     let builder: Arc<dyn ProviderBuilderPort> = Arc::new(DynamicProviderBuilder::new(
         model_catalog.clone(),
         quota_observation_recorder,
+        Arc::new(config.pricing.clone()),
     ));
     Ok(Some(
         ManageConnections::new(
@@ -335,20 +334,7 @@ impl RookContainer {
                 .map_err(|error| anyhow::anyhow!("invalid routing.default_combo {id}: {error}"))?;
         }
 
-        // 9. Format registry and use cases
-        let mut format_registry = transport_axum::format_registry::FormatRegistry::new();
-        format_registry.register(
-            rook_core::ApiFormat::OpenAI,
-            rook_core::ApiFormat::Anthropic,
-            transport_axum::format_registry::DomainPivotTranslator,
-        );
-        format_registry.register(
-            rook_core::ApiFormat::Anthropic,
-            rook_core::ApiFormat::OpenAI,
-            transport_axum::format_registry::DomainPivotTranslator,
-        );
-        let format_registry = Arc::new(format_registry);
-
+        // 9. Use cases
         // Create telemetry tracker and spawn cleanup task if enabled
         let telemetry_tracker = if config.telemetry.enabled {
             let telemetry_config: observability::TelemetryConfig = config.telemetry.clone().into();
@@ -375,12 +361,11 @@ impl RookContainer {
                     audit.clone(),
                     usage_recorder.clone(),
                     provider_repository_for_usage,
-                    Some(combo_repo.clone()), // combo_repository - wired in Phase 4
+                    Some(combo_repo.clone()),
                     Arc::new(config.pricing.clone()),
-                    format_registry.clone(),
-                    alias_repo.clone(), // model_alias_repository - wired in Phase 3
+                    alias_repo.clone(),
                     config.model_aliases.clone().into(),
-                    telemetry_tracker, // telemetry tracker from config
+                    telemetry_tracker,
                 )
                 .with_combo_alias_repository(combo_alias_repo.clone())
                 .with_default_combo(default_combo)
@@ -441,7 +426,6 @@ impl RookContainer {
             )),
             csrf_guard: Arc::new(transport_axum::CsrfGuard::new()),
             rate_limit_store,
-            format_registry,
             usage_repository: sqlite_usage,
             quota_observation_recorder,
             usage_config: config.usage.clone(),
@@ -472,7 +456,6 @@ pub fn build_rate_limiter_config(
             TierConfig {
                 requests_per_minute: tier_cfg.requests_per_minute,
                 requests_per_day: tier_cfg.requests_per_day,
-                tokens_per_minute: tier_cfg.tokens_per_minute,
             },
         );
     }
@@ -902,24 +885,6 @@ impl std::fmt::Display for ProviderBuildError {
     }
 }
 
-fn validate_azure_openai_endpoint(value: &str) -> Option<String> {
-    let endpoint = reqwest::Url::parse(value).ok()?;
-    let host = endpoint.host_str()?;
-    let azure_host =
-        host.ends_with(".openai.azure.com") || host.ends_with(".services.ai.azure.com");
-    if endpoint.scheme() != "https"
-        || !azure_host
-        || endpoint.username() != ""
-        || endpoint.password().is_some()
-        || endpoint.query().is_some()
-        || endpoint.fragment().is_some()
-        || !matches!(endpoint.path(), "" | "/")
-    {
-        return None;
-    }
-    Some(endpoint.as_str().trim_end_matches('/').to_string())
-}
-
 impl std::error::Error for ProviderBuildError {}
 
 // ---------------------------------------------------------------------------
@@ -932,14 +897,14 @@ impl std::error::Error for ProviderBuildError {}
 /// ollama, gemini, groq) for both ApiKey and OAuth credentials.
 pub fn build_provider_from_connection(
     connection_id: &ConnectionId,
-    kind: ProviderKind,
+    descriptor: &'static ProviderDescriptor,
     credentials: &DecryptedCredentials,
     base_url_override: Option<String>,
     models: Vec<ModelId>,
 ) -> Result<Arc<dyn ProviderPort>, ProviderBuildError> {
     build_provider_from_connection_with_recorder(
         connection_id,
-        kind,
+        descriptor,
         credentials,
         base_url_override,
         models,
@@ -962,7 +927,10 @@ pub fn build_provider_from_connection(
 ///
 /// Normalization: trim surrounding whitespace, case-insensitive scheme and
 /// host, ignore trailing slashes, tolerate `/v1` for OpenAI.
-pub fn is_canonical_base_url(kind: ProviderKind, base_url_override: Option<&str>) -> bool {
+pub fn is_canonical_base_url(
+    descriptor: &'static ProviderDescriptor,
+    base_url_override: Option<&str>,
+) -> bool {
     let Some(raw) = base_url_override else {
         return true;
     };
@@ -998,16 +966,20 @@ pub fn is_canonical_base_url(kind: ProviderKind, base_url_override: Option<&str>
         norm_path = "";
     }
     let norm_path = norm_path.to_ascii_lowercase();
-    match kind {
-        ProviderKind::OpenAI => {
-            host == "api.openai.com" && (norm_path.is_empty() || norm_path == "/v1")
-        }
-        ProviderKind::Anthropic => host == "api.anthropic.com" && norm_path.is_empty(),
-        ProviderKind::Groq => host == "api.groq.com" && norm_path == "/openai/v1",
-        // Ollama / OllamaCloud / Gemini never carry quota capture; no explicit
-        // URL is canonical (the recorder is ignored downstream anyway).
-        _ => false,
-    }
+    // Canonical hosts come from the descriptor table. Only entries declared
+    // in the table accept capture; the bare-host OpenAI spelling is declared
+    // as its own canonical base so no other provider inherits the tolerance.
+    descriptor.canonical_base_urls.iter().any(|canonical| {
+        let Some((_, c_rest)) = canonical.split_once("://") else {
+            return false;
+        };
+        let (c_host, c_path) = match c_rest.find('/') {
+            Some(idx) => (&c_rest[..idx], &c_rest[idx..]),
+            None => (c_rest, ""),
+        };
+        let path_matches = norm_path == c_path.to_ascii_lowercase();
+        host == c_host && path_matches
+    })
 }
 
 pub struct ProviderConnectionBuildOptions {
@@ -1018,7 +990,7 @@ pub struct ProviderConnectionBuildOptions {
 
 pub fn build_provider_from_connection_with_recorder(
     connection_id: &ConnectionId,
-    kind: ProviderKind,
+    descriptor: &'static ProviderDescriptor,
     credentials: &DecryptedCredentials,
     base_url_override: Option<String>,
     models: Vec<ModelId>,
@@ -1027,7 +999,7 @@ pub fn build_provider_from_connection_with_recorder(
 ) -> Result<Arc<dyn ProviderPort>, ProviderBuildError> {
     build_provider_from_connection_with_policy(
         connection_id,
-        kind,
+        descriptor,
         credentials,
         base_url_override,
         models,
@@ -1041,7 +1013,7 @@ pub fn build_provider_from_connection_with_recorder(
 
 pub fn build_provider_from_connection_with_policy(
     connection_id: &ConnectionId,
-    kind: ProviderKind,
+    descriptor: &'static ProviderDescriptor,
     credentials: &DecryptedCredentials,
     base_url_override: Option<String>,
     models: Vec<ModelId>,
@@ -1052,8 +1024,16 @@ pub fn build_provider_from_connection_with_policy(
         oauth_token_port,
         endpoint_policy,
     } = options;
-    let quota_recorder =
-        quota_recorder.filter(|_| is_canonical_base_url(kind, base_url_override.as_deref()));
+    let quota_recorder = quota_recorder.filter(|_| {
+        is_canonical_base_url(
+            descriptor,
+            Some(
+                base_url_override
+                    .as_deref()
+                    .unwrap_or(descriptor.default_base_url),
+            ),
+        )
+    });
     // Extract credentials — use access_token for OAuth where the provider supports it
     let api_key = match credentials {
         DecryptedCredentials::ApiKey { api_key } => api_key.clone(),
@@ -1065,61 +1045,78 @@ pub fn build_provider_from_connection_with_policy(
         DecryptedCredentials::OAuth { .. } => String::new(),
     };
 
-    let provider = match kind {
-        ProviderKind::OpenAI => {
-            let config = providers_openai::OpenAIProviderConfig {
-                id: ProviderId::new(connection_id.to_string()),
-                api_key,
-                base_url: base_url_override.unwrap_or_else(|| "https://api.openai.com".to_string()),
-                models: models.clone(),
-                timeout_secs: 60,
-            };
-            let provider = match (&oauth_token_port, credentials) {
-                (Some(token_port), DecryptedCredentials::OAuth { .. }) => {
-                    providers_openai::OpenAIProvider::new_with_oauth_and_quota_recorder(
-                        config,
-                        *connection_id,
-                        token_port.clone(),
-                        quota_recorder.clone(),
-                    )
-                }
-                _ => providers_openai::OpenAIProvider::new_with_quota_recorder(
-                    config,
-                    quota_recorder.clone(),
-                ),
-            }
-            .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?;
-            Arc::new(provider) as Arc<dyn ProviderPort>
-        }
-        ProviderKind::OpenAiCompatible => {
-            let base_url = base_url_override.ok_or_else(|| {
-                ProviderBuildError::ConstructionFailed(
+    let provider = match descriptor.protocol {
+        rook_core::Protocol::OpenAiChat => {
+            let is_azure =
+                descriptor.endpoint_validation == rook_core::EndpointValidation::AzureHost;
+            let is_compatible = descriptor.endpoint_validation
+                == rook_core::EndpointValidation::OpenAiEndpointPolicy;
+            if descriptor.requires_base_url && base_url_override.is_none() {
+                return Err(ProviderBuildError::ConstructionFailed(
                     "OpenAI-compatible provider requires base_url".to_string(),
-                )
-            })?;
-            if matches!(credentials, DecryptedCredentials::OAuth { .. }) {
+                ));
+            }
+            if is_azure && !matches!(credentials, DecryptedCredentials::OAuth { .. }) {
+                return Err(ProviderBuildError::AzureOpenAIRequiresOAuth);
+            }
+            let mut base_url =
+                base_url_override.unwrap_or_else(|| descriptor.default_base_url.to_string());
+            if is_azure {
+                base_url = providers_openai::OpenAIProvider::azure_resource_base_url(&base_url)
+                    .ok_or(ProviderBuildError::AzureOpenAIRequiresValidEndpoint)?;
+            }
+            if is_compatible && matches!(credentials, DecryptedCredentials::OAuth { .. }) {
                 return Err(ProviderBuildError::ConstructionFailed(
                     "OpenAI-compatible providers require API key authentication".to_string(),
                 ));
             }
             let config = providers_openai::OpenAIProviderConfig {
                 id: ProviderId::new(connection_id.to_string()),
+                provider_id: descriptor.id,
                 api_key,
                 base_url,
                 models: models.clone(),
                 timeout_secs: 60,
             };
-            Arc::new(
-                providers_openai::OpenAIProvider::new_with_endpoint_policy(config, endpoint_policy)
-                    .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?,
-            ) as Arc<dyn ProviderPort>
+            let provider_result = match (&oauth_token_port, credentials) {
+                (Some(token_port), DecryptedCredentials::OAuth { .. }) => {
+                    if is_compatible {
+                        Err(anyhow::anyhow!(
+                            "compatible endpoints require API key authentication"
+                        ))
+                    } else {
+                        providers_openai::OpenAIProvider::new_with_oauth_and_quota_recorder(
+                            config,
+                            *connection_id,
+                            token_port.clone(),
+                            quota_recorder.clone(),
+                        )
+                    }
+                }
+                _ if is_compatible => providers_openai::OpenAIProvider::new_with_endpoint_policy(
+                    config,
+                    endpoint_policy,
+                ),
+                _ => providers_openai::OpenAIProvider::new_with_quota_recorder(
+                    config,
+                    quota_recorder.clone(),
+                ),
+            };
+            let provider = provider_result
+                .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?;
+            let provider = provider
+                .with_chat_path(descriptor.paths.chat)
+                .with_health_path(descriptor.paths.health)
+                .with_descriptor_policy(descriptor.display_name, descriptor.quota_header_policy);
+            Arc::new(provider) as Arc<dyn ProviderPort>
         }
-        ProviderKind::Anthropic => {
+        rook_core::Protocol::AnthropicMessages => {
             let config = providers_anthropic::AnthropicProviderConfig {
                 id: ProviderId::new(connection_id.to_string()),
+                provider_id: descriptor.id,
                 api_key,
                 base_url: base_url_override
-                    .unwrap_or_else(|| "https://api.anthropic.com".to_string()),
+                    .unwrap_or_else(|| descriptor.default_base_url.to_string()),
                 models: models.clone(),
                 timeout_secs: 60,
             };
@@ -1127,45 +1124,39 @@ pub fn build_provider_from_connection_with_policy(
                 config,
                 quota_recorder.clone(),
             )
+            .map(|provider| provider.with_chat_path(descriptor.paths.chat))
             .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
         }
-        ProviderKind::Ollama => {
-            let base_url = base_url_override.ok_or(ProviderBuildError::OllamaRequiresBaseUrl)?;
+        rook_core::Protocol::OllamaNative => {
+            let base_url = match base_url_override {
+                Some(base_url) => base_url,
+                None if descriptor.requires_base_url => {
+                    return Err(ProviderBuildError::OllamaRequiresBaseUrl);
+                }
+                None => descriptor.default_base_url.to_string(),
+            };
             let config = providers_ollama::OllamaProviderConfig {
                 id: ProviderId::new(connection_id.to_string()),
                 base_url,
                 models: models.clone(),
                 timeout_secs: 300,
-                api_key: None,
+                api_key: (!api_key.is_empty()).then_some(api_key),
             };
             providers_ollama::OllamaProvider::new(config)
+                .map(|provider| {
+                    provider
+                        .with_chat_path(descriptor.paths.chat)
+                        .with_health_path(descriptor.paths.health)
+                })
                 .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
         }
-        ProviderKind::OllamaCloud => {
-            // Ollama Cloud reuses the same `OllamaProvider` implementation —
-            // it differs only in the base URL (defaults to https://ollama.com)
-            // and the required Bearer auth token. The API surface
-            // (`/api/chat`) is identical to local Ollama.
-            let base_url = base_url_override.unwrap_or_else(|| "https://ollama.com".to_string());
-            let config = providers_ollama::OllamaProviderConfig {
-                id: ProviderId::new(connection_id.to_string()),
-                base_url,
-                models: models.clone(),
-                timeout_secs: 300,
-                api_key: if api_key.is_empty() {
-                    None
-                } else {
-                    Some(api_key)
-                },
-            };
-            providers_ollama::OllamaProvider::new(config)
-                .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
-        }
-        ProviderKind::Gemini => {
+        rook_core::Protocol::GeminiGenerateContent => {
             let config = providers_gemini::GeminiProviderConfig {
                 id: ProviderId::new(connection_id.to_string()),
                 api_key,
-                base_url: base_url_override,
+                base_url: Some(
+                    base_url_override.unwrap_or_else(|| descriptor.default_base_url.to_string()),
+                ),
                 models: models.clone(),
                 timeout_secs: 60,
             };
@@ -1180,46 +1171,12 @@ pub fn build_provider_from_connection_with_policy(
                 }
                 _ => providers_gemini::GeminiProvider::new(config),
             }
+            .map(|provider| {
+                provider
+                    .with_generate_content_path(descriptor.paths.chat)
+                    .with_health_path(descriptor.paths.health)
+            })
             .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
-        }
-        ProviderKind::Groq => {
-            let config = providers_groq::GroqProviderConfig {
-                id: ProviderId::new(connection_id.to_string()),
-                api_key,
-                base_url: None,
-                models: models.clone(),
-                timeout_secs: 60,
-            };
-            providers_groq::GroqProvider::new_with_quota_recorder(config, quota_recorder.clone())
-                .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?
-        }
-        ProviderKind::AzureOpenAI => {
-            if !matches!(credentials, DecryptedCredentials::OAuth { .. }) {
-                return Err(ProviderBuildError::AzureOpenAIRequiresOAuth);
-            }
-            let endpoint = base_url_override
-                .as_deref()
-                .and_then(validate_azure_openai_endpoint)
-                .ok_or(ProviderBuildError::AzureOpenAIRequiresValidEndpoint)?;
-            let config = providers_openai::OpenAIProviderConfig {
-                id: ProviderId::new(connection_id.to_string()),
-                api_key,
-                base_url: format!("{endpoint}/openai/v1"),
-                models: models.clone(),
-                timeout_secs: 60,
-            };
-            let provider = match oauth_token_port {
-                Some(token_port) if matches!(credentials, DecryptedCredentials::OAuth { .. }) => {
-                    providers_openai::OpenAIProvider::new_with_oauth(
-                        config,
-                        *connection_id,
-                        token_port,
-                    )
-                }
-                _ => providers_openai::OpenAIProvider::new(config),
-            }
-            .map_err(|e| ProviderBuildError::ConstructionFailed(e.to_string()))?;
-            Arc::new(provider) as Arc<dyn ProviderPort>
         }
     };
 
@@ -1238,13 +1195,13 @@ struct ConnectionQuotaRecorder {
 /// Kept `pub` so integration tests exercise the production canonical-URL
 /// decision without reaching into private state.
 pub fn quota_recorder_for_connection(
-    kind: ProviderKind,
+    descriptor: &'static ProviderDescriptor,
     base_url_override: Option<&str>,
     connection_id: ConnectionId,
     provider_runtime_id: ProviderId,
     recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
 ) -> Option<Arc<dyn QuotaObservationRecorderPort>> {
-    if !is_canonical_base_url(kind, base_url_override) {
+    if !is_canonical_base_url(descriptor, base_url_override) {
         return None;
     }
     recorder.map(|recorder| {
@@ -1299,16 +1256,19 @@ impl QuotaObservationRecorderPort for ConnectionQuotaRecorder {
 struct DynamicProviderBuilder {
     catalog: Arc<dyn ModelCatalogPort>,
     quota_observation_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
+    pricing: Arc<rook_usecases::PricingConfig>,
 }
 
 impl DynamicProviderBuilder {
     fn new(
         catalog: Arc<dyn ModelCatalogPort>,
         quota_observation_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
+        pricing: Arc<rook_usecases::PricingConfig>,
     ) -> Self {
         Self {
             catalog,
             quota_observation_recorder,
+            pricing,
         }
     }
 
@@ -1319,7 +1279,7 @@ impl DynamicProviderBuilder {
         // Default endpoints and explicit canonical URLs both qualify; custom
         // endpoints must not have third-party headers attributed to the provider.
         quota_recorder_for_connection(
-            input.provider_kind,
+            input.provider,
             input.base_url.as_deref(),
             input.connection_id,
             input.provider_runtime_id.clone(),
@@ -1334,20 +1294,23 @@ impl ProviderBuilderPort for DynamicProviderBuilder {
         &self,
         input: ProviderBuildInput,
     ) -> Result<Arc<dyn ProviderPort>, ManageConnectionsError> {
-        // Query model catalog for models matching this provider kind
+        // Query model catalog for models matching this provider descriptor
         let catalog_entries = self
             .catalog
-            .list_for_connection(input.provider_kind, &input.connection_id)
+            .list_for_connection(input.provider, &input.connection_id)
             .await;
         let catalog_models: Vec<ModelId> = catalog_entries
             .into_iter()
-            .filter(|e| e.provider_kind == input.provider_kind)
+            .filter(|e| e.provider_id == input.provider.id)
             .map(|e| ModelId::new(e.model_id))
             .collect();
-        let models = match input.provider_kind {
-            ProviderKind::AzureOpenAI => input.default_model.clone().into_iter().collect(),
-            ProviderKind::OpenAiCompatible => input.supported_models.clone(),
-            _ => catalog_models,
+        // The listing strategy is descriptor data.
+        let models = match input.provider.model_listing {
+            rook_core::ModelListing::Deployment => {
+                input.default_model.clone().into_iter().collect()
+            }
+            rook_core::ModelListing::SupportedModels => input.supported_models.clone(),
+            rook_core::ModelListing::Catalog => catalog_models,
         };
 
         let quota_recorder = self.quota_recorder(&input);
@@ -1356,18 +1319,14 @@ impl ProviderBuilderPort for DynamicProviderBuilder {
             metadata.insert(
                 model.clone(),
                 self.catalog
-                    .resolve(
-                        input.provider_kind,
-                        Some(&input.connection_id),
-                        model.as_str(),
-                    )
+                    .resolve(input.provider, Some(&input.connection_id), model.as_str())
                     .await,
             );
         }
-        let ceiling = adapter_capability_ceiling(input.provider_kind);
+        let ceiling = adapter_capability_ceiling(input.provider);
         let provider = build_provider_from_connection_with_policy(
             &input.connection_id,
-            input.provider_kind,
+            input.provider,
             &input.decrypted_credentials,
             input.base_url,
             models,
@@ -1381,42 +1340,27 @@ impl ProviderBuilderPort for DynamicProviderBuilder {
         Ok(Arc::new(
             rook_usecases::catalogued_provider::CataloguedProvider::new(
                 provider, metadata, ceiling,
-            ),
+            )
+            .with_pricing(self.pricing.clone()),
         ))
     }
 }
 
 /// Verified implementation limits, not claims about any upstream model.
-fn adapter_capability_ceiling(kind: ProviderKind) -> rook_core::ModelCapabilities {
-    use rook_core::{
-        CapabilityOverrides,
-        CapabilityState::{Supported, Unsupported},
-        ModelCapabilities,
-    };
+fn adapter_capability_ceiling(descriptor: &ProviderDescriptor) -> rook_core::ModelCapabilities {
+    use rook_core::{CapabilityOverrides, CapabilityState, ModelCapabilities};
     let mut out = ModelCapabilities::default();
     out.apply(
         &CapabilityOverrides {
-            tools: Some(
-                if matches!(
-                    kind,
-                    ProviderKind::OpenAI
-                        | ProviderKind::OpenAiCompatible
-                        | ProviderKind::AzureOpenAI
-                        | ProviderKind::Anthropic
-                ) {
-                    Supported
-                } else {
-                    Unsupported
-                },
-            ),
-            vision: Some(Unsupported),
-            reasoning: Some(Unsupported),
-            streaming: Some(if kind == ProviderKind::Gemini {
-                Unsupported
-            } else {
-                Supported
-            }),
-            context_tokens: None,
+            tools: (descriptor.capability_ceiling.tools != CapabilityState::Unknown)
+                .then_some(descriptor.capability_ceiling.tools),
+            vision: (descriptor.capability_ceiling.vision != CapabilityState::Unknown)
+                .then_some(descriptor.capability_ceiling.vision),
+            reasoning: (descriptor.capability_ceiling.reasoning != CapabilityState::Unknown)
+                .then_some(descriptor.capability_ceiling.reasoning),
+            streaming: (descriptor.capability_ceiling.streaming != CapabilityState::Unknown)
+                .then_some(descriptor.capability_ceiling.streaming),
+            context_tokens: descriptor.capability_ceiling.context_tokens,
         },
         "adapter",
     );

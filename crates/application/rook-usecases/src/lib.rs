@@ -11,9 +11,11 @@ use tokio::sync::RwLock;
 pub mod auth;
 pub mod catalogued_provider;
 pub mod cost_estimation;
+pub mod eligibility;
 pub mod route_request;
 pub mod route_selection;
 pub mod router_impl;
+pub mod scoring;
 pub mod spending_budget;
 
 pub use auth::{
@@ -24,6 +26,7 @@ pub use auth::{
 };
 pub use authenticate_client_api::{AuthenticateClientApi, AuthenticateClientApiError};
 pub use cost_estimation::{estimate_cost_usd, PricingConfig, PricingEntry};
+pub use eligibility::{EligibilityResult, Rejection, RejectionReason, TargetRef};
 pub use health_check::HealthCheck;
 pub use manage_api_keys::{
     CreateApiKeyRequest, ManageApiKeys, ManageApiKeysError, UpdateApiKeyRequest,
@@ -39,6 +42,12 @@ pub use rook_core::{
 pub use route_request::RouteRequest;
 pub use route_selection::{classify_route, is_virtual_model, RouteError, RouteSelection};
 pub use router_impl::{FallbackRouter, RoutingStrategy};
+pub use scoring::{
+    all_components_unknown, build_score_components, build_selection_reason, build_signals_snapshot,
+    compare_candidates, CandidatePricing, CandidateScoreComponents, CandidateSignals, RawEvidence,
+    ScoreComponent, SelectionFallback, SelectionMethod, SelectionReason, SelectionResult,
+    SignalsSnapshot, UnknownReason,
+};
 
 pub mod authenticate_client_api;
 pub mod health_check;

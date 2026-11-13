@@ -24,6 +24,6 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
     )"
     v-bind="forwarded"
   >
-    <slot v-bind="slotProps" />
+    <slot v-bind="slotProps"/>
   </StepperRoot>
 </template>

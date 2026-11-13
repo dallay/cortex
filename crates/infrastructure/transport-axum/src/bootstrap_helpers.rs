@@ -9,10 +9,10 @@ use std::sync::Arc;
 
 use models_catalog::StaticModelCatalog;
 use rook_core::{
-    ApiFormat, ApiKeyRepositoryPort, AuditEntry, AuditPort, CachePort, CompletionRequest,
-    CompletionResponse, CortexResult, FormatTranslatorPort, ModelAlias, ModelAliasRepositoryError,
-    ModelAliasRepositoryPort, NewSession, PasswordHasher, ProviderPort, RouterPort, Session,
-    SessionId, SessionRepositoryError, SessionRepositoryPort, UserRepositoryPort,
+    ApiKeyRepositoryPort, AuditEntry, AuditPort, CachePort, CompletionResponse, CortexResult,
+    ModelAlias, ModelAliasRepositoryError, ModelAliasRepositoryPort, NewSession, PasswordHasher,
+    ProviderPort, RouterPort, Session, SessionId, SessionRepositoryError, SessionRepositoryPort,
+    UserRepositoryPort,
 };
 use rook_usecases::{
     BootstrapStatus, FallbackRouter, HealthCheck, ManageApiKeys, ManageProviders, RouteRequest,
@@ -63,7 +63,6 @@ pub fn make_test_bootstrap_usecases_with_providers(
     // FallbackRouter implements both RouterPort and ProviderRegistryPort.
     // We use concrete type here and pass as dyn where needed.
     let fallback_router = Arc::new(FallbackRouter::new(providers, RoutingStrategy::Priority));
-    let format_translator: Arc<dyn FormatTranslatorPort> = Arc::new(StubFormatTranslator);
     let cache: Arc<dyn CachePort> = Arc::new(StubCache);
     let audit: Arc<dyn AuditPort> = Arc::new(StubAudit);
     let alias_repo: Arc<dyn ModelAliasRepositoryPort> = Arc::new(StubAliasRepo);
@@ -80,10 +79,9 @@ pub fn make_test_bootstrap_usecases_with_providers(
         None,
         None,
         Arc::new(rook_usecases::PricingConfig::default()),
-        format_translator,
         alias_repo,
         alias_config,
-        None, // telemetry (will be configured in main.rs for production)
+        None,
     );
     let manage_providers = ManageProviders::new(fallback_router.clone());
     let health_check = Arc::new(HealthCheck::new(fallback_router.clone()));
@@ -178,30 +176,6 @@ impl AuditPort for StubAudit {
         // Bootstrap tests ignore audit records; stream route tests need to
         // complete audit writes without introducing a persistence dependency.
         Ok(())
-    }
-}
-
-struct StubFormatTranslator;
-
-impl FormatTranslatorPort for StubFormatTranslator {
-    fn translate_request(
-        &self,
-        _from: ApiFormat,
-        _to: ApiFormat,
-        req: CompletionRequest,
-    ) -> CortexResult<CompletionRequest> {
-        // Test providers use the OpenAI format, so no translation is required.
-        Ok(req)
-    }
-
-    fn translate_response(
-        &self,
-        _from: ApiFormat,
-        _to: ApiFormat,
-        resp: CompletionResponse,
-    ) -> CortexResult<CompletionResponse> {
-        // Pass through unchanged — never called by bootstrap tests
-        Ok(resp)
     }
 }
 

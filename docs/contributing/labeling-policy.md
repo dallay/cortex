@@ -43,15 +43,15 @@ for backward compatibility with historical titles.
 Scopes (must be exactly one): `rook`, `huginn`, `shared`, plus the legacy
 `agent` alias.
 
-| Prefix | Type |
-| --- | --- |
-| `fix` | `type/bug` |
-| `feat`, `feature` | `type/feature` |
-| `chore`, `docs` | `type/chore` |
-| `test`, `tests` | `type/test` |
-| `perf`, `performance` | `type/performance` |
+| Prefix                                   | Type               |
+|------------------------------------------|--------------------|
+| `fix`                                    | `type/bug`         |
+| `feat`, `feature`                        | `type/feature`     |
+| `chore`, `docs`                          | `type/chore`       |
+| `test`, `tests`                          | `type/test`        |
+| `perf`, `performance`                    | `type/performance` |
 | `refactor`, `enhancement`, `improvement` | `type/enhancement` |
-| `milestone` | `type/milestone` |
+| `milestone`                              | `type/milestone`   |
 
 Examples:
 
@@ -102,8 +102,7 @@ falls back to the title and then to existing labels.
 
 ## Weekly audit
 
-`labels-audit.yml` runs Mondays 09:00 UTC and on demand. It scans open issues
-(excluding PRs) and fails with a summary table when it finds:
+`labels-audit.yml` runs Mondays 09:00 UTC and on demand. It scans open issues (excluding PRs) and fails with a summary table when it finds:
 
 - missing or multiple `product/*`
 - missing or multiple `type/*`

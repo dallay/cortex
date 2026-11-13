@@ -9,6 +9,32 @@ pub struct PricingConfig {
     pub providers: HashMap<String, HashMap<String, PricingEntry>>,
 }
 
+impl PricingConfig {
+    /// Test helper: a config with exactly one priced model.
+    pub fn from_entry(
+        provider: &str,
+        model: &str,
+        prompt_per_million: f64,
+        completion_per_million: f64,
+    ) -> Self {
+        Self {
+            providers: HashMap::from([(
+                provider.to_string(),
+                HashMap::from([(
+                    model.to_string(),
+                    PricingEntry {
+                        prompt_per_million,
+                        completion_per_million,
+                        cache_read_per_million: None,
+                        cache_creation_per_million: None,
+                        reasoning_per_million: None,
+                    },
+                )]),
+            )]),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct PricingEntry {
     pub prompt_per_million: f64,

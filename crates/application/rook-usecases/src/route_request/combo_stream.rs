@@ -2,7 +2,7 @@
 //! The selected stream is pull-driven: one prefetched chunk, no queue or task.
 use super::{
     notify_provider_failure, notify_provider_success, quota_skip_reason, record_combo_skip,
-    ApiFormat, AuditEntry, ComboStepContext, CompletionRequest, ConnectionId, CortexError, ModelId,
+    AuditEntry, ComboStepContext, CompletionRequest, ConnectionId, CortexError, ModelId,
     ObservationStatus, RequestStatus, RouteRequest, StreamChunk, TokenUsage, UsageMetrics,
 };
 use futures::StreamExt;
@@ -233,7 +233,6 @@ impl RouteRequest {
     pub(super) async fn execute_combo_stream(
         &self,
         req: CompletionRequest,
-        client_format: ApiFormat,
     ) -> Result<ChunkStream, CortexError> {
         let requested = req.model.clone();
         let (combo_id, virtual_alias) = match req.metadata.combo_id {
@@ -306,19 +305,8 @@ impl RouteRequest {
                 record_combo_skip(&mut errors, &provider_id, step_index, reason);
                 continue;
             }
-            let context = ComboStepContext {
-                combo_id,
-                step_index,
-                provider_id: provider_id.clone(),
-                runtime_id,
-                connection_id: connection_id
-                    .or_else(|| ConnectionId::parse_str(provider_id.as_str()).ok()),
-            };
-            let mut provider_req = self.format_translator.translate_request(
-                client_format,
-                provider.api_format(),
-                step_req.clone(),
-            )?;
+            let managed_connection_id = connection_id.or_else(|| provider.connection_id().copied());
+            let mut provider_req = step_req.clone();
             provider_req.model = step.model.clone();
             let Some(permit) = self.router.try_acquire_trial(&provider_id).await else {
                 record_combo_skip(
@@ -328,6 +316,59 @@ impl RouteRequest {
                     "half_open_trial_in_progress",
                 );
                 continue;
+            };
+            let runtime_id = if let Some(expected_connection_id) = managed_connection_id {
+                let current_connection = match self
+                    .resolve_connection(provider.as_ref(), &provider_id, None)
+                    .await
+                {
+                    Ok(connection) => connection,
+                    Err(error) => {
+                        drop(permit);
+                        tracing::warn!(
+                            step_index = step_index + 1,
+                            provider_id = %provider_id,
+                            %error,
+                            skip_reason = "connection_state_unavailable",
+                            "skipping combo stream step after routing-state re-read failed"
+                        );
+                        record_combo_skip(
+                            &mut errors,
+                            &provider_id,
+                            step_index,
+                            "connection_state_unavailable",
+                        );
+                        continue;
+                    }
+                };
+                let current_runtime = current_connection.and_then(|current| {
+                    (!current.snapshot_changed
+                        && current.id == expected_connection_id
+                        && (connection_id.is_none()
+                            || current.runtime_id.as_ref() == Some(&step.provider_id)))
+                    .then_some(current.runtime_id)
+                    .flatten()
+                });
+                if current_runtime.is_none() {
+                    drop(permit);
+                    record_combo_skip(
+                        &mut errors,
+                        &provider_id,
+                        step_index,
+                        "adapter_revision_mismatch",
+                    );
+                    continue;
+                }
+                current_runtime
+            } else {
+                runtime_id
+            };
+            let context = ComboStepContext {
+                combo_id,
+                step_index,
+                provider_id: provider_id.clone(),
+                runtime_id,
+                connection_id: managed_connection_id,
             };
             let step_start = tokio::time::Instant::now();
             let deadline = (step_start + Self::COMBO_STEP_TIMEOUT).min(total_deadline);

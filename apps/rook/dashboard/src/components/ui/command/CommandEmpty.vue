@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {PrimitiveProps} from "reka-ui";
 import {Primitive} from "reka-ui";
@@ -22,9 +22,9 @@ const isRender = computed(
 <template>
   <Primitive
     v-if="isRender"
-    data-slot="command-empty"
-    v-bind="delegatedProps" :class="cn('py-6 text-center text-sm', props.class)"
+    :class="cn('py-6 text-center text-sm', props.class)"
+    data-slot="command-empty" v-bind="delegatedProps"
   >
-    <slot />
+    <slot/>
   </Primitive>
 </template>

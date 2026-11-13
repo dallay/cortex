@@ -2,8 +2,7 @@ use chrono::{DateTime, Duration, Utc};
 use provider_sqlite::SqliteProviderRepository;
 use rook_core::{
     ApiFormat, AuthType, ConnectionConfig, ConnectionId, Credentials, EncryptedBlob, ModelId,
-    ProviderConnection, ProviderKind, ProviderRepositoryPort, QuotaWindowThresholds,
-    RepositoryError, TestStatus,
+    ProviderConnection, ProviderRepositoryPort, QuotaWindowThresholds, RepositoryError, TestStatus,
 };
 use shared_kernel::ProviderId;
 
@@ -11,7 +10,7 @@ fn connection() -> ProviderConnection {
     let timestamp = "2026-01-01T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
     ProviderConnection {
         id: ConnectionId::parse_str("c56a4180-65aa-42ec-a945-5fd21dec0538").unwrap(),
-        provider_kind: ProviderKind::OpenAiCompatible,
+        provider: rook_core::descriptor_by_id("openai-compatible").expect("descriptor"),
         provider_runtime_id: ProviderId::new("compatible-runtime"),
         name: "compatible".into(),
         priority: 5,
@@ -34,6 +33,7 @@ fn connection() -> ProviderConnection {
             ],
             api_format: Some(ApiFormat::OpenAI),
         },
+        adapter_revision: 1,
         test_status: TestStatus::Active {
             last_test_at: timestamp,
             latency_ms: 42,
@@ -53,7 +53,7 @@ async fn compatible_model_declarations_round_trip_through_create_find_and_list()
     let listed = repo.list().await.unwrap();
     assert_eq!(listed.len(), 1);
     for loaded in [found, listed.into_iter().next().unwrap()] {
-        assert_eq!(loaded.provider_kind, ProviderKind::OpenAiCompatible);
+        assert_eq!(loaded.provider.id, "openai-compatible");
         assert_eq!(loaded.config, original.config);
         assert_eq!(loaded.credentials, original.credentials);
         assert_eq!(loaded.test_status, original.test_status);
@@ -108,13 +108,22 @@ async fn updating_model_declarations_preserves_status_credentials_and_optimistic
 #[tokio::test]
 async fn absent_api_format_uses_the_provider_default_on_create_and_update() {
     for (kind, expected) in [
-        (ProviderKind::Anthropic, ApiFormat::Anthropic),
-        (ProviderKind::OpenAI, ApiFormat::OpenAI),
-        (ProviderKind::OpenAiCompatible, ApiFormat::OpenAI),
+        (
+            rook_core::descriptor_by_id("anthropic").expect("descriptor"),
+            ApiFormat::Anthropic,
+        ),
+        (
+            rook_core::descriptor_by_id("openai").expect("descriptor"),
+            ApiFormat::OpenAI,
+        ),
+        (
+            rook_core::descriptor_by_id("openai-compatible").expect("descriptor"),
+            ApiFormat::OpenAI,
+        ),
     ] {
         let repo = SqliteProviderRepository::new(":memory:").unwrap();
         let mut original = connection();
-        original.provider_kind = kind;
+        original.provider = kind;
         original.config.api_format = None;
         repo.create(&original).await.unwrap();
         assert_eq!(

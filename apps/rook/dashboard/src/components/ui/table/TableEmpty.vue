@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {HTMLAttributes} from "vue";
 import {cn} from "@/lib/utils";
@@ -30,7 +30,7 @@ const delegatedProps = reactiveOmit(props, "class");
       v-bind="delegatedProps"
     >
       <div class="flex items-center justify-center py-10">
-        <slot />
+        <slot/>
       </div>
     </TableCell>
   </TableRow>

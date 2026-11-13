@@ -26,31 +26,30 @@ import LoadingState from "@/components/LoadingState.vue";
 import ProviderIcon from "@/components/ProviderIcon.vue";
 import {Button} from "@/components/ui/button";
 import {useAvailableModels} from "@/composables/useAvailableModels";
+import {useProviderDescriptors} from "@/composables/useProviderDescriptors";
 import {useProviders} from "@/composables/useProviders";
-import {
-  findCatalogEntry,
-  PROVIDER_KINDS,
-  type ProviderKind,
+import type {
+  ProviderKind,
 } from "@/config/providerCatalog";
 
 const route = useRoute();
 const router = useRouter();
 const {t} = useI18n();
 
-const validKinds = new Set<string>(PROVIDER_KINDS.map((p) => p.kind));
+const { catalog, fetch: fetchDescriptors, loading: descriptorsLoading, error: descriptorsError } = useProviderDescriptors();
 
 const providerKindParam = computed<ProviderKind | null>(() => {
   const param = route.params.providerKind;
-  if (typeof param === "string" && validKinds.has(param)) {
+  if (typeof param === "string" && catalog.value.some((entry) => entry.kind === param)) {
     return param as ProviderKind;
   }
   return null;
 });
 
 watch(
-  providerKindParam,
-  (value) => {
-    if (value === null) {
+  [providerKindParam, descriptorsLoading, descriptorsError],
+  ([value]) => {
+    if (value === null && catalog.value.length && !descriptorsLoading.value && !descriptorsError.value) {
       router.replace("/providers");
     }
   },
@@ -59,11 +58,13 @@ watch(
 
 const entry = computed(() => {
   const kind = providerKindParam.value;
-  return kind ? findCatalogEntry(kind) : null;
+  return kind ? catalog.value.find((entry) => entry.kind === kind) ?? null : null;
 });
 
 const providerName = computed(() =>
-  entry.value ? t(entry.value.displayNameKey) : "",
+  entry.value?.displayNameKey
+    ? t(entry.value.displayNameKey)
+    : (entry.value?.label ?? ""),
 );
 
 const {providers, loading, error, fetch, test, update, remove, refreshOAuth} =
@@ -71,6 +72,7 @@ const {providers, loading, error, fetch, test, update, remove, refreshOAuth} =
 const {modelsByProvider, fetch: fetchModels} = useAvailableModels();
 
 onMounted(() => {
+  fetchDescriptors();
   fetch();
   fetchModels();
 });
@@ -302,4 +304,10 @@ function closeProviderDialog() {
       @deleted="closeProviderDialog"
     />
   </div>
+  <LoadingState v-else-if="descriptorsLoading" />
+  <ErrorBanner
+    v-else-if="descriptorsError"
+    :message="descriptorsError"
+    @retry="fetchDescriptors"
+  />
 </template>

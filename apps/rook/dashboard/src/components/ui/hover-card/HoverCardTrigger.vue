@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {HoverCardTriggerProps} from "reka-ui";
 import {HoverCardTrigger} from "reka-ui";
 
@@ -10,6 +10,6 @@ const props = defineProps<HoverCardTriggerProps>();
     data-slot="hover-card-trigger"
     v-bind="props"
   >
-    <slot />
+    <slot/>
   </HoverCardTrigger>
 </template>

@@ -55,7 +55,7 @@ The `catalog()` function in `crates/infrastructure/models-catalog/src/lib.rs` SH
 | `ollamacloud/nemotron-3-super`  | NVIDIA Nemotron 3 Super |
 | `ollamacloud/qwen3.5:397b`      | Qwen 3.5 397B           |
 
-Source: OmniRoute `providerRegistry.ts` → `ollama-cloud` entry (lines 2958–2980).
+Source: the reference gateway's `providerRegistry.ts` → `ollama-cloud` entry (lines 2958–2980).
 
 #### Scenario: Catalog returns8 Ollama Cloud entries
 

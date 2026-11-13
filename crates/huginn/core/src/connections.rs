@@ -184,9 +184,13 @@ pub enum ConnectionError {
     InvalidSelection,
     #[error("credential is missing; reconnect this connection")]
     MissingSecret,
-    #[error("secure credential backend is locked or inaccessible; unlock the OS credential store and retry")]
+    #[error(
+        "secure credential backend is locked or inaccessible; unlock the OS credential store and retry"
+    )]
     Locked,
-    #[error("secure credential backend unavailable; enable Keychain/Secret Service or explicitly choose ephemeral mode")]
+    #[error(
+        "secure credential backend unavailable; enable Keychain/Secret Service or explicitly choose ephemeral mode"
+    )]
     BackendUnavailable,
     #[error("credential operation failed; retry reconciliation")]
     SecretStore,

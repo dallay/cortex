@@ -6,8 +6,8 @@
 |-------------------------|-------------------------------------------------------------|
 | Estimated changed lines | 750–950                                                     |
 | 400-line budget risk    | High                                                        |
-| Chained PRs recommended | No (entrega solicitada en una PR ordinaria)                 |
-| Suggested split         | Una PR: coste → contrato backend → dashboard → verificación |
+| Chained PRs recommended | No (delivery requested in one ordinary PR)                  |
+| Suggested split         | One PR: cost → backend contract → dashboard → verification  |
 | Delivery strategy       | single-pr                                                   |
 | Chain strategy          | single-pr                                                   |
 
@@ -16,45 +16,46 @@ Chained PRs recommended: No
 Chain strategy: single-pr
 400-line budget risk: High
 
-El usuario autorizó consolidar todo el alcance en una sola PR aunque el stack complique la entrega; esto aprueba la excepción de tamaño para esta entrega (estimado 750–950 líneas). Justificación: evitar complejidad de coordinación en tres capas y entregar el flujo integrado de extremo a extremo. Base `main`, issue/Linear #132. Se conserva el alcance técnico completo; no se crean ramas/capas superiores ni metadata de GitHub Stack. El uso Cortex no representa el total de cuenta; no inventar límites.
+The user authorized consolidating the whole scope into a single PR even though the stack complicates delivery; this approves the size exception for this delivery (estimated 750–950 lines). Rationale: avoid coordination complexity across three layers and deliver the integrated end-to-end flow. Base `main`, issue/Linear #132. The full technical scope is kept; no stacked branches/layers and no GitHub Stack metadata are created. Cortex usage does not represent the account total; do not invent limits.
 
 ### Suggested Work Units
 
 | Unit | Goal                                                                                      | Likely PR | Notes                                                                                                                           |
 |------|-------------------------------------------------------------------------------------------|-----------|---------------------------------------------------------------------------------------------------------------------------------|
-| 1    | Costes completos, resumen backend veraz y dashboard localizado con tendencias y refresco. | PR única  | Base=`main`; issue/Linear=#132. Inicio: agregado `cost_usd`; fin: criterios técnicos y verificaciones de las fases completados. |
+| 1    | Complete costs, truthful backend summary and localized dashboard with trends and refresh.  | Single PR | Base=`main`; issue/Linear=#132. Start: `cost_usd` aggregate; end: phase technical criteria and verifications completed. |
 
 ## Project Test Mode and Runners
 
-- `.agents/sdd/config.yaml`: `strict_tdd: false`; test-first solo para lógica pura con seam adecuado (clasificación de umbrales).
-- Rust: `cargo test --workspace --all-features`; dashboard: `cd apps/rook/dashboard && pnpm exec vitest run`. No hay quality runner SDD configurado.
+- `.agents/sdd/config.yaml`: `strict_tdd: false`; test-first only for pure logic with an adequate seam (threshold classification).
+- Rust: `cargo test --workspace --all-features`; dashboard: `cd apps/rook/dashboard && pnpm exec vitest run`. No SDD quality runner is configured.
 
 ## Phase 1: Cost Completeness
 
-- [x] 1.1 Extender `CostBreakdown` en `crates/domain/rook-core/src/model.rs` con conteos conocidos/desconocidos, preservando semántica del total.
-- [x] 1.2 Actualizar `SqliteUsageRepository::cost_breakdown` en `crates/infrastructure/audit-sqlite/src/lib.rs`: `SUM(cost_usd)`, `COUNT(cost_usd)` y conteo coincidente con filtros. Probar cero explícito, con/sin precio, mixto, ventana vacía y filtros conexión/fecha.
-- [x] 1.3 Ajustar mocks `UsageRecorderPort` solo si es necesario; correr tests focalizados de audit-sqlite y crates dependientes.
+- [x] 1.1 Extend `CostBreakdown` in `crates/domain/rook-core/src/model.rs` with known/unknown counts, preserving the total semantics.
+- [x] 1.2 Update `SqliteUsageRepository::cost_breakdown` in `crates/infrastructure/audit-sqlite/src/lib.rs`: `SUM(cost_usd)`, `COUNT(cost_usd)` and a count matching the filters. Test explicit zero, with/without price, mixed, empty window and connection/date filters.
+- [x] 1.3 Adjust `UsageRecorderPort` mocks only if necessary; run focused tests of audit-sqlite and dependent crates.
 
 ## Phase 2: Truthful Backend Summary
 
-- [x] 2.1 Extraer clasificador puro por conexión en `crates/infrastructure/transport-axum/src/handlers/provider_quota.rs`; test-first para límites warning/error y entradas no disponibles.
-- [x] 2.2 Reemplazar DTO legacy en `crates/infrastructure/transport-axum/src/provider_dto.rs`: cobertura, disponibilidad, completitud de coste, `accountQuota`, umbrales agrupados, observación rate-limit, nivel de alerta, períodos y tendencias; preservar ruta y camelCase.
-- [x] 2.3 En `provider_quota.rs`, construir filas de los siete tipos de proveedor desde conexiones; exponer cobertura solo Cortex, configuración, umbrales y disponibilidad correcta de Ollama local/Cloud.
-- [x] 2.4 Mapear datos all-time/24 h/7 días y siete buckets UTC a estados explícitos; aislar fallos del recorder por medida/ventana y mantener coste desconocido como null.
-- [x] 2.5 Añadir tests de ruta en `crates/infrastructure/transport-axum/tests/` con recorder falso configurable y `ManageConnections`: cobertura de respuesta JSON/procedencia, recorder ausente, fallo de una consulta de resumen conservando ventanas exitosas, coste parcial representado como `null` y agregación por proveedor/conexiones. Verificado con `cargo test -p transport-axum --test provider_quota_routes` (4 tests).
+- [x] 2.1 Extract a pure per-connection classifier in `crates/infrastructure/transport-axum/src/handlers/provider_quota.rs`; test-first for warning/error limits and unavailable inputs.
+- [x] 2.2 Replace the legacy DTO in `crates/infrastructure/transport-axum/src/provider_dto.rs`: coverage, availability, cost completeness, `accountQuota`, grouped thresholds, rate-limit observation, alert level, periods and trends; preserve the route and camelCase.
+- [x] 2.3 In `provider_quota.rs`, build rows for the seven provider types from connections; expose Cortex-only coverage, configuration, thresholds and correct availability for local/Cloud Ollama.
+- [x] 2.4 Map all-time/24 h/7-day data and seven UTC buckets to explicit states; isolate recorder failures per measure/window and keep unknown cost as null.
+- [x] 2.5 Add route tests in `crates/infrastructure/transport-axum/tests/` with a configurable fake recorder and `ManageConnections`: JSON response/provenance coverage, absent recorder, failure of one summary query while keeping successful windows, partial cost represented as `null` and aggregation per provider/connection. Verified with `cargo test -p transport-axum --test provider_quota_routes` (4 tests).
 
 ## Phase 3: Dashboard Usage and Refresh
 
-- [x] 3.1 Reflejar enums, costes nullable y contrato en `apps/rook/dashboard/src/lib/api.ts`; conservar URL de `getProvidersQuota()`.
-- [x] 3.2 Ampliar `useProvidersQuota.ts` y `useProvidersQuota.spec.ts`: refresco manual/60 s, solapamientos, último dato válido, stale/recuperación, fallo inicial y cleanup al desmontar.
-- [x] 3.3 Actualizar `ProvidersQuotaView.vue` y su spec: cobertura/procedencia, no disponible vs sin datos, alertas locales, cuotas de cuenta, costes/proveedores desconocidos y refresco stale.
-- [x] 3.4 Mostrar tendencias de 7 días (requests/tokens/coste estimado conocido) con primitives existentes; añadir equivalente accesible y casos vacío/no disponible.
-- [x] 3.5 Actualizar `apps/rook/dashboard/src/locales/en.json`, `locales/es.json` y `src/__tests__/providersI18n.spec.ts`; validar Vitest y typecheck. Eliminar `ChartContainer` para evitar la dependencia innecesaria de `@unovis/vue`.
+- [x] 3.1 Reflect the enums, nullable costs and contract in `apps/rook/dashboard/src/lib/api.ts`; keep the `getProvidersQuota()` URL.
+- [x] 3.2 Extend `useProvidersQuota.ts` and `useProvidersQuota.spec.ts`: manual/60 s refresh, overlaps, last valid data, stale/recovery, initial failure and cleanup on unmount.
+- [x] 3.3 Update `ProvidersQuotaView.vue` and its spec: coverage/provenance, unavailable vs no data, local alerts, account quotas, unknown costs/providers and stale refresh.
+- [x] 3.4 Show 7-day trends (requests/tokens/known estimated cost) with existing primitives; add an accessible equivalent and empty/unavailable cases.
+- [x] 3.5 Update `apps/rook/dashboard/src/locales/en.json`, `locales/es.json` and `src/__tests__/providersI18n.spec.ts`; validate Vitest and typecheck. Remove `ChartContainer` to avoid the unnecessary `@unovis/vue` dependency.
 
 ## Phase 4: Integrated Verification
 
-- [x] 4.1 Contrastar ambas delta specs con suites focalizadas y ejecutar `just ci-local`. Evidencia: ambas delta specs contrastadas con `cargo test -p transport-axum --test provider_quota_routes` (13 tests), `cargo test -p rook-usecases`, `cargo test -p rook-core` (61 tests) y la suite del dashboard (44 archivos, 386 tests). `just ci-local` re-ejecutado tras liberar espacio: todos los gates pasaron (install, CI contract, doctor, issue-labeler, dashboard build, Markdown lint, fmt, Clippy, Huginn architecture + cargo check, Rust tests 457s, frontend typecheck/Biome/Vitest, Rust doc, cargo audit, Trivy, Gitleaks). Semgrep falló por incompatibilidad de toolchain local (`protobuf` de `semgrep==1.126.0` bajo Python 3.14 elegido por `uv`) y pasó al reejecutarse con `--python 3.12`: 19 reglas, 252 objetivos, 11 hallazgos con excepciones exactas, chequeo de no suprimidos `true`. Gates adicionales: `just ci-coverage-frontend` pasó, `just ci-coverage-rust` pasó con `--fail-under-lines 87`, `just ci-e2e` pasó con 90 tests. SonarCloud y el build push-only quedan fuera del conjunto local por diseño y no se reportan como passed.
-- [x] 4.2 Confirmado por `git diff --name-only` y lectura de `routes.rs`: no cambian `V2__usage_history.sql`, adapters, routing, DI, autorización admin ni URL `/api/providers/quota`. Cambian deliberadamente el handler/DTO y dashboard para cumplir el contrato; el test de ruta invoca handler por Router de prueba y no revalida middleware admin existente.
+- [x] 4.1 Contrast both delta specs with focused suites and run `just ci-local`. Evidence: both delta specs checked with `cargo test -p transport-axum --test provider_quota_routes` (13 tests), `cargo test -p rook-usecases`, `cargo test -p rook-core` (61 tests) and the dashboard suite (44 files, 386 tests). `just ci-local` re-run after freeing space: all gates passed (install, CI contract, doctor, issue-labeler, dashboard build, Markdown lint, fmt, Clippy, Huginn architecture + cargo check, Rust tests 457s, frontend typecheck/Biome/Vitest, Rust doc, cargo audit, Trivy, Gitleaks). Semgrep failed because of a local toolchain incompatibility (`protobuf` from `semgrep==1.126.0` under Python 3.14 chosen by `uv`) and passed when re-run with `--python 3.12`: 19 rules, 252 targets, 11 findings with exact exceptions, non-suppressed check `true`. Additional gates: `just ci-coverage-frontend` passed, `just ci-coverage-rust` passed with `--fail-under-lines 87`,
+  `just ci-e2e` passed with 90 tests. SonarCloud and the push-only build are outside the local set by design and are not reported as passed.
+- [x] 4.2 Confirmed by `git diff --name-only` and reading `routes.rs`: `V2__usage_history.sql`, adapters, routing, DI, admin authorization and the `/api/providers/quota` URL do not change. The handler/DTO and dashboard change deliberately to satisfy the contract; the route test invokes the handler through a test Router and does not revalidate the existing admin middleware.
 
 ## Phase 5: Upstream Capture (U1–U3, absorbed from `per-provider-quota-integration`)
 
@@ -97,6 +98,6 @@ monitoring thresholds. The two designs no longer conflict: the reference
 capture design is applied only to the observation display, while its
 threshold-reuse proposal is rejected.
 
-## Orden de implementación
+## Implementation order
 
-Consolidar todas las fases en la misma PR ordinaria, en orden de dependencia: agregados SQLite, contrato/endpoint backend, dashboard/localización y verificación integrada. No omitir criterios técnicos al consolidar. La excepción explícita de tamaño para esta PR única está aprobada, como se indica en la autorización registrada arriba.
+Consolidate all phases into the same ordinary PR, in dependency order: SQLite aggregates, backend contract/endpoint, dashboard/localization and integrated verification. Do not omit technical criteria when consolidating. The explicit size exception for this single PR is approved, as stated in the authorization recorded above.

@@ -127,10 +127,7 @@ impl ManageApiKeys {
             .ok_or_else(|| ManageApiKeysError::NotFound(id.clone()))?;
 
         validate_spending_budget(
-            request
-                .spending_budget
-                .as_ref()
-                .and_then(|value| value.as_ref()),
+            request.spending_budget.as_ref().and_then(Option::as_ref),
             Some(&existing.id),
         )?;
         let label = request.label.unwrap_or(existing.label);

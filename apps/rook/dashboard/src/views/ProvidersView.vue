@@ -35,7 +35,7 @@ const {t} = useI18n();
 
 const {fetch, loading, error} = useProviders();
 const {fetch: fetchModels} = useAvailableModels();
-const {items, byCategory} = useProviderCatalog();
+const {items, byCategory, fetch: fetchDescriptors, loading: descriptorsLoading, error: descriptorsError} = useProviderCatalog();
 
 const searchQuery = ref("");
 const activeCategory = ref<CategoryFilter>("all");
@@ -43,6 +43,7 @@ const activeCategory = ref<CategoryFilter>("all");
 onMounted(() => {
   fetch();
   fetchModels();
+  fetchDescriptors();
 });
 
 const filteredByCategory = computed(() => {
@@ -108,9 +109,10 @@ function onDeleted() {
       v-model:active-category="activeCategory"
     />
 
-    <LoadingState v-if="loading && items.length === 0" />
-
+    <LoadingState v-if="(descriptorsLoading || loading) && items.length === 0" />
     <template v-else>
+      <ErrorBanner v-if="descriptorsError" :message="descriptorsError" @retry="fetchDescriptors" />
+
       <ProviderCategorySection
         v-for="entry in visibleSections"
         :key="entry.category.kind"
@@ -120,7 +122,7 @@ function onDeleted() {
       />
 
       <EmptyState
-        v-if="totalMatches === 0"
+        v-if="totalMatches === 0 && !descriptorsError"
         :title="t('common.noResults')"
         :description="t('providers.catalog.noResults')"
         :icon="SearchX"

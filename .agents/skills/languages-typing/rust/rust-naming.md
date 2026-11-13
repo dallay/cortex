@@ -75,7 +75,7 @@ The Rust compiler enforces some naming conventions.
 
 ### 5. name-as-free
 
-> Use the `as_` prefix for low-cost conversions (O(1), no allocation).
+> Use the `as_` prefix for low-cost conversions (O (1), no allocation).
 
  ```rust
  impl ProviderConfig {

@@ -51,7 +51,7 @@ repository text still remain in the original history.
 ## Follow-up and evidence
 
 See the [implementation specification](../implementation-specification.md),
-[usage guide](../README.md) and [validation record](../validation.md).
+[usage guide](../README.md).
 
 ## Runtime ownership invariant
 

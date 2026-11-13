@@ -20,9 +20,10 @@ use std::sync::Arc;
 pub fn parse_openai_rate_limit_headers(
     headers: &reqwest::header::HeaderMap,
     provider: ProviderId,
+    descriptor_id: &'static str,
     observed_at: chrono::DateTime<chrono::Utc>,
 ) -> Vec<rook_core::QuotaObservation> {
-    use rook_core::{ProviderKind, QuotaObservation};
+    use rook_core::QuotaObservation;
 
     let mut observations = Vec::new();
     for (metric, scope, prefix) in [
@@ -47,7 +48,7 @@ pub fn parse_openai_rate_limit_headers(
             continue;
         };
         observations.push(QuotaObservation {
-            provider_kind: ProviderKind::OpenAI,
+            provider_id: descriptor_id.to_string(),
             provider: provider.clone(),
             connection_id: None,
             metric: metric.to_string(),
@@ -63,6 +64,42 @@ pub fn parse_openai_rate_limit_headers(
         });
     }
     observations
+}
+
+/// Selects the provider-specific quota header schema for an OpenAI-wire adapter.
+pub fn parse_groq_rate_limit_headers(
+    headers: &reqwest::header::HeaderMap,
+    provider: ProviderId,
+    descriptor_id: &'static str,
+    observed_at: chrono::DateTime<chrono::Utc>,
+) -> Vec<rook_core::QuotaObservation> {
+    use rook_core::QuotaObservation;
+
+    [
+        ("requests", "requests", "day"),
+        ("tokens", "tokens", "minute"),
+    ]
+    .into_iter()
+    .filter_map(|(metric, suffix, window)| {
+        let limit = header_number(headers, &format!("x-ratelimit-limit-{suffix}"))?;
+        let remaining = header_number(headers, &format!("x-ratelimit-remaining-{suffix}"))?;
+        Some(QuotaObservation {
+            provider_id: descriptor_id.to_string(),
+            provider: provider.clone(),
+            connection_id: None,
+            metric: metric.to_string(),
+            source: "response_headers".to_string(),
+            scope: Some("organization".to_string()),
+            window: Some(window.to_string()),
+            limit: Some(limit),
+            remaining: Some(remaining),
+            reset_at: None,
+            reset_after_milliseconds: header_value(headers, &format!("x-ratelimit-reset-{suffix}"))
+                .and_then(parse_reset_milliseconds),
+            observed_at,
+        })
+    })
+    .collect()
 }
 
 fn header_value<'a>(headers: &'a reqwest::header::HeaderMap, name: &str) -> Option<&'a str> {
@@ -101,6 +138,7 @@ fn redact_secrets(text: &str, secrets: &[&str]) -> String {
 /// Reads `Retry-After` header for 429 and sanitizes the body to prevent leakage.
 async fn map_openai_http_error(
     provider_id: &ProviderId,
+    provider_name: &str,
     resp: reqwest::Response,
     secrets: &[&str],
 ) -> CortexError {
@@ -120,7 +158,7 @@ async fn map_openai_http_error(
     let sanitized = sanitize_body(&redacted);
 
     match status.as_u16() {
-        401 => CortexError::auth_failed("OpenAI authentication failed"),
+        401 => CortexError::auth_failed(format!("{provider_name} authentication failed")),
         429 => {
             let retry_secs = retry_after.unwrap_or(60);
             if let Some(reset) = reset_at {
@@ -130,7 +168,7 @@ async fn map_openai_http_error(
             }
         }
         400 => CortexError::invalid_request(sanitized),
-        _ => CortexError::provider(format!("OpenAI error {status}: {sanitized}")),
+        _ => CortexError::provider(format!("{provider_name} error {status}: {sanitized}")),
     }
 }
 
@@ -138,6 +176,9 @@ async fn map_openai_http_error(
 #[derive(Debug, Clone)]
 pub struct OpenAIProviderConfig {
     pub id: ProviderId,
+    /// Canonical descriptor id of the provider this connection represents
+    /// (OpenAI-compatible and Azure reuse this adapter).
+    pub provider_id: &'static str,
     pub api_key: String,
     pub base_url: String,
     pub models: Vec<ModelId>,
@@ -150,9 +191,38 @@ pub struct OpenAIProvider {
     quota_recorder: Option<Arc<dyn QuotaObservationRecorderPort>>,
     oauth_token_port: Option<Arc<dyn rook_core::OAuthTokenPort>>,
     connection_id: Option<ConnectionId>,
+    chat_path: String,
+    health_path: String,
+    quota_header_policy: rook_core::QuotaHeaderPolicy,
+    provider_name: &'static str,
 }
 
 impl OpenAIProvider {
+    /// Validate and normalize an Azure OpenAI resource URL before appending the
+    /// OpenAI API path. Azure resource hosts are an explicit trust boundary.
+    pub fn azure_resource_base_url(value: &str) -> Option<String> {
+        let endpoint = reqwest::Url::parse(value).ok()?;
+        let host = endpoint.host_str()?;
+        let azure_host = rook_core::AZURE_OPENAI_HOST_SUFFIXES
+            .iter()
+            .any(|suffix| host.ends_with(suffix));
+        if endpoint.scheme() != "https"
+            || !azure_host
+            || endpoint.username() != ""
+            || endpoint.password().is_some()
+            || endpoint.query().is_some()
+            || endpoint.fragment().is_some()
+            || !matches!(endpoint.path(), "" | "/")
+        {
+            return None;
+        }
+        Some(format!(
+            "{}{}",
+            endpoint.as_str().trim_end_matches('/'),
+            rook_core::AZURE_OPENAI_API_PREFIX
+        ))
+    }
+
     pub fn new(config: OpenAIProviderConfig) -> anyhow::Result<Self> {
         Self::new_with_quota_recorder(config, None)
     }
@@ -189,13 +259,47 @@ impl OpenAIProvider {
             }
         }
         let client = builder.build()?;
+        let descriptor = rook_core::descriptor_by_id(config.provider_id);
+        let paths = descriptor.map(|descriptor| descriptor.paths);
         Ok(Self {
             config,
             client,
             quota_recorder,
             oauth_token_port: None,
             connection_id: None,
+            chat_path: paths.map_or_else(
+                || "/chat/completions".to_string(),
+                |paths| paths.chat.to_string(),
+            ),
+            health_path: paths
+                .map_or_else(|| "/models".to_string(), |paths| paths.health.to_string()),
+            quota_header_policy: descriptor.map_or(rook_core::QuotaHeaderPolicy::OpenAi, |d| {
+                d.quota_header_policy
+            }),
+            provider_name: descriptor.map_or("OpenAI", |d| d.display_name),
         })
+    }
+
+    /// Configure the provider-relative chat path from its provider descriptor.
+    pub fn with_chat_path(mut self, path: impl Into<String>) -> Self {
+        self.chat_path = path.into();
+        self
+    }
+
+    pub fn with_health_path(mut self, path: impl Into<String>) -> Self {
+        self.health_path = path.into();
+        self
+    }
+
+    /// Apply descriptor-declared labels and quota interpretation.
+    pub fn with_descriptor_policy(
+        mut self,
+        provider_name: &'static str,
+        quota_header_policy: rook_core::QuotaHeaderPolicy,
+    ) -> Self {
+        self.provider_name = provider_name;
+        self.quota_header_policy = quota_header_policy;
+        self
     }
 
     pub fn new_with_oauth(
@@ -240,7 +344,7 @@ impl OpenAIProvider {
             let token = self.access_token(attempt == 1).await?;
             let response = self
                 .client
-                .post(format!("{}/chat/completions", self.config.base_url))
+                .post(format!("{}{}", self.config.base_url, self.chat_path))
                 .header("Authorization", format!("Bearer {token}"))
                 .json(body)
                 .send()
@@ -283,8 +387,21 @@ impl OpenAIProvider {
         let Some(recorder) = self.quota_recorder.as_ref() else {
             return;
         };
-        let observations =
-            parse_openai_rate_limit_headers(headers, self.config.id.clone(), chrono::Utc::now());
+        let observed_at = chrono::Utc::now();
+        let observations = match self.quota_header_policy {
+            rook_core::QuotaHeaderPolicy::OpenAi => parse_openai_rate_limit_headers(
+                headers,
+                self.config.id.clone(),
+                self.config.provider_id,
+                observed_at,
+            ),
+            rook_core::QuotaHeaderPolicy::Groq => parse_groq_rate_limit_headers(
+                headers,
+                self.config.id.clone(),
+                self.config.provider_id,
+                observed_at,
+            ),
+        };
         if let Err(error) = recorder.record_observations(observations).await {
             tracing::warn!(%error, "failed to record OpenAI quota observations");
         }
@@ -485,8 +602,8 @@ impl OpenAIProvider {
                 Some(FinishReason::Length | FinishReason::ContentFilter)
             )
         {
-            // Responses conserva los argumentos parciales cuando el proveedor
-            // declara un finish incompleto; Chat y Messages mantienen su contrato.
+            // Responses keeps partial arguments when the provider
+            // declares an incomplete finish; Chat and Messages keep their contract.
             tool_call_validator.calls.clear();
             tool_call_validator.total_argument_bytes = 0;
         }
@@ -803,7 +920,7 @@ impl ProviderPort for OpenAIProvider {
         }
 
         let start = std::time::Instant::now();
-        let probe_url = format!("{}/models", self.config.base_url);
+        let probe_url = format!("{}{}", self.config.base_url, self.health_path);
         match self.send_models_request(&probe_url).await {
             Ok(resp) => {
                 let latency_ms = start.elapsed().as_millis() as u64;
@@ -880,7 +997,9 @@ impl ProviderPort for OpenAIProvider {
         self.record_quota_headers(resp.headers()).await;
 
         if !resp.status().is_success() {
-            let error = map_openai_http_error(&self.config.id, resp, &self.secrets()).await;
+            let error =
+                map_openai_http_error(&self.config.id, self.provider_name, resp, &self.secrets())
+                    .await;
             return Err(error);
         }
 
@@ -957,8 +1076,12 @@ impl ProviderPort for OpenAIProvider {
         let body = Self::build_stream_request(req);
         let resp = self.send_stream_request(&body).await?;
 
+        self.record_quota_headers(resp.headers()).await;
+
         if !resp.status().is_success() {
-            let error = map_openai_http_error(&self.config.id, resp, &self.secrets()).await;
+            let error =
+                map_openai_http_error(&self.config.id, self.provider_name, resp, &self.secrets())
+                    .await;
             return Err(error);
         }
 

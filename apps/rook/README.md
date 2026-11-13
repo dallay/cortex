@@ -45,13 +45,13 @@ Rook is the **AI proxy binary** that powers Cortex. It provides:
 
 ### Components
 
-| Component | Description |
-|-----------|-------------|
-| **HTTP Server** | Axum-based server with OpenAI-compatible API |
-| **Dashboard** | Vue 3 SPA embedded at build time |
-| **Providers** | OpenAI, Anthropic, Gemini, Ollama, Groq |
-| **Storage** | SQLite for auth, audit logs, and provider configs |
-| **Cache** | In-memory TTL cache for responses |
+| Component       | Description                                       |
+|-----------------|---------------------------------------------------|
+| **HTTP Server** | Axum-based server with OpenAI-compatible API      |
+| **Dashboard**   | Vue 3 SPA embedded at build time                  |
+| **Providers**   | OpenAI, Anthropic, Gemini, Ollama, Groq           |
+| **Storage**     | SQLite for auth, audit logs, and provider configs |
+| **Cache**       | In-memory TTL cache for responses                 |
 
 ---
 
@@ -101,22 +101,22 @@ rook [OPTIONS]
 
 ### Options
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--host` | `127.0.0.1` | Server bind address |
-| `--port` | `3773` | Server port |
-| `--config` | — | Path to config TOML file |
-| `--help` | — | Show help |
-| `--version` | — | Show version |
+| Flag        | Default     | Description              |
+|-------------|-------------|--------------------------|
+| `--host`    | `127.0.0.1` | Server bind address      |
+| `--port`    | `3773`      | Server port              |
+| `--config`  | —           | Path to config TOML file |
+| `--help`    | —           | Show help                |
+| `--version` | —           | Show version             |
 
 ### Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `ROOK_CONFIG` | Path to configuration file |
-| `ROOK_HOST` | Override host |
-| `ROOK_PORT` | Override port |
-| `RUST_LOG` | Log level (trace, debug, info, warn, error) |
+| Variable      | Description                                 |
+|---------------|---------------------------------------------|
+| `ROOK_CONFIG` | Path to configuration file                  |
+| `ROOK_HOST`   | Override host                               |
+| `ROOK_PORT`   | Override port                               |
+| `RUST_LOG`    | Log level (trace, debug, info, warn, error) |
 
 ### Examples
 
@@ -155,14 +155,14 @@ enabled = true
 
 ### Full Schema
 
-| Section | Key | Type | Default | Description |
-|---------|-----|------|---------|-------------|
-| `server` | `host` | string | `"127.0.0.1"` | Bind address |
-| `server` | `port` | integer | `3773` | Server port |
-| `cache` | `enabled` | boolean | `true` | Enable response caching |
-| `cache` | `ttl_secs` | integer | `3600` | Cache TTL in seconds |
-| `audit` | `enabled` | boolean | `true` | Enable audit logging |
-| `auth` | `enabled` | boolean | `true` | Require API key auth |
+| Section  | Key        | Type    | Default       | Description             |
+|----------|------------|---------|---------------|-------------------------|
+| `server` | `host`     | string  | `"127.0.0.1"` | Bind address            |
+| `server` | `port`     | integer | `3773`        | Server port             |
+| `cache`  | `enabled`  | boolean | `true`        | Enable response caching |
+| `cache`  | `ttl_secs` | integer | `3600`        | Cache TTL in seconds    |
+| `audit`  | `enabled`  | boolean | `true`        | Enable audit logging    |
+| `auth`   | `enabled`  | boolean | `true`        | Require API key auth    |
 
 > **Note:** Provider configuration is done via the REST API at `/api/providers` after startup.
 > See [Configuration Docs](docs/rook/configuration.md) for detailed options.
@@ -298,14 +298,14 @@ just test-e2e
 
 ## 📚 Documentation
 
-| Resource | Description |
-|----------|-------------|
-| [Rook Docs](docs/rook/README.md) | Full Rook documentation |
-| [API Reference](docs/rook/api.md) | HTTP endpoints |
-| [Configuration](docs/rook/configuration.md) | Config options |
-| [Providers](docs/rook/providers.md) | Provider setup |
-| [Dashboard](apps/rook/dashboard/README.md) | Dashboard development |
-| [Architecture](docs/rook/architecture.md) | Internal design |
+| Resource                                    | Description             |
+|---------------------------------------------|-------------------------|
+| [Rook Docs](docs/rook/README.md)            | Full Rook documentation |
+| [API Reference](docs/rook/api.md)           | HTTP endpoints          |
+| [Configuration](docs/rook/configuration.md) | Config options          |
+| [Providers](docs/rook/providers.md)         | Provider setup          |
+| [Dashboard](apps/rook/dashboard/README.md)  | Dashboard development   |
+| [Architecture](docs/rook/architecture.md)   | Internal design         |
 
 ---
 

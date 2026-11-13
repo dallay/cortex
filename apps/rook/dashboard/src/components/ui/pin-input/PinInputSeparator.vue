@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {Minus} from "@lucide/vue";
 import type {PrimitiveProps} from "reka-ui";
 import {Primitive, useForwardProps} from "reka-ui";
@@ -13,7 +13,7 @@ const forwardedProps = useForwardProps(props);
     v-bind="forwardedProps"
   >
     <slot>
-      <Minus />
+      <Minus/>
     </slot>
   </Primitive>
 </template>

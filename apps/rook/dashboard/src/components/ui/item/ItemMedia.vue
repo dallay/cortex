@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {HTMLAttributes} from "vue";
 import {cn} from "@/lib/utils";
 import type {ItemMediaVariants} from ".";
@@ -12,10 +12,10 @@ const props = defineProps<{
 
 <template>
   <div
-    data-slot="item-media"
-    :data-variant="props.variant"
     :class="cn(itemMediaVariants({ variant }), props.class)"
+    :data-variant="props.variant"
+    data-slot="item-media"
   >
-    <slot />
+    <slot/>
   </div>
 </template>

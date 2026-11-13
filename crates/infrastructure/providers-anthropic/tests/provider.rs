@@ -5,9 +5,10 @@ use providers_anthropic::{
 use reqwest::header::{HeaderMap, HeaderValue};
 use rook_core::{
     ApiKeyRestrictions, CompletionRequest, FinishReason, HealthStatus, MessageContent, ModelId,
-    ProviderPort, RequestMetadata, Role,
+    ProviderPort, RequestMetadata, Role, TokenUsage,
 };
 use shared_kernel::{ProviderId, RequestId};
+use std::sync::Arc;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -317,74 +318,110 @@ async fn responses_late_usage_does_not_repeat_tools_or_finish() {
 async fn responses_missing_or_unknown_finish_keeps_usage_without_inventing_stop() {
     for reason in [None, Some("unknown")] {
         for stream in [false, true] {
-            let server = MockServer::start().await;
-            let mut delta = serde_json::json!({});
-            if let Some(reason) = reason {
-                delta["stop_reason"] = serde_json::json!(reason);
-            }
-            let mut body = serde_json::json!({"model":"claude-3-5-sonnet","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":3,"output_tokens":2}});
-            if let Some(reason) = reason {
-                body["stop_reason"] = serde_json::json!(reason);
-            }
-            let template = if stream {
-                ResponseTemplate::new(200).set_body_string(format!(
-                    "data: {{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{{\"type\":\"text_delta\",\"text\":\"hi\"}}}}\n\ndata: {}\n\n",
-                    serde_json::json!({"type":"message_delta","delta":delta,"usage":{"input_tokens":3,"output_tokens":2}})
-                ))
-            } else {
-                ResponseTemplate::new(200).set_body_json(body)
-            };
-            Mock::given(method("POST"))
-                .and(path("/v1/messages"))
-                .respond_with(template)
-                .mount(&server)
-                .await;
-            for origin in ["responses", "openai", "anthropic"] {
-                let mut req = make_test_request("claude-3-5-sonnet");
-                req.metadata.origin = origin.into();
-                req.stream = stream;
-                let (finish, usage) = if stream {
-                    let chunks = test_provider(&server)
-                        .stream(&req)
-                        .await
-                        .unwrap()
-                        .collect::<Vec<_>>()
-                        .await;
-                    if origin == "responses" && reason.is_some() {
-                        let error = chunks.last().unwrap().as_ref().unwrap_err();
-                        assert_eq!(
-                            rook_core::StreamValidationError::usage(error)
-                                .unwrap()
-                                .total_tokens,
-                            5
-                        );
-                        continue;
-                    }
-                    let chunks = chunks.into_iter().collect::<Result<Vec<_>, _>>().unwrap();
-                    let last = chunks.last().unwrap();
-                    // Legacy parsing skipped message_delta when stop_reason was absent.
-                    if origin != "responses" && reason.is_none() {
-                        assert!(last.usage.is_none());
-                        continue;
-                    }
-                    (
-                        last.finish_reason,
-                        last.usage.clone().expect("terminal usage"),
-                    )
-                } else {
-                    let response = test_provider(&server).complete(&req).await.unwrap();
-                    assert_eq!(response.content, "hi");
-                    (response.finish_reason, response.usage)
-                };
-                assert_eq!(
-                    finish,
-                    (origin != "responses").then_some(FinishReason::Stop),
-                    "origin={origin}, reason={reason:?}, stream={stream}"
-                );
-                assert_eq!(usage.total_tokens, 5);
-            }
+            assert_missing_finish_keeps_usage(reason, stream).await;
         }
     }
+}
+
+/// One (stop_reason, transport) pair served for every origin.
+async fn assert_missing_finish_keeps_usage(reason: Option<&str>, stream: bool) {
+    let server = MockServer::start().await;
+    let mut delta = serde_json::json!({});
+    if let Some(reason) = reason {
+        delta["stop_reason"] = serde_json::json!(reason);
+    }
+    let mut body = serde_json::json!({"model":"claude-3-5-sonnet","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":3,"output_tokens":2}});
+    if let Some(reason) = reason {
+        body["stop_reason"] = serde_json::json!(reason);
+    }
+    let template = if stream {
+        ResponseTemplate::new(200).set_body_string(format!(
+            "data: {{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{{\"type\":\"text_delta\",\"text\":\"hi\"}}}}\n\ndata: {}\n\n",
+            serde_json::json!({"type":"message_delta","delta":delta,"usage":{"input_tokens":3,"output_tokens":2}})
+        ))
+    } else {
+        ResponseTemplate::new(200).set_body_json(body)
+    };
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(template)
+        .mount(&server)
+        .await;
+    for origin in ["responses", "openai", "anthropic"] {
+        assert_missing_finish_for_origin(&server, reason, stream, origin).await;
+    }
+}
+
+/// One origin's finish reason and usage for the same served payload.
+async fn assert_missing_finish_for_origin(
+    server: &MockServer,
+    reason: Option<&str>,
+    stream: bool,
+    origin: &str,
+) {
+    let mut req = make_test_request("claude-3-5-sonnet");
+    req.metadata.origin = origin.into();
+    req.stream = stream;
+    let observed = if stream {
+        streamed_finish_and_usage(server, reason, origin, &req).await
+    } else {
+        let response = test_provider(server).complete(&req).await.unwrap();
+        assert_eq!(response.content, "hi");
+        Some((response.finish_reason, response.usage))
+    };
+    let Some((finish, usage)) = observed else {
+        return;
+    };
+    assert_eq!(
+        finish,
+        (origin != "responses").then_some(FinishReason::Stop),
+        "origin={origin}, reason={reason:?}, stream={stream}"
+    );
+    assert_eq!(usage.total_tokens, 5);
+}
+
+/// Streamed finish reason and usage, or `None` when the expectation was already asserted.
+async fn streamed_finish_and_usage(
+    server: &MockServer,
+    reason: Option<&str>,
+    origin: &str,
+    req: &CompletionRequest,
+) -> Option<(Option<FinishReason>, TokenUsage)> {
+    let chunks = test_provider(server)
+        .stream(req)
+        .await
+        .unwrap()
+        .collect::<Vec<_>>()
+        .await;
+    if origin == "responses" && reason.is_some() {
+        // An unknown stop_reason is an error, never a finish: every chunk that did arrive
+        // must be a successful one without a finish reason before the terminal error.
+        for chunk in chunks.iter().filter_map(|chunk| chunk.as_ref().ok()) {
+            assert!(
+                chunk.finish_reason.is_none(),
+                "origin={origin}, reason={reason:?}: finish reason before the terminal error"
+            );
+        }
+        let error = chunks.last().unwrap().as_ref().unwrap_err();
+        assert_eq!(
+            rook_core::StreamValidationError::usage(error)
+                .unwrap()
+                .total_tokens,
+            5
+        );
+        return None;
+    }
+    let chunks = chunks.into_iter().collect::<Result<Vec<_>, _>>().unwrap();
+    let last = chunks.last().unwrap();
+    // Legacy parsing skipped message_delta when stop_reason was absent.
+    if origin != "responses" && reason.is_none() {
+        assert!(last.usage.is_none());
+        return None;
+    }
+    Some((
+        last.finish_reason,
+        last.usage.clone().expect("terminal usage"),
+    ))
 }
 
 #[tokio::test]
@@ -400,7 +437,7 @@ async fn responses_malformed_or_pending_sse_fails_without_losing_prior_chunks() 
                 concat!(
                 "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n",
                 "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"input_tokens\":3,\"output_tokens\":2}}\n\n"
-            )
+                )
             } else {
                 ""
             };
@@ -512,13 +549,13 @@ async fn responses_tool_summary_does_not_repeat_name_without_upstream_id() {
 async fn responses_accepts_ping_comments_and_clean_eof_without_message_stop() {
     let server = MockServer::start().await;
     let sse = concat!(
-        ": keepalive\n\n",
-        "event: ping\ndata: {\"type\":\"ping\"}\n\n",
-        "data:{\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\n",
-        "data: {\"type\":\"content_block_delta\",\"index\":0,\n",
-        "data: \"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n",
-        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n",
-        ": another keepalive\n\ndata: {\"type\":\"ping\"}\n\n"
+    ": keepalive\n\n",
+    "event: ping\ndata: {\"type\":\"ping\"}\n\n",
+    "data:{\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\n",
+    "data: {\"type\":\"content_block_delta\",\"index\":0,\n",
+    "data: \"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n",
+    "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n",
+    ": another keepalive\n\ndata: {\"type\":\"ping\"}\n\n"
     );
     Mock::given(method("POST"))
         .and(path("/v1/messages"))
@@ -677,10 +714,10 @@ async fn stream_merges_initial_input_and_cache_usage_with_terminal_output() {
     let server = MockServer::start().await;
     Mock::given(method("POST")).and(path("/v1/messages"))
         .respond_with(ResponseTemplate::new(200).set_body_string(concat!(
-            "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":12,\"output_tokens\":0,\"cache_read_input_tokens\":8,\"cache_creation_input_tokens\":2}}}\n\n",
-            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n",
-            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":7}}\n\n",
-            "data: {\"type\":\"message_stop\"}\n\n"
+        "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":12,\"output_tokens\":0,\"cache_read_input_tokens\":8,\"cache_creation_input_tokens\":2}}}\n\n",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n",
+        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":7}}\n\n",
+        "data: {\"type\":\"message_stop\"}\n\n"
         ))).mount(&server).await;
     let provider = test_provider(&server);
     let mut req = make_test_request("claude-3-5-sonnet");
@@ -861,6 +898,7 @@ async fn health_check_returns_unknown_when_not_supported() {
     // Anthropic provider returns HealthStatus::Unknown because
     // health_check is not supported via the Anthropic API.
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: "http://localhost".to_string(),
@@ -880,6 +918,47 @@ async fn health_check_returns_unknown_when_not_supported() {
 }
 
 #[tokio::test]
+async fn unknown_anthropic_provider_uses_messages_path_and_arc_path_override_is_persistent() {
+    let server = wiremock::MockServer::start().await;
+    for endpoint in ["/v1/messages", "/custom/messages"] {
+        wiremock::Mock::given(method("POST"))
+            .and(path(endpoint))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "id":"msg_test", "type":"message", "role":"assistant", "model":"claude-test",
+                    "content":[{"type":"text","text":"ok"}], "stop_reason":"end_turn",
+                    "usage":{"input_tokens":1,"output_tokens":1}
+                })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let original = AnthropicProvider::new(AnthropicProviderConfig {
+        id: ProviderId::new("anthropic-unknown"),
+        provider_id: "unknown-custom-provider",
+        api_key: "key".into(),
+        base_url: server.uri(),
+        models: vec![],
+        timeout_secs: 10,
+    })
+    .unwrap();
+    let customized = Arc::clone(&original).with_chat_path("/custom/messages");
+    original
+        .complete(&make_test_request("claude-test"))
+        .await
+        .unwrap();
+    customized
+        .complete(&make_test_request("claude-test"))
+        .await
+        .unwrap();
+    let requests = server.received_requests().await.unwrap();
+    let mut paths: Vec<_> = requests.iter().map(|request| request.url.path()).collect();
+    paths.sort_unstable();
+    assert_eq!(paths, vec!["/custom/messages", "/v1/messages"]);
+}
+
+#[tokio::test]
 async fn complete_does_not_follow_redirects() {
     let target = MockServer::start().await;
     Mock::given(wiremock::matchers::any())
@@ -896,6 +975,7 @@ async fn complete_does_not_follow_redirects() {
         .mount(&source)
         .await;
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-redirect-test"),
         api_key: "sk-test".to_string(),
         base_url: source.uri(),
@@ -954,19 +1034,21 @@ async fn complete_returns_valid_response_from_mock_server() {
     });
 
     Mock::given(method("POST"))
-        .and(path("/v1/messages"))
+        .and(path("/custom/messages"))
         .respond_with(ResponseTemplate::new(200).set_body_json(response_body))
         .mount(&mock_server)
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: mock_server.uri(),
         models: vec![ModelId::new("claude-3-5-sonnet-20241022")],
         timeout_secs: 10,
     })
-    .unwrap();
+    .unwrap()
+    .with_chat_path("/custom/messages");
 
     let req = CompletionRequest {
         id: RequestId::new(),
@@ -1035,6 +1117,7 @@ async fn complete_parses_cache_tokens() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: mock_server.uri(),
@@ -1119,6 +1202,7 @@ async fn complete_returns_auth_error_on_401() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-invalid".to_string(),
         base_url: server.uri(),
@@ -1158,6 +1242,7 @@ async fn complete_returns_rate_limit_error_on_429() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1193,6 +1278,7 @@ async fn complete_returns_invalid_request_on_400() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1226,6 +1312,7 @@ async fn complete_sanitizes_error_body_sensitive_data() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1270,18 +1357,19 @@ async fn responses_stream_skips_well_formed_unknown_event_and_delta() {
         .and(path("/v1/messages"))
         .respond_with(ResponseTemplate::new(200).set_body_string(
             concat!(
-                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"before\"}}\n\n",
-                "data: {\"type\":\"future_event\",\"extra\":true}\n\n",
-                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"future_delta\",\"value\":7}}\n\n",
-                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"after\"}}\n\n",
-                "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2,\"input_tokens\":1}}\n\n",
-                "data: {\"type\":\"message_stop\"}\n\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"before\"}}\n\n",
+            "data: {\"type\":\"future_event\",\"extra\":true}\n\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"future_delta\",\"value\":7}}\n\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"after\"}}\n\n",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2,\"input_tokens\":1}}\n\n",
+            "data: {\"type\":\"message_stop\"}\n\n",
             ),
         ))
         .mount(&server)
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1327,6 +1415,7 @@ async fn stream_returns_chunks_on_anthropic_sse_success() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1382,6 +1471,7 @@ async fn stream_returns_error_on_http_429() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1419,6 +1509,7 @@ async fn stream_returns_error_on_http_401() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-invalid".to_string(),
         base_url: server.uri(),
@@ -1458,6 +1549,7 @@ async fn stream_parses_tool_use_finish_reason() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1506,6 +1598,7 @@ async fn stream_includes_system_message_in_request() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1562,6 +1655,7 @@ async fn complete_maps_pause_turn_to_stop_finish_reason() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1591,6 +1685,7 @@ async fn stream_maps_pause_turn_to_stop_finish_reason() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1632,6 +1727,7 @@ async fn stream_keeps_finish_reason_and_usage_when_stop_sequence_is_a_string() {
         .await;
 
     let provider = AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1696,6 +1792,7 @@ fn tool_test_request() -> CompletionRequest {
 
 fn test_provider(server: &MockServer) -> std::sync::Arc<AnthropicProvider> {
     AnthropicProvider::new(AnthropicProviderConfig {
+        provider_id: "anthropic",
         id: ProviderId::new("anthropic-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -1945,7 +2042,7 @@ fn test_parse_anthropic_rate_limit_headers_all_metrics() {
 
     let provider = ProviderId::new("anthropic-test");
     let now = chrono::Utc::now();
-    let obs = parse_anthropic_rate_limit_headers(&headers, provider, now);
+    let obs = parse_anthropic_rate_limit_headers(&headers, provider, "anthropic", now);
 
     assert!(!obs.is_empty());
     let req_obs = obs.iter().find(|o| o.metric == "requests").unwrap();
@@ -1988,4 +2085,115 @@ async fn complete_maps_anthropic_finish_reason_variants() {
         let response = test_provider(&server).complete(&request).await.unwrap();
         assert_eq!(response.finish_reason, expected, "stop_reason={reason}");
     }
+}
+
+#[tokio::test]
+async fn request_tools_are_normalized_to_native_anthropic_shape() {
+    use serde_json::json;
+    use wiremock::matchers::body_partial_json;
+
+    let server = MockServer::start().await;
+    // The gateway domain carries OpenAI function-shaped tools. The adapter owns
+    // the domain-to-wire mapping, so the upstream must observe the native
+    // Anthropic declaration shape for every client origin.
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(body_partial_json(json!({
+            "tools": [{
+                "name": "lookup",
+                "description": "Find things",
+                "input_schema": {"type": "object"},
+                "cache_control": {"type": "ephemeral"}
+            }],
+            "tool_choice": {"type": "auto"}
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "claude-3-5-sonnet",
+            "content": [{"type": "text", "text": "ok"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 1, "output_tokens": 1}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut req = make_test_request("claude-3-5-sonnet");
+    req.metadata.origin = "openai".into();
+    req.tools = Some(json!([{
+        "type": "function",
+        "cache_control": {"type": "ephemeral"},
+        "function": {"name": "lookup", "description": "Find things", "parameters": {"type": "object"}}
+    }]));
+    req.tool_choice = Some(json!("auto"));
+
+    let result = test_provider(&server).complete(&req).await;
+    assert!(
+        result.is_ok(),
+        "wire request must satisfy the native-tool matcher: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn request_tool_choice_function_form_maps_to_native_tool_selection() {
+    use serde_json::json;
+    use wiremock::matchers::body_partial_json;
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(body_partial_json(json!({
+            "tools": [{"name": "lookup", "input_schema": {"type": "object"}}],
+            "tool_choice": {"type": "tool", "name": "lookup"}
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "claude-3-5-sonnet",
+            "content": [{"type": "text", "text": "ok"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 1, "output_tokens": 1}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut req = make_test_request("claude-3-5-sonnet");
+    req.metadata.origin = "responses".into();
+    req.tools = Some(json!([{
+        "type": "function",
+        "function": {"name": "lookup", "parameters": {"type": "object"}}
+    }]));
+    req.tool_choice = Some(json!({"type": "function", "function": {"name": "lookup"}}));
+
+    let result = test_provider(&server).complete(&req).await;
+    assert!(
+        result.is_ok(),
+        "wire request must satisfy the native-tool_choice matcher: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn malformed_function_tool_choice_returns_request_error_before_sending() {
+    use serde_json::json;
+
+    let server = MockServer::start().await;
+    let provider = test_provider(&server);
+    for choice in [
+        json!({"type": "function"}),
+        json!({"type": "function", "function": null}),
+        json!({"type": "function", "function": []}),
+        json!({"type": "function", "function": "lookup"}),
+        json!({"type": "function", "function": {}}),
+        json!({"type": "function", "function": {"name": null}}),
+        json!({"type": "function", "function": {"name": 42}}),
+    ] {
+        let mut req = make_test_request("claude-3-5-sonnet");
+        req.tool_choice = Some(choice.clone());
+        let error = provider.complete(&req).await.unwrap_err();
+        assert!(error.is_invalid_request(), "choice={choice}: {error}");
+        let error = match provider.stream(&req).await {
+            Err(error) => error,
+            Ok(_) => panic!("malformed choice accepted: {choice}"),
+        };
+        assert!(error.is_invalid_request(), "choice={choice}: {error}");
+    }
+    assert!(server.received_requests().await.unwrap().is_empty());
 }

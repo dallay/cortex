@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {X} from "@lucide/vue";
 import {reactiveOmit} from "@vueuse/core";
 import type {TagsInputItemDeleteProps} from "reka-ui";
@@ -16,9 +16,10 @@ const forwardedProps = useForwardProps(delegatedProps);
 </script>
 
 <template>
-  <TagsInputItemDelete v-bind="forwardedProps" :class="cn('flex rounded bg-transparent mr-1', props.class)">
+  <TagsInputItemDelete :class="cn('flex rounded bg-transparent mr-1', props.class)"
+                       v-bind="forwardedProps">
     <slot>
-      <X class="w-4 h-4" />
+      <X class="w-4 h-4"/>
     </slot>
   </TagsInputItemDelete>
 </template>

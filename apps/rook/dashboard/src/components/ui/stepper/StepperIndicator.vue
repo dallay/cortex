@@ -17,7 +17,6 @@ const forwarded = useForwardProps(delegatedProps);
 <template>
   <StepperIndicator
     v-slot="slotProps"
-    v-bind="forwarded"
     :class="cn(
       'inline-flex items-center justify-center rounded-full text-muted-foreground/50 w-8 h-8',
       // Disabled
@@ -28,7 +27,8 @@ const forwarded = useForwardProps(delegatedProps);
       'group-data-[state=completed]:bg-accent group-data-[state=completed]:text-accent-foreground',
       props.class,
     )"
+    v-bind="forwarded"
   >
-    <slot v-bind="slotProps" />
+    <slot v-bind="slotProps"/>
   </StepperIndicator>
 </template>

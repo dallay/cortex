@@ -1,9 +1,11 @@
 //! Standalone stdio shell. Application handlers are not wired yet.
 
-fn main() -> std::io::Result<()> {
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
     muninn_mcp::serve(
-        std::io::stdin().lock(),
-        std::io::stdout().lock(),
+        tokio::io::BufReader::new(tokio::io::stdin()),
+        tokio::io::stdout(),
         &mut muninn_mcp::Server::default(),
     )
+    .await
 }

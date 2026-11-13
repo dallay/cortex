@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {Component} from "vue";
 import {RouterLink} from "vue-router";
 import {
@@ -19,9 +19,9 @@ defineProps<{
     <SidebarGroupLabel>Support</SidebarGroupLabel>
     <SidebarMenu>
       <SidebarMenuItem v-for="item in items" :key="item.title">
-        <SidebarMenuButton as-child :tooltip="item.title">
+        <SidebarMenuButton :tooltip="item.title" as-child>
           <RouterLink :to="item.url">
-            <component :is="item.icon" />
+            <component :is="item.icon"/>
             <span>{{ item.title }}</span>
           </RouterLink>
         </SidebarMenuButton>

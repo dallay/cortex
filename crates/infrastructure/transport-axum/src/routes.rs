@@ -13,8 +13,7 @@ use axum::{
 };
 use futures::StreamExt;
 use rook_core::{
-    ApiFormat, ApiKeyRestrictions, CompletionRequest, HealthPort, HealthStatus,
-    ProviderRegistryPort,
+    ApiKeyRestrictions, CompletionRequest, HealthPort, HealthStatus, ProviderRegistryPort,
 };
 use rook_usecases::{classify_route, RouteSelection};
 use shared_kernel::{ComboId, CortexError, ModelId, ProviderId};
@@ -589,11 +588,7 @@ async fn chat_completions(
         return chat_completions_stream(usecases, req).await;
     }
 
-    match usecases
-        .route_request
-        .execute_with_format(req, ApiFormat::OpenAI)
-        .await
-    {
+    match usecases.route_request.execute(req).await {
         Ok(resp) => {
             let openai_resp = OpenAIChatResponse::from(&resp);
             Ok(Json(openai_resp).into_response())
@@ -700,11 +695,7 @@ async fn chat_completions_stream(
     usecases: Usecases,
     req: CompletionRequest,
 ) -> Result<Response, HttpError> {
-    let stream = match usecases
-        .route_request
-        .execute_stream_with_format(req, ApiFormat::OpenAI)
-        .await
-    {
+    let stream = match usecases.route_request.execute_stream(req).await {
         Ok(stream) => stream,
         Err(error) if error.is_forbidden() => return Err(map_forbidden_openai(&error)),
         Err(error) if error.is_not_found() => return Err(map_not_found_openai(&error)),
@@ -968,7 +959,7 @@ async fn anthropic_messages(
 
     match usecases
         .route_request
-        .execute_with_format(req, ApiFormat::Anthropic)
+        .execute(req)
         .await
     {
         Ok(resp) => {
@@ -1003,11 +994,7 @@ async fn anthropic_messages_stream(
     usecases: Usecases,
     req: CompletionRequest,
 ) -> Result<Response, HttpError> {
-    let stream = match usecases
-        .route_request
-        .execute_stream_with_format(req, ApiFormat::Anthropic)
-        .await
-    {
+    let stream = match usecases.route_request.execute_stream(req).await {
         Ok(stream) => stream,
         Err(error) if error.is_forbidden() => {
             return Err(HttpError {
@@ -1497,7 +1484,6 @@ mod tests {
             target: "key_1".into(),
             requests_per_minute: 1,
             requests_per_day: None,
-            tokens_per_minute: None,
             burst: None,
             provider_limits: HashMap::new(),
         });

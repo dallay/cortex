@@ -1,10 +1,20 @@
 mod common;
+use async_trait::async_trait;
 use muninn_mcp::{serve, Server, MAX_MESSAGE_BYTES};
 use serde_json::{json, Value};
 use std::io::Cursor;
 
-#[test]
-fn framing_handles_parse_errors_notifications_and_eof() {
+struct NearLimitResult;
+
+#[async_trait]
+impl muninn_mcp::ToolHandler for NearLimitResult {
+    async fn call(&self, _: &Value) -> Result<Value, String> {
+        Ok(json!({"v":"x".repeat(muninn_mcp::MAX_RESULT_BYTES - 16)}))
+    }
+}
+
+#[tokio::test]
+async fn framing_handles_parse_errors_notifications_and_eof() {
     let input = format!(
         "not-json\n{{\"jsonrpc\":\"2.0\",\"method\":\"ping\"}}\n{}",
         common::request("ping", json!({}))
@@ -12,10 +22,11 @@ fn framing_handles_parse_errors_notifications_and_eof() {
 
     let mut output = Vec::new();
     serve(
-        Cursor::new(input.as_bytes()),
+        tokio::io::BufReader::new(Cursor::new(input.into_bytes())),
         &mut output,
         &mut Server::default(),
     )
+    .await
     .unwrap();
     let text = String::from_utf8(output).unwrap();
     let responses: Vec<Value> = text
@@ -27,13 +38,42 @@ fn framing_handles_parse_errors_notifications_and_eof() {
     assert_eq!(responses[1]["result"]["resultType"], "complete");
 }
 
-#[test]
-fn oversized_frames_stop_without_reading_the_entire_stream() {
+#[tokio::test]
+async fn oversized_frames_stop_without_reading_the_entire_stream() {
     let input = vec![b'x'; MAX_MESSAGE_BYTES + 100];
-    let mut reader = Cursor::new(input);
+    let mut reader = tokio::io::BufReader::new(Cursor::new(input));
     let mut output = Vec::new();
-    assert!(serve(&mut reader, &mut output, &mut Server::default()).is_err());
-    assert!(reader.position() <= (MAX_MESSAGE_BYTES + 1) as u64);
+    assert!(serve(&mut reader, &mut output, &mut Server::default())
+        .await
+        .is_err());
+    // Tokio's BufReader may read ahead by one fixed-size buffer. It must not
+    // consume the remainder of the deliberately much larger input.
+    assert!(reader.get_ref().position() <= (MAX_MESSAGE_BYTES + 8 * 1024 + 1) as u64);
+    assert!(output.is_empty());
+}
+
+#[tokio::test]
+async fn response_envelope_over_limit_is_rejected_before_any_bytes_are_written() {
+    let request = common::request("tools/call", json!({"name":"memory_search","arguments":{}}));
+    let input = format!("{request}\n");
+    let mut output = Vec::new();
+    let mut server = Server::default();
+    server
+        .register(
+            muninn_mcp::Catalog::Core,
+            "memory_search",
+            Box::new(NearLimitResult),
+        )
+        .unwrap();
+
+    let result = serve(
+        tokio::io::BufReader::new(Cursor::new(input.into_bytes())),
+        &mut output,
+        &mut server,
+    )
+    .await;
+
+    assert!(result.is_err());
     assert!(output.is_empty());
 }
 

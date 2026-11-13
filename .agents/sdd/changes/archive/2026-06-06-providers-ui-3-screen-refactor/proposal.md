@@ -10,7 +10,7 @@
 
 The current `/providers` view is a flat table that does not scale beyond a handful of connections. The product vision — "an AI Provider Control Plane" with many providers and many connections per provider — requires a navigable hierarchy, not a single dense grid.
 
-User intent (paraphrased): *"A futuro vamos a tener muchos providers"* and *"este es el AI Provider Control Plane."* The backend domain model (`Provider → Connection`, 5 `ProviderKind` values, `Credentials::ApiKey | OAuth`) is already correct and stable. The gap is purely in the dashboard UX.
+User intent (paraphrased): *"We will have many providers in the future"* and *"this is the AI Provider Control Plane."* The backend domain model (`Provider → Connection`, 5 `ProviderKind` values, `Credentials::ApiKey | OAuth`) is already correct and stable. The gap is purely in the dashboard UX.
 
 This refactor lands the navigation skeleton and a per-kind details view, so adding the 6th, 7th, 8th provider later is a metadata entry, not a UI rewrite.
 
@@ -87,7 +87,7 @@ This refactor is a **UI restructure only**. The existing backend capability `pro
 
 - ❌ Bulk actions (select all, enable/disable/delete multi) — future PR.
 - ❌ Distribute Proxies (auto-rebalance priority/weight) — future PR.
-- ❌ Static catalog of 228 providers (OmniRoute parity) — future PR.
+- ❌ Static catalog of 228 providers (reference-gateway parity) — future PR.
 - ❌ OAuth flow implementation for OAuth-supporting providers (Gemini, etc.) — dialog supports the form shape only; no OAuth redirect yet.
 - ❌ Per-provider quota implementation (real API integration) — placeholder page only; follow-up issue.
 - ❌ Provider logos/brand icons — use lucide icons only.

@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {ComboboxItemIndicatorProps} from "reka-ui";
 import {ComboboxItemIndicator, useForwardProps} from "reka-ui";
@@ -16,10 +16,10 @@ const forwarded = useForwardProps(delegatedProps);
 
 <template>
   <ComboboxItemIndicator
+    :class="cn('ml-auto', props.class)"
     data-slot="combobox-item-indicator"
     v-bind="forwarded"
-    :class="cn('ml-auto', props.class)"
   >
-    <slot />
+    <slot/>
   </ComboboxItemIndicator>
 </template>

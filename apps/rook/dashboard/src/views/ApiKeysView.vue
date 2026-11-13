@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {Key, Pencil, Plus, RefreshCw, Trash2} from "@lucide/vue";
 import {computed, onMounted, ref, watch} from "vue";
 import {useI18n} from "vue-i18n";
@@ -31,7 +31,13 @@ import {useApiKeys} from "@/composables/useApiKeys";
 import {useAvailableModels} from "@/composables/useAvailableModels";
 import {useProviders} from "@/composables/useProviders";
 import {DEFAULT_SCOPES, SCOPES} from "@/config/scopes";
-import {type CreateApiKeyRequest, microsToUsd, type SpendingBudgetRequest, type UpdateApiKeyRequest, usdToMicros } from "@/lib/api";
+import {
+  type CreateApiKeyRequest,
+  microsToUsd,
+  type SpendingBudgetRequest,
+  type UpdateApiKeyRequest,
+  usdToMicros
+} from "@/lib/api";
 
 const {t} = useI18n();
 
@@ -312,12 +318,12 @@ function getKeyStatus(
 <template>
   <div class="space-y-6">
     <PageHeader
-      :title="t('nav.apiKeys')"
       :description="t('apiKeys.description') || 'Manage API keys for external agents'"
+      :title="t('nav.apiKeys')"
     >
       <template #default>
         <Button @click="showCreateModal = true">
-          <Plus class="h-4 w-4 mr-2" />
+          <Plus class="h-4 w-4 mr-2"/>
           {{ t('apiKeys.create') || 'Create API Key' }}
         </Button>
       </template>
@@ -326,30 +332,40 @@ function getKeyStatus(
     <!-- Error State -->
     <ErrorBanner v-if="error" :message="error" @retry="fetch">
       <template #default>
-        <Button variant="ghost" size="sm" @click="fetch">
-          <RefreshCw class="h-4 w-4 mr-1" />
+        <Button size="sm" variant="ghost" @click="fetch">
+          <RefreshCw class="h-4 w-4 mr-1"/>
           Retry
         </Button>
       </template>
     </ErrorBanner>
 
     <!-- Loading State -->
-    <LoadingState v-if="loading && apiKeys.length === 0" />
+    <LoadingState v-if="loading && apiKeys.length === 0"/>
 
     <!-- Keys List -->
     <div v-else class="rounded-md border">
       <Table>
         <TableHeader>
           <TableRow class="bg-muted/50">
-            <TableHead class="px-4 py-3 text-left text-sm font-medium">{{ t('apiKeys.name') || 'Name' }}</TableHead>
-            <TableHead class="px-4 py-3 text-left text-sm font-medium">{{ t('apiKeys.keyPrefix') || 'Key' }}</TableHead>
+            <TableHead class="px-4 py-3 text-left text-sm font-medium">
+              {{ t('apiKeys.name') || 'Name' }}
+            </TableHead>
+            <TableHead class="px-4 py-3 text-left text-sm font-medium">
+              {{ t('apiKeys.keyPrefix') || 'Key' }}
+            </TableHead>
             <TableHead class="px-4 py-3 text-left text-sm font-medium">Scopes</TableHead>
             <TableHead class="px-4 py-3 text-left text-sm font-medium">Tier</TableHead>
             <TableHead class="px-4 py-3 text-left text-sm font-medium">Status</TableHead>
-            <TableHead class="px-4 py-3 text-left text-sm font-medium">{{ t('apiKeys.created') || 'Created' }}</TableHead>
-            <TableHead class="px-4 py-3 text-left text-sm font-medium">{{ t('apiKeys.lastUsed') || 'Last Used' }}</TableHead>
+            <TableHead class="px-4 py-3 text-left text-sm font-medium">
+              {{ t('apiKeys.created') || 'Created' }}
+            </TableHead>
+            <TableHead class="px-4 py-3 text-left text-sm font-medium">
+              {{ t('apiKeys.lastUsed') || 'Last Used' }}
+            </TableHead>
             <TableHead class="px-4 py-3 text-left text-sm font-medium">Restrictions</TableHead>
-            <TableHead class="px-4 py-3 text-right text-sm font-medium">{{ t('common.actions') || 'Actions' }}</TableHead>
+            <TableHead class="px-4 py-3 text-right text-sm font-medium">
+              {{ t('common.actions') || 'Actions' }}
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -357,7 +373,7 @@ function getKeyStatus(
             <TableRow v-for="item in apiKeys" :key="item.id" class="hover:bg-muted/30">
               <TableCell class="px-4 py-3">
                 <div class="flex items-center gap-2">
-                  <Key class="h-4 w-4 text-muted-foreground" />
+                  <Key class="h-4 w-4 text-muted-foreground"/>
                   <span class="font-medium">{{ item.label }}</span>
                 </div>
               </TableCell>
@@ -381,39 +397,44 @@ function getKeyStatus(
                 <span class="text-sm capitalize text-muted-foreground">{{ item.tier }}</span>
               </TableCell>
               <TableCell class="px-4 py-3">
-                <StatusBadge :status="item.isActive ? 'active' : 'revoked'" />
+                <StatusBadge :status="item.isActive ? 'active' : 'revoked'"/>
               </TableCell>
-              <TableCell class="px-4 py-3 text-sm text-muted-foreground">{{ formatDate(item.createdAt) }}</TableCell>
-              <TableCell class="px-4 py-3 text-sm text-muted-foreground">{{ formatDate(item.lastUsedAt) }}</TableCell>
+              <TableCell class="px-4 py-3 text-sm text-muted-foreground">
+                {{ formatDate(item.createdAt) }}
+              </TableCell>
+              <TableCell class="px-4 py-3 text-sm text-muted-foreground">
+                {{ formatDate(item.lastUsedAt) }}
+              </TableCell>
               <TableCell class="px-4 py-3">
-                <StatusBadge :status="getKeyStatus(item.isActive ? 'active' : 'revoked', item.allowedModels, item.allowedProviders)" />
+                <StatusBadge
+                  :status="getKeyStatus(item.isActive ? 'active' : 'revoked', item.allowedModels, item.allowedProviders)"/>
               </TableCell>
               <TableCell class="px-4 py-3 text-right">
                 <div class="flex items-center justify-end gap-2">
                   <Button
                     v-if="item.isActive"
-                    variant="ghost"
                     size="sm"
+                    variant="ghost"
                     @click="openEditModal(item)"
                   >
-                    <Pencil class="h-4 w-4" />
+                    <Pencil class="h-4 w-4"/>
                   </Button>
                   <Button
                     v-if="item.isActive"
-                    variant="ghost"
                     size="sm"
+                    variant="ghost"
                     @click="confirmRotate(item.id)"
                   >
-                    <RefreshCw class="h-4 w-4" />
+                    <RefreshCw class="h-4 w-4"/>
                   </Button>
                   <Button
                     v-if="item.isActive"
-                    variant="ghost"
-                    size="sm"
                     class="text-destructive hover:text-destructive"
+                    size="sm"
+                    variant="ghost"
                     @click="confirmRevoke(item.id)"
                   >
-                    <Trash2 class="h-4 w-4" />
+                    <Trash2 class="h-4 w-4"/>
                   </Button>
                 </div>
               </TableCell>
@@ -422,9 +443,10 @@ function getKeyStatus(
           <TableRow v-else>
             <TableCell :colspan="9" class="p-8 text-center text-muted-foreground">
               <div class="flex flex-col items-center">
-                <Key class="h-12 w-12 mb-4 opacity-50" />
+                <Key class="h-12 w-12 mb-4 opacity-50"/>
                 <p>{{ t('apiKeys.empty') || 'No API keys yet' }}</p>
-                <p class="text-sm mt-1">Create your first API key to enable external agent access</p>
+                <p class="text-sm mt-1">Create your first API key to enable external agent
+                  access</p>
               </div>
             </TableCell>
           </TableRow>
@@ -435,13 +457,13 @@ function getKeyStatus(
     <!-- Pagination -->
     <Pagination
       v-if="apiKeys.length > 0"
-      :offset="offset"
-      :limit="limit"
-      :total="total"
-      :has-prev="hasPrevPage"
       :has-next="hasNextPage"
-      :on-prev="prevPage"
+      :has-prev="hasPrevPage"
+      :limit="limit"
+      :offset="offset"
       :on-next="nextPage"
+      :on-prev="prevPage"
+      :total="total"
     />
 
     <!-- Create Modal -->
@@ -459,11 +481,11 @@ function getKeyStatus(
         <KeyDisplayCard
           v-if="newlyCreatedKey"
           :api-key="newlyCreatedKey"
-          :warning-text="t('apiKeys.warning.saveNow') || 'Save this key now — it will not be shown again'"
           :on-done="closeCreateWithKey"
+          :warning-text="t('apiKeys.warning.saveNow') || 'Save this key now — it will not be shown again'"
         >
           <template #copy>
-            <CopyButton :text="newlyCreatedKey" />
+            <CopyButton :text="newlyCreatedKey"/>
           </template>
         </KeyDisplayCard>
 
@@ -471,15 +493,15 @@ function getKeyStatus(
         <ApiKeyForm
           v-else
           v-model="createForm"
-          :scopes="SCOPES"
-          :providers="providers"
-          :models-by-provider="modelsByProvider"
-          :tier-options="TIER_OPTIONS"
           :error="createError"
-          submit-label="Create Key"
+          :models-by-provider="modelsByProvider"
+          :providers="providers"
+          :scopes="SCOPES"
+          :tier-options="TIER_OPTIONS"
           cancel-label="Cancel"
-          @submit="handleCreate"
+          submit-label="Create Key"
           @cancel="showCreateModal = false"
+          @submit="handleCreate"
         />
       </DialogContent>
     </Dialog>
@@ -494,16 +516,16 @@ function getKeyStatus(
 
         <ApiKeyForm
           v-model="editForm"
-          :scopes="SCOPES"
-          :providers="providers"
-          :models-by-provider="modelsByProvider"
-          :tier-options="TIER_OPTIONS"
           :error="editError"
-          submit-label="Save Changes"
-          cancel-label="Cancel"
           :is-edit="true"
-          @submit="handleUpdate"
+          :models-by-provider="modelsByProvider"
+          :providers="providers"
+          :scopes="SCOPES"
+          :tier-options="TIER_OPTIONS"
+          cancel-label="Cancel"
+          submit-label="Save Changes"
           @cancel="showEditModal = false"
+          @submit="handleUpdate"
         />
       </DialogContent>
     </Dialog>
@@ -543,11 +565,11 @@ function getKeyStatus(
         <KeyDisplayCard
           v-if="newlyRotatedKey"
           :api-key="newlyRotatedKey"
-          :warning-text="t('apiKeys.warning.saveNow') || 'Save this key now — it will not be shown again'"
           :on-done="closeRotateWithKey"
+          :warning-text="t('apiKeys.warning.saveNow') || 'Save this key now — it will not be shown again'"
         >
           <template #copy>
-            <CopyButton :text="newlyRotatedKey" />
+            <CopyButton :text="newlyRotatedKey"/>
           </template>
         </KeyDisplayCard>
 

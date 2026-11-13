@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {Loader2} from "@lucide/vue";
 
 defineProps<{
@@ -8,7 +8,7 @@ defineProps<{
 
 <template>
   <div class="flex flex-col items-center justify-center py-12">
-    <Loader2 class="h-8 w-8 animate-spin text-muted-foreground mb-4" />
+    <Loader2 class="h-8 w-8 animate-spin text-muted-foreground mb-4"/>
     <p v-if="message" class="text-sm text-muted-foreground">
       {{ message }}
     </p>

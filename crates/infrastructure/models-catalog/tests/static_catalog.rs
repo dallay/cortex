@@ -3,14 +3,14 @@
 //! These exercise the public API (`ModelCatalogPort::list`) and verify that
 //! the catalog:
 //!   1. is non-empty
-//!   2. covers every known `ProviderKind`
-//!   3. has unique model ids per provider kind
+//!   2. covers every declared provider
+//!   3. has unique model ids per provider
 //!   4. is stable across calls
 
 use std::collections::{HashMap, HashSet};
 
 use models_catalog::StaticModelCatalog;
-use rook_core::{ModelCatalogPort, ProviderKind};
+use rook_core::ModelCatalogPort;
 
 #[tokio::test]
 async fn list_is_non_empty() {
@@ -23,45 +23,48 @@ async fn list_is_non_empty() {
 }
 
 #[tokio::test]
-async fn list_covers_every_known_provider_kind() {
+async fn list_covers_every_declared_provider() {
     let catalog = StaticModelCatalog::new();
     let entries = catalog.list().await;
-    let kinds: HashSet<ProviderKind> = entries.iter().map(|e| e.provider_kind).collect();
+    let providers: HashSet<&str> = entries.iter().map(|e| e.provider_id.as_str()).collect();
 
-    for kind in [
-        ProviderKind::OpenAI,
-        ProviderKind::Anthropic,
-        ProviderKind::Ollama,
-        ProviderKind::OllamaCloud,
-        ProviderKind::Gemini,
-        ProviderKind::Groq,
+    for provider in [
+        "openai",
+        "anthropic",
+        "ollama",
+        "ollama-cloud",
+        "gemini",
+        "groq",
     ] {
         assert!(
-            kinds.contains(&kind),
-            "missing catalog entries for provider kind {kind:?}"
+            providers.contains(provider),
+            "missing catalog entries for provider {provider:?}"
         );
     }
 }
 
 #[tokio::test]
-async fn list_has_unique_model_ids_within_a_provider_kind() {
+async fn list_has_unique_model_ids_within_a_provider() {
     let catalog = StaticModelCatalog::new();
     let entries = catalog.list().await;
 
-    let mut by_kind: HashMap<ProviderKind, HashSet<String>> = HashMap::new();
+    let mut by_provider: HashMap<&str, HashSet<String>> = HashMap::new();
     for entry in &entries {
-        by_kind
-            .entry(entry.provider_kind)
+        by_provider
+            .entry(entry.provider_id.as_str())
             .or_default()
             .insert(entry.model_id.clone());
     }
 
-    for (kind, ids) in &by_kind {
-        let total_for_kind = entries.iter().filter(|e| e.provider_kind == *kind).count();
+    for (provider, ids) in &by_provider {
+        let total_for_provider = entries
+            .iter()
+            .filter(|e| e.provider_id == *provider)
+            .count();
         assert_eq!(
             ids.len(),
-            total_for_kind,
-            "duplicate model_id within provider kind {kind:?}"
+            total_for_provider,
+            "duplicate model_id within provider {provider:?}"
         );
     }
 }
@@ -75,37 +78,35 @@ async fn list_is_stable_across_calls() {
 }
 
 #[tokio::test]
-async fn list_returns_at_least_one_entry_per_supported_provider_kind() {
+async fn list_returns_at_least_one_entry_per_catalogued_provider() {
     let catalog = StaticModelCatalog::new();
     let entries = catalog.list().await;
-    let kinds_in_catalog: HashSet<ProviderKind> = entries.iter().map(|e| e.provider_kind).collect();
+    let providers_in_catalog: HashSet<&str> =
+        entries.iter().map(|e| e.provider_id.as_str()).collect();
 
-    // Explicitly assert that every known ProviderKind appears at least once.
-    // This complements list_covers_every_known_provider_kind by verifying
-    // the *count* is non-zero for each kind, not just that the kind is absent.
-    for kind in [
-        ProviderKind::OpenAI,
-        ProviderKind::Anthropic,
-        ProviderKind::Ollama,
-        ProviderKind::OllamaCloud,
-        ProviderKind::Gemini,
-        ProviderKind::Groq,
+    // Every catalogued provider appears at least once: not just present in
+    // the set, but with a non-zero model count.
+    for provider in [
+        "openai",
+        "anthropic",
+        "ollama",
+        "ollama-cloud",
+        "gemini",
+        "groq",
     ] {
-        let count = entries.iter().filter(|e| e.provider_kind == kind).count();
+        let count = entries.iter().filter(|e| e.provider_id == provider).count();
         assert!(
             count >= 1,
-            "provider kind {kind:?} must have at least one model, but catalog has none"
+            "provider {provider:?} must have at least one model, but catalog has none"
         );
-        // Also verify the kind is in the set (redundant with the above, but
-        // documents the intent that kinds_in_catalog is derived correctly).
         assert!(
-            kinds_in_catalog.contains(&kind),
-            "provider kind {kind:?} must appear in catalog"
+            providers_in_catalog.contains(provider),
+            "provider {provider:?} must appear in catalog"
         );
     }
 }
 
-/// Ollama Cloud models — must include the 9 models from OmniRoute registry.
+/// Ollama Cloud models — must include the 9 models from the reference-gateway registry.
 /// This verifies the expanded catalog is working correctly.
 const OLLAMA_CLOUD_EXPECTED_MODEL_IDS: &[&str] = &[
     "ollamacloud/deepseek-v4-pro",
@@ -126,7 +127,7 @@ async fn ollama_cloud_has_expanded_model_list() {
 
     let ollama_cloud_entries: Vec<_> = entries
         .iter()
-        .filter(|e| e.provider_kind == ProviderKind::OllamaCloud)
+        .filter(|e| e.provider_id == "ollama-cloud")
         .collect();
 
     let actual_ids: HashSet<_> = ollama_cloud_entries
@@ -139,7 +140,7 @@ async fn ollama_cloud_has_expanded_model_list() {
     assert_eq!(
         actual_ids.len(),
         expected_ids.len(),
-        "OllamaCloud must have exactly {} models, got {}",
+        "Ollama Cloud must have exactly {} models, got {}",
         expected_ids.len(),
         actual_ids.len()
     );
@@ -147,7 +148,7 @@ async fn ollama_cloud_has_expanded_model_list() {
     for expected_id in OLLAMA_CLOUD_EXPECTED_MODEL_IDS {
         assert!(
             actual_ids.contains(expected_id),
-            "missing OllamaCloud model: {expected_id}"
+            "missing Ollama Cloud model: {expected_id}"
         );
     }
 }
@@ -157,9 +158,9 @@ async fn ollama_cloud_qwen3_coder_next_is_present() {
     let catalog = StaticModelCatalog::new();
     let entries = catalog.list().await;
 
-    let has_qwen3_coder = entries.iter().any(|e| {
-        e.provider_kind == ProviderKind::OllamaCloud && e.model_id == "ollamacloud/qwen3-coder-next"
-    });
+    let has_qwen3_coder = entries
+        .iter()
+        .any(|e| e.provider_id == "ollama-cloud" && e.model_id == "ollamacloud/qwen3-coder-next");
 
     assert!(
         has_qwen3_coder,

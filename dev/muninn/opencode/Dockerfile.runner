@@ -1,0 +1,54 @@
+# Runner image for the OpenCode + Muninn memory benchmark.
+#
+# The image extends the pinned official OpenCode image and adds the Muninn
+# binary, so the MCP server and the agent run inside the same container and
+# talk over stdio. The build never runs a model and never fetches data at
+# runtime beyond the pinned base images.
+#
+# Build (from the repository root):
+#   docker build -f dev/muninn/opencode/Dockerfile.runner -t membench-opencode-runner:2.2.7 .
+#
+# Build with the local MiniLM embedder for semantic retrieval cases:
+#   docker build --build-arg MUNINN_FEATURES=minilm-cpu \
+#     -f dev/muninn/opencode/Dockerfile.runner -t membench-opencode-runner:2.2.7 .
+# syntax=docker/dockerfile:1
+
+ARG RUST_VERSION=1.99.1
+ARG OPENCODE_IMAGE=ghcr.io/anomalyco/opencode:2.2.7@sha256:7b1e3139a64121d12e572530974a18b9452967fb4d67516d8cfd9c0e763dd57d
+
+FROM rust:${RUST_VERSION}-alpine AS builder
+
+# The OpenCode base image is Alpine, so the Muninn binary must be a musl
+# build. The tokenizer and ONIGuruma dependencies need a C and C++ toolchain.
+RUN apk add --no-cache build-base cmake pkgconfig
+WORKDIR /build
+
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY apps ./apps
+COPY third_party ./third_party
+# The C1 exporter embeds the pinned artifact lock at compile time.
+COPY dev/muninn/fixtures/artifact-lock.json ./dev/muninn/fixtures/artifact-lock.json
+
+ARG MUNINN_FEATURES=""
+RUN set -eux; \
+    if [ -n "$MUNINN_FEATURES" ]; then \
+        cargo build --release --locked -p muninn --features "$MUNINN_FEATURES" --bin muninn; \
+    else \
+        cargo build --release --locked -p muninn --bin muninn; \
+    fi
+
+FROM ${OPENCODE_IMAGE} AS runtime
+
+RUN apk add --no-cache curl jq \
+    && addgroup -g 10001 bench \
+    && adduser -D -u 10001 -G bench bench
+
+COPY --from=builder /build/target/release/muninn /usr/local/bin/muninn
+COPY dev/muninn/opencode/bin/seed.sh /bench/bin/seed.sh
+RUN chmod 0755 /bench/bin/seed.sh && chown -R bench:bench /bench
+
+WORKDIR /bench
+USER bench
+
+ENTRYPOINT ["opencode"]

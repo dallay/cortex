@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 /**
  * ConnectionListItem — single row in the ProviderDetailsView connection
  * list. Represents one `ProviderConnectionResponse` with edit / test /
@@ -71,8 +71,8 @@ const oauthExpiry = computed(() => {
 
 <template>
   <div
-    class="rounded-lg border p-4 space-y-3"
     :data-testid="`connection-row-${connection.id}`"
+    class="rounded-lg border p-4 space-y-3"
   >
     <div class="flex items-start justify-between gap-3">
       <div class="space-y-1 min-w-0 flex-1">
@@ -83,17 +83,20 @@ const oauthExpiry = computed(() => {
           </Badge>
         </div>
         <div class="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
-          <Loader2 v-if="testing" class="h-3 w-3 animate-spin" />
-          <AlertCircle v-else-if="connection.testStatus.status === 'unhealthy'" :class="['h-3 w-3', statusClass]" />
-          <CheckCircle2 v-else :class="['h-3 w-3', statusClass]" />
+          <Loader2 v-if="testing" class="h-3 w-3 animate-spin"/>
+          <AlertCircle v-else-if="connection.testStatus.status === 'unhealthy'"
+                       :class="['h-3 w-3', statusClass]"/>
+          <CheckCircle2 v-else :class="['h-3 w-3', statusClass]"/>
           <span class="capitalize">{{ connection.testStatus.status }}</span>
-          <span v-if="connection.testStatus.latencyMs != null" class="inline-flex items-center gap-1">
-            <Activity class="h-3 w-3" />
+          <span v-if="connection.testStatus.latencyMs != null"
+                class="inline-flex items-center gap-1">
+            <Activity class="h-3 w-3"/>
             {{ connection.testStatus.latencyMs }}ms
           </span>
         </div>
         <div v-if="connection.oauthStatus" class="space-y-1 text-xs">
-          <p :class="connection.oauthStatus === 'connected' ? 'text-green-600' : 'text-destructive'">
+          <p
+            :class="connection.oauthStatus === 'connected' ? 'text-green-600' : 'text-destructive'">
             {{ t(`providers.oauth.status.${connection.oauthStatus}`) }}
           </p>
           <p v-if="oauthExpiry" class="text-muted-foreground">
@@ -110,48 +113,48 @@ const oauthExpiry = computed(() => {
       <div class="flex items-center gap-1 shrink-0">
         <Button
           v-if="connection.authType === 'oauth'"
-          variant="ghost"
-          size="sm"
-          :disabled="busy || testing"
           :aria-label="t('providers.oauth.refresh')"
           :data-testid="`connection-oauth-refresh-${connection.id}`"
+          :disabled="busy || testing"
+          size="sm"
+          variant="ghost"
           @click="emit('refresh', connection.id)"
         >
-          <RefreshCw class="h-4 w-4" />
+          <RefreshCw class="h-4 w-4"/>
         </Button>
         <Button
           v-else
-          variant="ghost"
-          size="sm"
-          :disabled="busy || testing"
           :data-testid="`connection-test-${connection.id}`"
+          :disabled="busy || testing"
+          size="sm"
+          variant="ghost"
           @click="emit('test', connection.id)"
         >
-          <RefreshCw class="h-4 w-4" />
+          <RefreshCw class="h-4 w-4"/>
         </Button>
         <Button
-          variant="ghost"
-          size="sm"
-          :disabled="busy"
           :data-testid="`connection-edit-${connection.id}`"
+          :disabled="busy"
+          size="sm"
+          variant="ghost"
           @click="emit('edit', connection.id)"
         >
-          <Pencil class="h-4 w-4" />
+          <Pencil class="h-4 w-4"/>
         </Button>
         <Button
-          variant="ghost"
-          size="sm"
-          class="text-destructive hover:text-destructive"
-          :disabled="busy"
           :data-testid="`connection-delete-${connection.id}`"
+          :disabled="busy"
+          class="text-destructive hover:text-destructive"
+          size="sm"
+          variant="ghost"
           @click="emit('delete', connection.id)"
         >
-          <Trash2 class="h-4 w-4" />
+          <Trash2 class="h-4 w-4"/>
         </Button>
         <Switch
-          :model-value="connection.isActive"
-          :disabled="busy"
           :data-testid="`connection-toggle-${connection.id}`"
+          :disabled="busy"
+          :model-value="connection.isActive"
           @update:model-value="(value: boolean) => emit('toggle', { id: connection.id, enabled: value })"
         />
       </div>
@@ -160,12 +163,12 @@ const oauthExpiry = computed(() => {
       <Badge
         v-for="model in visibleModels"
         :key="model"
-        variant="outline"
         class="font-mono text-xs"
+        variant="outline"
       >
         {{ model }}
       </Badge>
-      <Badge v-if="overflowCount > 0" variant="secondary" class="text-xs">
+      <Badge v-if="overflowCount > 0" class="text-xs" variant="secondary">
         +{{ overflowCount }} more
       </Badge>
     </div>

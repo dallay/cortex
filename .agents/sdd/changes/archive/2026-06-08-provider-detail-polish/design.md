@@ -73,7 +73,7 @@ Drop the 8-line "we intentionally do not import" comment block and the 5-line ha
 
 **Authored SVGs (4):** `openai.svg`, `ollama.svg`, `ollama-cloud.svg`, `groq.svg` at `apps/rook/dashboard/public/providers/`. Style guide: 24×24 `viewBox`, `fill="currentColor"` (filled) or `stroke="currentColor" stroke-width="2"` (outlined), no embedded styles/fonts/animations, no inner `<title>`/`<desc>`. Themed via Tailwind `text-*` on the parent.
 
-**Copied from OmniRoute (2) — LICENSE VERIFIED:** `tmp/OmniRoute/LICENSE` is **MIT** (© 2026 diegosouzapw). Both assets < 6 KB. Copy `anthropic-m.png` → `anthropic.png` and `gemini-cli.svg` → `gemini.svg`. Fallback: author fresh SVGs if off-brand.
+**Copied from the reference gateway (2) — LICENSE VERIFIED:** `tmp/reference-gateway/LICENSE` is **MIT**. Both assets < 6 KB. Copy `anthropic-m.png` → `anthropic.png` and `gemini-cli.svg` → `gemini.svg`. Fallback: author fresh SVGs if off-brand.
 
 ## 7. Unit Test — `ProviderDetailsView.spec.ts`
 
@@ -98,8 +98,8 @@ Add **3 tests** to the modern block: (1) `Ollama Cloud card navigates to /provid
 
 | # | Risk                                                                                                       | Mitigation                                                                                                            |
 |---|------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|
-| 1 | Visual quality of 4 authored SVGs may not match OmniRoute style                                            | sdd-apply browser-snaps the 6 cards; sdd-verify requires parity.                                                      |
-| 2 | OmniRoute assets are brand marks                                                                           | LICENSE is MIT — redistribution OK. Trademarks: fair-use on a self-hosted dashboard. Fallback to author-mode SVG.     |
+| 1 | Visual quality of 4 authored SVGs may not match reference-gateway style                                    | sdd-apply browser-snaps the 6 cards; sdd-verify requires parity.                                                      |
+| 2 | Reference-gateway assets are brand marks                                                                   | LICENSE is MIT — redistribution OK. Trademarks: fair-use on a self-hosted dashboard. Fallback to author-mode SVG.     |
 | 3 | Router-level `beforeEnter` not unit-tested                                                                 | View-level `watch` bounce test (case #3) catches the same drift in practice. Direct router test tracked as follow-up. |
 | 4 | `vue-router ^5.1.0` typo in `package.json`; `provider_crud.enabled` + encryption env vars required for E2E | Out of scope; pre-existing E2E setup gates on env vars.                                                               |
 
@@ -107,7 +107,7 @@ Add **3 tests** to the modern block: (1) `Ollama Cloud card navigates to /provid
 
 8 tasks in execution order. `sdd-tasks` will convert to checkboxes.
 
-1. **Assets** — author 4 SVGs + copy 2 from OmniRoute into `apps/rook/dashboard/public/providers/`. Browser-verify at 32×32 and 64×64.
+1. **Assets** — author 4 SVGs + copy 2 from the reference gateway into `apps/rook/dashboard/public/providers/`. Browser-verify at 32×32 and 64×64.
 2. **Catalog** — add `iconFile` (required) and `brandUrl?` (optional) to `CatalogEntry`; populate for all 6 kinds.
 3. **`ProviderIcon.vue`** — implement per §2 with `Server` Lucide fallback + dev `console.warn`.
 4. **`ProviderCatalogCard.vue`** — drop `ICONS` map (lines 35-42) + 6 Lucide imports; render `<ProviderIcon :kind="item.kind" loading="lazy" decorative />`.

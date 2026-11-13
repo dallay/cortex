@@ -20,12 +20,12 @@ fn preserves_request_and_input_metrics_and_handles_missing_malformed_and_reset()
         ("anthropic-ratelimit-input-tokens-remaining", "5000"),
     ]);
     let id = ProviderId::new("anthropic-1");
-    let got = parse(&h, id.clone(), chrono::Utc::now());
+    let got = parse(&h, id.clone(), "anthropic", chrono::Utc::now());
     assert_eq!(got[0].reset_at.unwrap().timestamp_subsec_millis(), 123);
     assert_eq!(got[1].metric, "input_tokens");
     h.insert("anthropic-ratelimit-requests-reset", "bad".parse().unwrap());
     h.remove("anthropic-ratelimit-input-tokens-remaining");
-    parse(&h, id, chrono::Utc::now());
+    parse(&h, id, "anthropic", chrono::Utc::now());
 }
 
 #[test]
@@ -34,7 +34,12 @@ fn scope_is_none_without_workspace_header() {
         ("anthropic-ratelimit-requests-limit", "100"),
         ("anthropic-ratelimit-requests-remaining", "90"),
     ]);
-    let got = parse(&h, ProviderId::new("anthropic-1"), chrono::Utc::now());
+    let got = parse(
+        &h,
+        ProviderId::new("anthropic-1"),
+        "anthropic",
+        chrono::Utc::now(),
+    );
     assert!(!got.is_empty());
     for observation in &got {
         assert_eq!(observation.scope, None);
@@ -48,7 +53,12 @@ fn scope_captures_workspace_id_when_present() {
         ("anthropic-ratelimit-requests-remaining", "90"),
         ("anthropic-workspace-id", "ws_123"),
     ]);
-    let got = parse(&h, ProviderId::new("anthropic-1"), chrono::Utc::now());
+    let got = parse(
+        &h,
+        ProviderId::new("anthropic-1"),
+        "anthropic",
+        chrono::Utc::now(),
+    );
     assert!(!got.is_empty());
     for observation in &got {
         assert_eq!(observation.scope.as_deref(), Some("ws_123"));

@@ -86,7 +86,11 @@ impl InstructionSource for Instructions {
 struct NoApproval;
 #[async_trait]
 impl ApprovalPolicy for NoApproval {
-    async fn approve(&self, request: &ApprovalRequest, _: CancellationToken) -> Result<bool> {
+    async fn approve(
+        &self,
+        request: &ApprovalRequest,
+        _: CancellationToken,
+    ) -> Result<huginn_core::ApprovalDecision> {
         Err(AgentError::Tool(format!(
             "unexpected approval {}",
             request.id

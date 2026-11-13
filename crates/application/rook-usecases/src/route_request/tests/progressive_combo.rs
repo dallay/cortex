@@ -1,4 +1,5 @@
 use super::*;
+use rook_core::ApiFormat;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 struct ScriptedProvider {
@@ -333,7 +334,7 @@ async fn combo_stream_preserves_reasoning_tool_fragments_finish_and_separate_usa
     let h = harness(vec![primary]);
     let actual: Vec<_> = h
         .usecase
-        .execute_stream_with_format(stream_req("rook/progressive"), ApiFormat::Anthropic)
+        .execute_stream(stream_req("rook/progressive"))
         .await
         .unwrap()
         .collect()

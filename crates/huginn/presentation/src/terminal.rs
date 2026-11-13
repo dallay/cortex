@@ -1,7 +1,7 @@
 use crate::{
     completion::{Acceptance, Completion as Suggestions},
     contributions::Contributions,
-    state::{approval_preview, safe, Editor, Ui},
+    state::{approval_preview, safe, safe_single_line, Editor, Ui},
     Connection, Interaction, Presentation,
 };
 use async_trait::async_trait;
@@ -12,7 +12,8 @@ use crossterm::event::{
 use crossterm::{
     cursor::Show,
     event::{
-        DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
+        DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
+        KeyModifiers,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode},
@@ -21,7 +22,7 @@ use huginn_core::{AgentError, CancellationToken, Result, Session};
 use ratatui::{
     backend::{Backend, ClearType, CrosstermBackend, WindowSize},
     buffer::Cell,
-    layout::{Constraint, Layout, Position, Size},
+    layout::{Constraint, Layout, Position, Rect, Size},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, List, ListItem, ListState, Paragraph},
@@ -48,7 +49,7 @@ static MODIFY_OTHER_KEYS_ACTIVE: AtomicBool = AtomicBool::new(false);
 static KITTY_KEYBOARD_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Lines the transcript moves per page when scrolling the history.
 const HISTORY_PAGE: usize = 10;
-const HELP: &str = "Enter sends; Shift+Enter (on compatible terminals), Alt+Enter or Ctrl+J inserts a newline. PgUp/PgDn scroll the transcript. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals require typing the fresh code; PgUp/PgDn scroll the complete preview. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
+const HELP: &str = "Enter sends; Shift+Enter (on compatible terminals), Alt+Enter or Ctrl+J inserts a newline. PgUp/PgDn scroll the transcript. Arrows/Home/End edit. Esc cancels. Ctrl+C cancels a turn or exits when idle. /compact asks before summarizing; /quit exits. Approvals are inline: Left/Right selects, Enter confirms the visible choice once the request is armed, Esc rejects, Ctrl+F opens details; incomplete summaries require reviewing details through the end, and Enter on an unreviewed request keeps it open until you do; Up/Down or PgUp/PgDn scrolls the preview. Plugin dialogs use arrows/Enter; Esc dismisses and never grants permissions. / opens commands; @ searches workspace filenames. Tab completes; Enter runs commands but only completes files and arguments; Esc closes suggestions. Settings: Up/Down select; Tab changes section; Space changes value; Enter saves; Left/Right changes toast values. Help: Up/Down or PgUp/PgDn scroll. File references are text, not attachments.";
 
 #[cfg(unix)]
 fn begin_keyboard_protocol() -> std::io::Result<()> {
@@ -123,6 +124,17 @@ fn is_ctrl_c(event: &Event) -> bool {
                 && key.code == KeyCode::Char('c')
                 && key.modifiers.contains(KeyModifiers::CONTROL)
     )
+}
+
+fn is_safe_approval_handoff_input(event: &Event) -> bool {
+    is_ctrl_c(event)
+        || matches!(
+            event,
+            Event::Key(key)
+                if key.kind == KeyEventKind::Press
+                    && key.code == KeyCode::Esc
+                    && key.modifiers.is_empty()
+        )
 }
 
 fn arm_approval_after_draw(ui: &Ui, identity: Option<crate::overlay::OverlaySnapshot>) {
@@ -296,15 +308,54 @@ struct Driver {
     model_configured: bool,
     readiness: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     guard: Arc<TerminalGuard>,
+    steering: Option<Arc<huginn_core::SteeringQueue>>,
     ui: Arc<Ui>,
     _done: Completion,
 }
+
+#[derive(Clone, Copy, Default)]
+struct FrameProgress {
+    last_scroll: usize,
+    preview_visible: bool,
+    summary_complete: bool,
+}
+
 struct Completion(CancellationToken);
 impl Drop for Completion {
     fn drop(&mut self) {
         self.0.cancel();
     }
 }
+
+#[derive(Default)]
+struct FocusDrain {
+    shown: u64,
+    draining: Option<u64>,
+}
+
+impl FocusDrain {
+    const fn modal_drawn(&mut self, focus: u64) {
+        // The modal is visible, but input stays on the previous lease until a
+        // quiet poll confirms that no bytes from the render transition remain.
+        if focus != self.shown {
+            self.draining = Some(focus);
+        }
+    }
+
+    fn observe(&mut self, focus: u64, drained: bool) -> bool {
+        if focus == self.shown {
+            return false;
+        }
+        if self.draining != Some(focus) || drained {
+            self.draining = Some(focus);
+            return false;
+        }
+        self.draining = None;
+        self.shown = focus;
+        true
+    }
+}
+
 impl Drop for Driver {
     fn drop(&mut self) {
         self.ui.shutdown();
@@ -322,6 +373,50 @@ impl Drop for Driver {
     }
 }
 
+#[cfg(test)]
+mod focus_drain_tests {
+    use super::{is_safe_approval_handoff_input, FocusDrain};
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+
+    #[test]
+    fn modal_lease_promotes_only_after_a_quiet_poll() {
+        let mut drain = FocusDrain {
+            shown: 3,
+            draining: None,
+        };
+        drain.modal_drawn(7);
+
+        assert_eq!(drain.shown, 3, "drawing must keep the old lease active");
+        assert!(
+            !drain.observe(7, true),
+            "bytes observed after the draw must keep the old lease active"
+        );
+        assert_eq!(drain.shown, 3);
+        assert!(
+            drain.observe(7, false),
+            "a quiet poll promotes the new lease"
+        );
+        assert_eq!(drain.shown, 7);
+    }
+
+    #[test]
+    fn only_reject_or_cancel_can_cross_the_handoff() {
+        assert!(is_safe_approval_handoff_input(&Event::Key(KeyEvent::new(
+            KeyCode::Esc,
+            KeyModifiers::NONE,
+        ))));
+        for key in [KeyCode::Enter, KeyCode::Right] {
+            assert!(!is_safe_approval_handoff_input(&Event::Key(KeyEvent::new(
+                key,
+                KeyModifiers::NONE,
+            ))));
+        }
+        let mut cancel = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        cancel.kind = KeyEventKind::Press;
+        assert!(is_safe_approval_handoff_input(&Event::Key(cancel)));
+    }
+}
+
 pub struct Ratatui {
     pub connection:
         Option<tokio::sync::watch::Receiver<huginn_core::providers::ConnectionSnapshot>>,
@@ -332,6 +427,8 @@ pub struct Ratatui {
     pub readiness: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     pub ui_config: Option<Arc<crate::settings::UiConfig>>,
     pub save_ui_config: Option<crate::settings::SaveUiConfig>,
+    /// Host mailbox the composer writes into while a turn is busy.
+    pub steering: Option<Arc<huginn_core::SteeringQueue>>,
 }
 #[async_trait]
 impl Presentation for Ratatui {
@@ -446,6 +543,7 @@ impl Ratatui {
             standalone,
             model_configured: self.model_configured,
             readiness: self.readiness.clone(),
+            steering: self.steering.clone(),
             _done: Completion(done),
         };
         // The driver is the ONLY reader, after stock inline cursor initialization.
@@ -484,6 +582,7 @@ pub async fn login(
         readiness: None,
         ui_config: None,
         save_ui_config: None,
+        steering: None,
     };
     // An in-memory rendering context only; never persisted or passed to inference.
     let mut connection = terminal
@@ -555,7 +654,16 @@ type SettingsView = (
 );
 
 enum OverlayView {
-    Approval(String, u64, String, String, usize),
+    Approval(
+        String,
+        String,
+        String,
+        String,
+        Vec<huginn_core::ApprovalDecision>,
+        usize,
+        bool,
+        usize,
+    ),
     Dialog(String, String, Vec<String>, usize, usize),
     Workflow(
         String,
@@ -584,6 +692,8 @@ struct View {
     busy: bool,
     overlay: Option<OverlayView>,
     overlay_identity: Option<crate::overlay::OverlaySnapshot>,
+    /// An acceptance was refused because the approval was not fully reviewed.
+    review_notice: bool,
 }
 impl View {
     fn snapshot(state: &crate::state::UiState) -> Self {
@@ -596,6 +706,7 @@ impl View {
             tail: state.tail.clone(),
             busy: state.busy,
             overlay_identity: state.overlays.snapshot(),
+            review_notice: state.modal().is_some_and(|modal| modal.review_notice),
             overlay: state
                 .overlays
                 .active()
@@ -650,10 +761,43 @@ impl View {
                         ))
                     }
                     crate::overlay::Payload::Approval(m) => OverlayView::Approval(
+                        safe(&m.request.action),
+                        safe_single_line(&m.request.id),
+                        if m.request
+                            .resource
+                            .as_ref()
+                            .is_some_and(|resource| resource.sensitive)
+                        {
+                            "sensitive resource".into()
+                        } else {
+                            let shell_command = (m.request.action == "native.shell")
+                                .then_some(())
+                                .and_then(|()| {
+                                    m.request
+                                        .preview
+                                        .lines()
+                                        .find_map(|line| line.trim().strip_prefix("Command:"))
+                                        .map(|command| safe(command.trim()))
+                                });
+                            shell_command
+                                .or_else(|| {
+                                    crate::approval::effect_line(&m.request.preview)
+                                        .map(|line| safe(&line))
+                                })
+                                .or_else(|| {
+                                    m.request.resource.as_ref().map(|resource| {
+                                        format!(
+                                            "resource {}",
+                                            safe(&resource.canonical_path.display().to_string())
+                                        )
+                                    })
+                                })
+                                .unwrap_or_else(|| format!("{} request", safe(&m.request.action)))
+                        },
                         approval_preview(&m.request.action, m.number, &m.request.preview),
-                        m.number,
-                        m.code.clone(),
-                        m.typed.clone(),
+                        m.allowed_decisions.clone(),
+                        m.selected,
+                        m.expanded,
                         m.scroll,
                     ),
                     crate::overlay::Payload::Help => OverlayView::Help(active.help_scroll),
@@ -661,6 +805,30 @@ impl View {
         }
     }
 }
+
+/// What a key means once the completion menu is open.
+enum CompletionAction {
+    /// The key is not a completion key; the caller keeps handling it.
+    Ignored,
+    /// The completion menu consumed the key.
+    Stop,
+    /// The caller must release the UI lock before dispatching this command.
+    Dispatch {
+        command: huginn_plugin_api::v1::Command,
+        rest: String,
+    },
+}
+
+/// What a submitted draft turned into.
+enum DraftDelivery {
+    /// The draft became a new turn.
+    Sent,
+    /// The draft stays in the composer and the reason is on screen.
+    Refused,
+    /// The draft became a steering message.
+    Steered,
+}
+
 impl Driver {
     fn model_configured(&self) -> bool {
         self.readiness
@@ -706,6 +874,11 @@ impl Driver {
         if !viewport_is_viable(size) {
             if let Some(modal) = self.ui.lock().modal_mut() {
                 modal.armed = false;
+                modal.selected = modal
+                    .allowed_decisions
+                    .iter()
+                    .position(|decision| *decision == huginn_core::ApprovalDecision::Reject)
+                    .unwrap_or(0);
             }
             return Ok(());
         }
@@ -718,10 +891,10 @@ impl Driver {
             let state = self.ui.lock();
             View::snapshot(&state)
         };
-        let last_scroll = self.draw_frame(&view)?;
-        self.update_modal_scroll(&view, last_scroll);
+        let progress = self.draw_frame(&view)?;
+        Self::update_modal_scroll(&self.ui, &view, progress);
         // Only a completed paint in a viable viewport may arm an approval.
-        if matches!(view.overlay, Some(OverlayView::Approval(_, _, _, _, _))) {
+        if matches!(view.overlay, Some(OverlayView::Approval(..))) {
             arm_approval_after_draw(&self.ui, view.overlay_identity);
         }
         Ok(())
@@ -744,30 +917,50 @@ impl Driver {
         }
     }
 
-    fn update_modal_scroll(&self, view: &View, last_scroll: usize) {
-        if let Some(OverlayView::Approval(_, _, code, _, _)) = &view.overlay {
-            let mut state = self.ui.lock();
+    fn update_modal_scroll(ui: &Ui, view: &View, progress: FrameProgress) {
+        if let Some(OverlayView::Approval(.., expanded, preview_scroll)) = &view.overlay {
+            let mut state = ui.lock();
             if state.overlays.snapshot() == view.overlay_identity {
-                if let Some(modal) = state.modal_mut().filter(|modal| &modal.code == code) {
-                    modal.last_scroll = last_scroll;
+                if let Some(modal) = state.modal_mut() {
+                    modal.last_scroll = progress.last_scroll;
+                    modal.summary_complete = progress.summary_complete
+                        && modal.request.preview == safe(&modal.request.preview);
+                    modal.details_rendered = *expanded && progress.preview_visible;
+                    if *expanded {
+                        if modal.request.action == "native.shell"
+                            || modal.request.action.starts_with("native.shell.")
+                        {
+                            if *preview_scroll <= modal.rendered_scroll.saturating_add(1) {
+                                modal.rendered_scroll = modal.rendered_scroll.max(*preview_scroll);
+                            }
+                        } else {
+                            modal.rendered_scroll = *preview_scroll;
+                        }
+                    } else {
+                        modal.rendered_scroll = 0;
+                    }
+                    // The notice is only stale once the missing review is done.
+                    if modal.review_notice && modal.review_satisfied() {
+                        modal.review_notice = false;
+                        ui.dirty.notify_one();
+                    }
                 }
             }
         }
     }
 
-    fn draw_frame(&mut self, view: &View) -> Result<usize> {
-        let mut last_scroll = 0;
+    fn draw_frame(&mut self, view: &View) -> Result<FrameProgress> {
+        let mut progress = FrameProgress::default();
         let mut size = Size::default();
         self.screen.draw(|frame| {
             size = frame.area().as_size();
-            last_scroll = Self::render_frame(frame, view);
+            progress = Self::render_frame(frame, view);
         })?;
         Self::update_help_scroll(&self.ui, view, size);
-        Ok(last_scroll)
+        Ok(progress)
     }
 
-    fn render_frame(frame: &mut Frame, view: &View) -> usize {
-        let mut last_scroll = 0;
+    fn render_frame(frame: &mut Frame, view: &View) -> FrameProgress {
         // Reserve the bar before any overlay's early return.
         let [area, status] =
             Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
@@ -779,303 +972,501 @@ impl Driver {
             }),
             status,
         );
-        if let Some(OverlayView::Help(scroll)) = &view.overlay {
-            let lines = wrapped(HELP, area.width.saturating_sub(2));
-            let height = usize::from(area.height.saturating_sub(2));
-            let scroll = (*scroll).min(lines.len().saturating_sub(height));
-            let visible = lines
-                .into_iter()
-                .skip(scroll)
-                .take(height)
-                .collect::<Vec<_>>();
-            frame.render_widget(
-                Paragraph::new(visible.join("\n"))
-                    .block(Block::bordered().title("Help — Esc closes")),
-                area,
-            );
-            return last_scroll;
+        if let Some(overlay @ OverlayView::Help(..)) = &view.overlay {
+            Self::render_help(frame, area, overlay);
+            return FrameProgress::default();
         }
-        if let Some(OverlayView::Approval(preview, number, code, typed, scroll)) = &view.overlay {
-            let [body, footer] =
-                Layout::vertical([Constraint::Min(1), Constraint::Length(2)]).areas(area);
-            let lines = wrapped(preview, body.width.saturating_sub(2));
-            let last = lines
-                .len()
-                .saturating_sub(usize::from(body.height.saturating_sub(2)));
-            last_scroll = last;
-            let visible: Vec<_> = lines
-                .into_iter()
-                .skip((*scroll).min(last))
-                .take(usize::from(body.height.saturating_sub(2)))
-                .collect();
-            frame.render_widget(
-                Paragraph::new(visible.join("\n")).block(
-                    Block::bordered()
-                        .title(format!("Permission #{} — full preview (PgUp/PgDn)", number)),
-                ),
-                body,
-            );
-            let instructions = if footer.width < 42 {
-                format!("Approve: {code}\nCode: {typed}")
-            } else {
-                format!("Type {code} then Enter to approve; Esc denies\nConfirmation: {typed}")
-            };
-            frame.render_widget(Paragraph::new(instructions), footer);
-            return last_scroll;
+        if let Some(overlay @ OverlayView::Approval(..)) = &view.overlay {
+            return Self::render_main_with_approval(frame, area, view, overlay);
         }
-        if let Some(OverlayView::Workflow(
-            title,
-            body,
-            fields,
+        if let Some(overlay @ OverlayView::Workflow(..)) = &view.overlay {
+            Self::render_workflow(frame, area, overlay);
+            return FrameProgress::default();
+        }
+        if let Some(overlay @ OverlayView::Settings(..)) = &view.overlay {
+            Self::render_settings(frame, area, overlay);
+            return FrameProgress::default();
+        }
+        if let Some(overlay @ OverlayView::Dialog(..)) = &view.overlay {
+            Self::render_dialog(frame, area, overlay);
+            return FrameProgress::default();
+        }
+        Self::render_main(frame, area, view);
+        FrameProgress::default()
+    }
+
+    /// Renders the help overlay and returns the scroll position it owns.
+    fn render_help(frame: &mut Frame, area: Rect, overlay: &OverlayView) -> usize {
+        let OverlayView::Help(scroll) = overlay else {
+            return 0;
+        };
+
+        let lines = wrapped(HELP, area.width.saturating_sub(2));
+        let height = usize::from(area.height.saturating_sub(2));
+        let scroll = (*scroll).min(lines.len().saturating_sub(height));
+        let visible = lines
+            .into_iter()
+            .skip(scroll)
+            .take(height)
+            .collect::<Vec<_>>();
+        frame.render_widget(
+            Paragraph::new(visible.join("\n")).block(Block::bordered().title("Help — Esc closes")),
+            area,
+        );
+        0
+    }
+
+    /// Renders the conversation and its contextual approval panel together.
+    fn render_main_with_approval(
+        frame: &mut Frame,
+        area: Rect,
+        view: &View,
+        overlay: &OverlayView,
+    ) -> FrameProgress {
+        let OverlayView::Approval(
+            action,
+            id,
+            summary,
+            preview,
+            decisions,
             selected,
-            pending,
-            error,
-            search,
-            searching,
-        )) = &view.overlay
-        {
-            let [heading, content, footer] = Layout::vertical([
-                Constraint::Length(2),
-                Constraint::Min(1),
-                Constraint::Length(2),
-            ])
-            .areas(area);
-            let rows = usize::from(content.height.saturating_sub(2)).max(1);
-            // A single-row viewport cannot show the error and the selected
-            // option. The heading carries the error so the option never leaves
-            // the viewport.
-            let cramped = rows < 2;
-            let mut title = safe(title);
-            let mut heading_text = safe(body);
-            if let Some(message) = error {
-                if cramped {
-                    // The block title is truncated in a cramped viewport, so
-                    // the message moves to the heading and the title only
-                    // marks the failure.
-                    title = format!("⚠ {title}");
-                    heading_text = safe(message);
-                }
-            }
-            frame.render_widget(Paragraph::new(heading_text), heading);
-            let mut lines: Vec<String> = Vec::new();
-            if let Some(message) = error {
-                if !cramped {
-                    // The error keeps its own lines: a long message never hides a field.
-                    lines.push(format!("Error: {}", safe(message)));
-                    lines.push("Correct the fields and submit again. Re-enter any API key.".into());
-                    lines.push(String::new());
-                }
-            }
-            // The header never takes the last row: the form or the selected
-            // option stays visible below it.
-            lines.truncate(lines.len().min(rows.saturating_sub(1)));
-            if *pending {
-                lines.push("Waiting… Esc cancels locally; completion may be unknown".into());
-            }
-            let header = lines.len();
-            // The option list belongs to the searchable field: it appears only
-            // while that field is active, so the selected field of another
-            // kind keeps the viewport.
-            let searchable = search.as_ref().filter(|_| !*pending && *searching);
-            let show_fields = !*pending && (searchable.is_none() || fields.len() != 1);
-            let mut remaining = rows.saturating_sub(header);
-            // The search line is context: it appears only when the selected
-            // option still keeps a visible row.
-            let mut show_search = false;
-            if searchable.is_some() && remaining >= 2 {
-                show_search = true;
-                remaining -= 1;
-            }
-            // A searchable form reserves one row for the selected option, so
-            // the choice never scrolls out of the viewport.
-            let field_budget = if searchable.is_some() {
-                remaining.saturating_sub(1)
-            } else {
-                remaining
-            };
-            let field_start = selected.saturating_sub(field_budget.saturating_sub(1));
-            if show_fields {
-                lines.extend(
-                    fields
-                        .iter()
-                        .enumerate()
-                        .skip(field_start)
-                        .take(field_budget)
-                        .map(|(i, field)| {
-                            format!("{} {}", if i == *selected { ">" } else { " " }, safe(field))
-                        }),
-                );
-            }
-            if let Some((query, options)) = searchable {
-                let rendered_fields = lines.len().saturating_sub(header);
-                let option_budget = remaining.saturating_sub(rendered_fields);
-                if show_search {
-                    lines.push(format!("Search: {}", safe(query)));
-                }
-                let selected = options
-                    .iter()
-                    .position(|(_, selected)| *selected)
-                    .unwrap_or(0);
-                let start = selected.saturating_sub(option_budget.saturating_sub(1));
-                if options.is_empty() {
-                    lines.push("No matching options".into());
-                }
-                for (label, selected) in options.iter().skip(start).take(option_budget) {
-                    lines.push(format!(
-                        "{} {}",
-                        if *selected { ">" } else { " " },
-                        safe(label)
-                    ));
-                }
-            }
-            let highlighted = lines
-                .iter()
-                .map(|line| {
-                    Line::styled(
-                        line.to_owned(),
-                        if line.starts_with("> ") {
-                            Style::default().reversed()
-                        } else {
-                            Style::default()
-                        },
-                    )
-                })
-                .collect::<Vec<_>>();
-            frame.render_widget(
-                Paragraph::new(highlighted).block(Block::bordered().title(title)),
-                content,
-            );
-            let hint = if fields.is_empty() {
-                "Enter submits · Esc back/cancel"
-            } else if *searching {
-                "Type filters searchable choices · ↑↓ choice · Tab field · Enter submits"
-            } else {
-                "Type enters the field · ↑↓ field · ←→ choice · Enter submits"
-            };
-            frame.render_widget(Paragraph::new(format!("{hint}\nEsc back/cancel · Ctrl+C cancels; secrets are never copied to history.")), footer);
-            return last_scroll;
+            expanded,
+            preview_scroll,
+        ) = overlay
+        else {
+            return FrameProgress::default();
+        };
+        let desired_panel_height = if *expanded { 8 } else { 5 };
+        let composer_height = if area.height >= desired_panel_height + 5 {
+            4
+        } else {
+            1
+        };
+        let panel_height =
+            desired_panel_height.min(area.height.saturating_sub(composer_height + 1));
+        let compact = panel_height < 8;
+        let [history, panel, composer] = Layout::vertical([
+            Constraint::Min(1),
+            Constraint::Length(panel_height),
+            Constraint::Length(composer_height),
+        ])
+        .areas(area);
+        let mut transcript = view
+            .history
+            .iter()
+            .flat_map(|block| wrapped(block, history.width))
+            .collect::<Vec<_>>();
+        if !view.tail.is_empty() {
+            transcript.extend(wrapped(&view.tail, history.width));
         }
-        if let Some(OverlayView::Settings((tabs, active, items, selected, error))) = &view.overlay {
-            let toasts = *active == crate::settings::TAB_TOASTS;
-            let wide_hint = if toasts {
-                "Up/Down select · Tab section · Space value · Left/Right value · Enter save · Esc close"
+        let height = usize::from(history.height);
+        let scroll = view
+            .history_scroll
+            .min(transcript.len().saturating_sub(height));
+        let start = transcript.len().saturating_sub(height + scroll);
+        let visible = transcript
+            .into_iter()
+            .skip(start)
+            .take(height)
+            .collect::<Vec<_>>();
+        frame.render_widget(Paragraph::new(markdown(visible)), history);
+
+        let action_names = decisions
+            .iter()
+            .map(|decision| match decision {
+                huginn_core::ApprovalDecision::Reject => "Reject",
+                huginn_core::ApprovalDecision::ApproveOnce => "Approve once",
+                huginn_core::ApprovalDecision::ApproveForSession => "Allow (session)",
+            })
+            .collect::<Vec<_>>();
+        let selector = action_names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                if index == *selected {
+                    format!("›{name}")
+                } else {
+                    name.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("   ");
+        let narrow = panel.width < 40;
+        let selected_choice = action_names
+            .get(*selected)
+            .map(|name| format!("›{name}"))
+            .unwrap_or_else(|| "›Reject".into());
+        let selector = if narrow { selected_choice } else { selector };
+        let narrow_summary = summary;
+        let mut content = if narrow {
+            format!("{}\n{}\n{}", action, narrow_summary, selector)
+        } else if compact {
+            format!("{} · {} · #{}\n{}", action, summary, id, selector)
+        } else {
+            format!(
+                "{} · {} · request #{}\n{}\n{}",
+                action,
+                summary,
+                id,
+                if *expanded {
+                    "Review details (↑↓/PgUp/PgDn):"
+                } else {
+                    "Ctrl+F: review details"
+                },
+                selector
+            )
+        };
+        // Only a single complete command can be approved from the summary.
+        // Diffs and other payloads require the rendered details through their end.
+        let summary_complete = !*expanded
+            && action == "native.shell"
+            && preview.split_once("Command:").is_some_and(|(_, command)| {
+                let command = command.strip_prefix(' ').unwrap_or(command);
+                !command.contains(['\n', '\r', '\t']) && command == summary
+            })
+            && content.lines().all(|line| {
+                unicode_width::UnicodeWidthStr::width(line)
+                    <= usize::from(panel.width.saturating_sub(2))
+            })
+            && content.lines().count() <= usize::from(panel.height.saturating_sub(2));
+        let mut preview_visible = false;
+        let last_scroll = if *expanded {
+            let lines = wrapped(preview, panel.width.saturating_sub(2));
+            // In narrow expanded mode keep the selected decision visible and
+            // give the remaining rows to the actual preview. At 20×8 this
+            // guarantees at least one preview row instead of clipping it below
+            // the collapsed request summary.
+            let viewport = if narrow {
+                usize::from(panel.height.saturating_sub(4))
             } else {
-                "Up/Down select · Tab section · Space value · Enter save · Esc close"
+                usize::from(panel.height.saturating_sub(if compact { 4 } else { 5 }))
             };
-            let hints = if unicode_width::UnicodeWidthStr::width(wide_hint) <= area.width as usize {
-                wide_hint
-            } else if toasts {
-                "Space value
+            let last = lines.len().saturating_sub(viewport);
+            if narrow {
+                content = format!("#{}\n{}", id, selector);
+            } else if compact {
+                content = format!("{} · {} · #{}\n{}", action, summary, id, selector);
+            }
+            let visible_lines = lines
+                .iter()
+                .skip(usize::min(*preview_scroll, last))
+                .take(viewport)
+                .cloned()
+                .collect::<Vec<_>>();
+            preview_visible = visible_lines.iter().any(|line| !line.trim().is_empty());
+            if !visible_lines.is_empty() {
+                content.push('\n');
+                content.push_str(&visible_lines.join("\n"));
+            }
+            last
+        } else {
+            0
+        };
+        frame.render_widget(
+            Paragraph::new(content).block(Block::bordered().title(if view.review_notice {
+                if *expanded {
+                    "↓ to the end"
+                } else if compact {
+                    "Ctrl+F: review all details"
+                } else {
+                    "Approval — review all details (Ctrl+F, ↓ to the end) before approving"
+                }
+            } else if compact {
+                "Approval"
+            } else {
+                "Approval — ←/→ select · Enter confirm · Esc reject · Ctrl+F details"
+            })),
+            panel,
+        );
+        if compact {
+            frame.render_widget(Paragraph::new("Approval pending"), composer);
+        } else {
+            frame.render_widget(
+                Paragraph::new("History remains visible; paste does not confirm").block(
+                    Block::bordered().title(if view.busy {
+                        "Compose next prompt — Esc cancels turn"
+                    } else {
+                        "Huginn"
+                    }),
+                ),
+                composer,
+            );
+        }
+        FrameProgress {
+            last_scroll,
+            preview_visible,
+            summary_complete,
+        }
+    }
+
+    /// Renders the workflow overlay and returns the scroll position it owns.
+    fn render_workflow(frame: &mut Frame, area: Rect, overlay: &OverlayView) -> usize {
+        let OverlayView::Workflow(title, body, fields, selected, pending, error, search, searching) =
+            overlay
+        else {
+            return 0;
+        };
+
+        let [heading, content, footer] = Layout::vertical([
+            Constraint::Length(2),
+            Constraint::Min(1),
+            Constraint::Length(2),
+        ])
+        .areas(area);
+        let rows = usize::from(content.height.saturating_sub(2)).max(1);
+        // A single-row viewport cannot show the error and the selected
+        // option. The heading carries the error so the option never leaves
+        // the viewport.
+        let cramped = rows < 2;
+        let mut title = safe(title);
+        let mut heading_text = safe(body);
+        if let Some(message) = error {
+            if cramped {
+                // The block title is truncated in a cramped viewport, so
+                // the message moves to the heading and the title only
+                // marks the failure.
+                title = format!("⚠ {title}");
+                heading_text = safe(message);
+            }
+        }
+        frame.render_widget(Paragraph::new(heading_text), heading);
+        let mut lines: Vec<String> = Vec::new();
+        if let Some(message) = error {
+            if !cramped {
+                // The error keeps its own lines: a long message never hides a field.
+                lines.push(format!("Error: {}", safe(message)));
+                lines.push("Correct the fields and submit again. Re-enter any API key.".into());
+                lines.push(String::new());
+            }
+        }
+        // The header never takes the last row: the form or the selected
+        // option stays visible below it.
+        lines.truncate(lines.len().min(rows.saturating_sub(1)));
+        if *pending {
+            lines.push("Waiting… Esc cancels locally; completion may be unknown".into());
+        }
+        let header = lines.len();
+        // The option list belongs to the searchable field: it appears only
+        // while that field is active, so the selected field of another
+        // kind keeps the viewport.
+        let searchable = search.as_ref().filter(|_| !*pending && *searching);
+        let show_fields = !*pending && (searchable.is_none() || fields.len() != 1);
+        let mut remaining = rows.saturating_sub(header);
+        // The search line is context: it appears only when the selected
+        // option still keeps a visible row.
+        let mut show_search = false;
+        if searchable.is_some() && remaining >= 2 {
+            show_search = true;
+            remaining -= 1;
+        }
+        // A searchable form reserves one row for the selected option, so
+        // the choice never scrolls out of the viewport.
+        let field_budget = if searchable.is_some() {
+            remaining.saturating_sub(1)
+        } else {
+            remaining
+        };
+        let field_start = selected.saturating_sub(field_budget.saturating_sub(1));
+        if show_fields {
+            lines.extend(
+                fields
+                    .iter()
+                    .enumerate()
+                    .skip(field_start)
+                    .take(field_budget)
+                    .map(|(i, field)| {
+                        format!("{} {}", if i == *selected { ">" } else { " " }, safe(field))
+                    }),
+            );
+        }
+        if let Some((query, options)) = searchable {
+            let rendered_fields = lines.len().saturating_sub(header);
+            let option_budget = remaining.saturating_sub(rendered_fields);
+            if show_search {
+                lines.push(format!("Search: {}", safe(query)));
+            }
+            let selected = options
+                .iter()
+                .position(|(_, selected)| *selected)
+                .unwrap_or(0);
+            let start = selected.saturating_sub(option_budget.saturating_sub(1));
+            if options.is_empty() {
+                lines.push("No matching options".into());
+            }
+            for (label, selected) in options.iter().skip(start).take(option_budget) {
+                lines.push(format!(
+                    "{} {}",
+                    if *selected { ">" } else { " " },
+                    safe(label)
+                ));
+            }
+        }
+        let highlighted = lines
+            .iter()
+            .map(|line| {
+                Line::styled(
+                    line.to_owned(),
+                    if line.starts_with("> ") {
+                        Style::default().reversed()
+                    } else {
+                        Style::default()
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        frame.render_widget(
+            Paragraph::new(highlighted).block(Block::bordered().title(title)),
+            content,
+        );
+        let hint = if fields.is_empty() {
+            "Enter submits · Esc back/cancel"
+        } else if *searching {
+            "Type filters searchable choices · ↑↓ choice · Tab field · Enter submits"
+        } else {
+            "Type enters the field · ↑↓ field · ←→ choice · Enter submits"
+        };
+        frame.render_widget(
+            Paragraph::new(format!(
+                "{hint}\nEsc back/cancel · Ctrl+C cancels; secrets are never copied to history."
+            )),
+            footer,
+        );
+        0
+    }
+
+    /// Renders the settings overlay and returns the scroll position it owns.
+    fn render_settings(frame: &mut Frame, area: Rect, overlay: &OverlayView) -> usize {
+        let OverlayView::Settings((tabs, active, items, selected, error)) = overlay else {
+            return 0;
+        };
+
+        let toasts = *active == crate::settings::TAB_TOASTS;
+        let wide_hint = if toasts {
+            "Up/Down select · Tab section · Space value · Left/Right value · Enter save · Esc close"
+        } else {
+            "Up/Down select · Tab section · Space value · Enter save · Esc close"
+        };
+        let hints = if unicode_width::UnicodeWidthStr::width(wide_hint) <= area.width as usize {
+            wide_hint
+        } else if toasts {
+            "Space value
 Tab section ←→ value
 Enter save Esc close"
-            } else {
-                "Space value
+        } else {
+            "Space value
 Tab section ↑↓ pick
 Enter save Esc close"
-            };
-            let [header, body, footer] = Layout::vertical([
-                Constraint::Length(1),
-                Constraint::Min(3),
-                Constraint::Length(hints.lines().count() as u16),
-            ])
-            .areas(area);
-            let mut header_spans: Vec<Span> = Vec::with_capacity(tabs.len() * 2);
-            for (i, name) in tabs.iter().enumerate() {
-                let style = if i == *active {
-                    Style::default().reversed()
-                } else {
-                    Style::default()
-                };
-                header_spans.push(Span::styled(format!(" {name} "), style));
-                header_spans.push(Span::raw(" "));
-            }
-            let full_width: usize = tabs
-                .iter()
-                .map(|name| unicode_width::UnicodeWidthStr::width(name.as_str()) + 3)
-                .sum();
-            let header_line = if full_width <= header.width as usize {
-                Line::from(header_spans)
+        };
+        let [header, body, footer] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Min(3),
+            Constraint::Length(hints.lines().count() as u16),
+        ])
+        .areas(area);
+        let mut header_spans: Vec<Span> = Vec::with_capacity(tabs.len() * 2);
+        for (i, name) in tabs.iter().enumerate() {
+            let style = if i == *active {
+                Style::default().reversed()
             } else {
-                Line::from(Span::styled(
-                    format!(
-                        "{} {}/{}",
-                        tabs.get(*active).map(String::as_str).unwrap_or("Settings"),
-                        active + 1,
-                        tabs.len()
-                    ),
-                    Style::default().reversed(),
-                ))
+                Style::default()
             };
-            frame.render_widget(Paragraph::new(header_line), header);
-            let body_rows = usize::from(body.height).saturating_sub(2).max(1);
-            let total_items = items.len();
-            let start = selected
-                .saturating_sub(body_rows.saturating_sub(1))
-                .min(total_items.saturating_sub(body_rows));
-            let mut text = String::new();
-            if let Some(err) = error {
-                text.push_str(&format!("!! {}\n", err));
-            }
-            for (i, (label, checked, _kind)) in items.iter().enumerate().skip(start).take(body_rows)
-            {
-                text.push_str(&format!(
-                    "{} {}{}\n",
-                    if i == *selected { "▶" } else { " " },
-                    label,
-                    if *checked { " ✓" } else { "" }
-                ));
-            }
-            frame.render_widget(
-                Paragraph::new(text).block(Block::bordered().title("Settings")),
-                body,
-            );
-            frame.render_widget(Paragraph::new(hints), footer);
-            return last_scroll;
+            header_spans.push(Span::styled(format!(" {name} "), style));
+            header_spans.push(Span::raw(" "));
         }
-        if let Some(OverlayView::Dialog(title, body, choices, selected, body_scroll)) =
-            &view.overlay
-        {
-            let [body_area, footer] =
-                Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
-            let body = safe(body);
-            // Window the body too: a long body must never push every choice
-            // out of view. One content row is always reserved so the
-            // selected choice stays visible and actionable.
-            let height = usize::from(body_area.height).saturating_sub(2);
-            let body_rows = body.lines().count().max(1).min(height.saturating_sub(1));
-            let body_lines: Vec<&str> = body.lines().collect();
-            let first = (*body_scroll).min(body_lines.len().saturating_sub(body_rows));
-            let mut text = String::new();
-            for line in body_lines.into_iter().skip(first).take(body_rows) {
-                text.push_str(line);
-                text.push('\n');
-            }
-            // Keep the selected choice visible: window the list like the
-            // approval preview does, preserving marker and safe rendering.
-            let rows = height.saturating_sub(body_rows);
-            let start = selected
-                .saturating_sub(rows.saturating_sub(1))
-                .min(choices.len().saturating_sub(rows));
-            for (index, choice) in choices.iter().enumerate().skip(start).take(rows) {
-                text.push_str(&format!(
-                    "{} {}\n",
-                    if index == *selected { ">" } else { " " },
-                    safe(choice)
-                ));
-            }
-            frame.render_widget(
-                Paragraph::new(text)
-                    .block(Block::bordered().title(format!("Plugin: {}", safe(title)))),
-                body_area,
-            );
-            frame.render_widget(
-                    Paragraph::new(
-                        "Arrows select; PgUp/PgDn scroll text; Enter chooses; Esc dismisses (not a permission)",
-                    ),
-                    footer,
-                );
-            return last_scroll;
+        let full_width: usize = tabs
+            .iter()
+            .map(|name| unicode_width::UnicodeWidthStr::width(name.as_str()) + 3)
+            .sum();
+        let header_line = if full_width <= header.width as usize {
+            Line::from(header_spans)
+        } else {
+            Line::from(Span::styled(
+                format!(
+                    "{} {}/{}",
+                    tabs.get(*active).map(String::as_str).unwrap_or("Settings"),
+                    active + 1,
+                    tabs.len()
+                ),
+                Style::default().reversed(),
+            ))
+        };
+        frame.render_widget(Paragraph::new(header_line), header);
+        let body_rows = usize::from(body.height).saturating_sub(2).max(1);
+        let total_items = items.len();
+        let start = selected
+            .saturating_sub(body_rows.saturating_sub(1))
+            .min(total_items.saturating_sub(body_rows));
+        let mut text = String::new();
+        if let Some(err) = error {
+            text.push_str(&format!("!! {}\n", err));
         }
+        for (i, (label, checked, _kind)) in items.iter().enumerate().skip(start).take(body_rows) {
+            text.push_str(&format!(
+                "{} {}{}\n",
+                if i == *selected { "▶" } else { " " },
+                label,
+                if *checked { " ✓" } else { "" }
+            ));
+        }
+        frame.render_widget(
+            Paragraph::new(text).block(Block::bordered().title("Settings")),
+            body,
+        );
+        frame.render_widget(Paragraph::new(hints), footer);
+        0
+    }
+
+    /// Renders the dialog overlay and returns the scroll position it owns.
+    fn render_dialog(frame: &mut Frame, area: Rect, overlay: &OverlayView) -> usize {
+        let OverlayView::Dialog(title, body, choices, selected, body_scroll) = overlay else {
+            return 0;
+        };
+
+        let [body_area, footer] =
+            Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
+        let body = safe(body);
+        // Window the body too: a long body must never push every choice
+        // out of view. One content row is always reserved so the
+        // selected choice stays visible and actionable.
+        let height = usize::from(body_area.height).saturating_sub(2);
+        let body_rows = body.lines().count().max(1).min(height.saturating_sub(1));
+        let body_lines: Vec<&str> = body.lines().collect();
+        let first = (*body_scroll).min(body_lines.len().saturating_sub(body_rows));
+        let mut text = String::new();
+        for line in body_lines.into_iter().skip(first).take(body_rows) {
+            text.push_str(line);
+            text.push('\n');
+        }
+        // Keep the selected choice visible: window the list like the
+        // approval preview does, preserving marker and safe rendering.
+        let rows = height.saturating_sub(body_rows);
+        let start = selected
+            .saturating_sub(rows.saturating_sub(1))
+            .min(choices.len().saturating_sub(rows));
+        for (index, choice) in choices.iter().enumerate().skip(start).take(rows) {
+            text.push_str(&format!(
+                "{} {}\n",
+                if index == *selected { ">" } else { " " },
+                safe(choice)
+            ));
+        }
+        frame.render_widget(
+            Paragraph::new(text).block(Block::bordered().title(format!("Plugin: {}", safe(title)))),
+            body_area,
+        );
+        frame.render_widget(
+            Paragraph::new(
+                "Arrows select; PgUp/PgDn scroll text; Enter chooses; Esc dismisses (not a permission)",
+            ),
+            footer,
+        );
+        0
+    }
+
+    /// Renders the transcript, completion popup and composer.
+    fn render_main(frame: &mut Frame, area: Rect, view: &View) -> usize {
+        let last_scroll = 0;
+
         let editor_width = area.width.saturating_sub(2).max(1);
         // Reuse wrapped rows for both sizing and rendering; do not add another
         // full-draft pass to the frame loop.
@@ -1190,22 +1581,12 @@ Enter save Esc close"
         last_scroll
     }
 
-    fn arm_modal(&mut self, epoch: u64, shown_focus: u64) -> Result<u64> {
+    fn arm_modal(&mut self) -> Result<u64> {
         let focus = self.ui.lock().focus();
-        // Discard queued keys/pastes before showing a new challenge. The
-        // unpredictable challenge additionally defeats late buffered input.
-        while let Some(event) = self.next_input(shown_focus)? {
-            discard_input(event);
-        }
+        // `draw` arms only the exact overlay snapshot after its frame is painted.
+        // Keep the previous input lease active throughout this draw. The event
+        // loop then drains bytes for that lease until it observes a quiet poll.
         self.draw()?;
-        let size = self.screen.size()?;
-        if size.width >= 20 && size.height >= 8 {
-            if let Some(modal) = self.ui.lock().modal_mut() {
-                if modal.epoch == epoch {
-                    modal.armed = true;
-                }
-            }
-        }
         Ok(focus)
     }
 
@@ -1218,8 +1599,7 @@ Enter save Esc close"
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut dirty = true;
         let mut shown_epoch = 0;
-        let mut shown_focus = 0;
-        let mut draining_focus = None;
+        let mut focus_drain = FocusDrain::default();
         let mut terminal_size = crossterm::terminal::size()?;
         loop {
             if self.standalone && self.ui.lock().overlays.active().is_none() {
@@ -1227,8 +1607,8 @@ Enter save Esc close"
             }
             let epoch = self.ui.lock().modal().map_or(0, |m| m.epoch);
             if epoch != 0 && shown_epoch != epoch {
-                shown_focus = self.arm_modal(epoch, shown_focus)?;
-                draining_focus = None;
+                let focus = self.arm_modal()?;
+                focus_drain.modal_drawn(focus);
                 shown_epoch = epoch;
                 dirty = false;
             }
@@ -1266,7 +1646,7 @@ Enter save Esc close"
                             }
                         }
                         let focus = self.ui.lock().focus();
-                        if draining_focus.is_none() && focus == shown_focus {
+                        if focus_drain.draining.is_none() && focus == focus_drain.shown {
                             self.draw()?;
                             dirty = false;
                         }
@@ -1275,31 +1655,46 @@ Enter save Esc close"
                     for _ in 0..256 {
                         dirty |= self.ui.refresh_contributions();
                         let focus = self.ui.lock().focus();
-                        if focus != shown_focus {
+                        if focus != focus_drain.shown {
                             // Read available bytes under the old lease; framing
                             // retains that ownership even if the paste finishes
                             // only after the next focus has been drawn.
                             let mut drained = false;
-                            while let Some(event) = self.next_input(shown_focus)? {
+                            let mut rejected = false;
+                            while let Some(event) = self.next_input(focus_drain.shown)? {
+                                if self.ui.lock().modal().is_some()
+                                    && is_safe_approval_handoff_input(&event)
+                                {
+                                    // Rejection and turn cancellation remain
+                                    // available during handoff. No navigation
+                                    // or positive decision crosses the old lease.
+                                    self.input(event, &prompts, focus);
+                                    rejected = true;
+                                    break;
+                                }
                                 discard_input(event);
                                 drained = true;
+                            }
+                            if rejected {
+                                if self.ui.lock().focus() == focus_drain.shown {
+                                    focus_drain.draining = None;
+                                }
+                                dirty = true;
+                                break;
                             }
                             // A single PTY write can arrive in multiple readable
                             // chunks. Keep the old lease until a later tick is
                             // quiet, before exposing the new focus to the user.
-                            if draining_focus != Some(focus) || drained {
-                                draining_focus = Some(focus);
+                            if !focus_drain.observe(focus, drained) {
                                 dirty = true;
                                 break;
                             }
-                            draining_focus = None;
-                            shown_focus = focus;
                             self.draw()?;
                             dirty = false;
                             continue;
                         }
-                        let Some(event) = self.next_input(shown_focus)? else { break; };
-                        self.input(event, &prompts, shown_focus);
+                        let Some(event) = self.next_input(focus_drain.shown)? else { break; };
+                        self.input(event, &prompts, focus_drain.shown);
                         dirty = true;
                     }
                     #[cfg(unix)]
@@ -1308,7 +1703,10 @@ Enter save Esc close"
                         dirty = true;
                     }
                     dirty |= self.ui.refresh_completion(self.model_configured());
-                    if dirty && draining_focus.is_none() && self.ui.lock().focus() == shown_focus {
+                    if dirty
+                        && focus_drain.draining.is_none()
+                        && self.ui.lock().focus() == focus_drain.shown
+                    {
                         self.draw()?;
                         dirty = false;
                     }
@@ -1317,6 +1715,95 @@ Enter save Esc close"
             }
         }
     }
+    /// Applies a completion-menu key; `Dispatch` tells the caller to drop the lock first.
+    fn completion_key(state: &mut crate::state::UiState, key: KeyEvent) -> CompletionAction {
+        if state.completion.items.is_empty() {
+            return CompletionAction::Ignored;
+        }
+        match key.code {
+            KeyCode::Esc => {
+                let crate::state::UiState {
+                    editor, completion, ..
+                } = &mut *state;
+                completion.dismiss(editor);
+                CompletionAction::Stop
+            }
+            KeyCode::Up if key.modifiers.is_empty() => {
+                state.completion.navigate(false);
+                CompletionAction::Stop
+            }
+            KeyCode::Down if key.modifiers.is_empty() => {
+                state.completion.navigate(true);
+                CompletionAction::Stop
+            }
+            KeyCode::Tab | KeyCode::Enter if key.modifiers.is_empty() => {
+                let execute = key.code == KeyCode::Enter;
+                // Completion replaces byte ranges in the visible draft.
+                // Expand paste spans first so that it cannot orphan source text.
+                state.materialize_all_pastes();
+                let crate::state::UiState {
+                    editor, completion, ..
+                } = &mut *state;
+                match completion.accept(editor, execute) {
+                    None | Some(Acceptance::Inserted) => CompletionAction::Stop,
+                    Some(Acceptance::Command(Some(command))) => {
+                        let line = state.editor.text.trim().to_string();
+                        let boundary = line.find(char::is_whitespace).unwrap_or(line.len());
+                        CompletionAction::Dispatch {
+                            command,
+                            rest: line[boundary..].trim().to_string(),
+                        }
+                    }
+                    Some(Acceptance::Command(None)) => CompletionAction::Ignored,
+                }
+            }
+            _ => CompletionAction::Ignored,
+        }
+    }
+
+    /// Delivers a submitted draft as a steering message during a turn, or as the next turn.
+    fn deliver_draft(
+        &self,
+        line: &str,
+        state: &mut crate::state::UiState,
+        prompts: &tokio::sync::mpsc::Sender<String>,
+    ) -> DraftDelivery {
+        // UI commands remain usable during a turn. A conversation draft becomes
+        // a steering message the loop drains at its next step boundary; it is
+        // never queued as a turn of its own.
+        if !state.busy {
+            if prompts.try_send(line.to_owned()).is_err() {
+                return DraftDelivery::Refused;
+            }
+            state.busy = true;
+            return DraftDelivery::Sent;
+        }
+        let Some(steering) = &self.steering else {
+            state.status.set_diagnostic(
+                "Steering is unavailable; the draft waits for the turn to end".into(),
+            );
+            return DraftDelivery::Refused;
+        };
+        if let Err(error) = steering.push(line) {
+            // The draft stays in the composer: a refused message must never
+            // look delivered. The loop's own wording is kept, without the
+            // internal error taxonomy, because this line is UI copy.
+            let reason = match &error {
+                huginn_core::AgentError::Configuration(message) => message.clone(),
+                other => other.to_string(),
+            };
+            state
+                .status
+                .set_diagnostic(format!("Steering refused: {reason}"));
+            return DraftDelivery::Refused;
+        }
+        state.clear_editor();
+        state
+            .status
+            .set_notice("Steering queued; delivered at the next step".into());
+        DraftDelivery::Steered
+    }
+
     fn input(&self, event: Event, prompts: &tokio::sync::mpsc::Sender<String>, focus: u64) {
         self.ui.refresh_completion(self.model_configured());
         let mut state = self.ui.lock();
@@ -1357,46 +1844,14 @@ Enter save Esc close"
             }
             return;
         }
-        if !state.completion.items.is_empty() {
-            match key.code {
-                KeyCode::Esc => {
-                    let crate::state::UiState {
-                        editor, completion, ..
-                    } = &mut *state;
-                    completion.dismiss(editor);
-                    return;
-                }
-                KeyCode::Up if key.modifiers.is_empty() => {
-                    state.completion.navigate(false);
-                    return;
-                }
-                KeyCode::Down if key.modifiers.is_empty() => {
-                    state.completion.navigate(true);
-                    return;
-                }
-                KeyCode::Tab | KeyCode::Enter if key.modifiers.is_empty() => {
-                    let execute = key.code == KeyCode::Enter;
-                    // Completion replaces byte ranges in the visible draft.
-                    // Expand paste spans first so that it cannot orphan source text.
-                    state.materialize_all_pastes();
-                    let crate::state::UiState {
-                        editor, completion, ..
-                    } = &mut *state;
-                    match completion.accept(editor, execute) {
-                        None => return,
-                        Some(Acceptance::Inserted) => return,
-                        Some(Acceptance::Command(Some(command))) => {
-                            let line = state.editor.text.trim().to_string();
-                            let boundary = line.find(char::is_whitespace).unwrap_or(line.len());
-                            drop(state);
-                            self.ui.dispatch_handle(&command, line[boundary..].trim());
-                            self.ui.lock().clear_editor();
-                            return;
-                        }
-                        Some(Acceptance::Command(None)) => {}
-                    }
-                }
-                _ => {}
+        match Self::completion_key(&mut state, key) {
+            CompletionAction::Ignored => {}
+            CompletionAction::Stop => return,
+            CompletionAction::Dispatch { command, rest } => {
+                drop(state);
+                self.ui.dispatch_handle(&command, &rest);
+                self.ui.lock().clear_editor();
+                return;
             }
         }
         if key.code == KeyCode::Enter
@@ -1444,15 +1899,9 @@ Enter save Esc close"
                     return;
                 }
                 let mut state = self.ui.lock();
-                // UI commands remain usable during a turn, but a conversation
-                // draft must wait until that turn finishes.
-                if state.busy {
-                    return;
-                }
-                if prompts.try_send(line).is_ok() {
-                    state.busy = true;
-                } else {
-                    return;
+                match self.deliver_draft(&line, &mut state, prompts) {
+                    DraftDelivery::Sent => {}
+                    DraftDelivery::Refused | DraftDelivery::Steered => return,
                 }
                 state.clear_editor();
             }
@@ -1529,7 +1978,7 @@ impl Ui {
             Effect::Close => self.close_overlay(ticket, focus),
             Effect::CancelForm => self.cancel_workflow_at(ticket),
             Effect::BackForm => self.back_workflow_at(ticket),
-            Effect::Resolve(approved) => self.resolve_modal_at(approved, ticket),
+            Effect::Resolve(decision) => self.resolve_modal_at(decision, ticket),
             Effect::Submit => {
                 self.submit_workflow_at(ticket);
             }
@@ -1562,6 +2011,16 @@ mod tests {
 
     fn frame_text(view: &View, width: u16, height: u16) -> String {
         frame_text_and_cursor(view, width, height).0
+    }
+
+    fn frame_progress(view: &View, width: u16, height: u16) -> FrameProgress {
+        let mut terminal =
+            Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        let mut progress = FrameProgress::default();
+        terminal
+            .draw(|frame| progress = Driver::render_frame(frame, view))
+            .unwrap();
+        progress
     }
 
     fn frame_text_and_cursor(view: &View, width: u16, height: u16) -> (String, Position) {
@@ -1923,8 +2382,286 @@ mod tests {
             busy: false,
             overlay: Some(overlay),
             overlay_identity: None,
+            review_notice: false,
             completion: Suggestions::default(),
         }
+    }
+
+    #[test]
+    fn approval_is_inline_with_history_and_policy_actions() {
+        let view = test_view(OverlayView::Approval(
+            "native.write_file".into(),
+            "req-42".into(),
+            "create note.txt".into(),
+            "Effect: create file note.txt\n+++ note.txt\n+body".into(),
+            vec![
+                huginn_core::ApprovalDecision::Reject,
+                huginn_core::ApprovalDecision::ApproveOnce,
+                huginn_core::ApprovalDecision::ApproveForSession,
+            ],
+            0,
+            false,
+            0,
+        ));
+        let mut view = view;
+        view.history = vec!["User: keep this context".into()];
+        let text = frame_text(&view, 80, 24);
+
+        for expected in [
+            "User: keep this context",
+            "native.write_file",
+            "create note.txt",
+            "#req-42",
+            "›Reject",
+            "Approve once",
+            "Allow (session)",
+        ] {
+            assert!(text.contains(expected), "missing {expected:?}: {text}");
+        }
+        assert!(
+            !text.contains("+body"),
+            "diff is hidden until expanded: {text}"
+        );
+    }
+
+    #[test]
+    fn expanded_approval_shows_preview_at_minimum_viable_size() {
+        let view = test_view(OverlayView::Approval(
+            "native.write_file".into(),
+            "req-42".into(),
+            "create note.txt".into(),
+            "PREVIEW_VISIBLE: +body".into(),
+            vec![
+                huginn_core::ApprovalDecision::Reject,
+                huginn_core::ApprovalDecision::ApproveOnce,
+            ],
+            0,
+            true,
+            0,
+        ));
+
+        let rendered = frame_text(&view, 20, 8);
+        let progress = frame_progress(&view, 20, 8);
+        assert!(
+            rendered.contains("PREVIEW_VISIBLE"),
+            "expanded approval must display preview before it can be approved: {rendered}"
+        );
+        assert!(
+            rendered.contains("›Reject"),
+            "Reject remains visible: {rendered}"
+        );
+        assert!(
+            progress.preview_visible,
+            "render result must record the visible preview"
+        );
+    }
+
+    #[test]
+    fn collapsed_approval_requires_complete_unclipped_command() {
+        for (action, summary, preview, width, expected) in [
+            (
+                "native.shell",
+                "echo ok",
+                "Directory: /workspace\nCommand: echo ok",
+                80,
+                true,
+            ),
+            (
+                "native.shell",
+                "echo ok",
+                "Directory: /workspace\nCommand: echo ok\necho hidden",
+                80,
+                false,
+            ),
+            (
+                "native.shell",
+                "echo a_very_long_command",
+                "Command: echo a_very_long_command",
+                20,
+                false,
+            ),
+            (
+                "native.edit_file",
+                "edit f",
+                "--- f\n+++ f\n+hidden",
+                80,
+                false,
+            ),
+        ] {
+            let view = test_view(OverlayView::Approval(
+                action.into(),
+                "id".into(),
+                summary.into(),
+                preview.into(),
+                vec![
+                    huginn_core::ApprovalDecision::Reject,
+                    huginn_core::ApprovalDecision::ApproveOnce,
+                ],
+                0,
+                false,
+                0,
+            ));
+            assert_eq!(
+                frame_progress(&view, width, 24).summary_complete,
+                expected,
+                "{preview}"
+            );
+        }
+    }
+
+    #[test]
+    fn expanded_approval_with_empty_preview_is_not_marked_reviewed() {
+        let view = test_view(OverlayView::Approval(
+            "native.write_file".into(),
+            "req-42".into(),
+            "create note.txt".into(),
+            String::new(),
+            vec![
+                huginn_core::ApprovalDecision::Reject,
+                huginn_core::ApprovalDecision::ApproveOnce,
+            ],
+            0,
+            true,
+            0,
+        ));
+
+        assert!(!frame_progress(&view, 20, 8).preview_visible);
+    }
+
+    #[test]
+    fn compact_approval_shows_shell_command_single_line_id_and_selected_scope() {
+        let view = test_view(OverlayView::Approval(
+            "native.shell".into(),
+            "request id".into(),
+            "touch pwned-shell".into(),
+            "Directory: /workspace\nCommand: touch pwned-shell".into(),
+            vec![
+                huginn_core::ApprovalDecision::Reject,
+                huginn_core::ApprovalDecision::ApproveOnce,
+                huginn_core::ApprovalDecision::ApproveForSession,
+            ],
+            2,
+            true,
+            0,
+        ));
+
+        let text = frame_text(&view, 20, 8);
+
+        assert!(
+            text.contains("Directory: /worksp"),
+            "first preview row hidden: {text}"
+        );
+        assert!(
+            text.contains("#request id"),
+            "single-line ID missing: {text}"
+        );
+        assert!(
+            !text.contains("#request\nid"),
+            "ID split across lines: {text}"
+        );
+        assert!(
+            text.contains("›Allow (session)"),
+            "selected scope clipped: {text}"
+        );
+    }
+
+    #[test]
+    fn collapsed_shell_approval_shows_command_and_optional_details_hint() {
+        let view = test_view(OverlayView::Approval(
+            "native.shell".into(),
+            "shell-long".into(),
+            "echo first line".into(),
+            "Directory: /workspace\nCommand: echo first line\necho second line".into(),
+            vec![
+                huginn_core::ApprovalDecision::Reject,
+                huginn_core::ApprovalDecision::ApproveOnce,
+            ],
+            0,
+            false,
+            0,
+        ));
+
+        let text = frame_text(&view, 20, 8);
+
+        assert!(
+            text.contains("native.shell") && text.contains("echo first line"),
+            "shell action and command summary missing: {text}"
+        );
+        assert!(text.contains("Reject"), "Reject is unavailable: {text}");
+    }
+
+    #[test]
+    fn expanded_shell_command_wraps_and_scrolls_from_first_to_last_line() {
+        let command = format!("echo {}", "x".repeat(180));
+        let preview = format!("Directory: /workspace\nCommand: {command}\necho final-line");
+        let first = test_view(OverlayView::Approval(
+            "native.shell".into(),
+            "shell-long".into(),
+            "echo x".into(),
+            preview.clone(),
+            vec![
+                huginn_core::ApprovalDecision::Reject,
+                huginn_core::ApprovalDecision::ApproveOnce,
+            ],
+            0,
+            true,
+            0,
+        ));
+        let first_text = frame_text(&first, 48, 12);
+        assert!(
+            first_text.contains("echo "),
+            "command start missing: {first_text}"
+        );
+        assert!(
+            first_text.contains("xxxxxxxx"),
+            "wrapped command missing: {first_text}"
+        );
+
+        let last_scroll = wrapped(&preview, 46).len().saturating_sub(3);
+        let last = test_view(OverlayView::Approval(
+            "native.shell".into(),
+            "shell-long".into(),
+            "echo x".into(),
+            preview,
+            vec![
+                huginn_core::ApprovalDecision::Reject,
+                huginn_core::ApprovalDecision::ApproveOnce,
+            ],
+            0,
+            true,
+            last_scroll,
+        ));
+        let last_text = frame_text(&last, 48, 12);
+        assert!(
+            last_text.contains("echo final-line"),
+            "command end missing: {last_text}"
+        );
+    }
+
+    #[test]
+    fn expanded_approval_keeps_diff_and_policy_actions_visible() {
+        let view = test_view(OverlayView::Approval(
+            "native.edit_file".into(),
+            "req-expanded".into(),
+            "edit note.txt".into(),
+            "Approval preview\nDIFF_VISIBLE_LINE\n+new content".into(),
+            vec![
+                huginn_core::ApprovalDecision::Reject,
+                huginn_core::ApprovalDecision::ApproveOnce,
+            ],
+            0,
+            true,
+            0,
+        ));
+
+        let text = frame_text(&view, 80, 14);
+
+        assert!(text.contains("DIFF_VISIBLE_LINE"), "diff missing: {text}");
+        assert!(text.contains("›Reject"), "Reject choice missing: {text}");
+        assert!(
+            text.contains("Approve once"),
+            "approval choice missing: {text}"
+        );
     }
 
     #[tokio::test]
@@ -2020,6 +2757,12 @@ mod tests {
         }
         Driver::update_help_scroll(&ui, &stale, Size::new(80, 24));
         assert_eq!(ui.lock().overlays.active().unwrap().help_scroll, 123);
+    }
+
+    #[test]
+    fn help_explains_that_details_are_optional_for_approval() {
+        assert!(HELP.contains("visible choice once the request is armed"));
+        assert!(HELP.contains("incomplete summaries require reviewing details through the end"));
     }
 
     #[test]
@@ -2125,6 +2868,177 @@ mod tests {
         ui.lock().modal_mut().unwrap().armed = false;
         arm_approval_after_draw(&ui, None);
         assert!(!ui.lock().modal().unwrap().armed);
+    }
+
+    #[test]
+    fn approval_scroll_projection_uses_overlay_identity_not_sanitized_request_id() {
+        use crate::overlay::{OpenRequest, Origin, OverlayKind, Payload};
+        let ui = Ui::new(
+            &Session::new(".".into()),
+            Arc::new(Contributions::default()),
+            CancellationToken::new(),
+            Arc::new(crate::settings::UiConfig::defaults()),
+            Arc::new(|_| Ok(())),
+        )
+        .0;
+        let identity = {
+            let mut state = ui.lock();
+            let mut modal = crate::state::Modal::test_stub();
+            modal.request.id = "request\nid\u{1b}".into();
+            modal.request.action = "native.shell".into();
+            modal.request.preview = "Directory: /workspace\nCommand: touch pwned-shell".into();
+            modal.expanded = true;
+            modal.scroll = 7;
+            modal.rendered_scroll = 6;
+            let ticket = state.overlays.ticket();
+            state.overlays.open(OpenRequest {
+                kind: OverlayKind::Approval,
+                origin: Origin::Host,
+                operation: crate::event::OperationId::default(),
+                payload: Payload::Approval(modal),
+                ticket,
+            });
+            state.overlays.snapshot()
+        };
+        let view = View::snapshot(&ui.lock());
+        match view.overlay.as_ref() {
+            Some(OverlayView::Approval(_, id, summary, ..)) => {
+                assert_eq!(id, "request id");
+                assert_eq!(summary, "touch pwned-shell");
+            }
+            _ => panic!("approval view is projected"),
+        }
+        let rendered = frame_text(&view, 20, 8);
+        assert!(
+            rendered.contains("#request id"),
+            "request ID missing: {rendered}"
+        );
+        assert!(
+            !rendered.contains("#request\nid"),
+            "request ID spans lines: {rendered}"
+        );
+
+        Driver::update_modal_scroll(
+            &ui,
+            &view,
+            FrameProgress {
+                last_scroll: 7,
+                preview_visible: true,
+                summary_complete: false,
+            },
+        );
+
+        let state = ui.lock();
+        let modal = state.modal().unwrap();
+        assert_eq!(state.overlays.snapshot(), identity);
+        assert_eq!(modal.last_scroll, 7);
+        assert!(modal.details_rendered);
+        assert_eq!(modal.rendered_scroll, 7);
+    }
+
+    /// A shell preview may only count rows the reviewer reached one at a time.
+    /// A jumped scroll offset must not satisfy the review, so Enter keeps the
+    /// request open and shows the notice; finishing the review clears it.
+    #[tokio::test]
+    async fn shell_review_ignores_jumped_scroll_and_notice_clears_when_reviewed() {
+        use crate::overlay::{OpenRequest, Origin, OverlayKind, Payload};
+        let ui = Ui::new(
+            &Session::new(".".into()),
+            Arc::new(Contributions::default()),
+            CancellationToken::new(),
+            Arc::new(crate::settings::UiConfig::defaults()),
+            Arc::new(|_| Ok(())),
+        )
+        .0;
+        {
+            let mut state = ui.lock();
+            let mut modal = crate::state::Modal::test_stub();
+            modal.request.action = "native.shell".into();
+            modal.request.preview = "Directory: /workspace\nCommand: echo a\necho b".into();
+            modal.expanded = true;
+            modal.armed = true;
+            modal.selected = 1;
+            modal.scroll = 7;
+            modal.rendered_scroll = 0;
+            let ticket = state.overlays.ticket();
+            state.overlays.open(OpenRequest {
+                kind: OverlayKind::Approval,
+                origin: Origin::Host,
+                operation: crate::event::OperationId::default(),
+                payload: Payload::Approval(modal),
+                ticket,
+            });
+        }
+        let view = View::snapshot(&ui.lock());
+        let progress = FrameProgress {
+            last_scroll: 7,
+            preview_visible: true,
+            summary_complete: false,
+        };
+        Driver::update_modal_scroll(&ui, &view, progress);
+        let (rendered, satisfied) = ui
+            .lock()
+            .modal()
+            .map(|modal| (modal.rendered_scroll, modal.review_satisfied()))
+            .unwrap();
+        assert_eq!(rendered, 0, "a jump must not count as rendered");
+        assert!(!satisfied);
+
+        let (ticket, focus) = {
+            let state = ui.lock();
+            (state.overlays.ticket(), state.overlays.focus())
+        };
+        ui.overlay_input(
+            Event::Key(crossterm::event::KeyEvent::new(
+                KeyCode::Enter,
+                KeyModifiers::NONE,
+            )),
+            ticket,
+            focus,
+        );
+        assert!(ui.lock().modal().is_some_and(|modal| modal.review_notice));
+        let noticed = View::snapshot(&ui.lock());
+
+        for (width, height) in [(20, 8), (40, 10), (80, 24), (120, 40)] {
+            assert!(frame_text(&noticed, width, height).contains("↓ to the end"));
+        }
+        while tokio::time::timeout(std::time::Duration::from_millis(1), ui.dirty.notified())
+            .await
+            .is_ok()
+        {}
+
+        // Reading one row at a time reaches the end and retires the notice.
+        for step in 1..=7 {
+            ui.lock().modal_mut().unwrap().scroll = step;
+            let view = View::snapshot(&ui.lock());
+            Driver::update_modal_scroll(&ui, &view, progress);
+        }
+        let (rendered, satisfied, notice) = ui
+            .lock()
+            .modal()
+            .map(|modal| {
+                (
+                    modal.rendered_scroll,
+                    modal.review_satisfied(),
+                    modal.review_notice,
+                )
+            })
+            .unwrap();
+        assert_eq!(rendered, 7);
+        assert!(satisfied);
+        assert!(!notice);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), ui.dirty.notified())
+                .await
+                .is_ok()
+        );
+        let view = View::snapshot(&ui.lock());
+        Driver::update_modal_scroll(&ui, &view, progress);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), ui.dirty.notified())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

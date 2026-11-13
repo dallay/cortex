@@ -5,6 +5,64 @@ ROOT_DIR="$(cd "$DOCTOR_DIR/.." && pwd)"
 PACKAGE_JSON="$ROOT_DIR/package.json"
 RUST_TOOLCHAIN_FILE="$ROOT_DIR/rust-toolchain.toml"
 
+# Colors are resolved on every write instead of once when this file is sourced,
+# so redirected output (files, pipes, CI logs) never receives ANSI escape codes.
+# Contract:
+#   NO_COLOR=1        -> never colorize.
+#   DOCTOR_COLOR=always -> always colorize.
+#   DOCTOR_COLOR=never  -> never colorize.
+#   DOCTOR_COLOR=auto (default) -> colorize only when stdout is a terminal.
+C_GREEN=''
+C_RED=''
+C_YELLOW=''
+C_CYAN=''
+C_BOLD=''
+C_RESET=''
+
+doctor_refresh_colors() {
+    local mode="${DOCTOR_COLOR:-auto}"
+
+    if [[ -n "${NO_COLOR:-}" ]]; then
+        mode=never
+    fi
+
+    case "$mode" in
+        never)
+            C_GREEN=''
+            C_RED=''
+            C_YELLOW=''
+            C_CYAN=''
+            C_BOLD=''
+            C_RESET=''
+            ;;
+        always)
+            C_GREEN=$'\033[0;32m'
+            C_RED=$'\033[0;31m'
+            C_YELLOW=$'\033[0;33m'
+            C_CYAN=$'\033[0;36m'
+            C_BOLD=$'\033[1m'
+            C_RESET=$'\033[0m'
+            ;;
+        *)
+            if [[ -t 1 ]]; then
+                C_GREEN=$'\033[0;32m'
+                C_RED=$'\033[0;31m'
+                C_YELLOW=$'\033[0;33m'
+                C_CYAN=$'\033[0;36m'
+                C_BOLD=$'\033[1m'
+                C_RESET=$'\033[0m'
+            else
+                C_GREEN=''
+                C_RED=''
+                C_YELLOW=''
+                C_CYAN=''
+                C_BOLD=''
+                C_RESET=''
+            fi
+            ;;
+    esac
+}
+
 read_node_minimum() {
     local manifest="${1:-$PACKAGE_JSON}"
     sed -nE '/"engines"[[:space:]]*:/,/^[[:space:]]*}/s/^[[:space:]]*"node"[[:space:]]*:[[:space:]]*">=([0-9]+(\.[0-9]+)?(\.[0-9]+)?).*/\1/p' "$manifest" | head -n 1
@@ -24,20 +82,20 @@ check_pnpm_version() {
     local actual
 
     if ! command -v pnpm >/dev/null 2>&1; then
-        doctor_fail "pnpm $expected: no se encontró 'pnpm'."
+        doctor_fail "pnpm $expected: 'pnpm' was not found."
         return 1
     fi
 
     if actual="$(read_pnpm_actual 2>&1)"; then
         if [[ "$actual" == "$expected" ]]; then
-            doctor_ok "pnpm $actual (versión fijada en package.json)."
+            doctor_ok "pnpm $actual (version pinned in package.json)."
         else
-            doctor_fail "pnpm $actual no coincide con pnpm $expected de package.json."
+            doctor_fail "pnpm $actual does not match pnpm $expected from package.json."
             return 1
         fi
     else
         actual="${actual%%$'\n'*}"
-        doctor_fail "No se pudo verificar pnpm $expected sin acceso de red de Corepack: ${actual:-versión no disponible}."
+        doctor_fail "Could not verify pnpm $expected without Corepack network access: ${actual:-version unavailable}."
         return 1
     fi
 }
@@ -85,17 +143,20 @@ version_at_least() {
 }
 
 doctor_ok() {
-    printf '[OK] %s\n' "$1"
+    doctor_refresh_colors
+    printf '%s[OK]%s %s\n' "$C_GREEN" "$C_RESET" "$1"
 }
 
 doctor_fail() {
     DOCTOR_FAILURES=$((DOCTOR_FAILURES + 1))
-    printf '[FALTA] %s\n' "$1"
+    doctor_refresh_colors
+    printf '%s[MISSING]%s %s\n' "$C_RED" "$C_RESET" "$1"
 }
 
 doctor_warn() {
     DOCTOR_WARNINGS=$((DOCTOR_WARNINGS + 1))
-    printf '[AVISO] %s\n' "$1"
+    doctor_refresh_colors
+    printf '%s[WARN]%s %s\n' "$C_YELLOW" "$C_RESET" "$1"
 }
 
 check_command() {
@@ -105,13 +166,13 @@ check_command() {
     local version
 
     if ! command -v "$binary" >/dev/null 2>&1; then
-        doctor_fail "$label: no se encontró '$binary'."
+        doctor_fail "$label: '$binary' was not found."
         return 1
     fi
 
     if ! version="$("$binary" "$version_arg" 2>&1)"; then
         version="${version%%$'\n'*}"
-        doctor_fail "$label: falló '$binary $version_arg': ${version:-sin detalles}."
+        doctor_fail "$label: '$binary $version_arg' failed: ${version:-no details}."
         return 1
     fi
     version="${version%%$'\n'*}"
@@ -123,9 +184,9 @@ check_optional_command() {
     local recipe="$2"
 
     if command -v "$binary" >/dev/null 2>&1; then
-        doctor_ok "$binary está disponible."
+        doctor_ok "$binary is available."
     else
-        doctor_warn "$binary falta; solo se necesita para '$recipe'."
+        doctor_warn "$binary is missing; only needed for '$recipe'."
     fi
 }
 
@@ -137,8 +198,9 @@ main() {
     local node_minimum pnpm_expected rust_channel rust_components component installed_components
     local node_actual
 
-    printf 'Diagnóstico local de Cortex (no instala ni modifica nada)\n\n'
-    printf 'Herramientas base\n'
+    doctor_refresh_colors
+    printf '%s%sCortex local environment diagnostics (does not install or modify anything)%s\n\n' "$C_BOLD" "$C_CYAN" "$C_RESET"
+    printf '%sCore tools%s\n' "$C_BOLD" "$C_RESET"
     check_command "just" "just" || true
     check_command "Rustup" "rustup" || true
     check_command "Cargo" "cargo" || true
@@ -147,74 +209,74 @@ main() {
 
     node_minimum="$(read_node_minimum)"
     if [[ -z "$node_minimum" ]]; then
-        doctor_fail "No pude leer el mínimo de Node.js desde package.json."
+        doctor_fail "Could not read Node.js minimum from package.json."
     elif ! command -v node >/dev/null 2>&1; then
-        doctor_fail "Node.js >= $node_minimum: no se encontró 'node'."
+        doctor_fail "Node.js >= $node_minimum: 'node' was not found."
     else
         node_actual="$(node --version 2>&1)" || node_actual=""
         if version_at_least "$node_actual" "$node_minimum"; then
-            doctor_ok "Node.js $node_actual (mínimo requerido: >= $node_minimum)."
+            doctor_ok "Node.js $node_actual (minimum required: >= $node_minimum)."
         else
-            doctor_fail "Node.js $node_actual no cumple el mínimo >= $node_minimum de package.json."
+            doctor_fail "Node.js $node_actual does not meet the minimum >= $node_minimum in package.json."
         fi
     fi
 
     pnpm_expected="$(read_pnpm_version)"
     if [[ -z "$pnpm_expected" ]]; then
-        doctor_fail "No pude leer packageManager desde package.json."
+        doctor_fail "Could not read packageManager from package.json."
     else
         check_pnpm_version "$pnpm_expected" || true
     fi
 
-    printf '\nToolchain Rust\n'
+    printf '\n%sRust toolchain%s\n' "$C_BOLD" "$C_RESET"
     rust_channel="$(read_rust_channel)"
     if [[ -z "$rust_channel" ]]; then
-        doctor_fail "No pude leer el canal Rust desde rust-toolchain.toml."
+        doctor_fail "Could not read Rust channel from rust-toolchain.toml."
     elif command -v rustup >/dev/null 2>&1; then
         if rustup run "$rust_channel" rustc --version >/dev/null 2>&1; then
-            doctor_ok "Toolchain Rust '$rust_channel' está instalada."
+            doctor_ok "Rust toolchain '$rust_channel' is installed."
             rust_components="$(read_rust_components)"
             installed_components="$(rustup component list --installed --toolchain "$rust_channel" 2>/dev/null)" || installed_components=""
             for component in $rust_components; do
                 if printf '%s\n' "$installed_components" | grep -Eq "^${component}(-|$)"; then
-                    doctor_ok "Componente Rust '$component' está instalado."
+                    doctor_ok "Rust component '$component' is installed."
                 else
-                    doctor_fail "Falta el componente Rust '$component' de rust-toolchain.toml (instálalo con rustup)."
+                    doctor_fail "Missing Rust component '$component' from rust-toolchain.toml (install it with rustup)."
                 fi
             done
         else
-            doctor_fail "No está instalada la toolchain Rust '$rust_channel' indicada en rust-toolchain.toml."
+            doctor_fail "Rust toolchain '$rust_channel' specified in rust-toolchain.toml is not installed."
         fi
     else
-        doctor_fail "No puedo verificar la toolchain Rust '$rust_channel' sin rustup."
+        doctor_fail "Cannot verify Rust toolchain '$rust_channel' without rustup."
     fi
 
-    printf '\nWorkspace\n'
+    printf '\n%sWorkspace%s\n' "$C_BOLD" "$C_RESET"
     if [[ -f "$ROOT_DIR/pnpm-lock.yaml" && -f "$ROOT_DIR/pnpm-workspace.yaml" ]]; then
-        doctor_ok "Workspace pnpm y lockfile de raíz están presentes."
+        doctor_ok "Root pnpm workspace and lockfile are present."
     else
-        doctor_fail "Falta pnpm-lock.yaml o pnpm-workspace.yaml en la raíz; ejecuta la instalación desde el workspace raíz."
+        doctor_fail "Missing pnpm-lock.yaml or pnpm-workspace.yaml in root; run install from workspace root."
     fi
     if [[ ! -e "$ROOT_DIR/apps/rook/dashboard/pnpm-lock.yaml" && ! -e "$ROOT_DIR/apps/rook/dashboard/pnpm-workspace.yaml" ]]; then
-        doctor_ok "El dashboard usa el workspace pnpm de la raíz."
+        doctor_ok "Dashboard uses the root pnpm workspace."
     else
-        doctor_fail "El dashboard contiene un lockfile o workspace pnpm local; CI requiere un único workspace raíz."
+        doctor_fail "Dashboard contains a local pnpm lockfile or workspace; CI requires a single root workspace."
     fi
     if [[ -d "$ROOT_DIR/apps/rook/dashboard/node_modules" ]]; then
-        doctor_ok "Dependencias del dashboard instaladas."
+        doctor_ok "Dashboard dependencies installed."
     else
-        doctor_warn "Faltan dependencias del dashboard; ejecuta 'just setup'."
+        doctor_warn "Dashboard dependencies missing; run 'just setup'."
     fi
 
-    printf '\nHerramientas opcionales\n'
+    printf '\n%sOptional tools%s\n' "$C_BOLD" "$C_RESET"
     if command -v docker >/dev/null 2>&1; then
         if docker info >/dev/null 2>&1; then
-            doctor_ok "Docker está instalado y el daemon responde."
+            doctor_ok "Docker is installed and daemon is responding."
         else
-            doctor_warn "Docker está instalado, pero el daemon no responde; se requiere para E2E y contenedores."
+            doctor_warn "Docker is installed, but daemon is not responding; required for E2E and containers."
         fi
     else
-        doctor_warn "Docker no está instalado; se requiere solo para E2E y recetas de contenedores."
+        doctor_warn "Docker is not installed; only required for E2E and container recipes."
     fi
 
     check_optional_command "cargo-watch" "just dev"
@@ -225,14 +287,14 @@ main() {
     check_optional_command "cargo-hack" "just hack"
     check_optional_command "cargo-spellcheck" "just spellcheck"
 
-    printf '\nResumen: %s requisito(s) obligatorio(s) faltante(s), %s aviso(s) opcional(es).\n' \
+    printf '\nSummary: %s required requirement(s) missing, %s optional warning(s).\n' \
         "$DOCTOR_FAILURES" "$DOCTOR_WARNINGS"
     if (( DOCTOR_FAILURES > 0 )); then
-        printf 'Faltan requisitos obligatorios. Revisa los mensajes [FALTA] antes de continuar.\n'
+        printf 'Missing required tools. Review [MISSING] messages before proceeding.\n'
         return 1
     fi
 
-    printf 'Requisitos obligatorios listos. Los avisos opcionales solo afectan las recetas indicadas.\n'
+    printf 'Required tools ready. Optional warnings only affect the indicated recipes.\n'
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

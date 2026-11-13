@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use rook_core::{
-    AuthType, ConnectionConfig, Credentials, ProviderConnection, ProviderKind, TestStatus,
+    AuthType, ConnectionConfig, Credentials, Protocol, ProviderConnection, ProviderDescriptor,
+    TestStatus,
 };
 use rook_usecases::manage_connections::{
     CreateConnectionRequest, CredentialsInput as UsecaseCredentialsInput, TestConnectionResult,
@@ -50,11 +51,11 @@ impl TestCredentialsRequest {
     pub fn try_into_domain(
         &self,
     ) -> Result<rook_usecases::manage_connections::TestCredentialsRequest, String> {
-        use rook_core::ProviderKind;
+        use rook_core::descriptor_for;
         use shared_kernel::ProviderId;
 
-        let provider_kind = ProviderKind::try_from(self.provider_kind.as_str())
-            .map_err(|e| format!("invalid provider kind: {}", e))?;
+        let provider = descriptor_for(&self.provider_kind)
+            .ok_or_else(|| format!("unknown provider id: {}", self.provider_kind))?;
 
         let auth_type = parse_auth_type(&self.auth_type)?;
 
@@ -62,7 +63,7 @@ impl TestCredentialsRequest {
         let config = config_to_domain(&self.config)?;
 
         Ok(rook_usecases::manage_connections::TestCredentialsRequest {
-            provider_kind,
+            provider,
             provider_runtime_id: ProviderId::new(&self.provider_runtime_id),
             auth_type,
             credentials,
@@ -312,8 +313,8 @@ impl TryFrom<&CreateProviderRequest> for CreateConnectionRequest {
 
     fn try_from(req: &CreateProviderRequest) -> Result<Self, Self::Error> {
         Ok(Self {
-            provider_kind: ProviderKind::try_from(req.provider_kind.as_str())
-                .map_err(|e| e.to_string())?,
+            provider: rook_core::descriptor_for(&req.provider_kind)
+                .ok_or_else(|| format!("unknown provider id: {}", req.provider_kind))?,
             provider_runtime_id: req.provider_runtime_id.clone(),
             auth_type: parse_auth_type(&req.auth_type)?,
             name: req.name.clone(),
@@ -333,10 +334,13 @@ impl TryFrom<&UpdateProviderRequest> for UsecaseUpdateConnectionRequest {
             expected_updated_at: DateTime::parse_from_rfc3339(&req.expected_updated_at)
                 .map_err(|e| format!("invalid expectedUpdatedAt: {e}"))?
                 .with_timezone(&Utc),
-            provider_kind: req
+            provider: req
                 .provider_kind
                 .as_ref()
-                .map(|kind| ProviderKind::try_from(kind.as_str()).map_err(|e| e.to_string()))
+                .map(|kind| {
+                    rook_core::descriptor_for(kind)
+                        .ok_or_else(|| format!("unknown provider id: {kind}"))
+                })
                 .transpose()?,
             provider_runtime_id: req.provider_runtime_id.clone(),
             auth_type: req
@@ -357,14 +361,14 @@ impl From<&ProviderConnection> for ProviderConnectionResponse {
     fn from(conn: &ProviderConnection) -> Self {
         Self {
             id: conn.id,
-            provider_kind: conn.provider_kind.as_str().to_string(),
+            provider_kind: conn.provider.id.to_string(),
             provider_runtime_id: conn.provider_runtime_id.clone(),
             auth_type: auth_type_str(conn.auth_type).to_string(),
             name: conn.name.clone(),
             priority: conn.priority,
             is_active: conn.is_active,
             credentials: EmptyCredentials {},
-            config: ConnectionConfigResponse::from_provider_kind(&conn.config, conn.provider_kind),
+            config: ConnectionConfigResponse::from_descriptor(&conn.config, conn.provider),
             test_status: TestStatusResponse::from(&conn.test_status),
             created_at: conn.created_at,
             updated_at: conn.updated_at,
@@ -411,14 +415,20 @@ pub(crate) fn oauth_status(conn: &ProviderConnection) -> Option<String> {
 
 impl From<&ConnectionConfig> for ConnectionConfigResponse {
     fn from(config: &ConnectionConfig) -> Self {
-        Self::from_provider_kind(config, ProviderKind::OpenAI)
+        Self::from_descriptor(
+            config,
+            rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+        )
     }
 }
 
 impl ConnectionConfigResponse {
-    pub fn from_provider_kind(config: &ConnectionConfig, provider_kind: ProviderKind) -> Self {
-        let api_format = config.api_format.unwrap_or(match provider_kind {
-            ProviderKind::Anthropic => rook_core::ApiFormat::Anthropic,
+    pub fn from_descriptor(
+        config: &ConnectionConfig,
+        provider: &'static ProviderDescriptor,
+    ) -> Self {
+        let api_format = config.api_format.unwrap_or(match provider.protocol {
+            Protocol::AnthropicMessages => rook_core::ApiFormat::Anthropic,
             _ => rook_core::ApiFormat::OpenAI,
         });
         Self {

@@ -28,12 +28,12 @@ trust, upgrade, and teardown problem that is larger than the current MVP.
 
 ## Compatibility and lifecycle analysis
 
-| Option | Compatibility surface | Lifecycle | Isolation | Current decision |
-| --- | --- | --- | --- | --- |
-| Static native composition | Rust/Cargo types; rebuild required | Supervisor generation cleanup | Trusted process | Selected now |
-| Native dynamic loader | ABI, symbol, platform and allocator rules | Hard unload and foreign tasks are difficult | Usually trusted process | Deferred |
-| WASM | Host ABI and serialized values | Strong instance boundary if host controls resources | Potential sandbox, subject to runtime policy | Deferred |
-| IPC/process | Protocol and deployment compatibility | Process restart and protocol cancellation | OS/process boundary | Deferred |
+| Option                    | Compatibility surface                     | Lifecycle                                           | Isolation                                    | Current decision |
+|---------------------------|-------------------------------------------|-----------------------------------------------------|----------------------------------------------|------------------|
+| Static native composition | Rust/Cargo types; rebuild required        | Supervisor generation cleanup                       | Trusted process                              | Selected now     |
+| Native dynamic loader     | ABI, symbol, platform and allocator rules | Hard unload and foreign tasks are difficult         | Usually trusted process                      | Deferred         |
+| WASM                      | Host ABI and serialized values            | Strong instance boundary if host controls resources | Potential sandbox, subject to runtime policy | Deferred         |
+| IPC/process               | Protocol and deployment compatibility     | Process restart and protocol cancellation           | OS/process boundary                          | Deferred         |
 
 The next decision must define discovery and installation trust, semver/major
 compatibility, capability negotiation, cancellation and task ownership,

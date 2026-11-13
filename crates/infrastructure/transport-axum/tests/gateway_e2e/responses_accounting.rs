@@ -16,132 +16,138 @@ fn anthropic_initial_usage() -> String {
 async fn responses_openai_omitted_ids_generate_unique_stable_replayable_calls() {
     for stream in [false, true] {
         for combo in [false, true] {
-            let calls = json!([
-                {"index":0,"function":{"name":"lookup","arguments":"{\"key\":\"one\"}"}},
-                {"index":1,"function":{"name":"search","arguments":"{\"key\":\"two\"}"}}
-            ]);
-            let usage = json!({"prompt_tokens":3,"completion_tokens":2,"total_tokens":5});
-            let upstream = if stream {
-                let first = json!({"model":"gpt-4o","choices":[{"delta":{"tool_calls":calls},"finish_reason":null}]});
-                // Nullable IDs and neutral names in continuations must not change identity.
-                let last = json!({"model":"gpt-4o","choices":[{"delta":{"tool_calls":[
+            assert_generated_ids_are_stable(stream, combo).await;
+        }
+    }
+}
+
+/// One transport/combo case: generated tool ids must stay unique and replayable.
+async fn assert_generated_ids_are_stable(stream: bool, combo: bool) {
+    let calls = json!([
+        {"index":0,"function":{"name":"lookup","arguments":"{\"key\":\"one\"}"}},
+        {"index":1,"function":{"name":"search","arguments":"{\"key\":\"two\"}"}}
+    ]);
+    let usage = json!({"prompt_tokens":3,"completion_tokens":2,"total_tokens":5});
+    let upstream = if stream {
+        let first = json!({"model":"gpt-4o","choices":[{"delta":{"tool_calls":calls},"finish_reason":null}]});
+        // Nullable IDs and neutral names in continuations must not change identity.
+        let last = json!({"model":"gpt-4o","choices":[{"delta":{"tool_calls":[
                     {"index":0,"id":null,"function":{"name":"","arguments":""}},
                     {"index":1,"id":null,"function":{"name":null,"arguments":""}}
                 ]},"finish_reason":"tool_calls"}],"usage":usage});
-                UpstreamMock::Sse(format!("data: {first}\n\ndata: {last}\n\ndata: [DONE]\n\n"))
-            } else {
-                UpstreamMock::Json(
-                    json!({"model":"gpt-4o","choices":[{"message":{"tool_calls":calls},"finish_reason":"tool_calls"}],"usage":usage}),
-                )
-            };
-            let g = build_gateway_planned(vec![], upstream, UpstreamMock::Fail500).await;
-            let model = if combo { "rook/e2e" } else { "gpt-4o" };
-            let request = json!({"model":model,"input":"hi","stream":stream});
-            let body = if stream {
-                let (status, _, sse) = post_sse(g.app.clone(), "/v1/responses", request).await;
-                assert_eq!(status, StatusCode::OK, "{sse}");
-                let events = sse_json(&sse);
-                let terminal = events.last().unwrap();
-                assert_eq!(terminal["type"], "response.completed", "{sse}");
-                let output = terminal["response"]["output"].as_array().unwrap();
-                for event in &events {
-                    if let Some(index) = event["output_index"].as_u64() {
-                        let call = &output[index as usize];
-                        if event.get("item").is_some() {
-                            assert_eq!(event["item"]["id"], call["id"]);
-                            assert_eq!(event["item"]["call_id"], call["call_id"]);
-                        }
-                        if event.get("item_id").is_some() {
-                            assert_eq!(event["item_id"], call["id"]);
-                        }
-                    }
+        UpstreamMock::Sse(format!("data: {first}\n\ndata: {last}\n\ndata: [DONE]\n\n"))
+    } else {
+        UpstreamMock::Json(
+            json!({"model":"gpt-4o","choices":[{"message":{"tool_calls":calls},"finish_reason":"tool_calls"}],"usage":usage}),
+        )
+    };
+    let g = build_gateway_planned(vec![], upstream, UpstreamMock::Fail500).await;
+    let model = if combo { "rook/e2e" } else { "gpt-4o" };
+    let request = json!({"model":model,"input":"hi","stream":stream});
+    let body = if stream {
+        let (status, _, sse) = post_sse(g.app.clone(), "/v1/responses", request).await;
+        assert_eq!(status, StatusCode::OK, "{sse}");
+        let events = sse_json(&sse);
+        let terminal = events.last().unwrap();
+        assert_eq!(terminal["type"], "response.completed", "{sse}");
+        let output = terminal["response"]["output"].as_array().unwrap();
+        for event in &events {
+            if let Some(index) = event["output_index"].as_u64() {
+                let call = &output[index as usize];
+                if event.get("item").is_some() {
+                    assert_eq!(event["item"]["id"], call["id"]);
+                    assert_eq!(event["item"]["call_id"], call["call_id"]);
                 }
-                super::responses::fixture(&format!("openai-generated-ids-{combo}.sse"), &sse);
-                terminal["response"].clone()
-            } else {
-                let (status, body) = post_json(g.app.clone(), "/v1/responses", request, &[]).await;
-                assert_eq!(status, StatusCode::OK, "{body}");
-                super::responses::fixture(
-                    &format!("openai-generated-ids-{combo}.json"),
-                    &body.to_string(),
-                );
-                body
-            };
-            assert_eq!(body["status"], "completed");
-            assert_eq!(body["usage"]["total_tokens"], 5);
-            let calls = body["output"].as_array().unwrap();
-            assert_eq!(calls.len(), 2);
-            assert_ne!(calls[0]["id"], calls[1]["id"]);
-            assert_ne!(calls[0]["call_id"], calls[1]["call_id"]);
-            for (call, name, key) in [(&calls[0], "lookup", "one"), (&calls[1], "search", "two")] {
-                assert!(call["call_id"].as_str().unwrap().starts_with("call_"));
-                assert_eq!(call["name"], name);
-                assert_eq!(
-                    serde_json::from_str::<serde_json::Value>(call["arguments"].as_str().unwrap())
-                        .unwrap(),
-                    json!({"key":key})
-                );
+                if event.get("item_id").is_some() {
+                    assert_eq!(event["item_id"], call["id"]);
+                }
             }
-            {
-                let audit = g.accounting.audit.lock().unwrap();
-                let usage = g.accounting.usage.lock().unwrap();
-                assert_eq!(audit.len(), 1);
-                assert_eq!(usage.len(), 1);
-                assert_eq!(audit[0].status, RequestStatus::Success);
-                assert_eq!(usage[0].status, RequestStatus::Success);
-                assert_eq!(audit[0].combo_id.is_some(), combo);
-                assert_eq!(audit[0].request_id, usage[0].request_id);
-                assert_eq!(audit[0].usage.as_ref().unwrap().total_tokens, 5);
-                assert!((usage[0].cost_usd.unwrap() - 7.0 / 1_000_000.0).abs() < 1e-12);
-            }
-            let mut input = calls.clone();
-            input.extend(calls.iter().map(|call| json!({"type":"function_call_output","call_id":call["call_id"],"output":"found"})));
-            // Replay through the same provider and mode so generated IDs cross the wire.
-            if stream {
-                let (_, _, replay) = post_sse(
-                    g.app,
-                    "/v1/responses",
-                    json!({"model":model,"input":input,"stream":true}),
-                )
-                .await;
-                assert_eq!(
-                    sse_json(&replay).last().unwrap()["type"],
-                    "response.completed",
-                    "{replay}"
-                );
-            } else {
-                let (status, replay) = post_json(
-                    g.app,
-                    "/v1/responses",
-                    json!({"model":model,"input":input}),
-                    &[],
-                )
-                .await;
-                assert_eq!(status, StatusCode::OK, "{replay}");
-            }
-            let requests = g.upstreams.openai.received_requests().await.unwrap();
-            assert_eq!(requests.len(), 2);
-            let sent: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
-            for (index, call) in calls.iter().enumerate() {
-                assert_eq!(
-                    sent["messages"][0]["tool_calls"][index]["id"],
-                    call["call_id"]
-                );
-                assert_eq!(
-                    sent["messages"][0]["tool_calls"][index]["function"]["name"],
-                    call["name"]
-                );
-                assert_eq!(sent["messages"][index + 1]["tool_call_id"], call["call_id"]);
-            }
-            assert!(g
-                .upstreams
-                .anthropic
-                .received_requests()
-                .await
-                .unwrap()
-                .is_empty());
         }
+        super::responses::fixture(&format!("openai-generated-ids-{combo}.sse"), &sse);
+        terminal["response"].clone()
+    } else {
+        let (status, body) = post_json(g.app.clone(), "/v1/responses", request, &[]).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        super::responses::fixture(
+            &format!("openai-generated-ids-{combo}.json"),
+            &body.to_string(),
+        );
+        body
+    };
+    assert_eq!(body["status"], "completed");
+    assert_eq!(body["usage"]["total_tokens"], 5);
+    let calls = body["output"].as_array().unwrap();
+    assert_eq!(calls.len(), 2);
+    assert_ne!(calls[0]["id"], calls[1]["id"]);
+    assert_ne!(calls[0]["call_id"], calls[1]["call_id"]);
+    for (call, name, key) in [(&calls[0], "lookup", "one"), (&calls[1], "search", "two")] {
+        assert!(call["call_id"].as_str().unwrap().starts_with("call_"));
+        assert_eq!(call["name"], name);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(call["arguments"].as_str().unwrap()).unwrap(),
+            json!({"key":key})
+        );
     }
+    {
+        let audit = g.accounting.audit.lock().unwrap();
+        let usage = g.accounting.usage.lock().unwrap();
+        assert_eq!(audit.len(), 1);
+        assert_eq!(usage.len(), 1);
+        assert_eq!(audit[0].status, RequestStatus::Success);
+        assert_eq!(usage[0].status, RequestStatus::Success);
+        assert_eq!(audit[0].combo_id.is_some(), combo);
+        assert_eq!(audit[0].request_id, usage[0].request_id);
+        assert_eq!(audit[0].usage.as_ref().unwrap().total_tokens, 5);
+        assert!((usage[0].cost_usd.unwrap() - 7.0 / 1_000_000.0).abs() < 1e-12);
+    }
+    let mut input = calls.clone();
+    input.extend(calls.iter().map(
+        |call| json!({"type":"function_call_output","call_id":call["call_id"],"output":"found"}),
+    ));
+    // Replay through the same provider and mode so generated IDs cross the wire.
+    if stream {
+        let (_, _, replay) = post_sse(
+            g.app,
+            "/v1/responses",
+            json!({"model":model,"input":input,"stream":true}),
+        )
+        .await;
+        assert_eq!(
+            sse_json(&replay).last().unwrap()["type"],
+            "response.completed",
+            "{replay}"
+        );
+    } else {
+        let (status, replay) = post_json(
+            g.app,
+            "/v1/responses",
+            json!({"model":model,"input":input}),
+            &[],
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{replay}");
+    }
+    let requests = g.upstreams.openai.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2);
+    let sent: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
+    for (index, call) in calls.iter().enumerate() {
+        assert_eq!(
+            sent["messages"][0]["tool_calls"][index]["id"],
+            call["call_id"]
+        );
+        assert_eq!(
+            sent["messages"][0]["tool_calls"][index]["function"]["name"],
+            call["name"]
+        );
+        assert_eq!(sent["messages"][index + 1]["tool_call_id"], call["call_id"]);
+    }
+    assert!(g
+        .upstreams
+        .anthropic
+        .received_requests()
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]
@@ -944,7 +950,7 @@ async fn responses_anthropic_missing_or_unknown_finish_never_succeeds() {
                     },
                 )
                 .await;
-                let request = json!({"model":if combo {"rook/anthropic-first"} else {"claude-e2e"},"input":"hola","stream":stream});
+                let request = json!({"model":if combo {"rook/anthropic-first"} else {"claude-e2e"},"input":"hello","stream":stream});
                 if stream {
                     let (_, _, body) = post_sse(g.app, "/v1/responses", request).await;
                     assert_failed_terminal_usage(&body, &g.accounting);
@@ -1009,7 +1015,7 @@ async fn responses_anthropic_malformed_and_pending_sse_preserve_prior_usage() {
                     UpstreamMock::Sse(prefix + suffix),
                 )
                 .await;
-                let (_, _, body) = post_sse(g.app, "/v1/responses", json!({"model":if combo {"rook/anthropic-first"} else {"claude-e2e"},"input":"hola","stream":true})).await;
+                let (_, _, body) = post_sse(g.app, "/v1/responses", json!({"model":if combo {"rook/anthropic-first"} else {"claude-e2e"},"input":"hello","stream":true})).await;
                 if !prior && combo {
                     assert!(body.contains("response.completed"), "{body}");
                     assert!(body.contains("fallback"));
@@ -1087,7 +1093,7 @@ async fn responses_anthropic_no_upstream_id_publishes_one_stable_call() {
         let sse = super::responses::initial_anthropic_tool_stream(json!({}))
             .replace("\"id\":\"call_initial\",", "");
         let g = build_gateway_planned(vec![], UpstreamMock::Fail500, UpstreamMock::Sse(sse)).await;
-        let (_, _, body) = post_sse(g.app, "/v1/responses", json!({"model":if combo {"rook/anthropic-first"} else {"claude-e2e"},"input":"hola","stream":true})).await;
+        let (_, _, body) = post_sse(g.app, "/v1/responses", json!({"model":if combo {"rook/anthropic-first"} else {"claude-e2e"},"input":"hello","stream":true})).await;
         let events = sse_json(&body);
         let terminal = events.last().unwrap();
         assert_eq!(terminal["type"], "response.completed", "{body}");
@@ -1131,7 +1137,7 @@ async fn responses_anthropic_clean_eof_ignores_ping_and_comments() {
             + &anthropic_text_stream(json!({"stop_reason":"end_turn"}))
             + ": after finish\n\ndata: {\"type\":\"ping\"}\n\n";
         let g = build_gateway_planned(vec![], UpstreamMock::Fail500, UpstreamMock::Sse(sse)).await;
-        let (_, _, body) = post_sse(g.app, "/v1/responses", json!({"model":if combo {"rook/anthropic-first"} else {"claude-e2e"},"input":"hola","stream":true})).await;
+        let (_, _, body) = post_sse(g.app, "/v1/responses", json!({"model":if combo {"rook/anthropic-first"} else {"claude-e2e"},"input":"hello","stream":true})).await;
         assert_eq!(
             sse_json(&body).last().unwrap()["type"],
             "response.completed",
@@ -1146,65 +1152,76 @@ async fn responses_anthropic_fixes_keep_chat_and_messages_legacy_contracts() {
     for messages in [false, true] {
         for stream in [false, true] {
             for case in ["missing", "unknown", "malformed", "pending", "no_id"] {
-                let mut delta = json!({"stop_reason":"end_turn"});
-                if case == "missing" {
-                    delta = json!({});
-                }
-                if case == "unknown" {
-                    delta = json!({"stop_reason":"unknown"});
-                }
-                let mut upstream = json!({"model":"claude-e2e","content":[{"type":"text","text":"previo"}],"usage":{"input_tokens":3,"output_tokens":2}});
-                if let Some(reason) = delta.get("stop_reason") {
-                    upstream["stop_reason"] = reason.clone();
-                }
-                let sse = if case == "no_id" {
-                    super::responses::initial_anthropic_tool_stream(json!({}))
-                        .replace("\"id\":\"call_initial\",", "")
-                } else {
-                    anthropic_text_stream(delta)
-                        + match case {
-                            "malformed" => "data: {bad}\n\n",
-                            "pending" => "data: {\"type\":\"error\",\"error\":{",
-                            _ => "",
-                        }
-                };
-                let g = build_gateway_planned(
-                    vec![],
-                    UpstreamMock::Fail500,
-                    if stream {
-                        UpstreamMock::Sse(sse)
-                    } else {
-                        UpstreamMock::Json(upstream)
-                    },
-                )
-                .await;
-                let (uri, request) = if messages {
-                    ("/v1/messages", anthropic_body("claude-e2e", stream))
-                } else {
-                    ("/v1/chat/completions", openai_body("claude-e2e", stream))
-                };
-                if stream {
-                    let (status, _, body) = post_sse(g.app, uri, request).await;
-                    assert_eq!(
-                        status,
-                        StatusCode::OK,
-                        "case={case}, messages={messages}: {body}"
-                    );
-                    assert!(
-                        sse_json(&body).iter().all(|e| e.get("error").is_none()),
-                        "case={case}, messages={messages}: {body}"
-                    );
-                    assert!(body.ends_with("data: [DONE]\n\n"));
-                } else {
-                    let (status, body) = post_json(g.app, uri, request, &[]).await;
-                    assert_eq!(status, StatusCode::OK, "{body}");
-                    if messages {
-                        assert_eq!(body["stop_reason"], "end_turn");
-                    } else {
-                        assert_eq!(body["choices"][0]["finish_reason"], "stop");
-                    }
-                }
+                assert_legacy_contract_case(messages, stream, case).await;
             }
+        }
+    }
+}
+
+/// One (transport, body, case) cell of the legacy contract matrix.
+async fn assert_legacy_contract_case(messages: bool, stream: bool, case: &str) {
+    let mut delta = json!({"stop_reason":"end_turn"});
+    if case == "missing" {
+        delta = json!({});
+    }
+    if case == "unknown" {
+        delta = json!({"stop_reason":"unknown"});
+    }
+    let mut upstream = json!({"model":"claude-e2e","content":[{"type":"text","text":"previo"}],"usage":{"input_tokens":3,"output_tokens":2}});
+    if let Some(reason) = delta.get("stop_reason") {
+        upstream["stop_reason"] = reason.clone();
+    }
+    let sse = if case == "no_id" {
+        super::responses::initial_anthropic_tool_stream(json!({}))
+            .replace("\"id\":\"call_initial\",", "")
+    } else {
+        anthropic_text_stream(delta)
+            + match case {
+                "malformed" => "data: {bad}\n\n",
+                "pending" => "data: {\"type\":\"error\",\"error\":{",
+                _ => "",
+            }
+    };
+    let g = build_gateway_planned(
+        vec![],
+        UpstreamMock::Fail500,
+        if stream {
+            UpstreamMock::Sse(sse)
+        } else {
+            UpstreamMock::Json(upstream)
+        },
+    )
+    .await;
+    let (uri, request) = if messages {
+        ("/v1/messages", anthropic_body("claude-e2e", stream))
+    } else {
+        ("/v1/chat/completions", openai_body("claude-e2e", stream))
+    };
+    if stream {
+        let (status, _, body) = post_sse(g.app, uri, request).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "case={case}, messages={messages}: {body}"
+        );
+        let events = sse_json(&body);
+        // A stream carrying only the [DONE] marker would make the no-error check vacuous.
+        assert!(
+            !events.is_empty(),
+            "case={case}, messages={messages}: no event reached the client: {body}"
+        );
+        assert!(
+            events.iter().all(|e| e.get("error").is_none()),
+            "case={case}, messages={messages}: {body}"
+        );
+        assert!(body.ends_with("data: [DONE]\n\n"));
+    } else {
+        let (status, body) = post_json(g.app, uri, request, &[]).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        if messages {
+            assert_eq!(body["stop_reason"], "end_turn");
+        } else {
+            assert_eq!(body["choices"][0]["finish_reason"], "stop");
         }
     }
 }
@@ -1250,8 +1267,8 @@ fn assert_failure(records: &Records, combo: bool) {
 fn assert_failure_tokens(records: &Records, combo: bool, prompt: u64, completion: u64) {
     let audit = records.audit.lock().unwrap();
     let usage = records.usage.lock().unwrap();
-    assert_eq!(audit.len(), 1, "un solo resultado definitivo");
-    assert_eq!(usage.len(), 1, "un solo uso definitivo");
+    assert_eq!(audit.len(), 1, "a single final result");
+    assert_eq!(usage.len(), 1, "a single final usage");
     assert_eq!(audit[0].status, RequestStatus::Failure);
     assert_eq!(usage[0].status, RequestStatus::Failure);
     assert_eq!(
@@ -1309,7 +1326,7 @@ async fn responses_terminal_nonobject_frame_is_rejected_before_delivery() {
             let (_, _, body) = post_sse(
                 g.app,
                 "/v1/responses",
-                json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hola","stream":true}),
+                json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hello","stream":true}),
             )
             .await;
             assert!(body.contains("response.failed"), "{body}");
@@ -1374,7 +1391,7 @@ async fn anthropic_stop_with_functions_records_one_failure_before_done() {
         let (status, _, body) = post_sse(
             g.app,
             "/v1/responses",
-            json!({"model":if combo {"rook/e2e"} else {"claude-e2e"},"input":"hola","stream":true}),
+            json!({"model":if combo {"rook/e2e"} else {"claude-e2e"},"input":"hello","stream":true}),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
@@ -1428,7 +1445,7 @@ async fn anthropic_stop_with_functions_records_one_failure_before_done() {
 async fn provider_validation_error_keeps_usage_from_the_rejected_frame() {
     for observe_error in [false, true] {
         for combo in [false, true] {
-            let first = json!({"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"hola"},"finish_reason":null}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}});
+            let first = json!({"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}});
             let invalid = json!({"model":"gpt-4o","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_bad","function":{"name":if observe_error {"x".repeat(4097)} else {"lookup".into()},"arguments":"{"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}});
             let sse = format!("data: {first}\n\ndata: {invalid}\n\ndata: [DONE]\n\n");
             let g =
@@ -1436,7 +1453,7 @@ async fn provider_validation_error_keeps_usage_from_the_rejected_frame() {
             let (_, _, body) = post_sse(
                 g.app,
                 "/v1/responses",
-                json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hola","stream":true}),
+                json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hello","stream":true}),
             )
             .await;
             assert!(body.contains("response.failed"), "{body}");
@@ -1476,7 +1493,7 @@ async fn first_frame_validation_error_preserves_usage_and_combo_fallback() {
         let (_, _, body) = post_sse(
             g.app,
             "/v1/responses",
-            json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hola","stream":true}),
+            json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hello","stream":true}),
         )
         .await;
         if combo {
@@ -1553,7 +1570,7 @@ async fn rejected_nonstream(combo: bool) {
     let (status, response) = post_json(
         g.app,
         "/v1/responses",
-        json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hola"}),
+        json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hello"}),
         &[],
     )
     .await;
@@ -1586,7 +1603,7 @@ async fn rejected_stream(combo: bool, push: bool, prior_frame: bool) {
         json!({"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]});
     let mut sse = String::new();
     if prior_frame {
-        let prior = json!({"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"hola"},"finish_reason":null}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}});
+        let prior = json!({"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}});
         sse.push_str(&format!("data: {prior}\n\n"));
     }
     sse.push_str(&format!("data: {first}\n\ndata: {last}\n\ndata: {{\"model\":\"gpt-4o\",\"choices\":[],\"usage\":{{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5}}}}\n\ndata: [DONE]\n\n"));
@@ -1594,7 +1611,7 @@ async fn rejected_stream(combo: bool, push: bool, prior_frame: bool) {
     let (_, _, body) = post_sse(
         g.app,
         "/v1/responses",
-        json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hola","stream":true}),
+        json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hello","stream":true}),
     )
     .await;
     assert!(body.contains("response.failed"), "{body}");
@@ -1602,7 +1619,7 @@ async fn rejected_stream(combo: bool, push: bool, prior_frame: bool) {
     if push {
         assert_failure(&g.accounting, combo);
     } else {
-        // El rechazo ocurre al recibir finish; no se lee el usage posterior.
+        // The rejection happens on receiving finish; the later usage is not read.
         assert_failure_tokens(&g.accounting, combo, 1, 1);
     }
     assert_failed_terminal_usage(&body, &g.accounting);
@@ -1680,7 +1697,7 @@ async fn repeated_name_fragments_survive_the_http_boundary() {
     let (_, _, body) = post_sse(
         g.app,
         "/v1/responses",
-        json!({"model":"gpt-4o","input":"hola","stream":true}),
+        json!({"model":"gpt-4o","input":"hello","stream":true}),
     )
     .await;
     assert!(body.contains("response.completed"), "{body}");
@@ -1706,7 +1723,7 @@ async fn incoherent_nonstream_terminal_states_fail_at_http_boundary() {
             let (status, _) = post_json(
                 g.app,
                 "/v1/responses",
-                json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hola"}),
+                json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hello"}),
                 &[],
             )
             .await;
@@ -1728,7 +1745,7 @@ async fn nonstream_functions_require_tool_calls_or_incomplete_finish() {
             let (status, response) = post_json(
                 g.app,
                 "/v1/responses",
-                json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hola"}),
+                json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hello"}),
                 &[],
             )
             .await;
@@ -1770,12 +1787,12 @@ async fn nonstream_functions_require_tool_calls_or_incomplete_finish() {
 async fn responses_disconnect_keeps_observed_usage_without_provider_failure() {
     use futures::StreamExt;
     for combo in [false, true] {
-        let first = json!({"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"hola"},"finish_reason":null}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}});
+        let first = json!({"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}});
         let sse = format!("data: {first}\n\ndata: {{\"model\":\"gpt-4o\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"stop\"}}]}}\n\ndata: [DONE]\n\n");
         let g = build_gateway_planned(vec![], UpstreamMock::Sse(sse), UpstreamMock::Fail500).await;
         let response = g.app.oneshot(Request::builder().method(Method::POST).uri("/v1/responses")
             .header("content-type", "application/json").header("authorization", "Bearer e2e-key-1")
-            .body(axum::body::Body::from(json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hola","stream":true}).to_string())).unwrap()).await.unwrap();
+            .body(axum::body::Body::from(json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hello","stream":true}).to_string())).unwrap()).await.unwrap();
         let mut body = response.into_body().into_data_stream();
         loop {
             let frame = body.next().await.unwrap().unwrap();
@@ -1803,7 +1820,7 @@ async fn responses_disconnect_keeps_observed_usage_without_provider_failure() {
 #[tokio::test]
 async fn missing_stream_finish_records_failure_with_usage_before_eof() {
     for combo in [false, true] {
-        let first = json!({"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"hola"},"finish_reason":null}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}});
+        let first = json!({"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}});
         let g = build_gateway_planned(
             vec![],
             UpstreamMock::Sse(format!("data: {first}\n\ndata: [DONE]\n\n")),
@@ -1813,7 +1830,7 @@ async fn missing_stream_finish_records_failure_with_usage_before_eof() {
         let (_, _, body) = post_sse(
             g.app,
             "/v1/responses",
-            json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hola","stream":true}),
+            json!({"model":if combo {"rook/e2e"} else {"gpt-4o"},"input":"hello","stream":true}),
         )
         .await;
         assert!(body.contains("response.failed"), "{body}");
@@ -1831,13 +1848,13 @@ async fn missing_stream_finish_records_failure_with_usage_before_eof() {
 #[tokio::test]
 async fn concurrent_responses_streams_have_independent_validation_state() {
     let sse = concat!(
-        "data: {\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hola\"},\"finish_reason\":null}]}\n\n",
-        "data: {\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
-        "data: [DONE]\n\n"
+    "data: {\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello\"},\"finish_reason\":null}]}\n\n",
+    "data: {\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+    "data: [DONE]\n\n"
     );
     let g =
         build_gateway_planned(vec![], UpstreamMock::Sse(sse.into()), UpstreamMock::Fail500).await;
-    let request = json!({"model":"gpt-4o","input":"hola","stream":true});
+    let request = json!({"model":"gpt-4o","input":"hello","stream":true});
     let (first, second) = tokio::join!(
         post_sse(g.app.clone(), "/v1/responses", request.clone()),
         post_sse(g.app, "/v1/responses", request)

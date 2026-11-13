@@ -1,140 +1,140 @@
 # Verification Report
 
-## Resultado
+## Result
 
-- Cambio: `huginn-overlay-system`.
-- Fecha: 2026-10-20. Persistencia: openspec, ruta explícita de esta misión.
-- **Veredicto actual: PASS WITH WARNINGS** tras reverify V-01 el 2026-10-20.
-  V-01 y V-02 resueltos con evidencia independiente; no quedan defectos técnicos
-  bloqueantes identificados. Se conservan los límites externos y de tooling V-03.
-- Veredicto inicial: **FAIL** por REQ-05; historia y evidencia RED conservadas abajo.
-- Verificación técnica independiente; no acredita aceptación del usuario ni QA.
-- Modo de ejecución: **fallback**. No se encontró `sdd-quality-runner.mjs` en
-  el proyecto ni en los recursos SDD locales consultados. No hubo enforcement
-  determinista ni envelopes versionados. `testing.strict_tdd: false`; no se
-  cargó el módulo Strict TDD.
-- Skill resolution: `none`; no existe `.agents/skill-registry.md`.
+- Change: `huginn-overlay-system`.
+- Date: 2026-10-20. Persistence: openspec, explicit path of this mission.
+- **Current verdict: PASS WITH WARNINGS** after the V-01 reverify on 2026-10-20.
+  V-01 and V-02 resolved with independent evidence; no blocking technical
+  defects identified. The external and tooling limits V-03 are preserved.
+- Initial verdict: **FAIL** due to REQ-05; history and RED evidence preserved below.
+- Independent technical verification; it does not certify user acceptance nor QA.
+- Execution mode: **fallback**. No `sdd-quality-runner.mjs` was found in
+  the project nor in the consulted local SDD resources. There was no deterministic
+  enforcement nor versioned envelopes. `testing.strict_tdd: false`; the
+  Strict TDD module was not loaded.
+- Skill resolution: `none`; there is no `.agents/skill-registry.md`.
 
-| Completitud                             | Resultado                                                                            |
+| Completeness                             | Result                                                                            |
 |-----------------------------------------|--------------------------------------------------------------------------------------|
-| Tareas principales declaradas completas | 21/21                                                                                |
+| Main tasks declared complete | 21/21                                                                                |
 | Subchecklist 2.2                        | 3/3                                                                                  |
-| Artifacts leídos                        | proposal, cuatro delta specs, spec base ui-settings, design, tasks, apply-validation |
-| Conformidad técnica                     | Acreditada en los escenarios ejecutados; V-01 resuelto                               |
-| QA / aceptación del usuario             | Pendiente; no inferida de Apply ni de Verify                                         |
+| Artifacts read                        | proposal, four delta specs, ui-settings base spec, design, tasks, apply-validation |
+| Technical conformance                     | Certified in the executed scenarios; V-01 resolved                               |
+| QA / user acceptance             | Pending; not inferred from Apply nor from Verify                                         |
 
-Se inspeccionó el código final, no solo las etiquetas COMPLIANT de Apply.
-No se modificó producción, tests del repositorio, staging ni `state.yaml`.
+The final code was inspected, not only the Apply COMPLIANT tags.
+Production, repository tests, staging nor `state.yaml` were not modified.
 
-## Reverify V-01 — evidencia actual y decisión
+## Reverify V-01: current evidence and decision
 
-Se leyó la corrección en `overlay.rs:140–151`, los tres tests host nuevos de
-`state.rs:742–864` y el bloque nuevo de `apply-validation.md`. No se rebajaron
-specs ni se sustituyó el escenario contractual por Space. La rama nueva se
-limita a Settings en toasts: Left/Right invocan `toggle_selected`, mientras que
-Tab/BackTab siguen cambiando de pestaña y las demás pestañas conservan las flechas
-horizontales. REQ-05 permite que Left también avance el ciclo. Esta regla concreta
-de pickers tiene precedencia sobre la navegación general de REQ-03; Tab/BackTab
-permiten salir de toasts. No se añadió aplicación live ni capa de toasts.
+The fix in `overlay.rs:140–151`, the three new host tests in
+`state.rs:742–864` and the new block of `apply-validation.md` were read. No spec
+was lowered nor the contractual scenario replaced by Space. The new branch is
+limited to Settings in toasts: Left/Right invoke `toggle_selected`, while
+Tab/BackTab keep changing tab and the other tabs keep the horizontal
+arrows. REQ-05 allows Left to also advance the cycle. This concrete rule
+of pickers takes precedence over the general navigation of REQ-03; Tab/BackTab
+allow leaving toasts. No live application nor toast layer was added.
 
-Directorio independiente de reverify (en adelante `R/`):
+Independent reverify directory (from now on `R/`):
 `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/opencode/huginn-reverify-v01/`.
-Todos los comandos se ejecutaron desde `/Users/acosta/Dev/dallay/cortex`.
+All commands were executed from `/Users/acosta/Dev/dallay/cortex`.
 
-| Comando / evidencia actual                                                        | Exit | Resultado                                                                                                                                      |
+| Command / current evidence                                                        | Exit | Result                                                                                                                                      |
 |-----------------------------------------------------------------------------------|------|------------------------------------------------------------------------------------------------------------------------------------------------|
-| `cargo test -p huginn-presentation --all-features -- --test-threads=1`            | 0    | `R/presentation.log`: 158 PASS, 0 failed, 0 ignored; lib 38, state 35, PTY 39 y restantes targets                                              |
-| Recompilación del fuente original independiente `V/settings-cycle.rs` con rustc   | 0    | `R/settings-cycle-build.log`; rlibs obtenidos del fingerprint del target state recién ejecutado; comando exacto en `R/independent-command.txt` |
-| `R/settings-cycle --nocapture`                                                    | 0    | `R/settings-cycle.log`: 1 PASS; `active_tab=3, level=1`; mismo fuente y aserciones que fallaron antes                                          |
-| `cargo fmt --all -- --check` y `git diff --check`                                 | 0    | `R/static.log`                                                                                                                                 |
-| `cargo clippy -p huginn-presentation --all-features --all-targets -- -D warnings` | 0    | `R/static.log`; incluye tests/fixture                                                                                                          |
+| `cargo test -p huginn-presentation --all-features -- --test-threads=1`            | 0    | `R/presentation.log`: 158 PASS, 0 failed, 0 ignored; lib 38, state 35, PTY 39 and the remaining targets                                              |
+| Recompilation of the independent original source `V/settings-cycle.rs` with rustc   | 0    | `R/settings-cycle-build.log`; rlibs obtained from the fingerprint of the state target just executed; exact command in `R/independent-command.txt` |
+| `R/settings-cycle --nocapture`                                                    | 0    | `R/settings-cycle.log`: 1 PASS; `active_tab=3, level=1`; the same source and assertions that failed before                                          |
+| `cargo fmt --all -- --check` and `git diff --check`                                 | 0    | `R/static.log`                                                                                                                                 |
+| `cargo clippy -p huginn-presentation --all-features --all-targets -- -D warnings` | 0    | `R/static.log`; includes tests/fixture                                                                                                          |
 
-La suite actual repite todos los casos de presentation de la matriz inicial,
-incluidos autoridad única, Approval fail-closed/resize/0x0, secretos, scrollback,
-receipts tardíos y watch. Además ejecuta estas regresiones por el router host real:
+The current suite repeats all the presentation cases of the initial matrix,
+including single authority, Approval fail-closed/resize/0x0, secrets, scrollback,
+late receipts and watch. It also runs these regressions through the real host router:
 
-| REQ → escenario del fix                                                                                                                | Test ejecutado                                                     | Resultado                                                                |
+| REQ → scenario of the fix                                                                                                                | Executed test                                                     | Result                                                                |
 |----------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------|--------------------------------------------------------------------------|
-| SET-05: level y duration, ambas flechas, ciclos completos y labels                                                                     | `settings_horizontal_arrows_cycle_toasts_without_leaving_the_row`  | PASS: no cambia tab/selección ni el otro valor                           |
-| SET-03/04/06: tabs ordinarios, wrap, salida de toasts y valores intactos                                                               | `settings_section_keys_preserve_noncycle_values_and_escape_toasts` | PASS: Tab/BackTab siguen siendo navegación; no edita valores no cíclicos |
-| SET-06/07/08/13 y EVT-01: no write antes de Enter, valores visibles guardados juntos, Esc descarta sin cancelar turno ni contaminar UI | `settings_cycle_arrows_only_persist_displayed_values_on_enter`     | PASS: warn/5s, una escritura y reapertura con snapshot guardado          |
+| SET-05: level and duration, both arrows, full cycles and labels                                                                     | `settings_horizontal_arrows_cycle_toasts_without_leaving_the_row`  | PASS: it does not change tab/selection nor the other value                           |
+| SET-03/04/06: ordinary tabs, wrap, leaving toasts and intact values                                                               | `settings_section_keys_preserve_noncycle_values_and_escape_toasts` | PASS: Tab/BackTab remain navigation; it does not edit non-cyclic values |
+| SET-06/07/08/13 and EVT-01: no write before Enter, visible values saved together, Esc discards without cancelling the turn nor contaminating the UI | `settings_cycle_arrows_only_persist_displayed_values_on_enter`     | PASS: warn/5s, one write and reopening with the saved snapshot          |
 
-Se revisó el log final y resumen de Apply en `huginn-fix-v01/`:
-`ci-local-final.log`, `ci-local-final.exit` y `ci-summary.txt` certifican exit 0,
-9/9, 477 s, 210 Vitest y 90 E2E. `focused-recheck.log` documenta la repetición
-verde de los siete paquetes. Es evidencia heredada de Apply, no CI ejecutada
-por reverify. La repetición independiente se limitó al paquete modificado y sus
-tests; no fue necesario repetir CI amplia ni los paquetes sin cambios productivos.
+The final log and the Apply summary in `huginn-fix-v01/` were reviewed:
+`ci-local-final.log`, `ci-local-final.exit` and `ci-summary.txt` certify exit 0,
+9/9, 477 s, 210 Vitest and 90 E2E. `focused-recheck.log` documents the green
+repetition of the seven packages. It is inherited evidence from Apply, not CI executed
+by reverify. The independent repetition was limited to the modified package and its
+tests; it was not necessary to repeat broad CI nor the packages without product changes.
 
-Se conserva el fallo intermedio de Apply en PTY
-`stale_and_paste_confirmation_cannot_approve_then_fresh_code_can`: el helper no
-obtuvo ocho caracteres de challenge. No acredita autorización indebida y no se
-establece una causa definitiva. Pasó después, sin modificar assertions ni ese
-código, en la repetición de siete paquetes, CI final y los 39 PTY de este reverify.
-Es riesgo de observación PTY, no un fallo vigente ni motivo para omitir el caso.
+The intermediate Apply failure in PTY
+`stale_and_paste_confirmation_cannot_approve_then_fresh_code_can` is preserved: the helper did not
+obtain eight challenge characters. It does not certify undue authorization and no
+definitive cause is established. It passed afterwards, without modifying assertions nor that
+code, in the repetition of the seven packages, the final CI and the 39 PTY of this reverify.
+It is a PTY observation risk, not an active failure nor a reason to omit the case.
 
-**Decisión:** V-01 corregido y V-02 cubierto. Los límites externos/opt-in de V-03
-no bloquean el paso a QA porque OVL-05 exige servicios controlados, no credenciales
-externas reales. No equivalen a integración operativa aprobada. Se permite el
-handoff a **sdd-qa**, no Archive ni aceptación del usuario. Modo fallback y ausencia
-de cobertura instrumental permanecen declarados; UNAVAILABLE no se convierte en PASS.
+**Decision:** V-01 corrected and V-02 covered. The external/opt-in limits of V-03
+do not block the pass to QA because OVL-05 requires controlled services, not real
+external credentials. They do not equal an approved operational integration. The
+handoff to **sdd-qa** is allowed, not Archive nor user acceptance. Fallback mode and the absence
+of instrumental coverage remain declared; UNAVAILABLE does not become a PASS.
 
-## Ejecución y evidencia iniciales (histórico)
+## Initial execution and evidence (historical)
 
-Directorio de evidencia independiente (en adelante `V/`):
+Independent evidence directory (from now on `V/`):
 `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/opencode/huginn-verify/`.
-Todos los comandos se ejecutaron desde `/Users/acosta/Dev/dallay/cortex`.
+All commands were executed from `/Users/acosta/Dev/dallay/cortex`.
 
-| Comando / evidencia                                                                                                                                                                        | Exit | Resultado                                                                                                                   |
+| Command / evidence                                                                                                                                                                        | Exit | Result                                                                                                                   |
 |--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------|-----------------------------------------------------------------------------------------------------------------------------|
-| `cargo test -p huginn-core -p huginn-application -p huginn-runtime -p huginn-presentation -p huginn-plugin-api -p huginn-reference-extension -p huginn --all-features -- --test-threads=1` | 0    | `V/focused-tests.log`; 388 PASS reportados en 57 bloques, incluidos resultados de subprocesos; 2 ignored, 0 failed          |
-| Presentation dentro del comando anterior                                                                                                                                                   | 0    | 155 PASS: lib 38, completion 9, extensions 2, files 2, parser 10, plugins 2, providers_ui 8, PTY 39, state 32, workflows 13 |
+| `cargo test -p huginn-core -p huginn-application -p huginn-runtime -p huginn-presentation -p huginn-plugin-api -p huginn-reference-extension -p huginn --all-features -- --test-threads=1` | 0    | `V/focused-tests.log`; 388 PASS reported in 57 blocks, including subprocess results; 2 ignored, 0 failed          |
+| Presentation inside the previous command                                                                                                                                                   | 0    | 155 PASS: lib 38, completion 9, extensions 2, files 2, parser 10, plugins 2, providers_ui 8, PTY 39, state 32, workflows 13 |
 | `cargo fmt --all -- --check`                                                                                                                                                               | 0    | `V/static.log`                                                                                                              |
 | `git diff --check`                                                                                                                                                                         | 0    | `V/static.log`                                                                                                              |
-| `cargo check -p huginn-application --examples`                                                                                                                                             | 0    | `V/static.log`; comprobación adicional a los tests                                                                          |
-| Prueba independiente `V/settings-cycle --nocapture`                                                                                                                                        | 101  | 0 PASS, 1 FAIL; `V/settings-cycle.log`, V-01                                                                                |
-| Cobertura instrumental                                                                                                                                                                     | —    | UNAVAILABLE: no se ejecutó llvm-cov; no se declara porcentaje                                                               |
+| `cargo check -p huginn-application --examples`                                                                                                                                             | 0    | `V/static.log`; additional check to the tests                                                                          |
+| Independent test `V/settings-cycle --nocapture`                                                                                                                                        | 101  | 0 PASS, 1 FAIL; `V/settings-cycle.log`, V-01                                                                                |
+| Instrumental coverage                                                                                                                                                                     | n/a  | UNAVAILABLE: llvm-cov was not executed; no percentage is declared                                                               |
 
-La prueba independiente se escribió fuera del repositorio en
-`V/settings-cycle.rs`. Se compiló correctamente con el siguiente comando,
-usando los mismos artefactos que `tests/state.rs` de esta ejecución:
+The independent test was written outside the repository in
+`V/settings-cycle.rs`. It compiled correctly with the following command,
+using the same artifacts as `tests/state.rs` of this execution:
 
 ```sh
 rustc --edition=2021 --test /private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/opencode/huginn-verify/settings-cycle.rs -L dependency=target/debug/deps -o /private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/opencode/huginn-verify/settings-cycle --extern huginn_presentation=target/debug/deps/libhuginn_presentation-f028ce01cd85534f.rlib --extern crossterm=target/debug/deps/libcrossterm-19462bd5fb984d15.rlib --extern huginn_core=target/debug/deps/libhuginn_core-b0fd28370cd72cd2.rlib
 ```
 
-Build exit 0 en `V/settings-cycle-build.log`. El primer intento de enlace había
-seleccionado rlibs de features distintas y falló por tipos incompatibles; no fue
-una regresión de producto. Se resolvió leyendo los hashes del fingerprint
+Build exit 0 in `V/settings-cycle-build.log`. The first link attempt had
+selected rlibs of different features and failed with incompatible types; it was not
+a product regression. It was resolved by reading the hashes of the fingerprint
 `huginn-presentation-537756dcf8e42867/test-integration-test-state.json`.
-El FAIL citado corresponde a una aserción conductual ejecutada, no a compilación.
+The cited FAIL corresponds to an executed behavioral assertion, not to compilation.
 
-Se leyó también el resumen y el log final de Apply en `huginn-apply6/`:
+The Apply summary and final log in `huginn-apply6/` were also read:
 `ci-local-verified.log` / `ci-summary.txt`, 9/9 exit 0, 431 s, 210 Vitest,
-90 E2E. Se conserva como evidencia heredada, no como CI ejecutada por Verify.
-No se repitió CI amplia porque las modificaciones son de Huginn y la repetición
-focal cubre sus siete paquetes. El fallo histórico openpty OS -6 no reapareció
-en los 39 PTY de Verify; esto no establece su causa definitiva.
+90 E2E. It is preserved as inherited evidence, not as CI executed by Verify.
+Broad CI was not repeated because the modifications are in Huginn and the focused
+repetition covers its seven packages. The historical openpty OS -6 failure did not reappear
+in the 39 PTY of Verify; this does not establish its definitive cause.
 
-## Matriz de conformidad conductual
+## Behavioral conformance matrix
 
-Los nombres siguientes corresponden a tests que pasaron en `V/focused-tests.log`.
-Los casos de presentation volvieron a pasar en `R/presentation.log`; SET-05 se
-actualiza con la evidencia de reverify. `lib` se refiere a huginn-presentation;
-los targets se identifican con su paquete cuando no pertenecen a presentation.
+The following names correspond to tests that passed in `V/focused-tests.log`.
+The presentation cases passed again in `R/presentation.log`; SET-05 is
+updated with the reverify evidence. `lib` refers to huginn-presentation;
+the targets are identified with their package when they do not belong to presentation.
 
-| REQ → escenario                                                              | Test ejecutado / evidencia                                                                                                                                                                                                 | Estado técnico                                                       |
+| REQ → scenario                                                              | Executed test / evidence                                                                                                                                                                                                 | Technical state                                                       |
 |------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------|
 | OVL-01-A                                                                     | workflows `declarative_help_opens_real_host_overlay_without_notification`; lib `render_snapshot_and_input_share_authority_and_redact_secrets`; PTY streaming/scrollback                                                    | COMPLIANT                                                            |
 | OVL-02-A                                                                     | workflows `declarative_help_opens_real_host_overlay_without_notification`; plugin-api contract/workflows                                                                                                                   | COMPLIANT                                                            |
-| OVL-02-B                                                                     | workflows `result_rejection_preserves_current_payload_focus_and_conversation`, `approval_preempts_secret_workflow_and_rejects_all_ordinary_requests`; plugin-api validadores                                               | COMPLIANT                                                            |
+| OVL-02-B                                                                     | workflows `result_rejection_preserves_current_payload_focus_and_conversation`, `approval_preempts_secret_workflow_and_rejects_all_ordinary_requests`; plugin-api validators                                               | COMPLIANT                                                            |
 | OVL-03-A                                                                     | state `settings_apply_reenters_ui_once_and_late_receipt_cannot_alter_approval`, `approval_retains_entire_diff_and_requires_fresh_armed_code`; PTY stale/fresh                                                              | COMPLIANT                                                            |
 | OVL-03-B                                                                     | state `approval_sender_loss_is_denial_and_late_input_has_no_authority`, `dropping_approval_waiter_retires_authority_and_sender`, `approval_cancellation_wins_ready_answer_and_shutdown_wakes_serial_waiters`               | COMPLIANT                                                            |
-| OVL-03-C                                                                     | state `approval_requests_serialize_and_stale_lease_cannot_resolve_successor`; workflows preemption/rechazo                                                                                                                 | COMPLIANT                                                            |
+| OVL-03-C                                                                     | state `approval_requests_serialize_and_stale_lease_cannot_resolve_successor`; workflows preemption/rejection                                                                                                                 | COMPLIANT                                                            |
 | OVL-04-A                                                                     | PTY `ctrl_c_cancels_incomplete_secret_paste_and_discards_its_remaining_bytes`, `closing_secret_form_discards_fragmented_paste_and_accepts_fresh_input`; app providers_flow                                                 | COMPLIANT                                                            |
 | OVL-04-B                                                                     | workflows `revoked_origin_and_reregistered_name_cannot_mutate_replacement`, `late_result_after_cancel_does_not_replace_a_new_form`, `reentrant_callbacks_cannot_commit_stale_tickets_and_pending_drop_is_outside_lock`     | COMPLIANT                                                            |
-| OVL-05-A                                                                     | providers_ui 8; huginn/providers_flow 6; application/providers_turns; runtime/providers_integration                                                                                                                        | COMPLIANT con servicios controlados                                  |
-| OVL-05-B                                                                     | providers_ui y providers_flow: Secure fallido, Ephemeral explícito, validación, logout/cancelación; runtime secret_store con doble                                                                                         | COMPLIANT con servicios controlados                                  |
+| OVL-05-A                                                                     | providers_ui 8; huginn/providers_flow 6; application/providers_turns; runtime/providers_integration                                                                                                                        | COMPLIANT with controlled services                                  |
+| OVL-05-B                                                                     | providers_ui and providers_flow: Secure failed, explicit Ephemeral, validation, logout/cancellation; runtime secret_store with double                                                                                         | COMPLIANT with controlled services                                  |
 | EVT-01-A                                                                     | providers_ui `repeated_ui_commands_after_dedup_expiry_preserve_stream_and_conversation`; PTY `overlays_during_streaming_never_commit_ui_or_secrets_to_scrollback`                                                          | COMPLIANT                                                            |
 | EVT-01-B                                                                     | state `explicit_ui_categories_do_not_depend_on_message_text`                                                                                                                                                               | COMPLIANT                                                            |
 | EVT-02-A                                                                     | state `resume_and_synchronize_commit_messages_once_not_mutable_tail`, `tool_error_uses_contributed_label_and_marks_status`; runtime stream_persistence                                                                     | COMPLIANT                                                            |
@@ -143,110 +143,110 @@ los targets se identifican con su paquete cuando no pertenecen a presentation.
 | EVT-03-B                                                                     | lib `dedup_interleaved_operations_do_not_suppress_each_other`; state `explicit_event_operation_scope_survives_interleaved_producers`                                                                                       | COMPLIANT                                                            |
 | EVT-03-C                                                                     | lib `dedup_scopes_operations_and_compares_full_text_on_hash_collision`                                                                                                                                                     | COMPLIANT                                                            |
 | EVT-04-A                                                                     | lib `dedup_enforces_entry_byte_and_oversize_bounds_without_truncation`, `dedup_purges_expired_entries_and_releases_retained_bytes`, `dedup_nonce_exhaustion_emits_without_panicking_or_caching`                            | COMPLIANT                                                            |
-| BAR-01-A                                                                     | PTY `overlays_keep_status_visible_at_minimum_inline_size`, `actual_terminal_resize_preserves_bar_and_restores_overlay_surface`, `approval_resize_below_minimum_disarms_until_a_fresh_draw`; lib zero-area y status_bar     | COMPLIANT                                                            |
+| BAR-01-A                                                                     | PTY `overlays_keep_status_visible_at_minimum_inline_size`, `actual_terminal_resize_preserves_bar_and_restores_overlay_surface`, `approval_resize_below_minimum_disarms_until_a_fresh_draw`; lib zero-area and status_bar     | COMPLIANT                                                            |
 | BAR-02-A                                                                     | state `watch_attachment_initial_read_coalesces_concurrent_updates_without_gap`; application/providers_contracts `staged_selection_requires_exact_commit_and_snapshot_is_safe`                                              | COMPLIANT                                                            |
 | BAR-02-B                                                                     | state `connection_attachment_rejects_stale_sources_revisions_and_retired_close`                                                                                                                                            | COMPLIANT                                                            |
 | BAR-02-C                                                                     | application/connections fault injection/publication/reopen; providers_contracts `selection_watch_tracks_exact_teardown_and_activation_source`, `adapter_self_cancellation_publishes_absence_before_unload`; core lifecycle | COMPLIANT                                                            |
-| BAR-03-A                                                                     | lib status_bar tests; application/providers_contracts staged snapshot; PTY barra                                                                                                                                           | COMPLIANT                                                            |
-| BAR-03-B                                                                     | providers_contracts failure/revocation; application/connections publication faults; lib status_bar feedback/diagnostic                                                                                                     | COMPLIANT: no se emite disponibilidad remota, ni siquiera tras éxito |
+| BAR-03-A                                                                     | lib status_bar tests; application/providers_contracts staged snapshot; PTY bar                                                                                                                                           | COMPLIANT                                                            |
+| BAR-03-B                                                                     | providers_contracts failure/revocation; application/connections publication faults; lib status_bar feedback/diagnostic                                                                                                     | COMPLIANT: no remote availability is emitted, not even after success |
 | SET-07-A/B/C                                                                 | state `settings_failed_apply_preserves_copy_and_error_and_can_retry`, `settings_apply_reenters_ui_once_and_late_receipt_cannot_alter_approval`; lib projected config                                                       | COMPLIANT                                                            |
-| SET-07-D                                                                     | state `late_settings_receipt_preserves_new_working_copy_and_focus` (éxito/error)                                                                                                                                           | COMPLIANT                                                            |
+| SET-07-D                                                                     | state `late_settings_receipt_preserves_new_working_copy_and_focus` (success/failure)                                                                                                                                           | COMPLIANT                                                            |
 | SET-08-A/B                                                                   | state receipt/preemption/streaming; PTY streaming; `settings_started_write_finishes_after_shutdown_without_reopening_or_notifying`                                                                                         | COMPLIANT                                                            |
-| SET-12-A/B/C/D                                                               | state stale input y receipt/Approval; workflows authorized replacement, result rejection y preemption                                                                                                                      | COMPLIANT                                                            |
-| SET-01, SET-16: registro, whitespace, catálogo y no prompt                   | state `settings_catalog_and_shell_navigation_never_persist_and_add_provider_only_notifies`; completion/plugins; PTY streaming                                                                                              | COMPLIANT                                                            |
-| SET-02/03/04: estructura, tabs y filas/markers                               | lib settings snapshot/tab/item; state shell; PTY matriz de tamaños                                                                                                                                                         | COMPLIANT                                                            |
-| SET-05: temas/defaults/booleanos                                             | lib settings `snapshot_items_match_locked_d6`; huginn config_compat/bin defaults                                                                                                                                           | COMPLIANT                                                            |
-| SET-05: toasts, `→` sobre level: info → level: warn                          | Prueba independiente original recompilada: active_tab=3, level=1; tres nuevos tests host en `R/presentation.log`                                                                                                           | **COMPLIANT, V-01 resuelto**                                         |
-| SET-06: navegación sin escritura                                             | state shell; lib settings; closures contadas                                                                                                                                                                               | COMPLIANT                                                            |
-| SET-09/10/11: bytes externos, defaults ausentes/parciales/completos, unknown | huginn bin tests 15 y config_compat 5                                                                                                                                                                                      | COMPLIANT                                                            |
-| SET-13/14: Esc no cancela turno, Add provider sin I/O                        | state shell/stale input; PTY streaming                                                                                                                                                                                     | COMPLIANT                                                            |
-| SET-15: exclusión de line-mode                                               | huginn tui y cli                                                                                                                                                                                                           | COMPLIANT                                                            |
+| SET-12-A/B/C/D                                                               | state stale input and receipt/Approval; workflows authorized replacement, result rejection and preemption                                                                                                                      | COMPLIANT                                                            |
+| SET-01, SET-16: registration, whitespace, catalog and no prompt                   | state `settings_catalog_and_shell_navigation_never_persist_and_add_provider_only_notifies`; completion/plugins; PTY streaming                                                                                              | COMPLIANT                                                            |
+| SET-02/03/04: structure, tabs and rows/markers                               | lib settings snapshot/tab/item; state shell; PTY size matrix                                                                                                                                                         | COMPLIANT                                                            |
+| SET-05: themes/defaults/booleans                                             | lib settings `snapshot_items_match_locked_d6`; huginn config_compat/bin defaults                                                                                                                                           | COMPLIANT                                                            |
+| SET-05: toasts, `→` over level: info → level: warn                          | Recompiled original independent test: active_tab=3, level=1; three new host tests in `R/presentation.log`                                                                                                           | **COMPLIANT, V-01 resolved**                                         |
+| SET-06: navigation without write                                             | state shell; lib settings; counted closures                                                                                                                                                                               | COMPLIANT                                                            |
+| SET-09/10/11: external bytes, absent/partial/complete defaults, unknown | huginn bin tests 15 and config_compat 5                                                                                                                                                                                      | COMPLIANT                                                            |
+| SET-13/14: Esc does not cancel the turn, Add provider without I/O                        | state shell/stale input; PTY streaming                                                                                                                                                                                     | COMPLIANT                                                            |
+| SET-15: line-mode exclusion                                               | huginn tui and cli                                                                                                                                                                                                           | COMPLIANT                                                            |
 
-## Corrección e inspección de diseño
+## Fix and design inspection
 
-| Área                      | Inspección independiente                                                                                                                                                                                                                | Resultado                                                                         |
+| Area                      | Independent inspection                                                                                                                                                                                                                | Result                                                                         |
 |---------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------|
-| Autoridad única D1/D8     | `state.rs:158–192`: solo `overlays` posee payload activo; accesores modal/workflow/settings son proyecciones; `terminal.rs` snapshot e input consultan la misma máquina                                                                 | Conforme                                                                          |
-| Host-only D2/D9           | API plugin no incluye Approval; máquina `overlay.rs:401–427` valida host/ticket/origen; Approval conserva sender separado de PluginDialog                                                                                               | Conforme                                                                          |
-| Resize fail-closed        | `terminal.rs:523–549,909–918` desarma tamaño inviable y solo arma tras paint viable; PTY envía código válido a 1x1 y después a 20x8; lib cubre 0x0                                                                                      | Conforme en escenarios ejecutados                                                 |
-| UI y persistencia D3/D7   | `state.rs:284–300` separa categorías; `terminal.rs:564–575` solo inserta conversation; FIFO en event.rs es no autoritativa; runtime recupera sesión >256                                                                                | Conforme                                                                          |
-| Selección/watch D4        | providers publica con mutex/`send_replace`, exige candidata exacta; subscribe usa mismo mutex; ModelPublication y MetadataMutation cierran fail-closed; terminal usa borrow_and_update antes del draw y attachment al actualizar/cerrar | Conforme                                                                          |
-| Secretos D5/D6            | Snapshot de overlay solo identidad; workflow renderer enmascara; dedup conserva comparación cifrada, límites 256/256KiB/4096 y operación; pruebas de centinela/JSON/PTY pasan                                                           | Conforme al alcance de pruebas; no certifica todas las fuentes de errores futuras |
-| Settings receipts         | `state.rs:1051–1143` captura una vez, serializa workers y consume en orden; éxito tardío solo actualiza saved config; error tardío no modifica overlay actual                                                                           | Conforme                                                                          |
-| Tamaño, clipping y scroll | Reserva barra antes de ramas; clipping por celdas; Approval preview completo con PgUp/PgDn; PTY 20x8/100x30, resize y restauración pasan                                                                                                | Conforme                                                                          |
-| Navegación Settings       | `overlay.rs:140–151` da prioridad a los ciclos toasts; Tab/BackTab conservan navegación y las demás pestañas conservan flechas de sección; regresiones host y test independiente pasan                                                  | Conforme tras reverify; incumplimiento histórico SET-05 resuelto                  |
+| Single authority D1/D8     | `state.rs:158–192`: only `overlays` owns the active payload; the modal/workflow/settings accessors are projections; the `terminal.rs` snapshot and input query the same machine                                                                 | Compliant                                                                          |
+| Host-only D2/D9           | The plugin API does not include Approval; the `overlay.rs:401–427` machine validates host/ticket/origin; Approval keeps a sender separate from PluginDialog                                                                                               | Compliant                                                                          |
+| Fail-closed resize        | `terminal.rs:523–549,909–918` disarms an unviable size and only arms after a viable paint; the PTY sends a valid code at 1x1 and then at 20x8; lib covers 0x0                                                                                      | Compliant in the executed scenarios                                                 |
+| UI and persistence D3/D7   | `state.rs:284–300` separates the categories; `terminal.rs:564–575` only inserts conversation; the FIFO in event.rs is not authoritative; the runtime recovers a session >256                                                                                | Compliant                                                                          |
+| Selection/watch D4        | providers publishes with mutex/`send_replace`, requires the exact candidate; subscribe uses the same mutex; ModelPublication and MetadataMutation close fail-closed; the terminal uses borrow_and_update before the draw and attachment on update/close | Compliant                                                                          |
+| Secrets D5/D6            | The overlay snapshot holds identity only; the workflow renderer masks; dedup keeps encrypted comparison, the 256/256KiB/4096 limits and the operation; the sentinel/JSON/PTY tests pass                                                           | Compliant to the test scope; it does not certify all future error sources |
+| Settings receipts         | `state.rs:1051–1143` captures once, serializes the workers and consumes in order; a late success only updates the saved config; a late error does not modify the current overlay                                                                           | Compliant                                                                          |
+| Size, clipping and scroll | The bar is reserved before the branches; clipping is per cell; the Approval preview is complete with PgUp/PgDn; the PTY 20x8/100x30, resize and restoration pass                                                                                                | Compliant                                                                          |
+| Settings navigation       | `overlay.rs:140–151` prioritizes the toast cycles; Tab/BackTab keep the navigation and the other tabs keep the section arrows; the host regressions and the independent test pass                                                  | Compliant after reverify; the historical SET-05 breach resolved                  |
 
-El diseño permite kind + payload tipado en vez de imponer literalmente una
-variante de payload por cada superficie; esta elección no es doble autoridad.
-Los tests de reentrancia ejercitan callbacks y Drop fuera del lock. No se
-observaron slots activos legacy independientes ni cambios de contratos durables.
+The design allows kind + typed payload instead of imposing literally a
+payload variant for each surface; this choice is not a dual authority.
+The reentrancy tests exercise callbacks and Drop outside the lock. No
+independent legacy active slots nor durable contract changes were observed.
 
-## Hallazgos priorizados
+## Prioritized findings
 
 | Finding                                                                | Judge A      | Judge B      | Severity           | Status                                                              |
 |------------------------------------------------------------------------|--------------|--------------|--------------------|---------------------------------------------------------------------|
-| V-01: SET-05 no cicla toasts con →, overlay.rs:140–144 original        | No ejecutado | No ejecutado | CRITICAL histórico | RESOLVED: test independiente original PASS en reverify              |
-| V-02: cobertura original no acredita teclado del escenario SET-05      | No ejecutado | No ejecutado | WARNING histórico  | RESOLVED: tres regresiones host PASS                                |
-| V-03: sistemas externos/opt-in sin ejecución                           | No ejecutado | No ejecutado | WARNING            | UNTESTED; no es PASS externo                                        |
-| V-04: helper PTY de challenge falló en una corrida intermedia de Apply | No ejecutado | No ejecutado | WARNING            | Sin causa definitiva; caso íntegro PASS en reverify y gates finales |
+| V-01: SET-05 did not cycle toasts with →, overlay.rs:140–144 original        | Not executed | Not executed | Historical CRITICAL | RESOLVED: the original independent test PASSES in reverify              |
+| V-02: the original coverage does not certify the keyboard of the SET-05 scenario      | Not executed | Not executed | Historical WARNING  | RESOLVED: three host regressions PASS                                |
+| V-03: external/opt-in systems not executed                           | Not executed | Not executed | WARNING            | UNTESTED; it is not an external PASS                                        |
+| V-04: the challenge PTY helper failed in an intermediate Apply run | Not executed | Not executed | WARNING            | No definitive cause; the complete case PASSES in reverify and the final gates |
 
-No hubo dos jueces independientes; las columnas requeridas no simulan votos.
+There were no two independent judges; the required columns do not simulate votes.
 
-### CRITICAL histórico — V-01 resuelto
+### Historical CRITICAL: V-01 resolved
 
-La especificación base conservada exige en REQ-05, líneas 132–139, que `→` sobre
-`level: info` muestre `level: warn`. Reproducción: abrir `/settings`, pulsar Tab
-tres veces para toasts y pulsar Right. El router real cambia a integrations (`active_tab=4`) y mantiene info (`level=0`). La aserción independiente falla
-con exit 101. Esto impide aceptar la preservación completa de Settings aunque
-el comportamiento pudiera ser anterior a esta migración: el delta conserva
-expresamente REQ-05. No se corrigió ni se cambió el spec en Verify.
-La corrección posterior de Apply hace pasar exactamente este fuente externo:
-exit 0, tab=3 y level=1, sin cambiar las aserciones. No queda abierto V-01.
+The preserved base specification requires in REQ-05, lines 132–139, that `→` over
+`level: info` shows `level: warn`. Reproduction: open `/settings`, press Tab
+three times to reach the toasts and press Right. The real router switches to integrations (`active_tab=4`) and keeps info (`level=0`). The independent assertion fails
+with exit 101. This prevents accepting the full preservation of Settings even though
+the behavior could predate this migration: the delta preserves
+REQ-05 expressly. It was not corrected nor the spec changed in Verify.
+The later Apply correction makes exactly this external source pass:
+exit 0, tab=3 and level=1, without changing the assertions. V-01 remains open no more.
 
-### WARNING histórico — V-02 resuelto
+### Historical WARNING: V-02 resolved
 
 `toggle_advances_toast_level_cycle` / `toggle_advances_toast_duration_cycle`
-invocan `toggle_selected`; el test host navega las pestañas con Tab y no prueba
-Right dentro de toasts. Así, los 155 tests de presentation pueden pasar mientras
-el escenario contractual falla. Se requiere regresión por input host, además de
-decidir cómo compatibilizar navegación horizontal de tabs y ciclo de pickers.
-Apply añadió tres tests host que cubren teclado, ciclos, navegación y persistencia;
-los tres pasan en este reverify. No queda abierto V-02.
+invoke `toggle_selected`; the host test navigates the tabs with Tab and does not test
+Right inside the toasts. Thus, the 155 presentation tests can pass while the
+contractual scenario fails. A regression through host input is required, in addition to
+deciding how to make compatible the horizontal navigation of tabs and the cycle of pickers.
+Apply added three host tests that cover the keyboard, the cycles, the navigation and the persistence;
+the three pass in this reverify. V-02 remains open no more.
 
-### WARNING — V-03 y límites de aceptación
+### WARNING: V-03 and acceptance limits
 
-- No se usaron proveedor externo ni almacén seguro real del SO. OVL-05-A exige
-  explícitamente un servicio controlado; OVL-05-B exige un fallo controlado de
-  almacenamiento. Por tanto estos límites no invalidan esos escenarios técnicos,
-  que sí se ejecutaron, pero tampoco acreditan integración operativa externa.
-- Dos tests ignored siguen UNTESTED: lock con binario pre-rename y backend de
-  secretos del SO. El primero no corresponde a un requisito nuevo de overlay;
-  el segundo no sustituye la prueba de fallo Secure sin fallback, que sí pasó.
-  Ningún spec de este cambio exige usar credenciales externas reales para aceptar
-  esos escenarios. QA debe declarar su alcance operativo, no asumir éxito real.
-- El spec base enumera un target `--test settings` que no existe. La conducta
-  se distribuye entre lib/state/PTY; se verificaron esos targets reales. Esa
-  distribución no excusó el escenario de teclado faltante V-01, ahora cubierto.
-- Sin cobertura instrumental ni runner determinista, no se declara cobertura
-  exhaustiva de ramas. La conformidad se limita a los escenarios ejecutados.
-- Los casos llamados QA en specs tienen evidencia automatizada técnica; la
-  aceptación del operador y `qa-report.md` siguen pendientes. No archivar.
+- Neither an external provider nor the real OS secure store were used. OVL-05-A requires
+  explicitly a controlled service; OVL-05-B requires a controlled storage failure.
+  Therefore these limits do not invalidate those technical scenarios,
+  which were indeed executed, but they also do not certify external operational integration.
+- Two ignored tests remain UNTESTED: the lock with the pre-rename binary and the OS
+  secrets backend. The first does not correspond to a new overlay requirement;
+  the second does not replace the Secure failure test without fallback, which did pass.
+  No spec of this change requires using real external credentials to accept
+  those scenarios. QA must declare its operational scope, not assume real success.
+- The base spec enumerates a `--test settings` target that does not exist. The behavior
+  is distributed among lib/state/PTY; those real targets were verified. That
+  distribution did not excuse the missing keyboard scenario V-01, now covered.
+- Without instrumental coverage nor a deterministic runner, exhaustive branch coverage
+  is not declared. The conformance is limited to the executed scenarios.
+- The cases called QA in the specs have technical automated evidence; the
+  operator acceptance and `qa-report.md` remain pending. Do not archive.
 
 ### SUGGESTION
 
-Conservar una prueba de regresión host para cada tecla contractual de Settings;
-no sustituir el escenario Right por una prueba de Space sin cambio aprobado del
-spec. Mantener las aserciones de seguridad y de PTY existentes.
+Keep a host regression test for each contractual Settings key;
+do not replace the Right scenario with a Space test without an approved spec change.
+Keep the existing security and PTY assertions.
 
-## Integridad y siguiente fase
+## Integrity and next phase
 
-El hash final del staging coincide con el recibido:
+The final staging hash matches the received one:
 `180ff411c3b36a8699b8986dd543e8237cf83fdebe946e6f052722fea4471c54`.
-No se ejecutó add/reset/unstage/checkout/commit/push/merge/PR, reset de datos,
-Archive ni escritura de state.
+No add/reset/unstage/checkout/commit/push/merge/PR, data reset,
+Archive nor state write was executed.
 
-**Handoff actual:** el orquestador puede delegar a **sdd-qa**, responsable de los
-escenarios de aceptación y de `qa-report.md`. Reverify concluye **PASS WITH WARNINGS**;
-el FAIL inicial queda supersedido por evidencia nueva, no borrado. No autoriza
-Archive ni aceptación de producto. Staging comprobado sin cambios también al
-final de la ejecución focal de reverify; state sigue bajo control del orquestador.
+**Current handoff:** the orchestrator can delegate to **sdd-qa**, responsible for the
+acceptance scenarios and for `qa-report.md`. Reverify concludes **PASS WITH WARNINGS**;
+the initial FAIL is superseded by new evidence, not deleted. It does not authorize
+Archive nor product acceptance. Staging verified without changes also at the
+end of the focused reverify execution; the state remains under the orchestrator control.

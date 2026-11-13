@@ -129,7 +129,6 @@ mod tests {
             None,
             None,
             Arc::new(rook_usecases::PricingConfig::default()),
-            Arc::new(crate::format_registry::FormatRegistry::new()),
             Arc::new(DummyAliasRepo),
             rook_usecases::route_request::ModelAliasesConfig {
                 enabled: false,

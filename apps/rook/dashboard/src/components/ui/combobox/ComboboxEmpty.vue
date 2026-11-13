@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {ComboboxEmptyProps} from "reka-ui";
 import {ComboboxEmpty} from "reka-ui";
@@ -14,10 +14,10 @@ const delegatedProps = reactiveOmit(props, "class");
 
 <template>
   <ComboboxEmpty
+    :class="cn('py-6 text-center text-sm', props.class)"
     data-slot="combobox-empty"
     v-bind="delegatedProps"
-    :class="cn('py-6 text-center text-sm', props.class)"
   >
-    <slot />
+    <slot/>
   </ComboboxEmpty>
 </template>

@@ -4,11 +4,11 @@
 
 We actively maintain security updates for the following versions. We recommend always using the latest stable release.
 
-| Version    | Supported          |
-| --------- | ------------------ |
-| `>= 2.x`  | :white_check_mark: |
-| `1.x`     | :white_check_mark: |
-| `< 1.x`   | :x:                |
+| Version  | Supported          |
+|----------|--------------------|
+| `>= 2.x` | :white_check_mark: |
+| `1.x`    | :white_check_mark: |
+| `< 1.x`  | :x:                |
 
 ### Release Cadence
 
@@ -33,16 +33,17 @@ Send a report to **privately via GitHub Security Advisories**:
 
 ### What to Expect After Reporting
 
-| Timeline | What Happens |
-| -------- | ------------ |
-| **< 48 hours** | Initial acknowledgment from the maintainers. |
-| **< 7 days** | Preliminary severity assessment (Critical / High / Medium / Low). |
-| **< 30 days** | If accepted: a fix is prepared in a private branch. Patch release timeline communicated. |
-| **< 60 days** | Public disclosure on a mutually agreed date. We will reach out if extended timeline is needed. |
+| Timeline       | What Happens                                                                                   |
+|----------------|------------------------------------------------------------------------------------------------|
+| **< 48 hours** | Initial acknowledgment from the maintainers.                                                   |
+| **< 7 days**   | Preliminary severity assessment (Critical / High / Medium / Low).                              |
+| **< 30 days**  | If accepted: a fix is prepared in a private branch. Patch release timeline communicated.       |
+| **< 60 days**  | Public disclosure on a mutually agreed date. We will reach out if extended timeline is needed. |
 
 ### Scope
 
 The policy covers vulnerabilities in the cortex monorepo, including:
+
 - Core packages (`rook` CLI, Rust backend)
 - Frontend apps (`apps/`)
 - Infrastructure-as-Code configurations
@@ -87,12 +88,12 @@ The policy covers vulnerabilities in the cortex monorepo, including:
 
 The following packages/configs receive elevated security scrutiny:
 
-| Package / Config | Reason |
-| ---------------- | ------ |
-| `crates/rook/` | CLI with file system and git access |
-| `apps/rook/dashboard/` | User-facing web app with auth |
-| `.github/workflows/` | CI/CD with secrets access |
-| `infra/` | Cloud infrastructure definitions |
+| Package / Config       | Reason                              |
+|------------------------|-------------------------------------|
+| `crates/rook/`         | CLI with file system and git access |
+| `apps/rook/dashboard/` | User-facing web app with auth       |
+| `.github/workflows/`   | CI/CD with secrets access           |
+| `infra/`               | Cloud infrastructure definitions    |
 
 ---
 
@@ -102,21 +103,21 @@ The following packages/configs receive elevated security scrutiny:
 
 The project uses multiple layers of automated vulnerability scanning:
 
-| Tool | Scope | PR Gate (`ci.yml`) | Nightly (`security-deep.yml`) | SonarCloud |
-| ---- | ----- | ------------------ | ---------------------------- | --------- |
-| **cargo audit** | Rust dependencies | :white_check_mark: Blocks on vulnerable deps | N/A | — |
-| **Dependabot** | `Cargo.lock`, `pnpm-lock.yaml` | :white_check_mark: Auto-merge for patch/security | N/A | — |
-| **Gitleaks** (`gitleaks-pr`) | Secrets in commits | :white_check_mark: Blocks on any secret found | Reporting only (full history) | — |
-| **GitGuardian** (`ggshield`) | Secret detection in commits & pre-push | :white_check_mark: Scans on push/PR (`gitguardian-scan.yml`) & local pre-push hook | — | — |
-| **Semgrep** (`semgrep-pr`) | SAST (rust, docker, GH actions, secrets) | :white_check_mark: Blocks on ERROR-severity findings | Reporting only (all severities) | — |
-| **Trivy** (`trivy-fs`) | Filesystem, dependencies, IaC | :white_check_mark: Blocks on HIGH/CRITICAL vulns | Reporting only (all severities) | — |
-| **SonarCloud** | Code quality + security hotspots | Conditional (token required) | — | :white_check_mark: If configured |
+| Tool                         | Scope                                    | PR Gate (`ci.yml`)                                                                 | Nightly (`security-deep.yml`)   | SonarCloud                       |
+|------------------------------|------------------------------------------|------------------------------------------------------------------------------------|---------------------------------|----------------------------------|
+| **cargo audit**              | Rust dependencies                        | :white_check_mark: Blocks on vulnerable deps                                       | N/A                             | —                                |
+| **Renovate**                 | `Cargo.lock`, `pnpm-lock.yaml`           | :white_check_mark: Opens patch/security and lock-file maintenance PRs for manual merge | N/A                             | —                                |
+| **Gitleaks** (`gitleaks-pr`) | Secrets in commits                       | :white_check_mark: Blocks on any secret found                                      | Reporting only (full history)   | —                                |
+| **GitGuardian** (`ggshield`) | Secret detection in commits & pre-push   | :white_check_mark: Scans on push/PR (`gitguardian-scan.yml`) & local pre-push hook | —                               | —                                |
+| **Semgrep** (`semgrep-pr`)   | SAST (rust, docker, GH actions, secrets) | :white_check_mark: Blocks on ERROR-severity findings                               | Reporting only (all severities) | —                                |
+| **Trivy** (`trivy-fs`)       | Filesystem, dependencies, IaC            | :white_check_mark: Blocks on HIGH/CRITICAL vulns                                   | Reporting only (all severities) | —                                |
+| **SonarCloud**               | Code quality + security hotspots         | Conditional (token required)                                                       | —                               | :white_check_mark: If configured |
 
 ### Keeping Dependencies Updated
 
-- **GitHub Dependabot** creates PRs for outdated dependencies automatically.
+- **Renovate** creates PRs for outdated dependencies automatically, with OSV vulnerability alerts enabled and lock file maintenance.
 - Security updates are merged quickly; feature/minor updates follow regular review cadence.
-- We enable **automated security updates** for critical CVEs via Dependabot.
+- Renovate runs on a schedule with a minimum release age of 3 days and groups updates by manager and type.
 
 ---
 
@@ -132,12 +133,12 @@ When a vulnerability is reported or discovered:
 
 ### Severity Classification
 
-| Level | Definition | Response Time |
-| ----- | ---------- | ------------- |
+| Level        | Definition                                            | Response Time                     |
+|--------------|-------------------------------------------------------|-----------------------------------|
 | **Critical** | Remote code execution, complete authentication bypass | < 24 hours for initial mitigation |
-| **High** | Data exfiltration, privilege escalation | < 7 days for patch |
-| **Medium** | Information disclosure, DoS | < 30 days for patch |
-| **Low** | Minor impact, hard to exploit | Next release cycle |
+| **High**     | Data exfiltration, privilege escalation               | < 7 days for patch                |
+| **Medium**   | Information disclosure, DoS                           | < 30 days for patch               |
+| **Low**      | Minor impact, hard to exploit                         | Next release cycle                |
 
 ---
 
@@ -156,11 +157,11 @@ No formal certifications currently (SOC2, ISO 27001, etc.).
 
 ## Security-Related Links
 
-| Resource | Link |
-| -------- | ---- |
-| Report a vulnerability | [GitHub Security Advisories](https://github.com/dallay/cortex/security/advisories) |
-| Code scanning results | [GitHub Code Scanning](https://github.com/dallay/cortex/security/code-scanning) |
-| Dependabot alerts | [Dependabot Alerts](https://github.com/dallay/cortex/security/dependabot) |
-| Secret scanning alerts | [GitHub Secret Scanning](https://github.com/dallay/cortex/security/secrets) |
-| CI/CD workflow | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) |
-| Nightly security deep scan | [`.github/workflows/security-deep.yml`](.github/workflows/security-deep.yml) |
+| Resource                   | Link                                                                               |
+|----------------------------|------------------------------------------------------------------------------------|
+| Report a vulnerability     | [GitHub Security Advisories](https://github.com/dallay/cortex/security/advisories) |
+| Code scanning results      | [GitHub Code Scanning](https://github.com/dallay/cortex/security/code-scanning)    |
+| Renovate configuration     | [`renovate.json`](renovate.json)                                                |
+| Secret scanning alerts     | [GitHub Secret Scanning](https://github.com/dallay/cortex/security/secrets)        |
+| CI/CD workflow             | [`.github/workflows/ci.yml`](.github/workflows/ci.yml)                             |
+| Nightly security deep scan | [`.github/workflows/security-deep.yml`](.github/workflows/security-deep.yml)       |

@@ -1,4 +1,4 @@
-use huginn_core::{CancellationToken, ModelProvider, ModelRequest};
+use huginn_core::{AgentError, CancellationToken, ModelProvider, ModelRequest};
 use huginn_runtime::model::OpenAiProvider;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -78,8 +78,66 @@ async fn untrusted_tls_is_rejected_before_authorization() {
         .err()
         .unwrap();
     assert!(!error.to_string().contains("sentinel-secret"));
+    // A certificate this client does not trust is a configuration error, not a transient
+    // one: repeating the same handshake can never succeed and would only burn the budget.
+    assert!(
+        matches!(error, AgentError::Model(_)),
+        "an untrusted certificate must be a permanent failure, got {error:?}"
+    );
+    assert!(!error.is_retryable_inference());
     task.await.unwrap();
     assert!(!received.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn handshake_eof_is_retryable_inference() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!(
+        "https://127.0.0.1:{}",
+        listener.local_addr().unwrap().port()
+    );
+    let task = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut hello = [0; 4096];
+        assert!(socket.read(&mut hello).await.unwrap() > 0);
+        socket.shutdown().await.unwrap();
+    });
+    let provider = OpenAiProvider::new(&endpoint, "m".into(), None, 2).unwrap();
+    let error = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .err()
+        .unwrap();
+    assert!(matches!(error, AgentError::Inference(_)), "got {error:?}");
+    assert!(error.is_retryable_inference());
+    task.await.unwrap();
+}
+
+#[tokio::test]
+async fn plaintext_response_to_tls_is_permanent() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!(
+        "https://127.0.0.1:{}",
+        listener.local_addr().unwrap().port()
+    );
+    let task = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut hello = [0; 4096];
+        assert!(socket.read(&mut hello).await.unwrap() > 0);
+        socket
+            .write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n")
+            .await
+            .unwrap();
+    });
+    let provider = OpenAiProvider::new(&endpoint, "m".into(), None, 2).unwrap();
+    let error = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .err()
+        .unwrap();
+    assert!(matches!(error, AgentError::Model(_)), "got {error:?}");
+    assert!(!error.is_retryable_inference());
+    task.await.unwrap();
 }
 
 #[tokio::test]

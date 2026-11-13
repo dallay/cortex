@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {ComboboxTriggerProps} from "reka-ui";
 import {ComboboxTrigger, useForwardProps} from "reka-ui";
@@ -16,11 +16,11 @@ const forwarded = useForwardProps(delegatedProps);
 
 <template>
   <ComboboxTrigger
-    data-slot="combobox-trigger"
-    v-bind="forwarded"
     :class="cn('', props.class)"
+    data-slot="combobox-trigger"
     tabindex="0"
+    v-bind="forwarded"
   >
-    <slot />
+    <slot/>
   </ComboboxTrigger>
 </template>

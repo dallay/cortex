@@ -243,6 +243,111 @@ fn prepare_interaction(
     Ok((interactive, tui, input))
 }
 
+/// Prints the discovered Agent Skills catalog, as JSON when `--json` is set.
+fn print_skills_report(cli: &Cli) -> anyhow::Result<()> {
+    use huginn_application::skills::SkillCatalogQuery;
+    let workspace = resolve_workspace(cli.workspace.clone())?;
+    let home = std::env::var_os("HOME")
+        .filter(|p| !p.is_empty())
+        .map(PathBuf::from);
+    let catalog =
+        huginn_runtime::skills::FilesystemSkillCatalog.refresh(&workspace, home.as_deref())?;
+    let mut out = std::io::stdout().lock();
+    if cli.json {
+        writeln!(out, "{}", catalog.to_json())?;
+    } else {
+        writeln!(out, "Agent Skills ({})", catalog.fingerprint)?;
+        for skill in &catalog.skills {
+            writeln!(
+                out,
+                "{} [{}; {}; untrusted]\n  {}\n  logical: {}\n  canonical: {}",
+                escape_terminal_value(&skill.name),
+                skill.source_scope.as_str(),
+                if skill.selected {
+                    "selected"
+                } else {
+                    "overridden"
+                },
+                escape_terminal_value(&skill.description),
+                escape_terminal_value(&skill.logical_path.to_string_lossy()),
+                escape_terminal_value(&skill.canonical_path.to_string_lossy())
+            )?;
+        }
+        for diagnostic in &catalog.diagnostics {
+            writeln!(
+                out,
+                "{} [{}; {}] {}: {}",
+                diagnostic.code,
+                diagnostic.scope.as_str(),
+                diagnostic.severity,
+                escape_terminal_value(&diagnostic.path.to_string_lossy()),
+                escape_terminal_value(&diagnostic.message)
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Registers durable connection management unless another process already owns it.
+async fn enable_connection_management(
+    config: &Config,
+    supervisor: &mut huginn_core::kernel::Supervisor,
+    access: Arc<huginn_application::connections::ConnectionAccess>,
+    tui: bool,
+    is_doctor: bool,
+) -> anyhow::Result<bool> {
+    use huginn_application::{
+        connections::{ConnectionManager, ConnectionsPlugin},
+        providers::{catalog_id, providers_id},
+    };
+    use huginn_core::{
+        connections::ConnectionStore,
+        providers::{ProviderAction, ProviderCatalogService, ProvidersService},
+    };
+    supervisor.register(Box::new(huginn_runtime::providers::OllamaLocalPlugin {
+        timeout_secs: config.timeout_secs,
+    }))?;
+    supervisor.register(Box::new(huginn_runtime::providers::OllamaCloudPlugin {
+        timeout_secs: config.timeout_secs,
+    }))?;
+    supervisor.register(Box::new(huginn_runtime::providers::CustomProviderPlugin {
+        timeout_secs: config.timeout_secs,
+    }))?;
+    supervisor.start().await?;
+    let providers = supervisor.resolve::<ProvidersService>(&providers_id())?;
+    let catalog = supervisor.resolve::<ProviderCatalogService>(&catalog_id())?;
+    let explicit_selection = if config.model_readiness() == ModelReadiness::Ready {
+        providers.0.diagnostic()?.selection
+    } else {
+        None
+    };
+    let store = match huginn_runtime::connections::SqliteConnections::open(
+        &config.db.with_extension("providers.db"),
+    ) {
+        Ok(store) => Arc::new(store) as Arc<dyn ConnectionStore>,
+        Err(huginn_core::connections::ConnectionError::Conflict) if tui || is_doctor => {
+            // Another process owns durable connection management. Keep
+            // the TUI/doctor available; management is optional here.
+            return Ok(false);
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let manager = Arc::new(
+        ConnectionManager::open(store, access, providers.0.clone(), catalog.0.clone()).await?,
+    );
+    // Explicit configuration still wins at startup; UI choices are deliberate
+    // runtime changes. Never combine stored credentials with legacy settings.
+    if let Some(selection) = explicit_selection {
+        providers
+            .0
+            .execute(ProviderAction::Select(selection), CancellationToken::new())
+            .await?;
+    }
+    supervisor.register(Box::new(ConnectionsPlugin(manager)))?;
+    supervisor.start().await?;
+    Ok(true)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -262,47 +367,7 @@ async fn main() -> anyhow::Result<()> {
         anyhow::bail!("--experimental-wasm-outline requires run or resume --prompt; interactive loading is not supported");
     }
     if matches!(cli.command, Some(Commands::Skills { .. })) {
-        use huginn_application::skills::SkillCatalogQuery;
-        let workspace = resolve_workspace(cli.workspace.clone())?;
-        let home = std::env::var_os("HOME")
-            .filter(|p| !p.is_empty())
-            .map(PathBuf::from);
-        let catalog =
-            huginn_runtime::skills::FilesystemSkillCatalog.refresh(&workspace, home.as_deref())?;
-        let mut out = std::io::stdout().lock();
-        if cli.json {
-            writeln!(out, "{}", catalog.to_json())?;
-        } else {
-            writeln!(out, "Agent Skills ({})", catalog.fingerprint)?;
-            for skill in &catalog.skills {
-                writeln!(
-                    out,
-                    "{} [{}; {}; untrusted]\n  {}\n  logical: {}\n  canonical: {}",
-                    escape_terminal_value(&skill.name),
-                    skill.source_scope.as_str(),
-                    if skill.selected {
-                        "selected"
-                    } else {
-                        "overridden"
-                    },
-                    escape_terminal_value(&skill.description),
-                    escape_terminal_value(&skill.logical_path.to_string_lossy()),
-                    escape_terminal_value(&skill.canonical_path.to_string_lossy())
-                )?;
-            }
-            for diagnostic in &catalog.diagnostics {
-                writeln!(
-                    out,
-                    "{} [{}; {}] {}: {}",
-                    diagnostic.code,
-                    diagnostic.scope.as_str(),
-                    diagnostic.severity,
-                    escape_terminal_value(&diagnostic.path.to_string_lossy()),
-                    escape_terminal_value(&diagnostic.message)
-                )?;
-            }
-        }
-        return Ok(());
+        return print_skills_report(&cli);
     }
     if matches!(cli.command, Some(Commands::Auth { .. })) {
         auth::require_interactive(cli.json, cli.line_mode)?;
@@ -314,6 +379,7 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     let (mut session, prompt, lease) = prepare_session(&cli, &sessions).await?;
+    let effective_policy = Arc::new(config.effective_policy());
     let guards = huginn_runtime::guardrails::load_guardrails(&session.workspace)?;
     let _lease = match lease {
         Some(lease) => lease,
@@ -323,7 +389,15 @@ async fn main() -> anyhow::Result<()> {
     let (_, tui, input) = prepare_interaction(&cli, prompt.is_some(), is_doctor)?;
     let allowed = cli.allow.into_iter().collect::<BTreeSet<_>>();
     let prompt_adapter = Arc::new(LinePrompt::new(input.clone()));
-    let policy = Arc::new(HostPolicy::new(prompt_adapter.clone(), allowed.clone()));
+    let policy_context = PolicyContext {
+        allowed: allowed.clone(),
+        effective: effective_policy.clone(),
+    };
+    let policy = Arc::new(
+        HostPolicy::new(prompt_adapter.clone(), policy_context.allowed.clone())
+            .with_effective_policy(policy_context.effective.clone())
+            .for_session(session.id.clone()),
+    );
     let output = Output { json: cli.json };
     let model = if is_doctor && config.model_readiness() == ModelReadiness::Unconfigured {
         Arc::new(huginn_runtime::model::UnconfiguredModelProvider)
@@ -363,61 +437,7 @@ async fn main() -> anyhow::Result<()> {
     // global writer lease. TUI always needs management for deliberate UI changes.
     let mut connection_management = false;
     if tui || config.model_readiness() == ModelReadiness::Unconfigured {
-        let result: anyhow::Result<bool> = async {
-            use huginn_application::{
-                connections::{ConnectionManager, ConnectionsPlugin},
-                providers::{catalog_id, providers_id},
-            };
-            use huginn_core::{
-                connections::ConnectionStore,
-                providers::{ProviderAction, ProviderCatalogService, ProvidersService},
-            };
-            supervisor.register(Box::new(huginn_runtime::providers::OllamaLocalPlugin {
-                timeout_secs: config.timeout_secs,
-            }))?;
-            supervisor.register(Box::new(huginn_runtime::providers::OllamaCloudPlugin {
-                timeout_secs: config.timeout_secs,
-            }))?;
-            supervisor.register(Box::new(huginn_runtime::providers::CustomProviderPlugin {
-                timeout_secs: config.timeout_secs,
-            }))?;
-            supervisor.start().await?;
-            let providers = supervisor.resolve::<ProvidersService>(&providers_id())?;
-            let catalog = supervisor.resolve::<ProviderCatalogService>(&catalog_id())?;
-            let explicit_selection = if config.model_readiness() == ModelReadiness::Ready {
-                providers.0.diagnostic()?.selection
-            } else {
-                None
-            };
-            let store = match huginn_runtime::connections::SqliteConnections::open(
-                &config.db.with_extension("providers.db"),
-            ) {
-                Ok(store) => Arc::new(store) as Arc<dyn ConnectionStore>,
-                Err(huginn_core::connections::ConnectionError::Conflict) if tui || is_doctor => {
-                    // Another process owns durable connection management. Keep
-                    // the TUI/doctor available; management is optional here.
-                    return Ok(false);
-                }
-                Err(error) => return Err(error.into()),
-            };
-            let manager = Arc::new(
-                ConnectionManager::open(store, access, providers.0.clone(), catalog.0.clone())
-                    .await?,
-            );
-            // Explicit configuration still wins at startup; UI choices are deliberate
-            // runtime changes. Never combine stored credentials with legacy settings.
-            if let Some(selection) = explicit_selection {
-                providers
-                    .0
-                    .execute(ProviderAction::Select(selection), CancellationToken::new())
-                    .await?;
-            }
-            supervisor.register(Box::new(ConnectionsPlugin(manager)))?;
-            supervisor.start().await?;
-            Ok(true)
-        }
-        .await;
-        match result {
+        match enable_connection_management(&config, &mut supervisor, access, tui, is_doctor).await {
             Ok(enabled) => connection_management = enabled,
             Err(error) => {
                 supervisor.shutdown().await;
@@ -444,7 +464,7 @@ async fn main() -> anyhow::Result<()> {
             cli.config.as_deref(),
             &mut session,
             &mut supervisor,
-            allowed,
+            policy_context,
             model_readiness,
             connection_management,
         )
@@ -640,12 +660,18 @@ async fn run_compact(
     agent_loop.compact(session, output, cancel).await
 }
 
+#[derive(Clone)]
+struct PolicyContext {
+    allowed: BTreeSet<String>,
+    effective: Arc<huginn_application::permission_policy::EffectivePolicy>,
+}
+
 async fn tui_chat(
     config: &Config,
     cli_config: Option<&std::path::Path>,
     session: &mut Session,
     supervisor: &mut huginn_core::kernel::Supervisor,
-    allowed: BTreeSet<String>,
+    policy_context: PolicyContext,
     model_readiness: ServiceSlotHandle<ModelService>,
     connection_management: bool,
 ) -> anyhow::Result<()> {
@@ -655,7 +681,8 @@ async fn tui_chat(
     let readiness = model_readiness.clone();
     // Reading and writing share one path: an explicit --config, otherwise
     // ~/.cortex/huginn/config.toml. There is no legacy layout to seed from.
-    let save_path = cli_config.map_or_else(Config::primary_config_path, |path| path.to_path_buf());
+    let save_path =
+        cli_config.map_or_else(Config::primary_config_path, std::path::Path::to_path_buf);
     let ui_config = Arc::new(config.ui.clone());
     let save_ui_config: huginn_presentation::settings::SaveUiConfig =
         Arc::new(move |ui: &UiConfig| ui_settings::persist_seeded(ui, &save_path, None));
@@ -695,7 +722,7 @@ async fn tui_chat(
                 "{} {} [{}]",
                 entry.description,
                 entry.argument_hint,
-                if entry.project { "proyecto" } else { "usuario" }
+                if entry.project { "project" } else { "user" }
             ),
         )
     }));
@@ -706,7 +733,11 @@ async fn tui_chat(
     {
         ui.notification(message);
     }
-    let policy = Arc::new(HostPolicy::new(ui.clone(), allowed));
+    let policy = Arc::new(
+        HostPolicy::new(ui.clone(), policy_context.allowed)
+            .with_effective_policy(policy_context.effective)
+            .for_session(session.id.clone()),
+    );
     let result: anyhow::Result<()> = async {
         let startup = CancellationToken::new();
         let startup_operation = ui.begin(startup.clone());
@@ -737,16 +768,18 @@ async fn tui_chat(
                     id: uuid::Uuid::new_v4().to_string(),
                     action: "session.compact".into(),
                     preview: "Older history will be summarized by the model. Original messages stay in the database. No effects are replayed.".into(),
+                    resource: None,
+                    provenance: None,
                 };
                 match policy.approve(&request, cancel.clone()).await {
-                    Ok(true) => {
+                    Ok(huginn_core::ApprovalDecision::ApproveOnce) => {
                         interruptible(
                             cancel.clone(),
                             implementation.0.compact(session, &scoped_events, cancel),
                         )
-                        .await
+                            .await
                     }
-                    Ok(false) => {
+                    Ok(_) => {
                         ui.notification("Compaction skipped.".into());
                         Ok(())
                     }
@@ -759,7 +792,7 @@ async fn tui_chat(
                         .0
                         .run(session, prompt, policy.as_ref(), &scoped_events, cancel),
                 )
-                .await
+                    .await
             };
             ui.synchronize(session);
             if let Err(error) = &result {
@@ -772,7 +805,7 @@ async fn tui_chat(
         }
         Ok(())
     }
-    .await;
+        .await;
     // Restore the TTY before any shutdown error can be printed by the host.
     let restored = connection.finish().await;
     result?;

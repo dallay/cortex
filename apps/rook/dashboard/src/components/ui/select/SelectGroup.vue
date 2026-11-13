@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {SelectGroupProps} from "reka-ui";
 import {SelectGroup} from "reka-ui";
 
@@ -10,6 +10,6 @@ const props = defineProps<SelectGroupProps>();
     data-slot="select-group"
     v-bind="props"
   >
-    <slot />
+    <slot/>
   </SelectGroup>
 </template>

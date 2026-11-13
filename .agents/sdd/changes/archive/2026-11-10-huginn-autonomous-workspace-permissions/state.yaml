@@ -1,0 +1,20 @@
+change: huginn-autonomous-workspace-permissions
+current_phase: qa
+completed: [ init, explore, propose, spec, design, tasks, apply, verify, qa ]
+next: archive
+apply_status: complete
+verify_status: pass_with_warnings
+qa_status: pass_with_warnings
+qa_note: "Acceptance QA on macOS 27.3/build 26C5035r: real focused Seatbelt tests 29/29 in lib and approval_resource; filesystem/cwd/symlink, TCP/UDP/Unix, fail-closed, lifecycle and cleanup passed. Deny/Allow once and the local CI gate tests also passed (309/309). Warnings: enforcement observed only on this version, without remote CI nor an additional matrix; fallback without a deterministic QA runner. Next: archive; neither just ci-local nor remote CI were executed."
+verify_note: "Current verification against the reviewed contract: 2.1–2.2 compliant; all 23 entries of tasks.md complete. cargo test -p huginn-runtime, clippy -D warnings, fmt, diff-check and the local CI tests (309/309) passed. Real enforcement observed only on macOS 27.3/build 26C5035r; no remote CI nor just ci-local. The previous FAIL is kept as historical in verify-report.md. Next: independent QA."
+apply_note: "Reviewed contract with user approval: explicit cleanup and error propagation in controlled exits; pre-spawn errors preserve the primary error and the cleanup without starting the shell; abrupt Drop is best-effort; no unobservable close error is required through the std::fs::File safe API. The previous behavior was temporarily reconstructed to observe a behavioral RED in the pre/post-spawn composition, the implementation was restored and the tests passed. Tasks 2.1–2.2 complete according to the reviewed contract. The package cargo test, clippy -D warnings, fmt and diff-check passed; the Seatbelt evidence is still limited to macOS 27.3/build 26C5035r. Verify gave PASS WITH WARNINGS; next: independent QA."
+updated: "2026-11-09"
+
+verification:
+  status: pass_with_warnings
+  test_results: "cargo test -p huginn-runtime: all the suites passed; 1 test ignored for an external requirement"
+  spec_compliance: "2.1–2.2 compliant under the reviewed contract; 23/23 checklist entries complete"
+  notes:
+    - "Real enforcement tested only on macOS 27.3/build 26C5035r"
+    - "Remote CI, just ci-local and a separate build were not executed"
+    - "Composition and cleanup failure were tested with helpers; no arbitrary OS failure was injected end-to-end"

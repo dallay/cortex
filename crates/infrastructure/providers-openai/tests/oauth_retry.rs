@@ -81,6 +81,7 @@ async fn stream_refreshes_and_retries_once_after_unauthorized() {
     });
     let provider = OpenAIProvider::new_with_oauth(
         OpenAIProviderConfig {
+            provider_id: "openai",
             id: ProviderId::new("azure-test"),
             api_key: String::new(),
             base_url: server.uri(),
@@ -116,6 +117,7 @@ async fn stream_stops_after_one_refresh_retry() {
     });
     let provider = OpenAIProvider::new_with_oauth(
         OpenAIProviderConfig {
+            provider_id: "openai",
             id: ProviderId::new("azure-test"),
             api_key: String::new(),
             base_url: server.uri(),

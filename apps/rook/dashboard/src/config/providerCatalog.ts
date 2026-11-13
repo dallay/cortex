@@ -35,14 +35,8 @@
  *  the base URL (`https://ollama.com`) and the required Bearer auth
  *  token. Split out at the enum level so the dashboard, route
  *  resolution, and connection list treat them as separate kinds. */
-export type ProviderKind =
-	| "openai"
-	| "anthropic"
-	| "ollama"
-	| "ollama-cloud"
-	| "gemini"
-	| "azure-openai"
-	| "groq";
+/** Provider identifiers are owned by the backend descriptor table. */
+export type ProviderKind = string;
 
 /** Backend `AuthType` enum (2 values, stable for v1 — OAuth is gated). */
 export type AuthType = "apikey" | "oauth";
@@ -248,7 +242,15 @@ export const CATEGORIES: readonly CategoryDescriptor[] = [
 export function findCatalogEntry(kind: ProviderKind): CatalogEntry {
 	const entry = PROVIDER_KINDS.find((p) => p.kind === kind);
 	if (!entry) {
-		throw new Error(`Unknown provider kind: ${kind}`);
+		return {
+			kind,
+			category: "api-key",
+			displayNameKey: "",
+			defaultBaseUrl: "",
+			authTypes: ["apikey"],
+			descriptionKey: "",
+			defaultModels: [],
+		};
 	}
 	return entry;
 }

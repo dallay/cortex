@@ -7,6 +7,8 @@ kind: frontend
 model: nan/deepseek-v4-flash
 thinking: high
 description: >
+model: nan/deepseek-v4-flash
+thinking: high
   Frontend UX for the Rook dashboard's AI provider management flows.
   Captures the 3-screen navigation model (Catalog → Details → Connection Modal),
   the quota placeholder page, and the EmptyState wrapper used across the dashboard.
@@ -21,7 +23,7 @@ nonGoals:
   - Backend changes of any kind
   - Bulk actions on the catalog (multi-select enable/disable/delete)
   - Distribute Proxies (auto-rebalance priority/weight)
-  - Static catalog of 228 providers (OmniRoute parity)
+  - Static catalog of 228 providers (reference-gateway parity)
   - OAuth authorization redirect/initiation (form shape only)
   - Per-provider quota implementation (placeholder only)
   - Real-time connection status push (WebSocket / SSE)

@@ -20,6 +20,7 @@ type Usecases = Arc<rook_usecases::RookUsecases>;
 
 pub fn router(usecases: Usecases) -> Router {
     Router::new()
+        .route("/api/provider-descriptors", get(list_provider_descriptors))
         .route("/api/providers", get(list_providers))
         .route("/api/providers", post(create_provider))
         .route("/api/providers/{id}", get(get_provider))
@@ -28,6 +29,84 @@ pub fn router(usecases: Usecases) -> Router {
         .route("/api/providers/{id}/test", post(test_provider))
         .route("/api/providers/test-credentials", post(test_credentials))
         .with_state(usecases)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderDescriptorResponse {
+    id: &'static str,
+    label: &'static str,
+    protocol: &'static str,
+    auth_kinds: Vec<&'static str>,
+    capability_ceiling: CapabilityCeilingResponse,
+    #[serde(rename = "supportsOAuth")]
+    supports_oauth: bool,
+    icon_key: &'static str,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CapabilityCeilingResponse {
+    tools: &'static str,
+    vision: &'static str,
+    reasoning: &'static str,
+    streaming: &'static str,
+    context_tokens: Option<u64>,
+}
+
+impl From<rook_core::Capabilities> for CapabilityCeilingResponse {
+    fn from(capabilities: rook_core::Capabilities) -> Self {
+        fn state(value: rook_core::CapabilityState) -> &'static str {
+            match value {
+                rook_core::CapabilityState::Supported => "supported",
+                rook_core::CapabilityState::Unsupported => "unsupported",
+                rook_core::CapabilityState::Unknown => "unknown",
+            }
+        }
+        Self {
+            tools: state(capabilities.tools),
+            vision: state(capabilities.vision),
+            reasoning: state(capabilities.reasoning),
+            streaming: state(capabilities.streaming),
+            context_tokens: capabilities.context_tokens,
+        }
+    }
+}
+
+async fn list_provider_descriptors() -> Json<Vec<ProviderDescriptorResponse>> {
+    Json(
+        rook_core::PROVIDER_DESCRIPTORS
+            .iter()
+            .map(|descriptor| ProviderDescriptorResponse {
+                id: descriptor.id,
+                label: descriptor.label,
+                protocol: match descriptor.protocol {
+                    rook_core::Protocol::OpenAiChat => "openAiChat",
+                    rook_core::Protocol::AnthropicMessages => "anthropicMessages",
+                    rook_core::Protocol::GeminiGenerateContent => "geminiGenerateContent",
+                    rook_core::Protocol::OllamaNative => "ollamaNative",
+                },
+                auth_kinds: descriptor
+                    .accepted_auth_kinds
+                    .iter()
+                    .filter_map(|kind| match kind {
+                        rook_core::AuthKind::ApiKey => Some("apiKey"),
+                        rook_core::AuthKind::OAuth => {
+                            if descriptor.oauth.is_some() {
+                                Some("oauth")
+                            } else {
+                                None
+                            }
+                        }
+                        rook_core::AuthKind::ImportedToken => Some("importedToken"),
+                    })
+                    .collect(),
+                capability_ceiling: descriptor.capability_ceiling.into(),
+                supports_oauth: descriptor.oauth.is_some(),
+                icon_key: descriptor.id,
+            })
+            .collect(),
+    )
 }
 
 async fn list_providers(

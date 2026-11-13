@@ -6,15 +6,14 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use rook_core::{
     ApiFormat, ApiKeyRestrictions, AuditPort, CachePort, CompletionRequest, CompletionResponse,
-    CortexError, CortexResult, FormatTranslatorPort, HealthStatus, Message, MessageContent,
-    ModelAliasRepositoryPort, ModelId, ProviderId, ProviderPort, RequestMetadata, Role, RouterPort,
-    StreamChunk, TokenUsage,
+    CortexError, CortexResult, HealthStatus, Message, MessageContent, ModelAliasRepositoryPort,
+    ModelId, ProviderId, ProviderPort, RequestMetadata, Role, RouterPort, StreamChunk, TokenUsage,
 };
 use rook_usecases::{route_request::ModelAliasesConfig, PricingConfig, RouteRequest};
 use shared_kernel::RequestId;
 
 mod common;
-use common::{NoOpAliasRepository, NoOpAudit, NoOpCache, NoOpTranslator};
+use common::{NoOpAliasRepository, NoOpAudit, NoOpCache};
 
 // --- Fake Implementations ---
 
@@ -145,7 +144,6 @@ async fn allowed_models_contains_requested_model_passes() {
     let router = Arc::new(FakeRouter::new(provider)) as Arc<dyn RouterPort>;
     let cache = Arc::new(NoOpCache) as Arc<dyn CachePort>;
     let audit = Arc::new(NoOpAudit) as Arc<dyn AuditPort>;
-    let translator = Arc::new(NoOpTranslator) as Arc<dyn FormatTranslatorPort>;
     let alias_repo = Arc::new(NoOpAliasRepository) as Arc<dyn ModelAliasRepositoryPort>;
     let alias_config = test_alias_config();
 
@@ -157,10 +155,9 @@ async fn allowed_models_contains_requested_model_passes() {
         None,
         None,
         Arc::new(PricingConfig::default()),
-        translator,
         alias_repo,
         alias_config,
-        None, // telemetry
+        None,
     );
 
     let req = CompletionRequest {
@@ -191,9 +188,7 @@ async fn allowed_models_contains_requested_model_passes() {
         },
     };
 
-    let result = route_request
-        .execute_with_format(req, ApiFormat::OpenAI)
-        .await;
+    let result = route_request.execute(req).await;
     assert!(result.is_ok());
 }
 
@@ -203,7 +198,6 @@ async fn allowed_models_missing_requested_model_returns_403_with_structured_code
     let router = Arc::new(FakeRouter::new(provider)) as Arc<dyn RouterPort>;
     let cache = Arc::new(NoOpCache) as Arc<dyn CachePort>;
     let audit = Arc::new(NoOpAudit) as Arc<dyn AuditPort>;
-    let translator = Arc::new(NoOpTranslator) as Arc<dyn FormatTranslatorPort>;
     let alias_repo = Arc::new(NoOpAliasRepository) as Arc<dyn ModelAliasRepositoryPort>;
     let alias_config = test_alias_config();
 
@@ -215,10 +209,9 @@ async fn allowed_models_missing_requested_model_returns_403_with_structured_code
         None,
         None,
         Arc::new(PricingConfig::default()),
-        translator,
         alias_repo,
         alias_config,
-        None, // telemetry
+        None,
     );
 
     let req = CompletionRequest {
@@ -249,9 +242,7 @@ async fn allowed_models_missing_requested_model_returns_403_with_structured_code
         },
     };
 
-    let result = route_request
-        .execute_with_format(req, ApiFormat::OpenAI)
-        .await;
+    let result = route_request.execute(req).await;
     assert!(result.is_err());
     let error = result.unwrap_err();
     assert!(error.is_forbidden());
@@ -265,7 +256,6 @@ async fn allowed_providers_contains_selected_provider_passes() {
     let router = Arc::new(FakeRouter::new(provider)) as Arc<dyn RouterPort>;
     let cache = Arc::new(NoOpCache) as Arc<dyn CachePort>;
     let audit = Arc::new(NoOpAudit) as Arc<dyn AuditPort>;
-    let translator = Arc::new(NoOpTranslator) as Arc<dyn FormatTranslatorPort>;
     let alias_repo = Arc::new(NoOpAliasRepository) as Arc<dyn ModelAliasRepositoryPort>;
     let alias_config = test_alias_config();
 
@@ -277,10 +267,9 @@ async fn allowed_providers_contains_selected_provider_passes() {
         None,
         None,
         Arc::new(PricingConfig::default()),
-        translator,
         alias_repo,
         alias_config,
-        None, // telemetry
+        None,
     );
 
     let req = CompletionRequest {
@@ -311,9 +300,7 @@ async fn allowed_providers_contains_selected_provider_passes() {
         },
     };
 
-    let result = route_request
-        .execute_with_format(req, ApiFormat::OpenAI)
-        .await;
+    let result = route_request.execute(req).await;
     assert!(result.is_ok());
 }
 
@@ -323,7 +310,6 @@ async fn allowed_providers_missing_selected_provider_returns_403_with_structured
     let router = Arc::new(FakeRouter::new(provider)) as Arc<dyn RouterPort>;
     let cache = Arc::new(NoOpCache) as Arc<dyn CachePort>;
     let audit = Arc::new(NoOpAudit) as Arc<dyn AuditPort>;
-    let translator = Arc::new(NoOpTranslator) as Arc<dyn FormatTranslatorPort>;
     let alias_repo = Arc::new(NoOpAliasRepository) as Arc<dyn ModelAliasRepositoryPort>;
     let alias_config = test_alias_config();
 
@@ -335,10 +321,9 @@ async fn allowed_providers_missing_selected_provider_returns_403_with_structured
         None,
         None,
         Arc::new(PricingConfig::default()),
-        translator,
         alias_repo,
         alias_config,
-        None, // telemetry
+        None,
     );
 
     let req = CompletionRequest {
@@ -369,9 +354,7 @@ async fn allowed_providers_missing_selected_provider_returns_403_with_structured
         },
     };
 
-    let result = route_request
-        .execute_with_format(req, ApiFormat::OpenAI)
-        .await;
+    let result = route_request.execute(req).await;
     assert!(result.is_err());
     let error = result.unwrap_err();
     assert!(error.is_forbidden());

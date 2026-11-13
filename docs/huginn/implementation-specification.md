@@ -2,15 +2,15 @@
 
 ## Crate boundaries
 
-| Crate | Responsibility |
-| --- | --- |
-| `huginn-core` | Typed ports, events, session model and service composition kernel |
-| `huginn-application` | Standard loop, context/compaction, output policy and trusted host authorization |
-| `huginn-runtime` | HTTP/SSE, native/MCP tool plugins, SQLite, filesystem instructions and adapter factories |
-| `huginn-presentation` | Replaceable presentation contract, Ratatui driver, UI state and scoped contributions |
-| `huginn-plugin-api` | Versioned author-facing contribution contract with no terminal dependencies |
-| `huginn-reference-extension` | Separately authored example extension composed statically by the CLI |
-| `huginn` | Configuration, composition root, terminal approvals and CLI |
+| Crate                        | Responsibility                                                                           |
+|------------------------------|------------------------------------------------------------------------------------------|
+| `huginn-core`                | Typed ports, events, session model and service composition kernel                        |
+| `huginn-application`         | Standard loop, context/compaction, output policy and trusted host authorization          |
+| `huginn-runtime`             | HTTP/SSE, native/MCP tool plugins, SQLite, filesystem instructions and adapter factories |
+| `huginn-presentation`        | Replaceable presentation contract, Ratatui driver, UI state and scoped contributions     |
+| `huginn-plugin-api`          | Versioned author-facing contribution contract with no terminal dependencies              |
+| `huginn-reference-extension` | Separately authored example extension composed statically by the CLI                     |
+| `huginn`                     | Configuration, composition root, terminal approvals and CLI                              |
 
 The application depends only on core ports and general-purpose libraries; runtime adapters depend inward. The CLI composes the application, runtime and presentation. None depends on Rook. [ADR-0012](adr/0012-hexagonal-application-and-plugin-lifecycle.md) records the enforced boundaries and lifecycle rules.
 Ports use async traits and typed errors. ModelProvider yields a stream of deltas;
@@ -30,8 +30,8 @@ This section governs **new** interactive behavior. The first vertical slice is i
 - **Presentation plugin:** Ratatui + Crossterm + Tokio run behind a first-party plugin/service boundary. The composition root selects one terminal owner before initializing input. No Ratatui types in `huginn-core` or `huginn-runtime`.
 - **Default selection:** `chat` and interactive `resume` select Ratatui when both stdin/stdout are TTYs, `TERM` is set and non-dumb, and the initial size is at least 20×8. Unsupported initialization fails with a recovery hint, never silently switches readers. `--line-mode` selects the explicit recovery adapter, including piped recovery input. `run`, `resume --prompt`, `sessions` and `doctor` do not open a presentation. `--json` preserves the existing line/NDJSON adapter and never opens Ratatui or emits ANSI UI output.
 - **Plugin model:** all non-kernel features, including view/prompt functionality, commands, tool-result renderers and status contributions, register through kernel-managed services. Contributions are declarative and host-rendered; registration and cleanup belong to the plugin generation. User-authored plugin extensibility is a roadmap requirement, but a public dynamic ABI is not implied by the first built-in implementation.
-- **Focus/input:** host owns raw mode, stdin, keymap context, modal priority and terminal restoration. The legacy `Input::new()` is never constructed for TUI mode. One Tokio driver uses bounded, zero-timeout Crossterm polling at 33 ms intervals; no competing EventStream reader runs during stock inline cursor queries. Modal paste/repeat events are ignored, queued input is drained before display, and a fresh unpredictable eight-hex-digit challenge is armed only after drawing. Enter with a missing/wrong code denies, as does Esc. No answer grants nothing.
-- **Approvals:** Both adapters implement `ApprovalPrompt`; the application-owned `HostPolicy` implements `ApprovalPolicy` and applies exact invocation grants. Presentation never receives `--allow`. Shared numbering and `Effect:` summaries live in `huginn-presentation::approval`. Approval views show the complete authorized action/diff, distinguish pending vs decided, bind to the request ID and reject stale confirmations; only policy grants authority. Plugin views are never authorities. The line adapter confirms with one-time yes/no; the TUI modal requires typing a fresh unpredictable code.
+- **Focus/input:** host owns raw mode, stdin, keymap context, modal priority and terminal restoration. The legacy `Input::new()` is never constructed for TUI mode. One Tokio driver uses bounded, zero-timeout Crossterm polling at 33 ms intervals; no competing EventStream reader runs during stock inline cursor queries. Modal paste/repeat events are ignored. The approval modal is armed only after drawing and a quiet input handoff; input owned by the prior focus cannot authorize it. Left/Right selects a visible policy choice, Enter confirms that choice only while the current modal is armed, and Esc rejects. Input alone does not grant authorization.
+- **Approvals:** Both adapters implement `ApprovalPrompt`; the application-owned `HostPolicy` implements `ApprovalPolicy` and applies exact invocation grants. Presentation never receives `--allow`. Shared numbering and `Effect:` summaries live in `huginn-presentation::approval`. Approval views show the requested action and target/effect summary before the decision, distinguish pending vs decided, bind to the request ID and reject stale confirmations; only policy grants authority. The TUI starts with Reject selected and shows only choices allowed by policy. Ctrl+F opens optional details; users can inspect and scroll the complete preview. Rejecting never requires review. A positive choice is valid only after review: a complete single-line `native.shell` command in the collapsed panel, or the expanded preview rendered through its last line (shell previews advance one row per painted frame). Enter on a positive choice that has not been reviewed grants nothing, keeps the request open and shows a "review all details" notice until the review is complete; it never silently rejects. Programmatic resolution (`resolve_modal`) stays fail-closed and finalizes an unreviewed acceptance as Reject. Plugin views are never authorities. The line adapter confirms with one-time yes/no; the TUI confirms the selected choice with Enter after the modal is armed.
 - **Streaming state:** `EventSink::emit` remains synchronous; it synchronously projects typed events into TUI-owned state with short critical sections and emits a coalesced dirty-frame signal. Token deltas fold into the mutable `tail`; the retained event log keeps only non-text authoritative transitions, so there is no unbounded token-to-frame queue. Renderers read snapshots. Persisted session messages and permissions are authoritative, unfinished tokens are ephemeral, and tool/approval transitions must not be silently dropped. If this contract proves inadequate, evolve `EventSink` explicitly with tests rather than hide overload losses.
 - **Scrollback:** preserve native history semantics. Keep mutable Markdown blocks/tables/code fences in a streaming tail until safe to commit; once committed, do not duplicate them on resize. PTY tests must cover cursor query races and Windows/SSH/tmux claims separately.
 - **Lifecycle:** `presentation.ratatui` requires the typed `agent:loop@1` capability and provides `agent:presentation@1` and `agent:ui-contributions@1`. `PresentationService` wraps a replaceable trait. A Supervisor-owned cleanup task stops and waits for active drivers on unload. Connection destruction synchronously restores raw mode/paste/cursor under a terminal-I/O lock; failed initialization and panics also restore. No alternate screen is entered.
@@ -39,7 +39,7 @@ This section governs **new** interactive behavior. The first vertical slice is i
 ### Initial keymap and contribution surface
 
 - Enter submits when idle. Alt+Enter, Shift+Enter (where encoded by the terminal), Ctrl+J or bracketed paste insert newlines. Left/Right/Home/End/Up/Down, Backspace and Delete edit UTF-8 text. The three-line visible editor scrolls to its cursor; it is editable but cannot submit a second turn while a model is running.
-- Esc cancels an active turn or denies a modal. Ctrl+C cancels an active turn (including MCP startup/compaction) and exits when idle. `/quit` and `/exit` exit. A modal has priority over the composer; Up/Down/PgUp/PgDn scroll its wrapped full action/diff, Home/End jump to the ends.
+- Esc cancels an active turn or denies a modal. Ctrl+C cancels an active turn (including MCP startup/compaction) and exits when idle. `/quit` and `/exit` exit. A modal has priority over the composer; when approval details are expanded, Up/Down/PgUp/PgDn scroll the wrapped preview and Home/End jump to its ends.
 - `/compact` and `/summarize` use the registered loop and a host-owned confirmation modal. The normal effect `--allow` grants remain invocation-scoped. Resume projects saved messages and warns about interrupted effects; nothing is automatically replayed.
 - `presentation.conversation` registers `/help` and a fallback tool-result renderer through `huginn-plugin-api::v1`: exact tool selectors win over a single `*` fallback, duplicate/reserved command names are rejected, and commit-gated visibility plus Drop-owned leases remove every registration on failure, removal, shutdown or supervisor drop. Retained handles fail closed. Contributions may use cheap synchronous callbacks for commands, per-tool views, selection dialogs and status widgets; the host sanitizes and bounds their output, converts callback panics into errors without disturbing the terminal, and keeps approval/TTY authority. See [DALLAY-666](https://linear.app/dallay/issue/DALLAY-666), the [authoring guide](authoring.md) and [ADR-0013](adr/0013-authorable-plugin-contract-and-loading.md).
 - Completed authoritative session messages are inserted once into stock `Viewport::Inline` history. In-flight Markdown remains a mutable tail (basic heading/fence coloring, not a complete Markdown engine). Terminal escape/control bytes are filtered. Large previews remain scrollable without truncating payloads. Comprehensive scrollback/rapid-resize, SSH/tmux and native-terminal certification remain DALLAY-665 work.
@@ -62,9 +62,16 @@ Tools expose definitions, prepare a payload and optional approval preview, then
 execute. The loop persists the assistant tool call before execution and persists
 approval outcomes before effects. Calls execute sequentially. Permission policy
 runs outside model/provider code and cannot be changed by repository text. The
-interactive presentation shows the complete approval action and preview without
-truncating diffs, then requests a one-time confirmation; explicit `--allow`
-grants apply only to that CLI invocation. Approval previews must identify the
+interactive presentation shows the requested action, target/effect summary, and
+policy-allowed choices before the decision. The complete preview remains
+available as expanded details. A positive choice requires review: a complete
+single-line `native.shell` command is approvable from the collapsed panel, while
+every other request must have its expanded preview rendered through the last
+line. In the TUI, an unreviewed acceptance keeps the request open and shows a
+notice; rejection never requires review. Programmatic resolution
+(`resolve_modal(true)`), a cancelled decision and a disallowed decision close
+the request as Reject. Explicit `--allow` grants apply only to
+that CLI invocation. Approval previews must identify the
 target/location, requested change or arguments, and relevant external-effect or
 sandboxing risk. MCP tool previews identify the server and remote tool, show the
 arguments sent, and warn that effects depend on the server; MCP startup previews
@@ -163,6 +170,7 @@ flowchart TD
     K --> M
     L --> M
 ```
+
 - Shell uses POSIX sh, null stdin, PATH-only environment and supervised process groups.
   Timeout, cancellation and dropped execution kill the group; stdout/stderr are drained
   with bounded retained output. Nonzero exit status is returned to the model.
@@ -181,5 +189,5 @@ Separate deterministic tests exercise kernel lifecycle/rollback, edit approval a
 stale diffs, shell execution and descendant cleanup, path containment, interruption
 and resume, scoped instructions, compaction, HTTP and MCP transports, and CLI JSON.
 Public endpoints and Rook have not been asserted compatible. macOS deterministic
-checks do not establish Linux daily-use acceptance. Record full gate results in
-[validation](validation.md); real-model and Linux checks remain manual acceptance.
+checks do not establish Linux daily-use acceptance. Record full gate results;
+real-model and Linux checks remain manual acceptance.

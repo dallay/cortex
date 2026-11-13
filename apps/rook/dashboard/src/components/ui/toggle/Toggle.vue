@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {ToggleEmits, ToggleProps} from "reka-ui";
 import {Toggle, useForwardPropsEmits} from "reka-ui";
@@ -31,10 +31,10 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
 <template>
   <Toggle
     v-slot="slotProps"
+    :class="cn(toggleVariants({ variant, size }), props.class)"
     data-slot="toggle"
     v-bind="forwarded"
-    :class="cn(toggleVariants({ variant, size }), props.class)"
   >
-    <slot v-bind="slotProps" />
+    <slot v-bind="slotProps"/>
   </Toggle>
 </template>

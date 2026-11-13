@@ -13,6 +13,7 @@ export function useCache() {
 	const selectedSignature = ref<CachedCompletionResponse | null>(null);
 	const loading = ref(false);
 	const error = ref<string | null>(null);
+
 	async function fetch() {
 		loading.value = true;
 		error.value = null;
@@ -28,6 +29,7 @@ export function useCache() {
 			loading.value = false;
 		}
 	}
+
 	async function inspect(signature: string) {
 		error.value = null;
 		try {
@@ -39,6 +41,7 @@ export function useCache() {
 					: "Failed to inspect cache entry";
 		}
 	}
+
 	async function clear() {
 		try {
 			await api.clearCache();
@@ -51,6 +54,7 @@ export function useCache() {
 			return false;
 		}
 	}
+
 	async function remove(signature: string) {
 		error.value = null;
 		try {
@@ -73,6 +77,7 @@ export function useCache() {
 			return false;
 		}
 	}
+
 	return {
 		stats,
 		signatures,

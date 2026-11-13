@@ -4,18 +4,18 @@ completed:
   - init
   - explore
   - propose
-  - "spec (actualizada 2026-10-29: LoopService retenido reusa providers vigentes entre operaciones de builders productivos application/runtime)"
-  - "design (actualizado 2026-10-29: slots desde PluginContext, adapters privados y rutas runtime productivas)"
-  - "tasks (actualizadas 2026-10-29: seam PluginContext, adapters application/runtime, readiness y handoff)"
-  - "apply (completada hasta 5.6: slots, rebind application/runtime, readiness y documentación; sin commit/push)"
-  - "verify (FAIL inicial 2026-10-29: V-01/V-02; QA/archive no iniciados)"
-  - "apply (remediación de cobertura 5.8–5.11 completada; sin cambios de producción)"
-  - "verify (PASS WITH WARNINGS 2026-10-29: V-01/V-02 cubiertos por tests aprobados; V-03 queda como warning de cobertura de dos variantes runtime; QA/archive no iniciados)"
-  - "qa (NOT TESTED 2026-10-29: QA-01 requiere evidencia directa de dos builders runtime; Archive bloqueado)"
-  - "apply (tarea 5.12: cobertura in-process de ambos builders con conexiones; tests-only, sin cambio de producción)"
-  - "verify (PASS WITH WARNINGS 2026-10-29: reverify tras QA-01; ambos builders connections probados in-process; V-01–V-03 sin blockers; QA/archive no iniciados)"
-  - "qa (PASS WITH WARNINGS 2026-10-29: QA-01 resuelto con tests in-process de los tres builders runtime; sustitución en TUI ya abierta NOT TESTED fuera de alcance; Archive permitido con advertencias)"
-  - "archive (completado 2026-10-29: spec huginn-kernel sincronizado y cambio movido a archive; sin aceptación del operador)"
+  - "spec (updated 2026-10-29: retained LoopService reuses current providers between operations of the productive application/runtime builders)"
+  - "design (updated 2026-10-29: slots from PluginContext, private adapters, and productive runtime paths)"
+  - "tasks (updated 2026-10-29: PluginContext seam, application/runtime adapters, readiness, and handoff)"
+  - "apply (completed up to 5.6: slots, application/runtime rebind, readiness, and documentation; no commit/push)"
+  - "verify (initial FAIL on 2026-10-29: V-01/V-02; QA/archive not started)"
+  - "apply (coverage remediation 5.8–5.11 completed; no production changes)"
+  - "verify (PASS WITH WARNINGS 2026-10-29: V-01/V-02 covered by approved tests; V-03 remains as a coverage warning for two runtime variants; QA/archive not started)"
+  - "qa (NOT TESTED 2026-10-29: QA-01 requires direct evidence from two runtime builders; Archive blocked)"
+  - "apply (task 5.12: in-process coverage of both builders with connections; tests only, no production change)"
+  - "verify (PASS WITH WARNINGS 2026-10-29: reverify after QA-01; both connection builders tested in-process; V-01–V-03 without blockers; QA/archive not started)"
+  - "qa (PASS WITH WARNINGS 2026-10-29: QA-01 resolved with in-process tests of the three runtime builders; substitution in an already open TUI NOT TESTED out of scope; Archive allowed with warnings)"
+  - "archive (completed 2026-10-29: huginn-kernel spec synced and change moved to archive; no operator acceptance)"
 next: none
 updated: "2026-10-29"
 epic: DALLAY-718

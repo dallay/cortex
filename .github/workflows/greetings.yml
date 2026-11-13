@@ -2,9 +2,9 @@ name: 👋 Greetings
 
 on:
   pull_request:
-    types: [opened, reopened]
+    types: [ opened, reopened ]
   issues:
-    types: [opened, reopened]
+    types: [ opened, reopened ]
 
 permissions:
   issues: write
@@ -13,4 +13,4 @@ permissions:
 jobs:
   greeting:
     name: 👋 Welcome Contributor
-    uses: dallay/common-actions/.github/workflows/greetings.yml@2914eb9522e67957a0b266f10132704d27389e80 # v2.9.0
+    uses: dallay/common-actions/.github/workflows/greetings.yml@8dd14d86a6bf1a4673aba902e3c3e27993b0e583 # v2.9.1

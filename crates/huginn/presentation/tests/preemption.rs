@@ -24,6 +24,8 @@ fn request() -> ApprovalRequest {
         id: "one".into(),
         action: "native.edit".into(),
         preview: "Test approval".into(),
+        resource: None,
+        provenance: None,
     }
 }
 
@@ -60,7 +62,17 @@ async fn settings_modal_preempted_by_approval() {
     let task = {
         let ui = ui.clone();
         let cancel = cancel.clone();
-        tokio::spawn(async move { ui.request_decision(&request(), cancel).await })
+        tokio::spawn(async move {
+            ui.request_decision(
+                &request(),
+                &[
+                    huginn_core::ApprovalDecision::Reject,
+                    huginn_core::ApprovalDecision::ApproveOnce,
+                ],
+                cancel,
+            )
+            .await
+        })
     };
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         while ui.lock().modal().is_none() {

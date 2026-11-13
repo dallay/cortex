@@ -1,0 +1,71 @@
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:844b3a794dc2189dfc990413f0c0a027a6764b91323d844665b3de813c59ecb0 -->
+
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:f3e8de776fcca00213102b6d0812f700155dea499085f7a24a7ef1e004f0bf07 -->
+
+# ADR-0018: Mandatory Seatbelt isolation for macOS shell commands
+
+- Status: Accepted for implementation; operational verification remains limited to the macOS version recorded in the SDD apply evidence. This is not release acceptance.
+- Date: 2026-11-10
+- Product: Huginn
+- Decision basis: Archived SDD implementation and macOS scenario evidence linked below.
+
+## Context
+
+`run_shell` executes commands with the host user's authority. Approval decides
+whether an operation may run, but approval alone does not constrain filesystem
+or network access. Huginn needs a system-enforced boundary for shell commands
+without treating approval as permission to remove that boundary.
+
+## Decision
+
+On macOS, every `run_shell` invocation MUST use `/usr/bin/sandbox-exec` and a
+dynamic deny-by-default SBPL profile. The profile permits the workspace, read
+metadata for the workspace's immediate parent only, and runtime operations
+supported by evidence. The parent metadata exception supports POSIX directory
+listing of the workspace; it does not permit listing or reading parent contents.
+The profile denies network and socket access. The shell and descendants remain
+subject to the same profile. Failure to prepare or apply the profile MUST stop
+execution. There is no opt-out, fallback, bypass, or persistent grant.
+
+`Deny` continues to block execution. `Allow once` approves only the requested
+operation and does not change the sandbox. Native tools and MCP are outside
+this boundary. This decision makes no Linux or Windows isolation claim.
+
+## Alternatives considered
+
+- Signed App Sandbox prototype: requires packaging and user-selected resources; the prototype did not establish the required shell confinement.
+- Opt-out sandbox setting: would remove the mandatory execution boundary.
+- Treating approval as consent to run unsandboxed: would conflate operation authorization with isolation and weaken the boundary.
+
+## Consequences
+
+- Shell commands that require network access or paths outside the workspace
+  can fail.
+- Listing a workspace can report its own `..` entry without granting access to
+  the parent directory's contents.
+- Apple deprecates Seatbelt interfaces. `dyld-support.sb` is private Apple
+  behavior. Availability and behavior can change; Huginn fails closed.
+- Support claims are limited to macOS versions actually tested. The current
+  implementation evidence is specific to macOS 27.3, build 26C5035r.
+- Runtime allow rules require evidence and must not be broadened speculatively.
+- This mechanism does not authorize persistent grants or change approval
+  policy.
+
+## Validation boundary
+
+The PR-blocking `Test Huginn Seatbelt (macOS)` CI job checks that it runs on
+macOS, requires `/usr/bin/sandbox-exec`, and runs the unfiltered
+`cargo test -p huginn-runtime` suite. A CI pass is required for merge. It does
+not establish compatibility with other macOS versions or Apple endorsement.
+
+## Follow-up and evidence
+
+Verify compatibility on each supported macOS version.
+
+Implementation and scenario evidence: [SDD change](../../../.agents/sdd/changes/archive/2026-11-10-huginn-autonomous-workspace-permissions/).
+
+<!-- /coderabbit-ai-generated:v1 --><!-- /coderabbit-ai-generated:v1 -->

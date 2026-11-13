@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {AvatarFallbackProps} from "reka-ui";
 import {AvatarFallback} from "reka-ui";
@@ -14,10 +14,10 @@ const delegatedProps = reactiveOmit(props, "class");
 
 <template>
   <AvatarFallback
+    :class="cn('bg-muted flex size-full items-center justify-center rounded-full', props.class)"
     data-slot="avatar-fallback"
     v-bind="delegatedProps"
-    :class="cn('bg-muted flex size-full items-center justify-center rounded-full', props.class)"
   >
-    <slot />
+    <slot/>
   </AvatarFallback>
 </template>

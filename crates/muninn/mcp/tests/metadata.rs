@@ -2,8 +2,8 @@ mod common;
 use muninn_mcp::Server;
 use serde_json::json;
 
-#[test]
-fn client_identity_is_optional_but_validated_when_present() {
+#[tokio::test]
+async fn client_identity_is_optional_but_validated_when_present() {
     let mut server = Server::default();
     let mut request = common::request("server/discover", json!({}));
     request["params"]["_meta"]
@@ -12,20 +12,21 @@ fn client_identity_is_optional_but_validated_when_present() {
         .remove("io.modelcontextprotocol/clientInfo");
     assert!(server
         .handle(request.clone())
+        .await
         .unwrap()
         .get("result")
         .is_some());
     for invalid in [json!(null), json!({"name":"missing-version"}), json!(42)] {
         request["params"]["_meta"]["io.modelcontextprotocol/clientInfo"] = invalid;
         assert_eq!(
-            server.handle(request.clone()).unwrap()["error"]["code"],
+            server.handle(request.clone()).await.unwrap()["error"]["code"],
             -32602
         );
     }
 }
 
-#[test]
-fn required_metadata_is_checked_on_each_request() {
+#[tokio::test]
+async fn required_metadata_is_checked_on_each_request() {
     for key in [
         "io.modelcontextprotocol/protocolVersion",
         "io.modelcontextprotocol/clientCapabilities",
@@ -36,7 +37,7 @@ fn required_metadata_is_checked_on_each_request() {
             .unwrap()
             .remove(key);
         assert_eq!(
-            Server::default().handle(request).unwrap()["error"]["code"],
+            Server::default().handle(request).await.unwrap()["error"]["code"],
             -32602
         );
     }

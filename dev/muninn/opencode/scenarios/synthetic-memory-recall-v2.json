@@ -1,0 +1,187 @@
+{
+  "version": "synthetic-memory-recall-v2",
+  "owner": "bench-owner",
+  "empty_owner": "bench-empty",
+  "cases": [
+    {
+      "id": "category-exact",
+      "goal": "The retrieval contract returns the preference when the agent asks with the exact category.",
+      "owner": "bench-category-exact",
+      "empty_owner": "bench-category-exact-empty",
+      "seed": [
+        {
+          "kind": "preference",
+          "category": "campaign_status_report",
+          "text": "For the campaign status report, use the title Juniper Harbor and the columns Task, Owner, Status in that order."
+        }
+      ],
+      "prompt": "For the campaign status report I need the exact report title and the ordered list of column names. What are they?",
+      "oracle_context": "For the campaign status report, use the title Juniper Harbor and the columns Task, Owner, Status in that order.",
+      "expected_contains": ["Juniper Harbor", "Task", "Owner", "Status"],
+      "expected_absent": [],
+      "direct": {
+        "tool": "muninn_search_preferences",
+        "arguments": {
+          "query": "campaign status report title and columns",
+          "category": "campaign_status_report",
+          "limit": 5
+        }
+      }
+    },
+    {
+      "id": "category-equivalent",
+      "goal": "Semantic retrieval finds the preference when the agent asks with equivalent wording instead of the stored category.",
+      "owner": "bench-category-equivalent",
+      "empty_owner": "bench-category-equivalent-empty",
+      "requires_semantic": true,
+      "seed": [
+        {
+          "kind": "preference",
+          "category": "reporting_standards",
+          "text": "When the weekly status report is produced, its title is Juniper Harbor and its columns are Task, Owner, Status in that order."
+        }
+      ],
+      "prompt": "I am writing the weekly status report. Which title and which column names do I use?",
+      "oracle_context": "When the weekly status report is produced, its title is Juniper Harbor and its columns are Task, Owner, Status in that order.",
+      "expected_contains": ["Juniper Harbor", "Task", "Owner", "Status"],
+      "expected_absent": [],
+      "direct": {
+        "tool": "muninn_search_preferences",
+        "arguments": {
+          "query": "weekly status report title and column names",
+          "limit": 5
+        }
+      }
+    },
+    {
+      "id": "category-incompatible",
+      "goal": "An unrelated stored preference is not presented as the answer to a different question.",
+      "owner": "bench-category-incompatible",
+      "empty_owner": "bench-category-incompatible-empty",
+      "seed": [
+        {
+          "kind": "preference",
+          "category": "deployment_window",
+          "text": "The deployment window for the mobile release is Orion-Vault between 02:00 and 04:00 UTC."
+        }
+      ],
+      "prompt": "What is the title of the campaign status report and which columns does it use?",
+      "oracle_context": "No stored preference answers this request. The only stored preference belongs to a different subject.",
+      "abstain": true,
+      "expected_contains": [],
+      "expected_absent": ["Orion-Vault"],
+      "direct": {
+        "tool": "muninn_search_preferences",
+        "arguments": {
+          "query": "campaign status report title and columns",
+          "limit": 5
+        }
+      }
+    },
+    {
+      "id": "preference-updated",
+      "goal": "Retrieval returns the current version of a preference and not the superseded one.",
+      "owner": "bench-preference-updated",
+      "empty_owner": "bench-preference-updated-empty",
+      "seed": [
+        {
+          "kind": "preference",
+          "category": "editor_config",
+          "text": "The default indentation of the project is 2 spaces."
+        },
+        {
+          "kind": "preference",
+          "category": "editor_config",
+          "text": "The default indentation of the project is 4 spaces.",
+          "supersedes": "The default indentation of the project is 2 spaces."
+        }
+      ],
+      "prompt": "What is the default indentation of the project?",
+      "oracle_context": "The default indentation of the project is 4 spaces.",
+      "expected_contains": ["4 spaces"],
+      "expected_absent": ["2 spaces"],
+      "direct": {
+        "tool": "muninn_search_preferences",
+        "arguments": {
+          "query": "default indentation of the project",
+          "category": "editor_config",
+          "limit": 5
+        }
+      }
+    },
+    {
+      "id": "preference-missing",
+      "goal": "The agent reports that nothing is stored instead of inventing an answer.",
+      "owner": "bench-preference-missing",
+      "empty_owner": "bench-preference-missing-empty",
+      "seed": [
+        {
+          "kind": "preference",
+          "category": "office_hours",
+          "text": "The office closes at 18:00 on weekdays."
+        }
+      ],
+      "prompt": "What is the title of the campaign status report and which columns does it use?",
+      "oracle_context": "No stored preference answers this request.",
+      "abstain": true,
+      "expected_contains": [],
+      "expected_absent": ["18:00"],
+      "direct": {
+        "tool": "muninn_search_preferences",
+        "arguments": {
+          "query": "campaign status report title and columns",
+          "limit": 5
+        }
+      }
+    },
+    {
+      "id": "other-owner",
+      "goal": "Records of another owner scope are never visible to the agent.",
+      "owner": "bench-other-owner",
+      "empty_owner": "bench-other-owner-empty",
+      "seed": [
+        {
+          "kind": "preference",
+          "owner": "bench-other-owner-data",
+          "category": "account_policy",
+          "text": "The support escalation phone number is 555-0143."
+        }
+      ],
+      "prompt": "What is the support escalation phone number?",
+      "oracle_context": "No stored preference answers this request in the configured scope.",
+      "abstain": true,
+      "expected_contains": [],
+      "expected_absent": ["555-0143"],
+      "direct": {
+        "tool": "muninn_search_preferences",
+        "arguments": {
+          "query": "support escalation phone number",
+          "limit": 5
+        }
+      }
+    },
+    {
+      "id": "message-identifier",
+      "goal": "The message retrieval path returns the stored identifier.",
+      "owner": "bench-message-identifier",
+      "empty_owner": "bench-message-identifier-empty",
+      "seed": [
+        {
+          "kind": "message",
+          "text": "The release workspace identifier is Vesper-Delta-704."
+        }
+      ],
+      "prompt": "What is the release workspace identifier?",
+      "oracle_context": "The release workspace identifier is Vesper-Delta-704.",
+      "expected_contains": ["Vesper-Delta-704"],
+      "expected_absent": [],
+      "direct": {
+        "tool": "muninn_search_messages",
+        "arguments": {
+          "query": "release workspace identifier",
+          "limit": 5
+        }
+      }
+    }
+  ]
+}

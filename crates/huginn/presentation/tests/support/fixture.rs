@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use huginn_core::{
     kernel::{Manifest, Plugin, PluginContext, ServiceId, Supervisor},
     AgentLoop, ApprovalPolicy, CancellationToken, Event, EventSink, LoopService, Message, Result,
-    Role, Session, StepId, TurnId,
+    Role, Session, SteeringQueue, StepId, TurnId,
 };
 use huginn_plugin_api::v1::{
     contributions_id, CommandMetadata, CommandResult, Contribution, Dialog, UiService, View,
@@ -13,7 +13,10 @@ use huginn_presentation::{
 };
 use std::{sync::Arc, time::Duration};
 
-struct Engine;
+/// The fixture is the loop: it owns the same queue the presentation writes into.
+struct Engine {
+    steering: Arc<SteeringQueue>,
+}
 #[async_trait]
 impl AgentLoop for Engine {
     async fn run(
@@ -39,26 +42,80 @@ impl AgentLoop for Engine {
             session.interrupted = true;
             return Err(huginn_core::AgentError::Cancelled);
         }
-        if prompt == "approve" {
+        if matches!(
+            prompt.as_str(),
+            "approve" | "approve-shell" | "approve-shell-multiline"
+        ) {
+            let (action, preview) = match prompt.as_str() {
+                "approve-shell" => (
+                    "native.shell",
+                    "Directory: /workspace\nCommand: echo ok".to_owned(),
+                ),
+                "approve-shell-multiline" => (
+                    "native.shell",
+                    "Directory: /workspace\nCommand: echo first\necho second".to_owned(),
+                ),
+                _ => (
+                    "native.edit",
+                    std::iter::once("--- /workspace/note.txt".to_owned())
+                        .chain((0..40).map(|index| format!("diff-line-{index:02}")))
+                        .chain(std::iter::once("PREVIEW_LAST".to_owned()))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                ),
+            };
             let approved = policy
                 .approve(
                     &huginn_core::ApprovalRequest {
                         id: "test".into(),
-                        action: "native.edit".into(),
-                        preview: std::iter::once("PREVIEW_FIRST".to_owned())
-                            .chain((0..40).map(|index| format!("diff-line-{index:02}")))
-                            .chain(std::iter::once("PREVIEW_LAST".to_owned()))
-                            .collect::<Vec<_>>()
-                            .join("\n"),
+                        action: action.into(),
+                        preview,
+                        resource: None,
+                        provenance: None,
                     },
                     cancel.clone(),
                 )
                 .await?;
             session.messages.push(Message::text(
                 Role::Assistant,
-                if approved { "APPROVED" } else { "DENIED" },
+                if approved == huginn_core::ApprovalDecision::Reject {
+                    "DENIED"
+                } else {
+                    "APPROVED"
+                },
             ));
             return Ok(());
+        }
+        if prompt == "steer" || prompt == "steer-full" {
+            events.emit(Event::Text {
+                step: StepId(1),
+                text: "STREAM_HELD".into(),
+            });
+            // "steer" drains what the composer pushed, at a step boundary; "steer-full"
+            // never drains, so the mailbox keeps refusing once it is full.
+            loop {
+                if prompt == "steer" && !self.steering.is_empty() {
+                    let injected = self.steering.take();
+                    let count = injected.len();
+                    events.emit(Event::Steered {
+                        turn: TurnId(1),
+                        step: StepId(1),
+                        count,
+                    });
+                    session
+                        .messages
+                        .push(Message::text(Role::User, injected.join("\n")));
+                    events.emit(Event::TurnFinished { turn: TurnId(1) });
+                    return Ok(());
+                }
+                tokio::select! {
+                    _ = cancel.cancelled() => {
+                        session.interrupted = true;
+                        return Err(huginn_core::AgentError::Cancelled);
+                    },
+                    _ = tokio::time::sleep(Duration::from_millis(10)) => {},
+                }
+            }
         }
         let gated_resize_stream = std::env::args().nth(1).as_deref() == Some("resize-stream");
         for index in 0..40 {
@@ -87,7 +144,7 @@ impl AgentLoop for Engine {
         Ok(())
     }
 }
-struct EnginePlugin;
+struct EnginePlugin(Arc<SteeringQueue>);
 struct Replaceable(&'static str);
 #[async_trait]
 impl Plugin for Replaceable {
@@ -257,16 +314,16 @@ impl Plugin for ProviderSelectPlugin {
                                                                 })
                                                             }),
                                                         )?
-                                                        .with_overlay_kind(OverlayKind::Login)?,
+                                                            .with_overlay_kind(OverlayKind::Login)?,
                                                     ))
                                                 })
                                             }),
                                         )?
-                                        .with_overlay_kind(OverlayKind::Login)?,
+                                            .with_overlay_kind(OverlayKind::Login)?,
                                     ))
                                 })
                             }))?
-                            .with_overlay_kind(OverlayKind::Login)?,
+                                .with_overlay_kind(OverlayKind::Login)?,
                         ))
                     }),
                 },
@@ -436,14 +493,17 @@ impl Plugin for EnginePlugin {
     async fn activate(&mut self, ctx: &mut PluginContext) -> Result<()> {
         ctx.provide(
             ServiceId::new("agent:loop", 1),
-            LoopService(Arc::new(Engine)),
+            LoopService(Arc::new(Engine {
+                steering: self.0.clone(),
+            })),
         )
     }
 }
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut supervisor = Supervisor::default();
-    supervisor.register(Box::new(EnginePlugin))?;
+    let steering = Arc::new(SteeringQueue::default());
+    supervisor.register(Box::new(EnginePlugin(steering.clone())))?;
     let bar = std::env::args().nth(1).as_deref() == Some("bar");
     let terminal = if bar {
         use huginn_core::providers::*;
@@ -454,7 +514,9 @@ async fn main() -> Result<()> {
             selection: None,
         });
         // A cloned receiver with an already-unread update must initialize from latest.
-        let terminal = RatatuiPlugin::default().with_connection(receiver);
+        let terminal = RatatuiPlugin::default()
+            .with_connection(receiver)
+            .with_steering(steering.clone());
         sender.send_modify(|snapshot| {
             snapshot.revision = 1;
             snapshot.phase = ConnectionPhase::Selected;
@@ -468,7 +530,7 @@ async fn main() -> Result<()> {
         supervisor.register(Box::new(BarPlugin(sender)))?;
         terminal
     } else {
-        RatatuiPlugin::default()
+        RatatuiPlugin::default().with_steering(steering.clone())
     };
     supervisor.register(Box::new(terminal))?;
     supervisor.register(Box::new(ConversationPlugin))?;
@@ -539,7 +601,13 @@ async fn main() -> Result<()> {
                         id: "modal-probe".into(),
                         action: "native.edit".into(),
                         preview: "MODAL_PROBE".into(),
+                        resource: None,
+                        provenance: None,
                     },
+                    &[
+                        huginn_core::ApprovalDecision::Reject,
+                        huginn_core::ApprovalDecision::ApproveOnce,
+                    ],
                     CancellationToken::new(),
                 )
                 .await?;
@@ -572,7 +640,9 @@ async fn main() -> Result<()> {
             !crossterm::terminal::is_raw_mode_enabled()?,
             "unload must complete terminal cleanup"
         );
-        supervisor.register(Box::new(RatatuiPlugin::default()))?;
+        supervisor.register(Box::new(
+            RatatuiPlugin::default().with_steering(steering.clone()),
+        ))?;
         supervisor.start().await?;
         let next = supervisor
             .resolve::<PresentationService>(&presentation_id())?
@@ -591,9 +661,11 @@ async fn main() -> Result<()> {
     while let Some(prompt) = ui.prompt().await {
         let cancel = CancellationToken::new();
         ui.begin(cancel.clone());
-        let result = Engine
-            .run(&mut session, prompt, &policy, ui.as_ref(), cancel)
-            .await;
+        let result = Engine {
+            steering: steering.clone(),
+        }
+        .run(&mut session, prompt, &policy, ui.as_ref(), cancel)
+        .await;
         ui.synchronize(&session);
         if let Err(error) = result {
             ui.notification(error.to_string());

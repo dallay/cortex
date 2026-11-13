@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {NavigationMenuListProps} from "reka-ui";
 import {NavigationMenuList, useForwardProps} from "reka-ui";
@@ -16,15 +16,15 @@ const forwardedProps = useForwardProps(delegatedProps);
 
 <template>
   <NavigationMenuList
-    data-slot="navigation-menu-list"
-    v-bind="forwardedProps"
     :class="
       cn(
         'group flex flex-1 list-none items-center justify-center gap-1',
         props.class,
       )
     "
+    data-slot="navigation-menu-list"
+    v-bind="forwardedProps"
   >
-    <slot />
+    <slot/>
   </NavigationMenuList>
 </template>

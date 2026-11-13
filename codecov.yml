@@ -17,7 +17,7 @@ coverage:
         target: auto
         threshold: 1%
         informational: false
-      
+
       # Backend (Rust) coverage target
       backend:
         target: 85%
@@ -25,7 +25,7 @@ coverage:
         flags:
           - backend
         informational: false
-      
+
       # Frontend (Dashboard) coverage target
       frontend:
         target: 80%
@@ -33,19 +33,19 @@ coverage:
         flags:
           - frontend
         informational: false
-    
+
     patch:
       default:
         target: 80%
         threshold: 5%
         informational: false
-      
+
       backend:
         target: 85%
         threshold: 5%
         flags:
           - backend
-      
+
       frontend:
         target: 75%
         threshold: 5%
@@ -56,7 +56,7 @@ coverage:
 flag_management:
   default_rules:
     carryforward: true
-  
+
   individual_flags:
     - name: backend
       paths:
@@ -64,11 +64,55 @@ flag_management:
         - "apps/rook/tests/**"
         - "crates/**"
       carryforward: true
-    
+
     - name: frontend
       paths:
         - "apps/rook/dashboard/**"
       carryforward: true
+
+# Component Management - Coverage breakdown by product
+# Components are virtual filters defined only in this file: no extra uploads
+# and no changes to the CI jobs. The Rust upload already covers the whole
+# workspace, so each component slices it by path.
+component_management:
+  default_rules:
+    # Informational by default: components measure, they do not block merges.
+    # Codecov statuses are not in the branch ruleset, so a failing component
+    # status cannot block a pull request.
+    statuses:
+      - type: project
+        target: auto
+        informational: true
+      - type: patch
+        target: 80%
+        informational: true
+
+  individual_components:
+    # Rook: the API proxy and router.
+    - component_id: rook
+      name: rook
+      paths:
+        - "apps/rook/src/**"
+        - "apps/rook/tests/**"
+        - "crates/domain/**"
+        - "crates/application/**"
+        - "crates/infrastructure/**"
+        - "crates/test-support/**"
+
+    # Huginn: the local programming agent. These paths fall outside the
+    # `backend` flag, so the component is the only view that reports them.
+    - component_id: huginn
+      name: huginn
+      paths:
+        - "apps/huginn/src/**"
+        - "apps/huginn/tests/**"
+        - "crates/huginn/**"
+
+    # Dashboard: the Vue.js front end.
+    - component_id: dashboard
+      name: dashboard
+      paths:
+        - "apps/rook/dashboard/**"
 
 # Comment configuration
 comment:
@@ -78,9 +122,10 @@ comment:
   require_base: yes
   require_head: yes
   branches: null
-  # Wait for both backend and frontend reports before commenting
-  # See docs/codecov-setup.md for troubleshooting delayed/missing comments
-  after_n_builds: 2
+  show_carryforward_flags: true
+  # Path filters can skip one coverage job; carryforward supplies that flag.
+  # Post after the first report and let Codecov update the comment when needed.
+  after_n_builds: 1
 
 # Ignore patterns
 ignore:
@@ -90,6 +135,11 @@ ignore:
   - "**/*.test.ts"
   - "**/*.spec.ts"
   - "**/__tests__/**"
+  # Declarative provider data: const fn constructors are evaluated at
+  # compile time, so coverage instrumentation reports their bodies as
+  # never executed even though the table is exercised by
+  # rook-core/tests/descriptor_table.rs.
+  - "crates/domain/rook-core/src/provider_descriptor.rs"
 
 # Bundle Analysis Configuration (for frontend)
 bundle_analysis:

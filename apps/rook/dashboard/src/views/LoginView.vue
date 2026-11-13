@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {Lock, ShieldCheck} from "@lucide/vue";
 import {computed, ref} from "vue";
 import {useI18n} from "vue-i18n";
@@ -69,11 +69,11 @@ async function submitLogin() {
       <template v-if="auth.bootstrapRequired">
         <div class="space-y-2 text-center">
           <div class="flex justify-center">
-            <ShieldCheck class="h-10 w-10 text-primary" />
+            <ShieldCheck class="h-10 w-10 text-primary"/>
           </div>
           <PageHeader
-            :title="t('setup.title')"
             :description="t('setup.description')"
+            :title="t('setup.title')"
           />
         </div>
 
@@ -84,10 +84,10 @@ async function submitLogin() {
             <Input
               id="setup-token"
               v-model="setupToken"
-              type="text"
               autocomplete="off"
-              spellcheck="false"
               required
+              spellcheck="false"
+              type="text"
             />
           </div>
 
@@ -95,10 +95,10 @@ async function submitLogin() {
             <Label for="setup-password">{{ t('setup.field.password') }}</Label>
             <PasswordInput
               id="setup-password"
-              type="new-password"
               v-model="setupPassword"
-              :required="true"
               :error="!setupPasswordsMatch && setupConfirm !== ''"
+              :required="true"
+              type="new-password"
             />
           </div>
 
@@ -106,10 +106,10 @@ async function submitLogin() {
             <Label for="setup-confirm">{{ t('setup.field.confirm') }}</Label>
             <PasswordInput
               id="setup-confirm"
-              type="new-password"
               v-model="setupConfirm"
-              :required="true"
               :error="!setupPasswordsMatch"
+              :required="true"
+              type="new-password"
             />
             <p v-if="!setupPasswordsMatch" class="text-xs text-destructive">
               {{ t('setup.error.passwordMismatch') }}
@@ -120,8 +120,8 @@ async function submitLogin() {
             {{ setupError }}
           </p>
 
-          <Button type="submit" class="w-full" :disabled="auth.isLoading">
-            <Lock class="mr-2 h-4 w-4" />
+          <Button :disabled="auth.isLoading" class="w-full" type="submit">
+            <Lock class="mr-2 h-4 w-4"/>
             {{ auth.isLoading ? t('setup.submitting') : t('setup.submit') }}
           </Button>
         </form>
@@ -131,11 +131,11 @@ async function submitLogin() {
       <template v-else>
         <div class="space-y-2 text-center">
           <div class="flex justify-center">
-            <Lock class="h-10 w-10 text-primary" />
+            <Lock class="h-10 w-10 text-primary"/>
           </div>
           <PageHeader
-            :title="t('auth.title')"
             :description="t('auth.description')"
+            :title="t('auth.title')"
           />
         </div>
 
@@ -144,9 +144,9 @@ async function submitLogin() {
             <Label for="login-password">{{ t('auth.field.password') }}</Label>
             <PasswordInput
               id="login-password"
-              type="current-password"
               v-model="loginPassword"
               :required="true"
+              type="current-password"
             />
           </div>
 
@@ -154,7 +154,7 @@ async function submitLogin() {
             {{ loginError }}
           </p>
 
-          <Button type="submit" class="w-full" :disabled="auth.isLoading">
+          <Button :disabled="auth.isLoading" class="w-full" type="submit">
             {{ auth.isLoading ? t('auth.submitting') : t('auth.submit') }}
           </Button>
         </form>

@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {DialogClose} from "reka-ui";
 import type {HTMLAttributes} from "vue";
 import {Button} from "@/components/ui/button";
@@ -17,10 +17,10 @@ const props = withDefaults(
 
 <template>
   <div
-    data-slot="dialog-footer"
     :class="cn('flex flex-col-reverse gap-2 sm:flex-row sm:justify-end', props.class)"
+    data-slot="dialog-footer"
   >
-    <slot />
+    <slot/>
     <DialogClose v-if="showCloseButton" as-child>
       <Button variant="outline">
         Close

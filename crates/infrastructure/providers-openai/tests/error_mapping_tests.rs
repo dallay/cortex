@@ -14,6 +14,7 @@ fn test_provider(base_url: String) -> OpenAIProvider {
 
 fn test_provider_with_key(base_url: String, api_key: String) -> OpenAIProvider {
     OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key,
         base_url,
@@ -146,6 +147,7 @@ async fn complete_sanitizes_error_body_sensitive_data() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),
@@ -215,6 +217,7 @@ async fn stream_returns_error_on_429() {
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "sk-test".to_string(),
         base_url: server.uri(),

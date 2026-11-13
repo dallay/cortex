@@ -35,10 +35,9 @@ use shared_kernel::CacheKey;
 use tokio::sync::RwLock;
 use tower::ServiceExt;
 use transport_axum::authz::AuthzConfig;
-use transport_axum::format_registry::{DomainPivotTranslator, FormatRegistry};
 
 // ---------------------------------------------------------------------------
-// Instant provider — respuesta inmediata, aisla overhead del gateway
+// Instant provider — immediate response, isolates gateway overhead
 // ---------------------------------------------------------------------------
 
 struct InstantProvider {
@@ -386,17 +385,6 @@ fn build_app(in_flight: Arc<AtomicUsize>) -> axum::Router {
         vec![provider],
         RoutingStrategy::Priority,
     ));
-    let mut registry = FormatRegistry::new();
-    registry.register(
-        ApiFormat::OpenAI,
-        ApiFormat::Anthropic,
-        DomainPivotTranslator,
-    );
-    registry.register(
-        ApiFormat::Anthropic,
-        ApiFormat::OpenAI,
-        DomainPivotTranslator,
-    );
     let route_request = RouteRequest::new(
         router.clone() as Arc<dyn rook_core::RouterPort>,
         Arc::new(NoopCache),
@@ -405,7 +393,6 @@ fn build_app(in_flight: Arc<AtomicUsize>) -> axum::Router {
         None,
         None,
         Arc::new(rook_usecases::PricingConfig::default()),
-        Arc::new(registry),
         Arc::new(NoopAliasRepo),
         rook_usecases::route_request::ModelAliasesConfig {
             enabled: false,
@@ -586,7 +573,7 @@ async fn streaming_cancel_drops_in_flight() {
     assert_eq!(
         in_flight.load(Ordering::SeqCst),
         0,
-        "cancel no liberó in-flight tras drop del body SSE"
+        "cancel did not release in-flight requests after the SSE body drop"
     );
     println!("PERF cancel_ok in_flight=0 tras drop via gateway");
 }

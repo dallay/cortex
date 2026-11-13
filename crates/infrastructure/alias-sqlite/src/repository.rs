@@ -18,12 +18,8 @@ pub struct SqliteModelAliasRepository {
 impl SqliteModelAliasRepository {
     pub fn new(db_path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let mut conn = Connection::open(&db_path)?;
-        conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             PRAGMA busy_timeout = 5000;
-             PRAGMA synchronous = NORMAL;
-             PRAGMA foreign_keys = ON;",
-        )?;
+        db_migration::connection::configure_connection(&conn)?;
+        conn.execute_batch("PRAGMA synchronous = NORMAL;")?;
 
         // Run migrations for in-memory databases
         if db_path.as_ref().to_str() == Some(":memory:") {
@@ -54,8 +50,8 @@ impl ModelAliasRepositoryPort for SqliteModelAliasRepository {
         let result = if let Some(pid) = provider_id {
             // Provider-scoped query
             conn.query_row(
-                "SELECT alias, canonical, provider_id, created_at 
-                 FROM model_aliases 
+                "SELECT alias, canonical, provider_id, created_at
+                 FROM model_aliases
                  WHERE alias = ?1 AND (provider_id = ?2 OR provider_id IS NULL)
                  ORDER BY CASE WHEN provider_id IS NOT NULL THEN 0 ELSE 1 END
                  LIMIT 1",
@@ -81,9 +77,9 @@ impl ModelAliasRepositoryPort for SqliteModelAliasRepository {
         } else {
             // Global query
             conn.query_row(
-                "SELECT alias, canonical, provider_id, created_at 
-                 FROM model_aliases 
-                 WHERE alias = ?1 
+                "SELECT alias, canonical, provider_id, created_at
+                 FROM model_aliases
+                 WHERE alias = ?1
                  LIMIT 1",
                 params![alias.as_str()],
                 |row| {
@@ -114,8 +110,8 @@ impl ModelAliasRepositoryPort for SqliteModelAliasRepository {
 
         let mut stmt = conn
             .prepare(
-                "SELECT alias, canonical, provider_id, created_at 
-                 FROM model_aliases 
+                "SELECT alias, canonical, provider_id, created_at
+                 FROM model_aliases
                  ORDER BY alias",
             )
             .map_err(|e| ModelAliasRepositoryError::Database(e.to_string()))?;
@@ -170,7 +166,7 @@ impl ModelAliasRepositoryPort for SqliteModelAliasRepository {
 
         // Insert the alias
         let result = conn.execute(
-            "INSERT INTO model_aliases (alias, canonical, provider_id, created_at) 
+            "INSERT INTO model_aliases (alias, canonical, provider_id, created_at)
              VALUES (?1, ?2, ?3, ?4)",
             params![
                 alias.alias.as_str(),
@@ -214,7 +210,7 @@ impl ModelAliasRepositoryPort for SqliteModelAliasRepository {
         let mut inserted = 0;
         for alias in aliases {
             let result = tx.execute(
-                "INSERT OR IGNORE INTO model_aliases (alias, canonical, provider_id, created_at) 
+                "INSERT OR IGNORE INTO model_aliases (alias, canonical, provider_id, created_at)
                  VALUES (?1, ?2, ?3, ?4)",
                 params![
                     alias.alias.as_str(),

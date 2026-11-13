@@ -29,18 +29,19 @@ async fn upstream_tool_call_fragments_survive_provider_domain_and_openai_wire() 
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/chat/completions"))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(concat!(
-            r#"data: {"id":"chatcmpl-test","model":"gpt-4o","choices":[{"delta":{"content":"Looking up.","tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"lookup","arguments":"{\"key\":"}}]},"finish_reason":null}]}"#,
-            "\n\n",
-            r#"data: {"id":"chatcmpl-test","model":"gpt-4o","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"value\"}"}}]},"finish_reason":null}]}"#,
-            "\n\n",
-            r#"data: {"id":"chatcmpl-test","model":"gpt-4o","choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
-            "\n\n",
-            "data: [DONE]\n\n"
+        r#"data: {"id":"chatcmpl-test","model":"gpt-4o","choices":[{"delta":{"content":"Looking up.","tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"lookup","arguments":"{\"key\":"}}]},"finish_reason":null}]}"#,
+        "\n\n",
+        r#"data: {"id":"chatcmpl-test","model":"gpt-4o","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"value\"}"}}]},"finish_reason":null}]}"#,
+        "\n\n",
+        r#"data: {"id":"chatcmpl-test","model":"gpt-4o","choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+        "\n\n",
+        "data: [DONE]\n\n"
         )))
         .mount(&server)
         .await;
 
     let provider = OpenAIProvider::new(OpenAIProviderConfig {
+        provider_id: "openai",
         id: ProviderId::new("openai-test"),
         api_key: "test-key".to_string(),
         base_url: server.uri(),
@@ -140,8 +141,8 @@ async fn ollama_structured_tool_call_survives_domain_and_openai_wire() {
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/api/chat"))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(concat!(
-            r#"{"model":"qwen3","message":{"role":"assistant","content":"","thinking":"checking the key","tool_calls":[{"function":{"name":"lookup","arguments":{"key":"value"}}}]},"done":true,"done_reason":"tool_calls"}"#,
-            "\n"
+        r#"{"model":"qwen3","message":{"role":"assistant","content":"","thinking":"checking the key","tool_calls":[{"function":{"name":"lookup","arguments":{"key":"value"}}}]},"done":true,"done_reason":"tool_calls"}"#,
+        "\n"
         )))
         .mount(&server)
         .await;

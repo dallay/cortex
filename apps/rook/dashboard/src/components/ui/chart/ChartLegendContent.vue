@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type {HTMLAttributes} from "vue";
 import {computed, onMounted, ref} from "vue";
 import {cn} from "@/lib/utils";
@@ -50,13 +50,13 @@ onMounted(() => {
         '[&>svg]:text-muted-foreground flex items-center gap-1.5 [&>svg]:h-3 [&>svg]:w-3',
       )"
     >
-      <component :is="itemConfig.icon" v-if="itemConfig.icon" />
+      <component :is="itemConfig.icon" v-if="itemConfig.icon"/>
       <div
         v-else
-        class="h-2 w-2 shrink-0 rounded-[2px]"
         :style="{
           backgroundColor: itemConfig?.color,
         }"
+        class="h-2 w-2 shrink-0 rounded-[2px]"
       />
 
       {{ itemConfig.label }}

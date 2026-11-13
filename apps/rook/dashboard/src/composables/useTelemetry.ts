@@ -20,6 +20,7 @@ export function useTelemetry() {
 	const error = ref<string | null>(null);
 	const availability = ref<"available" | "unavailable" | "error">("available");
 	const providers = computed(() => data.value?.providers ?? []);
+
 	async function fetch() {
 		loading.value = true;
 		error.value = null;
@@ -35,6 +36,7 @@ export function useTelemetry() {
 			loading.value = false;
 		}
 	}
+
 	async function inspect(providerId: string) {
 		try {
 			[provider.value, latency.value] = await Promise.all([
@@ -48,6 +50,7 @@ export function useTelemetry() {
 					: "Failed to load provider telemetry";
 		}
 	}
+
 	return {
 		data,
 		providers,

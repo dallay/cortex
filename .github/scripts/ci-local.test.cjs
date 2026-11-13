@@ -1,12 +1,14 @@
 'use strict';
 
-const { describe, it } = require('node:test');
+const {describe, it} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const justfile = fs.readFileSync(path.join(__dirname, '../../justfile'), 'utf8');
-const workflow = fs.readFileSync(path.join(__dirname, '../workflows/ci.yml'), 'utf8');
+const justfile = fs.readFileSync(path.join(__dirname, '../../justfile'),
+    'utf8');
+const workflow = fs.readFileSync(path.join(__dirname, '../workflows/ci.yml'),
+    'utf8');
 
 function recipeBlock(name) {
   const start = justfile.match(new RegExp(`^${name}(?:\\s[^\\n]*)?:\\n`, 'm'));
@@ -30,50 +32,69 @@ describe('local CI contract', () => {
     assert.match(recipeBlock('ci-local'), /just ci-contract/);
   });
 
-  it('runs contract, doctor and issue-labeler tests from the GitHub workflow', () => {
-    const local = recipeBlock('ci-local');
-    assert.match(local, /ci-contract/);
-    assert.match(local, /doctor-test/);
-    assert.match(local, /ci-labeler-test/);
-    assert.match(workflow, /node --test \.github\/scripts\/ci-\*\.test\.cjs/);
-    assert.match(recipeBlock('ci-labeler-test'), /node --test \.github\/scripts\/issue-labeler\.test\.cjs/);
-    assert.match(recipeBlock('ci-install'), /pnpm install --frozen-lockfile/);
-  });
+  it('runs contract, doctor and issue-labeler tests from the GitHub workflow',
+      () => {
+        const local = recipeBlock('ci-local');
+        assert.match(local, /ci-contract/);
+        assert.match(local, /doctor-test/);
+        assert.match(local, /ci-labeler-test/);
+        assert.match(workflow,
+            /node --test \.github\/scripts\/ci-\*\.test\.cjs/);
+        assert.match(recipeBlock('ci-labeler-test'),
+            /node --test \.github\/scripts\/issue-labeler\.test\.cjs/);
+        assert.match(recipeBlock('ci-install'),
+            /pnpm install --frozen-lockfile/);
+      });
 
   it('covers dashboard build, both coverage gates, E2E and Rust docs', () => {
     const local = recipeBlock('ci-local');
-    assertContainsAll(local, ['ci-dashboard-build', 'ci-coverage-rust', 'ci-coverage-frontend', 'ci-e2e', 'ci-doc'], 'ci-local');
+    assertContainsAll(local,
+        ['ci-dashboard-build', 'ci-coverage-rust', 'ci-coverage-frontend',
+          'ci-e2e', 'ci-doc'], 'ci-local');
     assert.match(workflow, /--fail-under-lines 87/);
-    const localThreshold = recipeBlock('ci-coverage-rust').match(/--fail-under-lines\s+(\d+(?:\.\d+)?)(?=\s|$)/);
-    const workflowThreshold = workflow.match(/--fail-under-lines\s+(\d+(?:\.\d+)?)(?=\s|$)/);
-    assert.ok(localThreshold, 'ci-coverage-rust debe declarar un umbral de cobertura de líneas');
-    assert.ok(workflowThreshold, 'el workflow debe declarar un umbral de cobertura de líneas');
-    assert.equal(localThreshold[1], workflowThreshold[1], 'los umbrales de cobertura Rust deben coincidir');
+    const localThreshold = recipeBlock('ci-coverage-rust').match(
+        /--fail-under-lines\s+(\d+(?:\.\d+)?)(?=\s|$)/);
+    const workflowThreshold = workflow.match(
+        /--fail-under-lines\s+(\d+(?:\.\d+)?)(?=\s|$)/);
+    assert.ok(localThreshold,
+        'ci-coverage-rust must declare a line coverage threshold');
+    assert.ok(workflowThreshold,
+        'the workflow must declare a line coverage threshold');
+    assert.equal(localThreshold[1], workflowThreshold[1],
+        'the Rust coverage thresholds must match');
     assert.match(workflow, /vitest run --coverage/);
   });
 
-  it('runs blocking local security gates and does not hide audit failures', () => {
-    const local = recipeBlock('ci-local');
-    for (const token of ['ci-audit', 'ci-trivy', 'ci-gitleaks', 'ci-semgrep']) {
-      assert.match(local, new RegExp(token));
-    }
-    assert.doesNotMatch(recipeBlock('ci-audit'), /\|\|\s*true/);
-    assert.match(recipeBlock('ci-audit'), /cargo audit(?:\s|$)/);
-    assert.match(recipeBlock('ci-semgrep'), /semgrep==1\.126\.0/);
-    assert.match(workflow, /severity: HIGH,CRITICAL/);
-    assert.match(workflow, /--severity ERROR/);
-    assert.match(recipeBlock('ci-semgrep'), /jq -e/);
-    assert.match(recipeBlock('ci-semgrep'), /CORTEX_CI_TMPDIR/);
-    assert.match(recipeBlock('ci-trivy'), /Trivy is required/);
-    assert.match(workflow, /--exit-code 1/);
-  });
+  it('runs blocking local security gates and does not hide audit failures',
+      () => {
+        const local = recipeBlock('ci-local');
+        for (const token of
+            ['ci-audit', 'ci-trivy', 'ci-gitleaks', 'ci-semgrep']) {
+          assert.match(local, new RegExp(token));
+        }
+        assert.doesNotMatch(recipeBlock('ci-audit'), /\|\|\s*true/);
+        assert.match(recipeBlock('ci-audit'), /cargo audit(?:\s|$)/);
+        assert.match(recipeBlock('ci-semgrep'), /semgrep==1\.126\.0/);
+        assert.match(workflow, /severity: HIGH,CRITICAL/);
+        assert.match(workflow, /--severity ERROR/);
+        assert.match(recipeBlock('ci-semgrep'), /jq -e/);
+        assert.match(recipeBlock('ci-semgrep'), /CORTEX_CI_TMPDIR/);
+        assert.match(recipeBlock('ci-trivy'), /Trivy is required/);
+        assertContainsAll(recipeBlock('ci-trivy'),
+            ['--skip-dirs tmp', '--skip-dirs .opencode',
+              '--skip-dirs .claude/worktrees'], 'ci-trivy');
+        assert.match(workflow, /--exit-code 1/);
+      });
 
-  it('documents SonarCloud and push-only builds as non-local or separate checks', () => {
-    const local = recipeBlock('ci-local');
-    assert.match(local, /SonarCloud/);
-    assert.match(workflow, /Cross-compile validation \(only on main\/develop push, not PRs\)/);
-    assert.match(workflow, /Windows validation/);
-    assert.match(recipeBlock('ci-gitleaks'), /CI_BASE_REF/);
-    assert.match(recipeBlock('ci-gitleaks'), /refusing an incomplete Gitleaks range scan/);
-  });
+  it('documents SonarCloud and push-only builds as non-local or separate checks',
+      () => {
+        const local = recipeBlock('ci-local');
+        assert.match(local, /SonarCloud/);
+        assert.match(workflow,
+            /Cross-compile validation \(only on main\/develop push, not PRs\)/);
+        assert.match(workflow, /Windows validation/);
+        assert.match(recipeBlock('ci-gitleaks'), /CI_BASE_REF/);
+        assert.match(recipeBlock('ci-gitleaks'),
+            /refusing an incomplete Gitleaks range scan/);
+      });
 });

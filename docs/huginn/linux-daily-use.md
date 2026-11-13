@@ -1,8 +1,8 @@
 # Huginn Linux daily-use checklist
 
 This checklist records a real coding session against a tool-capable Chat
-Completions endpoint on a Linux host. It is the manual acceptance step
-referenced from `validation.md`. Each step has a fixed command and a one-line
+Completions endpoint on a Linux host. It is the manual acceptance step.
+Each step has a fixed command and a one-line
 note you paste into the daily record.
 
 Target: **10–15 minutes** of focused use per session, with at least one session
@@ -117,8 +117,8 @@ compaction failed, did the turn stop without losing the originals?_
 
 ## After the session
 
-Append a one-line entry per session to `docs/huginn/validation.md` under the
-"Linux daily-use record" heading, in this exact shape:
+Append a one-line entry per session under a "Linux daily-use record" heading,
+in this exact shape:
 
 ```
 - YYYY-MM-DD host=<hostname> rustc=<version> endpoint=<provider/model>
@@ -140,5 +140,5 @@ same change so the record travels with the code.
   closest log line.
 
 Five consecutive `ok` sessions across at least two different repositories are
-the bar for closing this item in `validation.md`. Anything short of that keeps
+the bar for closing this item. Anything short of that keeps
 the item open.

@@ -8,7 +8,7 @@ use axum::{
     Json, Router,
 };
 use chrono::{DateTime, Utc};
-use rook_core::{AuthType, Credentials, ProviderConnection, ProviderKind, TestStatus};
+use rook_core::{AuthType, Credentials, ProviderConnection, ProviderDescriptor, TestStatus};
 use rook_usecases::manage_connections::{
     ManageConnectionsError, OAuthFlowStatus, OAuthFlowType, StartOAuthFlowRequest,
 };
@@ -78,7 +78,7 @@ async fn authorize(
     Path(provider): Path<String>,
     Json(request): Json<StartOAuthRequestDto>,
 ) -> Result<Json<rook_usecases::manage_connections::OAuthFlowStart>, HttpError> {
-    let provider_kind = parse_provider(&provider)?;
+    let provider = parse_provider(&provider)?;
     let flow_type = match request.flow_type.as_str() {
         "authorizationCode" => OAuthFlowType::AuthorizationCode,
         "deviceCode" => OAuthFlowType::DeviceCode,
@@ -104,7 +104,7 @@ async fn authorize(
         project_id: request.project_id,
     };
     connections
-        .start_oauth_flow(provider_kind, request)
+        .start_oauth_flow(provider, request)
         .await
         .map(Json)
         .map_err(map_error)
@@ -115,14 +115,14 @@ async fn status(
     Path(provider): Path<String>,
     Query(query): Query<OAuthQuery>,
 ) -> Result<Json<serde_json::Value>, HttpError> {
-    let provider_kind = parse_provider(&provider)?;
+    let provider = parse_provider(&provider)?;
     let connections = manage_connections(&usecases)?;
     if let Some(flow_id) = query.flow_id {
         let flow = connections
             .oauth_flow_status(&flow_id)
             .await
             .map_err(map_error)?;
-        if flow.provider_kind != provider_kind.as_str() {
+        if flow.provider_id != provider.id {
             return Err(not_found("OAuth flow not found"));
         }
         return Ok(Json(flow_status_json(flow)));
@@ -138,7 +138,7 @@ async fn status(
         .await
         .map_err(map_error)?
         .ok_or_else(|| not_found("OAuth connection not found"))?;
-    if connection.provider_kind != provider_kind || connection.auth_type != AuthType::OAuth {
+    if connection.provider.id != provider.id || connection.auth_type != AuthType::OAuth {
         return Err(not_found("OAuth connection not found"));
     }
     Ok(Json(connection_status(&connection)))
@@ -149,7 +149,7 @@ async fn refresh(
     Path(provider): Path<String>,
     Json(request): Json<OAuthConnectionRequest>,
 ) -> Result<StatusCode, HttpError> {
-    let provider_kind = parse_provider(&provider)?;
+    let provider = parse_provider(&provider)?;
     let connections = manage_connections(&usecases)?;
     let id = parse_connection_id(&request.connection_id)?;
     let connection = connections
@@ -157,7 +157,7 @@ async fn refresh(
         .await
         .map_err(map_error)?
         .ok_or_else(|| not_found("OAuth connection not found"))?;
-    if connection.provider_kind != provider_kind || connection.auth_type != AuthType::OAuth {
+    if connection.provider.id != provider.id || connection.auth_type != AuthType::OAuth {
         return Err(not_found("OAuth connection not found"));
     }
     connections
@@ -172,7 +172,7 @@ async fn disconnect(
     Path(provider): Path<String>,
     Json(request): Json<OAuthConnectionRequest>,
 ) -> Result<StatusCode, HttpError> {
-    let provider_kind = parse_provider(&provider)?;
+    let provider = parse_provider(&provider)?;
     let connections = manage_connections(&usecases)?;
     let id = parse_connection_id(&request.connection_id)?;
     let connection = connections
@@ -180,7 +180,7 @@ async fn disconnect(
         .await
         .map_err(map_error)?
         .ok_or_else(|| not_found("OAuth connection not found"))?;
-    if connection.provider_kind != provider_kind || connection.auth_type != AuthType::OAuth {
+    if connection.provider.id != provider.id || connection.auth_type != AuthType::OAuth {
         return Err(not_found("OAuth connection not found"));
     }
     connections
@@ -237,7 +237,7 @@ fn connection_status(connection: &ProviderConnection) -> serde_json::Value {
     };
     serde_json::to_value(OAuthConnectionStatusResponse {
         connection_id: connection.id,
-        provider_kind: connection.provider_kind.as_str().to_string(),
+        provider_kind: connection.provider.id.to_string(),
         status: status.to_string(),
         expires_at,
         updated_at: connection.updated_at,
@@ -249,7 +249,7 @@ fn connection_status(connection: &ProviderConnection) -> serde_json::Value {
 fn flow_status_json(status: OAuthFlowStatus) -> serde_json::Value {
     serde_json::json!({
         "flowId": status.flow_id,
-        "providerKind": status.provider_kind,
+        "providerKind": status.provider_id,
         "status": status.status,
         "message": status.message,
         "connectionId": status.connection_id,
@@ -289,8 +289,8 @@ fn manage_connections(
         .ok_or_else(|| not_found("not found"))
 }
 
-fn parse_provider(value: &str) -> Result<ProviderKind, HttpError> {
-    ProviderKind::try_from(value).map_err(|_| validation_error("invalid provider"))
+fn parse_provider(value: &str) -> Result<&'static ProviderDescriptor, HttpError> {
+    rook_core::descriptor_for(value).ok_or_else(|| validation_error("invalid provider"))
 }
 
 fn parse_connection_id(value: &str) -> Result<ConnectionId, HttpError> {

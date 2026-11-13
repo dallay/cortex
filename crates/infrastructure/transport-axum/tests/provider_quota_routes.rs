@@ -10,7 +10,7 @@ use axum::{
 };
 use chrono::Utc;
 use rook_core::{
-    CortexResult, CostBreakdown, Pagination, ProviderConnection, ProviderKind, QuotaObservation,
+    CortexResult, CostBreakdown, Pagination, ProviderConnection, QuotaObservation,
     QuotaObservationQuery, QuotaObservationRecorderPort, UsageEntry, UsageFilters,
     UsageRecorderPort, UsageSummary,
 };
@@ -219,7 +219,12 @@ async fn get_provider_quota_returns_json_with_explicit_usage_coverage_and_source
     assert!(!items.is_empty());
     let openai = items
         .iter()
-        .find(|item| item["providerKind"] == ProviderKind::OpenAI.as_str())
+        .find(|item| {
+            item["providerKind"]
+                == rook_core::descriptor_by_id("openai")
+                    .expect("openai descriptor")
+                    .as_str()
+        })
         .unwrap();
     assert_eq!(openai["coverage"], "cortex_routed");
     assert_eq!(openai["accountQuota"]["availability"], "not_provided");
@@ -238,14 +243,17 @@ async fn get_provider_quota_returns_json_with_explicit_usage_coverage_and_source
 
 #[tokio::test]
 async fn get_provider_quota_exposes_upstream_observations_separately_with_provenance_and_age() {
-    let mut usecases = test_usecases(vec![api_key_connection(ProviderKind::OpenAI, "upstream")]);
+    let mut usecases = test_usecases(vec![api_key_connection(
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+        "upstream",
+    )]);
     Arc::get_mut(&mut usecases).unwrap().usage_recorder =
         Some(Arc::new(FakeUsageRecorder::default()));
     let connection_id = usecases.manage_connections.as_ref().unwrap();
     let connection = connection_id.list().await.unwrap().remove(0);
     let observed_at = Utc::now() - chrono::Duration::seconds(12);
     let observation = QuotaObservation {
-        provider_kind: ProviderKind::OpenAI,
+        provider_id: "openai".to_string(),
         provider: connection.provider_runtime_id,
         connection_id: Some(connection.id),
         metric: "requests".to_string(),
@@ -266,7 +274,10 @@ async fn get_provider_quota_exposes_upstream_observations_separately_with_proven
     }));
 
     let json = quota_json(usecases).await;
-    let openai = provider_item(&json, ProviderKind::OpenAI);
+    let openai = provider_item(
+        &json,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+    );
     assert_eq!(
         openai["rateLimitObservation"]["source"],
         "recorded_routed_request_status"
@@ -293,11 +304,17 @@ async fn get_provider_quota_marks_absent_upstream_observations_not_reported() {
         .quota_observation_reader = Some(Arc::new(FakeQuotaObservationReader::default()));
     let json = quota_json(usecases).await;
     assert_eq!(
-        provider_item(&json, ProviderKind::OpenAI)["upstreamObservations"]["availability"],
+        provider_item(
+            &json,
+            rook_core::descriptor_by_id("openai").expect("openai descriptor")
+        )["upstreamObservations"]["availability"],
         "not_reported"
     );
     assert_eq!(
-        provider_item(&json, ProviderKind::OpenAI)["upstreamObservations"]["observations"],
+        provider_item(
+            &json,
+            rook_core::descriptor_by_id("openai").expect("openai descriptor")
+        )["upstreamObservations"]["observations"],
         serde_json::json!([])
     );
 }
@@ -315,18 +332,27 @@ async fn get_provider_quota_marks_failed_upstream_observation_read_unavailable()
     }));
     let json = quota_json(usecases).await;
     assert_eq!(
-        provider_item(&json, ProviderKind::OpenAI)["upstreamObservations"]["availability"],
+        provider_item(
+            &json,
+            rook_core::descriptor_by_id("openai").expect("openai descriptor")
+        )["upstreamObservations"]["availability"],
         "unavailable"
     );
     assert_eq!(
-        provider_item(&json, ProviderKind::OpenAI)["usageAvailability"],
+        provider_item(
+            &json,
+            rook_core::descriptor_by_id("openai").expect("openai descriptor")
+        )["usageAvailability"],
         "no_data"
     );
 }
 
 #[tokio::test]
 async fn get_provider_quota_preserves_successful_windows_when_one_summary_query_fails() {
-    let connection = api_key_connection(ProviderKind::OpenAI, "primary");
+    let connection = api_key_connection(
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+        "primary",
+    );
     let mut usecases = test_usecases(vec![connection]);
     let recorder = FakeUsageRecorder {
         summary: UsageSummary {
@@ -341,7 +367,10 @@ async fn get_provider_quota_preserves_successful_windows_when_one_summary_query_
     Arc::get_mut(&mut usecases).unwrap().usage_recorder = Some(Arc::new(recorder));
 
     let json = quota_json(usecases).await;
-    let openai = provider_item(&json, ProviderKind::OpenAI);
+    let openai = provider_item(
+        &json,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+    );
     assert_eq!(openai["coverage"], "cortex_routed");
     assert_eq!(openai["connectionCount"], 1);
     assert_eq!(openai["allTime"]["availability"], "available");
@@ -355,9 +384,18 @@ async fn get_provider_quota_preserves_successful_windows_when_one_summary_query_
 #[tokio::test]
 async fn get_provider_quota_reports_partial_and_unknown_cost_without_losing_provenance() {
     let mut usecases = test_usecases(vec![
-        api_key_connection(ProviderKind::OpenAI, "first"),
-        api_key_connection(ProviderKind::OpenAI, "second"),
-        api_key_connection(ProviderKind::Anthropic, "anthropic"),
+        api_key_connection(
+            rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+            "first",
+        ),
+        api_key_connection(
+            rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+            "second",
+        ),
+        api_key_connection(
+            rook_core::descriptor_by_id("anthropic").expect("anthropic descriptor"),
+            "anthropic",
+        ),
     ]);
     let connections = usecases
         .manage_connections
@@ -399,7 +437,10 @@ async fn get_provider_quota_reports_partial_and_unknown_cost_without_losing_prov
 
     let json = quota_json(usecases).await;
     let items = json["items"].as_array().unwrap();
-    let openai = provider_item(&json, ProviderKind::OpenAI);
+    let openai = provider_item(
+        &json,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+    );
     assert_eq!(openai["connectionCount"], 2);
     assert_eq!(openai["activeConnectionCount"], 2);
     assert_eq!(openai["coverage"], "cortex_routed");
@@ -414,26 +455,45 @@ async fn get_provider_quota_reports_partial_and_unknown_cost_without_losing_prov
         openai["rateLimitObservation"]["source"],
         "recorded_routed_request_status"
     );
-    let anthropic = provider_item(&json, ProviderKind::Anthropic);
+    let anthropic = provider_item(
+        &json,
+        rook_core::descriptor_by_id("anthropic").expect("anthropic descriptor"),
+    );
     assert_eq!(anthropic["connectionCount"], 1);
     assert_eq!(anthropic["allTime"]["requests"], 7);
-    assert_eq!(items.len(), 7);
+    // The quota view lists every descriptor in the table, including
+    // OpenAI-compatible, which the old fixed array omitted.
+    assert_eq!(items.len(), rook_core::PROVIDER_DESCRIPTORS.len());
+    assert!(provider_item(
+        &json,
+        rook_core::descriptor_by_id("openai-compatible").expect("openai-compatible descriptor")
+    )
+    .is_object());
 }
 
 #[tokio::test]
 async fn get_provider_quota_marks_ollama_account_quota_not_applicable() {
-    let mut usecases = test_usecases(vec![api_key_connection(ProviderKind::Ollama, "ollama")]);
+    let mut usecases = test_usecases(vec![api_key_connection(
+        rook_core::descriptor_by_id("ollama").expect("ollama descriptor"),
+        "ollama",
+    )]);
     Arc::get_mut(&mut usecases).unwrap().usage_recorder =
         Some(Arc::new(FakeUsageRecorder::default()));
     let json = quota_json(usecases).await;
-    let ollama = provider_item(&json, ProviderKind::Ollama);
+    let ollama = provider_item(
+        &json,
+        rook_core::descriptor_by_id("ollama").expect("ollama descriptor"),
+    );
     assert_eq!(ollama["accountQuota"]["availability"], "not_applicable");
     assert_eq!(ollama["allTime"]["costUsd"], serde_json::Value::Null);
 }
 
 #[tokio::test]
 async fn get_provider_quota_reports_unknown_cost_when_all_entries_have_unknown_prices() {
-    let connection = api_key_connection(ProviderKind::OpenAI, "unknown-cost");
+    let connection = api_key_connection(
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+        "unknown-cost",
+    );
     let id = connection.id;
     let mut usecases = test_usecases(vec![connection]);
     Arc::get_mut(&mut usecases).unwrap().usage_recorder = Some(Arc::new(FakeUsageRecorder {
@@ -456,7 +516,10 @@ async fn get_provider_quota_reports_unknown_cost_when_all_entries_have_unknown_p
     }));
 
     let json = quota_json(usecases).await;
-    let openai = provider_item(&json, ProviderKind::OpenAI);
+    let openai = provider_item(
+        &json,
+        rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+    );
     assert_eq!(openai["allTime"]["costAvailability"], "unknown");
     assert!(openai["allTime"]["costUsd"].is_null());
     assert_eq!(openai["last24h"]["costAvailability"], "unknown");
@@ -490,8 +553,14 @@ async fn aggregate_cost_availability_ignores_no_data_in_either_order() {
     ] {
         for costs in [costs.clone(), [costs[1].clone(), costs[0].clone()]] {
             let connections = vec![
-                api_key_connection(ProviderKind::OpenAI, "cost-a"),
-                api_key_connection(ProviderKind::OpenAI, "cost-b"),
+                api_key_connection(
+                    rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+                    "cost-a",
+                ),
+                api_key_connection(
+                    rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+                    "cost-b",
+                ),
             ];
             let costs_by_connection = connections
                 .iter()
@@ -509,7 +578,10 @@ async fn aggregate_cost_availability_ignores_no_data_in_either_order() {
                     ..FakeUsageRecorder::default()
                 }));
             let json = quota_json(usecases).await;
-            let openai = provider_item(&json, ProviderKind::OpenAI);
+            let openai = provider_item(
+                &json,
+                rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+            );
             assert_eq!(openai["allTime"]["costAvailability"], expected);
         }
     }
@@ -546,8 +618,14 @@ async fn aggregate_cost_availability_is_partial_for_two_connections_in_either_or
         ],
     ] {
         let connections = vec![
-            api_key_connection(ProviderKind::OpenAI, "cost-a"),
-            api_key_connection(ProviderKind::OpenAI, "cost-b"),
+            api_key_connection(
+                rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+                "cost-a",
+            ),
+            api_key_connection(
+                rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+                "cost-b",
+            ),
         ];
         let costs_by_connection = connections
             .iter()
@@ -565,7 +643,10 @@ async fn aggregate_cost_availability_is_partial_for_two_connections_in_either_or
         }));
 
         let json = quota_json(usecases).await;
-        let openai = provider_item(&json, ProviderKind::OpenAI);
+        let openai = provider_item(
+            &json,
+            rook_core::descriptor_by_id("openai").expect("openai descriptor"),
+        );
         assert_eq!(openai["allTime"]["costAvailability"], "partial");
         assert!(openai["allTime"]["costUsd"].is_null());
     }
@@ -615,20 +696,26 @@ async fn quota_json(usecases: Arc<rook_usecases::RookUsecases>) -> serde_json::V
     serde_json::from_slice(&body).unwrap()
 }
 
-fn provider_item(json: &serde_json::Value, kind: ProviderKind) -> &serde_json::Value {
+fn provider_item<'a>(
+    json: &'a serde_json::Value,
+    descriptor: &rook_core::ProviderDescriptor,
+) -> &'a serde_json::Value {
     json["items"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|item| item["providerKind"] == kind.as_str())
+        .find(|item| item["providerKind"] == descriptor.id)
         .unwrap()
 }
 
-fn api_key_connection(kind: ProviderKind, name: &str) -> ProviderConnection {
+fn api_key_connection(
+    kind: &'static rook_core::ProviderDescriptor,
+    name: &str,
+) -> ProviderConnection {
     let now = Utc::now();
     ProviderConnection {
         id: shared_kernel::ConnectionId::new(),
-        provider_kind: kind,
+        provider: kind,
         provider_runtime_id: shared_kernel::ProviderId::new(format!("runtime-{name}")),
         name: name.to_string(),
         priority: 10,
@@ -648,6 +735,7 @@ fn api_key_connection(kind: ProviderKind, name: &str) -> ProviderConnection {
             api_format: Some(rook_core::ApiFormat::OpenAI),
             supported_models: Vec::new(),
         },
+        adapter_revision: 1,
         test_status: rook_core::TestStatus::NeverTested,
         created_at: now,
         updated_at: now,

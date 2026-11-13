@@ -1,6 +1,7 @@
 //! Host-owned overlay payloads and focus-transition primitives.
 
 use crate::event::OperationId;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use huginn_plugin_api::v1::{Command, DialogHandle, Workflow};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -91,7 +92,7 @@ pub(crate) enum InputEffect {
     BackForm,
     Submit,
     Choose,
-    Resolve(bool),
+    Resolve(huginn_core::ApprovalDecision),
     DiscardSettings(bool),
     ApplySettings,
     AddProvider,
@@ -103,7 +104,7 @@ impl Payload {
         event: crossterm::event::Event,
         settings_pending: bool,
     ) -> InputEffect {
-        use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
+        use crossterm::event::{Event, KeyEventKind};
         use zeroize::Zeroize;
         use InputEffect as Effect;
         let key = match event {
@@ -120,107 +121,170 @@ impl Payload {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let cancel = key.code == KeyCode::Esc || (key.code == KeyCode::Char('c') && ctrl);
         match self {
-            Self::Workflow(form) => {
-                if key.code == KeyCode::Esc && form.can_go_back() {
-                    return Effect::BackForm;
-                }
-                if cancel {
-                    return Effect::CancelForm;
-                }
-                match key.code {
-                    KeyCode::Down if form.searching() => form.choice(true),
-                    KeyCode::Up if form.searching() => form.choice(false),
-                    KeyCode::Tab | KeyCode::Down => form.navigate(true),
-                    KeyCode::BackTab | KeyCode::Up => form.navigate(false),
-                    KeyCode::Left => form.choice(false),
-                    KeyCode::Right => form.choice(true),
-                    KeyCode::Backspace => form.backspace(),
-                    KeyCode::Enter => return Effect::Submit,
-                    KeyCode::Char(ch) if !ctrl => {
-                        let mut bytes = [0; 4];
-                        form.insert(ch.encode_utf8(&mut bytes));
-                        bytes.zeroize();
-                    }
-                    _ => {}
-                }
-            }
-            Self::Settings(dialog) => {
-                if cancel {
-                    return Effect::DiscardSettings(settings_pending);
-                }
-                if settings_pending {
-                    return Effect::None;
-                }
-                match key.code {
-                    // REQ-05: cycle rows consume horizontal arrows; both
-                    // directions may advance. Tab/BackTab always change section.
-                    KeyCode::Left | KeyCode::Right
-                        if dialog.active_tab == crate::settings::TAB_TOASTS =>
-                    {
-                        dialog.toggle_selected()
-                    }
-                    KeyCode::Left | KeyCode::BackTab => dialog.prev_tab(),
-                    KeyCode::Right | KeyCode::Tab => dialog.next_tab(),
-                    KeyCode::Up => dialog.select_prev(),
-                    KeyCode::Down => dialog.select_next(),
-                    KeyCode::Char(' ') => dialog.toggle_selected(),
-                    KeyCode::Enter => {
-                        return if dialog.handle_add_provider() {
-                            Effect::AddProvider
-                        } else {
-                            Effect::ApplySettings
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            Self::PluginDialog(dialog) => {
-                if cancel {
-                    return Effect::Close;
-                }
-                match key.code {
-                    KeyCode::Up => dialog.selected = dialog.selected.saturating_sub(1),
-                    KeyCode::Down => {
-                        dialog.selected = (dialog.selected + 1)
-                            .min(dialog.handle.choices().len().saturating_sub(1))
-                    }
-                    KeyCode::PageUp => dialog.body_scroll = dialog.body_scroll.saturating_sub(1),
-                    KeyCode::PageDown => dialog.body_scroll = dialog.body_scroll.saturating_add(1),
-                    KeyCode::Enter => return Effect::Choose,
-                    _ => {}
-                }
-            }
-            Self::Approval(modal) => {
-                if cancel {
-                    return Effect::Resolve(false);
-                }
-                match key.code {
-                    KeyCode::PageDown | KeyCode::Down => {
-                        modal.scroll = modal.scroll.saturating_add(1)
-                    }
-                    KeyCode::PageUp | KeyCode::Up => modal.scroll_up(),
-                    KeyCode::Home => modal.scroll = 0,
-                    KeyCode::End => modal.scroll = modal.last_scroll,
-                    KeyCode::Char(ch)
-                        if modal.armed
-                            && !ctrl
-                            && ch.is_ascii_hexdigit()
-                            && modal.typed.len() < 8 =>
-                    {
-                        modal.typed.push(ch)
-                    }
-                    KeyCode::Backspace => {
-                        modal.typed.pop();
-                    }
-                    KeyCode::Enter if modal.armed => return Effect::Resolve(modal.confirm()),
-                    _ => {}
-                }
-            }
+            Self::Workflow(form) => Self::workflow_input(form, key, ctrl, cancel),
+            Self::Settings(dialog) => Self::settings_input(dialog, key, settings_pending, cancel),
+            Self::PluginDialog(dialog) => Self::plugin_dialog_input(dialog, key, cancel),
+            Self::Approval(modal) => Self::approval_input(modal, key, ctrl, cancel),
             Self::Help => {
                 if cancel || key.code == KeyCode::Enter {
                     return Effect::Close;
                 }
+                Effect::None
             }
+        }
+    }
+
+    fn workflow_input(
+        form: &mut crate::workflow::HostWorkflow,
+        key: KeyEvent,
+        ctrl: bool,
+        cancel: bool,
+    ) -> InputEffect {
+        use zeroize::Zeroize;
+        use InputEffect as Effect;
+        if key.code == KeyCode::Esc && form.can_go_back() {
+            return Effect::BackForm;
+        }
+        if cancel {
+            return Effect::CancelForm;
+        }
+        match key.code {
+            KeyCode::Down if form.searching() => form.choice(true),
+            KeyCode::Up if form.searching() => form.choice(false),
+            KeyCode::Tab | KeyCode::Down => form.navigate(true),
+            KeyCode::BackTab | KeyCode::Up => form.navigate(false),
+            KeyCode::Left => form.choice(false),
+            KeyCode::Right => form.choice(true),
+            KeyCode::Backspace => form.backspace(),
+            KeyCode::Enter => return Effect::Submit,
+            KeyCode::Char(ch) if !ctrl => {
+                let mut bytes = [0; 4];
+                form.insert(ch.encode_utf8(&mut bytes));
+                bytes.zeroize();
+            }
+            _ => {}
+        }
+        Effect::None
+    }
+
+    const fn settings_input(
+        dialog: &mut crate::settings::SettingsDialog,
+        key: KeyEvent,
+        settings_pending: bool,
+        cancel: bool,
+    ) -> InputEffect {
+        use InputEffect as Effect;
+        if cancel {
+            return Effect::DiscardSettings(settings_pending);
+        }
+        if settings_pending {
+            return Effect::None;
+        }
+        match key.code {
+            // REQ-05: cycle rows consume horizontal arrows; both
+            // directions may advance. Tab/BackTab always change section.
+            KeyCode::Left | KeyCode::Right if dialog.active_tab == crate::settings::TAB_TOASTS => {
+                dialog.toggle_selected()
+            }
+            KeyCode::Left | KeyCode::BackTab => dialog.prev_tab(),
+            KeyCode::Right | KeyCode::Tab => dialog.next_tab(),
+            KeyCode::Up => dialog.select_prev(),
+            KeyCode::Down => dialog.select_next(),
+            KeyCode::Char(' ') => dialog.toggle_selected(),
+            KeyCode::Enter => {
+                return if dialog.handle_add_provider() {
+                    Effect::AddProvider
+                } else {
+                    Effect::ApplySettings
+                }
+            }
+            _ => {}
+        }
+        Effect::None
+    }
+
+    fn plugin_dialog_input(
+        dialog: &mut crate::state::PluginDialog,
+        key: KeyEvent,
+        cancel: bool,
+    ) -> InputEffect {
+        use InputEffect as Effect;
+        if cancel {
+            return Effect::Close;
+        }
+        match key.code {
+            KeyCode::Up => dialog.selected = dialog.selected.saturating_sub(1),
+            KeyCode::Down => {
+                dialog.selected =
+                    (dialog.selected + 1).min(dialog.handle.choices().len().saturating_sub(1))
+            }
+            KeyCode::PageUp => dialog.body_scroll = dialog.body_scroll.saturating_sub(1),
+            KeyCode::PageDown => dialog.body_scroll = dialog.body_scroll.saturating_add(1),
+            KeyCode::Enter => return Effect::Choose,
+            _ => {}
+        }
+        Effect::None
+    }
+
+    fn approval_input(
+        modal: &mut crate::state::Modal,
+        key: KeyEvent,
+        ctrl: bool,
+        cancel: bool,
+    ) -> InputEffect {
+        use InputEffect as Effect;
+        if cancel {
+            return Effect::Resolve(huginn_core::ApprovalDecision::Reject);
+        }
+        if ctrl && matches!(key.code, KeyCode::Char('f' | 'F')) {
+            modal.expanded = !modal.expanded;
+            if modal.expanded {
+                modal.details_rendered = false;
+                modal.scroll = 0;
+                modal.rendered_scroll = 0;
+            }
+            return Effect::None;
+        }
+        let count = modal.allowed_decisions.len();
+        match key.code {
+            KeyCode::Left if count > 0 => {
+                let selected = modal.selected.saturating_sub(1);
+                if selected != modal.selected {
+                    modal.selected = selected;
+                    modal.review_notice = false;
+                }
+            }
+            KeyCode::Right if count > 0 => {
+                let selected = (modal.selected + 1).min(count - 1);
+                if selected != modal.selected {
+                    modal.selected = selected;
+                    modal.review_notice = false;
+                }
+            }
+            KeyCode::PageDown | KeyCode::Down if modal.expanded => {
+                let next = modal.scroll.saturating_add(1).min(modal.last_scroll);
+                modal.scroll = if modal.request.action == "native.shell" {
+                    next.min(modal.rendered_scroll.saturating_add(1))
+                } else {
+                    next
+                };
+            }
+            KeyCode::PageUp | KeyCode::Up if modal.expanded => modal.scroll_up(),
+            KeyCode::Home if modal.expanded => modal.scroll = 0,
+            KeyCode::End if modal.expanded && modal.request.action != "native.shell" => {
+                modal.scroll = modal.last_scroll
+            }
+            KeyCode::End if modal.expanded => {}
+            KeyCode::Enter if modal.armed => {
+                return Effect::Resolve(
+                    modal
+                        .allowed_decisions
+                        .get(modal.selected)
+                        .copied()
+                        .unwrap_or(huginn_core::ApprovalDecision::Reject),
+                );
+            }
+            _ => {}
         }
         Effect::None
     }

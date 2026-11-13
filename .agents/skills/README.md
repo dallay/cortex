@@ -1,6 +1,7 @@
 ---
 specs: https://agentskills.io/specification
 ---
+
 # Agent Skills — Cortex
 
 Catalog of engineering and product skills for the monorepo. Each skill lives in
@@ -23,10 +24,10 @@ verify those against manifests, code, and tests.
 
 `.agents/skills/` has two distinct uses, and they do not share the same mechanism:
 
-| Consumer                                             | What it uses                                  | Scope                 |
-|------------------------------------------------------|-----------------------------------------------|-----------------------|
-| Engineering agents (OpenCode, Claude Code, Codex)    | Full catalog, synchronized with AgentSync     | Any depth             |
-| Huginn (`FilesystemSkillCatalog`)                    | Direct children of `.agents/skills/` only     | One level             |
+| Consumer                                          | What it uses                              | Scope     |
+|---------------------------------------------------|-------------------------------------------|-----------|
+| Engineering agents (OpenCode, Claude Code, Codex) | Full catalog, synchronized with AgentSync | Any depth |
+| Huginn (`FilesystemSkillCatalog`)                 | Direct children of `.agents/skills/` only | One level |
 
 Consequences:
 
@@ -36,14 +37,17 @@ Consequences:
   requires a product decision and tests for nesting depth, duplicates, and
   symbolic links.
 - Huginn validates up to 65,536 bytes per file, but `load_skill` has a
-  16 KiB budget for the JSON response. A skill can be **valid** but not
-  **loadable**; check its size before adding extensive content.
+  16 KiB budget for the JSON response. A skill can be **valid** but not **loadable**; check its size before adding extensive content.
 
 ## Product Skills
 
 ### [pinned-tag](pinned-tag/SKILL.md)
 
 Pins GitHub Actions to immutable SHAs and resolves the correct reference (`v4`, `v4.2.2`, annotated tags) with `scripts/resolve-action-sha.sh`.
+
+### [security-audit](security-audit/SKILL.md)
+
+Audits codebases, APIs, and services for vulnerabilities across trust boundaries following Cloudflare's security audit skill methodology.
 
 ### [tui/ratatui-tui](tui/ratatui-tui/SKILL.md)
 
@@ -54,46 +58,46 @@ rendering, layout, Unicode, focus/overlays, lifecycle, and PTY tests.
 
 Base path: `frontend-platform/`.
 
-| Skill                                                                 | Use case                                                          |
-|-----------------------------------------------------------------------|-------------------------------------------------------------------|
-| [vue](frontend-platform/vue/SKILL.md)                                 | Components, composables, Pinia stores, dashboard forms             |
-| [shadcn-vue](frontend-platform/shadcn-vue/SKILL.md)                   | shadcn-vue components and registry                                 |
-| [best-practices](frontend-platform/best-practices/SKILL.md)           | Web security, compatibility, quality, and performance              |
-| [accessibility](frontend-platform/accessibility/SKILL.md)             | WCAG, keyboard navigation, screen readers                          |
-| [core-web-vitals](frontend-platform/core-web-vitals/SKILL.md)         | LCP, CLS, and INP                                                  |
-| [performance](frontend-platform/performance/SKILL.md)                 | Load-time and runtime optimization                                 |
-| [seo](frontend-platform/seo/SKILL.md)                                 | Metadata, structured data, sitemaps                                |
-| [astro](frontend-platform/astro/SKILL.md)                             | Astro, SSG, and islands                                            |
-| [frontend-design](frontend-platform/frontend-design/SKILL.md)         | Component and page design                                          |
-| [animate-text](frontend-platform/animate-text/SKILL.md)               | Named text effects                                                 |
-| [nothing-design](frontend-platform/nothing-design/SKILL.md)           | Nothing-inspired design                                            |
-| [modern-web-guidance](frontend-platform/modern-web-guidance/SKILL.md) | Current web APIs and patterns                                      |
-| [chrome-extensions](frontend-platform/chrome-extensions/SKILL.md)     | Manifest V3 extensions and Chrome Web Store                        |
+| Skill                                                                 | Use case                                               |
+|-----------------------------------------------------------------------|--------------------------------------------------------|
+| [vue](frontend-platform/vue/SKILL.md)                                 | Components, composables, Pinia stores, dashboard forms |
+| [shadcn-vue](frontend-platform/shadcn-vue/SKILL.md)                   | shadcn-vue components and registry                     |
+| [best-practices](frontend-platform/best-practices/SKILL.md)           | Web security, compatibility, quality, and performance  |
+| [accessibility](frontend-platform/accessibility/SKILL.md)             | WCAG, keyboard navigation, screen readers              |
+| [core-web-vitals](frontend-platform/core-web-vitals/SKILL.md)         | LCP, CLS, and INP                                      |
+| [performance](frontend-platform/performance/SKILL.md)                 | Load-time and runtime optimization                     |
+| [seo](frontend-platform/seo/SKILL.md)                                 | Metadata, structured data, sitemaps                    |
+| [astro](frontend-platform/astro/SKILL.md)                             | Astro, SSG, and islands                                |
+| [frontend-design](frontend-platform/frontend-design/SKILL.md)         | Component and page design                              |
+| [animate-text](frontend-platform/animate-text/SKILL.md)               | Named text effects                                     |
+| [nothing-design](frontend-platform/nothing-design/SKILL.md)           | Nothing-inspired design                                |
+| [modern-web-guidance](frontend-platform/modern-web-guidance/SKILL.md) | Current web APIs and patterns                          |
+| [chrome-extensions](frontend-platform/chrome-extensions/SKILL.md)     | Manifest V3 extensions and Chrome Web Store            |
 
 ## Testing
 
 Base path: `testing/`.
 
-| Skill                                                                   | Use case                                       |
-|-------------------------------------------------------------------------|------------------------------------------------|
-| [vitest](testing/vitest/SKILL.md)                                       | Unit and component tests; Vitest 5.0.5         |
-| [playwright](testing/playwright/SKILL.md)                               | Dashboard E2E; `apps/rook/dashboard/e2e`       |
-| [playwright-best-practices](testing/playwright-best-practices/SKILL.md) | Advanced Playwright patterns                   |
+| Skill                                                                   | Use case                                 |
+|-------------------------------------------------------------------------|------------------------------------------|
+| [vitest](testing/vitest/SKILL.md)                                       | Unit and component tests; Vitest 5.0.5   |
+| [playwright](testing/playwright/SKILL.md)                               | Dashboard E2E; `apps/rook/dashboard/e2e` |
+| [playwright-best-practices](testing/playwright-best-practices/SKILL.md) | Advanced Playwright patterns             |
 
 ## Languages and Typing
 
-| Skill                                                               | Use case                                 |
-|---------------------------------------------------------------------|------------------------------------------|
-| [typescript](languages-typing/typescript/SKILL.md)                  | Types, interfaces, and generics          |
-| [rust-anti-patterns](languages-typing/rust/rust-anti-patterns.md)   | Common anti-patterns                     |
-| [rust-api-design](languages-typing/rust/rust-api-design.md)         | Public API design                        |
-| [rust-async-patterns](languages-typing/rust/rust-async-patterns.md) | Tokio and concurrency                    |
-| [rust-error-handling](languages-typing/rust/rust-error-handling.md) | `CortexError`, `thiserror`, propagation  |
-| [rust-linting](languages-typing/rust/rust-linting.md)               | Lints and enforcement                    |
-| [rust-documentation](languages-typing/rust/rust-documentation.md)   | Public docs, examples, and safety        |
-| [rust-naming](languages-typing/rust/rust-naming.md)                 | Naming conventions                       |
-| [rust-memory](languages-typing/rust/rust-memory.md)                 | Allocation, cloning, and zero-copy       |
-| [rust-testing](languages-typing/rust/rust-testing.md)               | Tests, doctests, and benchmarks          |
+| Skill                                                               | Use case                                  |
+|---------------------------------------------------------------------|-------------------------------------------|
+| [typescript](languages-typing/typescript/SKILL.md)                  | Types, interfaces, and generics           |
+| [rust-anti-patterns](languages-typing/rust/rust-anti-patterns.md)   | Common anti-patterns                      |
+| [rust-api-design](languages-typing/rust/rust-api-design.md)         | Public API design                         |
+| [rust-async-patterns](languages-typing/rust/rust-async-patterns.md) | Tokio and concurrency                     |
+| [rust-error-handling](languages-typing/rust/rust-error-handling.md) | `CortexError`, `thiserror`, propagation   |
+| [rust-linting](languages-typing/rust/rust-linting.md)               | Lints and enforcement                     |
+| [rust-documentation](languages-typing/rust/rust-documentation.md)   | Public docs, examples, and safety         |
+| [rust-naming](languages-typing/rust/rust-naming.md)                 | Naming conventions                        |
+| [rust-memory](languages-typing/rust/rust-memory.md)                 | Allocation, cloning, and zero-copy        |
+| [rust-testing](languages-typing/rust/rust-testing.md)               | Tests, doctests, and benchmarks           |
 | [rust-tooling](languages-typing/rust/rust-tooling.md)               | `just`, coverage, auditing, and debugging |
 
 ## Monorepo Architecture

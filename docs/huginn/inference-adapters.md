@@ -9,8 +9,7 @@ activate the adapter plugin, then open `ConnectionManager`. The adapter receives
 only the pinned `ConnectionMaterial`; it never reads environment credentials.
 
 Every endpoint requires validated HTTPS, except when that connection explicitly
-sets `allow_loopback_http = true` for a literal loopback IP. Neither DNS names
-(including `localhost`) nor private/LAN addresses qualify. Local HTTP bypasses
+sets `allow_loopback_http = true` for a literal loopback IP. Neither DNS names (including `localhost`) nor private/LAN addresses qualify. Local HTTP bypasses
 environment proxies. URL credentials, query strings, fragments, zero timeouts,
 and remote HTTP are rejected. Certificate validation is never disabled.
 Redirects, including same-origin and HTTPS-to-HTTP redirects, are rejected.

@@ -141,9 +141,9 @@ async fn main() -> Result<()> {
         .await?;
     println!("Turno fijado: {}", infer(pinned.as_ref()).await?);
     println!("Siguiente turno: {}", infer(router.0.as_ref()).await?);
-    observed.changed().await.expect("selección local publicada");
+    observed.changed().await.expect("local selection published");
     println!(
-        "Preparación local, no salud remota: {:?}",
+        "Local preparation, not remote health: {:?}",
         *observed.borrow_and_update()
     );
     management
@@ -154,7 +154,7 @@ async fn main() -> Result<()> {
         )
         .await?;
     assert!(infer(pinned.as_ref()).await.is_err());
-    println!("Conexión original revocada: sin fallback ni confirmación remota.");
+    println!("Original connection revoked: no fallback and no remote confirmation.");
     supervisor.shutdown().await;
     Ok(())
 }

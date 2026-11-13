@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import {reactiveOmit} from "@vueuse/core";
 import type {NavigationMenuItemProps} from "reka-ui";
 import {NavigationMenuItem} from "reka-ui";
@@ -14,10 +14,10 @@ const delegatedProps = reactiveOmit(props, "class");
 
 <template>
   <NavigationMenuItem
+    :class="cn('relative', props.class)"
     data-slot="navigation-menu-item"
     v-bind="delegatedProps"
-    :class="cn('relative', props.class)"
   >
-    <slot />
+    <slot/>
   </NavigationMenuItem>
 </template>

@@ -33,6 +33,7 @@ import {Label} from "@/components/ui/label";
 import {NativeSelect, NativeSelectOption} from "@/components/ui/native-select";
 import {Switch} from "@/components/ui/switch";
 import {ToggleGroup, ToggleGroupItem} from "@/components/ui/toggle-group";
+import {useProviderDescriptors} from "@/composables/useProviderDescriptors";
 import {useProviders} from "@/composables/useProviders";
 import {
   type AuthType,
@@ -75,6 +76,7 @@ const emit = defineEmits<{
 const {t} = useI18n();
 const {create, update, remove, testCredentials, fetch, providerById, startOAuthFlow, getOAuthStatus} =
   useProviders();
+const {catalog: descriptorCatalog, fetch: fetchDescriptors} = useProviderDescriptors();
 
 // ---------------------------------------------------------------------------
 // Form state
@@ -136,9 +138,22 @@ let oauthPollTimer: number | undefined;
 const isEditMode = computed(() => props.mode === "edit");
 const showKindSelector = computed(() => props.providerKind === undefined);
 const catalogEntry = computed(() => findCatalogEntry(kind.value));
+const authTypes = computed(() => descriptorCatalog.value.find((entry) => entry.kind === kind.value)?.authTypes ?? catalogEntry.value.authTypes);
+function getProviderLabel(entry: (typeof descriptorCatalog.value)[number]) {
+  return entry.displayNameKey ? t(entry.displayNameKey) : entry.label;
+}
+
+const providerLabel = computed(() => {
+  const entry = descriptorCatalog.value.find((item) => item.kind === kind.value);
+  return entry
+    ? getProviderLabel(entry)
+    : catalogEntry.value.displayNameKey
+      ? t(catalogEntry.value.displayNameKey)
+      : kind.value;
+});
 const isApikey = computed(() => authType.value === "apikey");
 const supportsOAuth = computed(() =>
-  catalogEntry.value.authTypes.includes("oauth"),
+  authTypes.value.includes("oauth"),
 );
 const isOAuth = computed(() => authType.value === "oauth");
 const canStartOAuth = computed(
@@ -298,9 +313,9 @@ function resetForm() {
   oauthMessage.value = null;
   oauthBusy.value = false;
   kind.value = props.providerKind ?? PROVIDER_KINDS[0].kind;
-  authType.value = findCatalogEntry(kind.value).authTypes.includes("apikey")
+  authType.value = authTypes.value.includes("apikey")
     ? "apikey"
-    : "oauth";
+    : (authTypes.value[0] ?? "oauth");
   form.value = blankForm();
   testResult.value = null;
   showDeleteConfirm.value = false;
@@ -308,25 +323,33 @@ function resetForm() {
 
 watch(
   () => props.open,
-  async (isOpen) => {
+  async (isOpen, _previous, onCleanup) => {
+    let active = true;
+    onCleanup(() => { active = false; });
     if (!isOpen) {
       resetForm();
       return;
+    }
+    await fetchDescriptors();
+    if (!active || !props.open) return;
+    if (!props.providerKind && descriptorCatalog.value.length && !descriptorCatalog.value.some((item) => item.kind === kind.value)) {
+      kind.value = descriptorCatalog.value[0].kind;
     }
     if (isEditMode.value && props.connectionId) {
       // Use cache if we already have the connection, otherwise fetch the list.
       let conn = providerById.value.get(props.connectionId);
       if (!conn) {
         await fetch();
+        if (!active || !props.open) return;
         conn = providerById.value.get(props.connectionId);
       }
       if (conn) loadFromConnection(conn);
     } else {
       // Create mode — seed from current kind.
       if (props.providerKind) kind.value = props.providerKind;
-      authType.value = findCatalogEntry(kind.value).authTypes.includes("apikey")
+      authType.value = authTypes.value.includes("apikey")
         ? "apikey"
-        : "oauth";
+        : (authTypes.value[0] ?? "oauth");
       form.value = blankForm();
       testResult.value = null;
     }
@@ -339,8 +362,10 @@ watch(
 watch(kind, (newKind) => {
   if (!isEditMode.value) {
     form.value.baseUrl = findCatalogEntry(newKind).defaultBaseUrl;
-    if (!findCatalogEntry(newKind).authTypes.includes(authType.value)) {
-      authType.value = findCatalogEntry(newKind).authTypes[0] ?? "oauth";
+    if (!authTypes.value.includes(authType.value)) {
+      authType.value = authTypes.value.includes("apikey")
+        ? "apikey"
+        : (authTypes.value[0] ?? "oauth");
     }
   }
 });
@@ -543,10 +568,10 @@ onUnmounted(stopOAuthPolling);
           {{
             isEditMode
               ? t('providers.form.editTitle', {
-                  providerName: t(catalogEntry.displayNameKey),
+                  providerName: providerLabel || t(catalogEntry.displayNameKey),
                 })
               : t('providers.form.createTitle', {
-                  providerName: t(catalogEntry.displayNameKey),
+                  providerName: providerLabel || t(catalogEntry.displayNameKey),
                 })
           }}
         </DialogTitle>
@@ -568,11 +593,11 @@ onUnmounted(stopOAuthPolling);
             :aria-label="t('providers.form.selectProvider')"
           >
             <NativeSelectOption
-              v-for="entry in PROVIDER_KINDS"
+              v-for="entry in descriptorCatalog"
               :key="entry.kind"
               :value="entry.kind"
             >
-              {{ t(entry.displayNameKey) }}
+              {{ getProviderLabel(entry) }}
             </NativeSelectOption>
           </NativeSelect>
         </div>
@@ -591,6 +616,7 @@ onUnmounted(stopOAuthPolling);
           >
             <ToggleGroupItem
               value="apikey"
+              :disabled="!authTypes.includes('apikey')"
               :aria-label="t('providers.form.authTypeApikey')"
               data-testid="auth-type-apikey"
             >
@@ -622,7 +648,7 @@ onUnmounted(stopOAuthPolling);
             v-model="form.displayName"
             :placeholder="
               t('providers.form.displayNamePlaceholder', {
-                providerName: t(catalogEntry.displayNameKey),
+                providerName: providerLabel || t(catalogEntry.displayNameKey),
               })
             "
             :disabled="saving"
@@ -909,7 +935,7 @@ onUnmounted(stopOAuthPolling);
             {{ t('providers.details.deleteConfirm') }}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            {{ form.displayName || t(catalogEntry.displayNameKey) }}
+          {{ form.displayName || providerLabel || t(catalogEntry.displayNameKey) }}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

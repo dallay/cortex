@@ -100,19 +100,19 @@ This is a shortened excerpt of the contract. Consult
 
 The `Supervisor` manages plugin lifecycle:
 
-| Method | Purpose |
-|--------|---------|
-| `register(plugin)` | Add a plugin to the system |
-| `start()` | Activate plugins in dependency order |
-| `resolve::<T>(id)` | Get a registered service |
-| `remove(id)` | Unload a plugin and dependents |
-| `shutdown()` | Shut down all plugins |
-| `diagnostics()` | Inspect plugin state and activation errors |
-| `provider_of(service)` | Read the owning plugin and generation |
-| `dependents_of(service)` | Read active plugins that require the service |
-| `service_handle::<T>(service)` | Create a generation-bound handle that can issue cooperative leases |
-| `service_slot_handle::<T>(service)` | Create a dynamic handle that resolves the current provider on each `acquire()` |
-| `resolve_lease::<T>(service)` | Resolve and acquire one cooperative lease |
+| Method                                              | Purpose                                                                                                            |
+|-----------------------------------------------------|--------------------------------------------------------------------------------------------------------------------|
+| `register(plugin)`                                  | Add a plugin to the system                                                                                         |
+| `start()`                                           | Activate plugins in dependency order                                                                               |
+| `resolve::<T>(id)`                                  | Get a registered service                                                                                           |
+| `remove(id)`                                        | Unload a plugin and dependents                                                                                     |
+| `shutdown()`                                        | Shut down all plugins                                                                                              |
+| `diagnostics()`                                     | Inspect plugin state and activation errors                                                                         |
+| `provider_of(service)`                              | Read the owning plugin and generation                                                                              |
+| `dependents_of(service)`                            | Read active plugins that require the service                                                                       |
+| `service_handle::<T>(service)`                      | Create a generation-bound handle that can issue cooperative leases                                                 |
+| `service_slot_handle::<T>(service)`                 | Create a dynamic handle that resolves the current provider on each `acquire()`                                     |
+| `resolve_lease::<T>(service)`                       | Resolve and acquire one cooperative lease                                                                          |
 | `substitute(service, alternative, policy, timeout)` | Replace a provider with bounded drain and rollback; a post-commit finalization error leaves the alternative active |
 
 The methods are asynchronous where lifecycle work requires it. See
@@ -283,8 +283,7 @@ the protected builder for run/chat/resume, before branching to line mode or TUI.
 `huginn-core::hooks::ToolHooks` is a generation-owned registry published as
 `agent:tool-hooks@1`. The loop asks it about every tool call before
 `prepare`. A `Block` verdict, or a failing hook, ends the call with an error and
-no approval prompt. Hooks have no verdict that grants authorization
-([ADR-0016](adr/0016-restrict-only-tool-hooks.md)).
+no approval prompt. Hooks have no verdict that grants authorization ([ADR-0016](adr/0016-restrict-only-tool-hooks.md)).
 
 ### SessionStore
 
@@ -342,14 +341,14 @@ the case that proves each one, and the contract gaps that remain are in
 
 Built-in tools registered by the Huginn runtime:
 
-| Tool | Description | Module |
-|------|-------------|--------|
-| `list_files` | List workspace files | `runtime/src/tools.rs` |
-| `read_file` | Read a UTF-8 file | `runtime/src/tools.rs` |
-| `search_files` | Search literal text in workspace files | `runtime/src/tools.rs` |
-| `write_file` | Create or replace a file; requires approval | `runtime/src/tools.rs` |
-| `edit_file` | Apply a reviewed text replacement; requires approval | `runtime/src/tools.rs` |
-| `shell` | Run a POSIX shell command; requires approval and is not sandboxed | `runtime/src/tools.rs` |
+| Tool           | Description                                                                                 | Module                 |
+|----------------|---------------------------------------------------------------------------------------------|------------------------|
+| `list_files`   | List workspace files                                                                        | `runtime/src/tools.rs` |
+| `read_file`    | Read a UTF-8 file                                                                           | `runtime/src/tools.rs` |
+| `search_files` | Search literal text in workspace files                                                      | `runtime/src/tools.rs` |
+| `write_file`   | Create or replace a file; requires approval                                                 | `runtime/src/tools.rs` |
+| `edit_file`    | Apply a reviewed text replacement; requires approval                                        | `runtime/src/tools.rs` |
+| `shell`        | Run a POSIX shell command; requires approval and uses mandatory Seatbelt isolation on macOS | `runtime/src/tools.rs` |
 
 ## MCP Integration
 
@@ -359,6 +358,24 @@ A server definition includes a command, arguments, explicit environment values,
 and optional mappings from host variable names. See the configuration schema
 and examples in [`mcp.rs`](../../crates/huginn/runtime/src/mcp.rs); server
 configuration must not be confused with an approval or sandbox boundary.
+
+### `run_shell` isolation on macOS
+
+The runtime builds a deny-by-default SBPL profile and invokes the command with
+the absolute `/usr/bin/sandbox-exec` path. The profile permits the canonical
+workspace and the minimum runtime rules observed to start the shell. It denies
+network and socket operations. The shell and its descendants inherit the
+profile. A missing launcher or profile error prevents execution; Huginn does
+not retry without isolation. Approval remains an independent authorization
+control: `Deny` blocks the operation and `Allow once` does not alter the
+profile. No persistent grants or sandbox opt-out are provided.
+
+Seatbelt covers only `run_shell` and descendants, not native tools or MCP.
+Linux and Windows have no equivalent isolation claim from this feature. Apple
+deprecates `sandbox-exec` and its private `dyld-support.sb` import; availability
+and behavior can change. Compatibility is established only for versions tested
+by the blocking CI job. Shell commands that require network access or paths
+outside the workspace may fail.
 
 ### MCP Client Lifecycle
 
@@ -416,18 +433,43 @@ pub trait ApprovalPolicy: Send + Sync {
         &self,
         request: &ApprovalRequest,
         cancel: CancellationToken,
-    ) -> Result<bool>;
+    ) -> Result<ApprovalDecision>;
+}
+
+pub enum ApprovalDecision {
+    Reject,
+    ApproveOnce,
+    ApproveForSession,
 }
 ```
 
 ### ApprovalRequest Actions
 
-The `ApprovalRequest` contains an action identifier and a preview. Current native
+The `ApprovalRequest` contains an action identifier, preview and optional canonical
+resource identity. Current native
 mutations use `native.write_file` or `native.edit_file`; shell execution uses
 `native.shell`; MCP calls identify the server and tool, for example
 `mcp.github.search`. The host policy decides whether to prompt or honor an
-explicit one-invocation grant. There is no fixed `FileWrite`/`BashCommand` enum
-in the core contract.
+explicit one-invocation grant. The policy passes its allowed decisions to the
+presentation prompt; the presentation cannot add decisions. Current policy
+offers `ApproveForSession` only for runtime-verified native `write_file` and
+`edit_file` builtins with an exact canonical workspace path that is not sensitive.
+The volatile grant matches only the exact action and path. Runtime registration
+overwrites tool-supplied resource and provenance metadata; public plugin registration
+cannot receive native-builtin provenance. Provenance is in-memory only and is omitted
+from serialized approval history. Sensitive canonical resource identities remain
+available to the live authorization flow but are omitted from serialized approval
+history; non-sensitive canonical paths remain available for historical traces.
+Approval previews are serialized only when the request has a resource explicitly
+classified as non-sensitive. Requests without a resource remain compatible with
+legacy deserialization and retain their preview in memory, but persistence omits that
+preview because its sensitivity cannot be established. Sensitive resources and
+their previews are also omitted; known non-sensitive resources and previews remain
+available for historical traces.
+Sensitive resources offer only `Reject` and `ApproveOnce`. Legacy action-only grants cannot authorize file mutations,
+`native.shell` or any `mcp.` action; shell and MCP effects require fresh approval
+for each invocation. There is no fixed
+`FileWrite`/`BashCommand` enum in the core contract.
 
 ## Session Persistence
 
@@ -452,10 +494,10 @@ for the current signatures and plugin assembly.
 
 The current runtime implements two inference adapter kinds:
 
-| Adapter kind | Description |
-|--------------|-------------|
-| `openai` | OpenAI-compatible endpoint |
-| `ollama` | Local Ollama endpoint with local-model checks |
+| Adapter kind | Description                                   |
+|--------------|-----------------------------------------------|
+| `openai`     | OpenAI-compatible endpoint                    |
+| `ollama`     | Local Ollama endpoint with local-model checks |
 
 Anthropic, Google Gemini and Groq are not implemented as built-in Huginn
 inference adapters in the current runtime. Provider connection workflows and
@@ -466,17 +508,9 @@ The CLI's current legacy configuration uses `HUGINN_BASE_URL`, `HUGINN_MODEL`,
 and `HUGINN_API_KEY`; consult the [Huginn configuration guide](README.md) for
 current setup details.
 
-## Validation Evidence
-
-The Huginn validation record documents focused test suites, architecture checks,
-and known platform limitations. See [validation.md](validation.md) for dated
-results. Those results are evidence for the recorded commit and environment; they
-do not guarantee that the same checks pass on the current checkout.
-
 ## Related Documentation
 
 - [README](README.md) — Usage guide and quick start
 - [providers.md](providers.md) — Provider configuration
 - [connections.md](connections.md) — Connection management
 - [authoring.md](authoring.md) — Plugin authoring guide
-- [validation.md](validation.md) — Testing and validation

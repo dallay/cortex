@@ -61,12 +61,17 @@ fn emits_nothing_without_delimiter() {
 }
 
 #[test]
-fn skips_invalid_utf8_event_without_panicking() {
+fn rejects_invalid_utf8_event_before_later_complete_events() {
     let mut buffer = SseBuffer::new();
 
-    let events = buffer.push(&[0xff, 0xfe, b'\n', b'\n']);
+    let result = buffer.push_with_max_event_bytes(
+        &[
+            0xff, 0xfe, b'\n', b'\n', b'd', b'a', b't', b'a', b':', b' ', b'!', b'\n', b'\n',
+        ],
+        64,
+    );
 
-    assert!(events.is_empty());
+    assert_eq!(result, Err(SseBufferError::InvalidUtf8));
 }
 
 #[test]

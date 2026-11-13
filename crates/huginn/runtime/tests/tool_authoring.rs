@@ -28,7 +28,7 @@ impl Plugin for Author {
         service.register(ctx, self.tool.clone())?;
         assert!(self.registry.get(&self.tool.definition().name).is_none());
         if self.fail {
-            return Err(AgentError::Composition("fallo inyectado".into()));
+            return Err(AgentError::Composition("injected failure".into()));
         }
         Ok(())
     }

@@ -15,7 +15,7 @@ impl Tool for Echo {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "author.echo".into(),
-            description: "Efecto de prueba que requiere aprobación".into(),
+            description: "Test effect that requires approval".into(),
             input_schema: Default::default(),
         }
     }
@@ -25,6 +25,8 @@ impl Tool for Echo {
                 id: call.id.clone(),
                 action: "author.echo".into(),
                 preview: "Emitir echo".into(),
+                resource: None,
+                provenance: None,
             }),
             payload: Default::default(),
         })

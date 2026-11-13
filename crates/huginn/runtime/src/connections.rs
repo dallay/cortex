@@ -108,30 +108,29 @@ async fn os_operation() -> tokio::sync::OwnedMutexGuard<()> {
 }
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 impl OsSecrets {
-    fn entry(reference: &SecretReference) -> ConnectionResult<keyring::Entry> {
-        // Explicit credentials bypass process-global defaults and mock stores.
+    fn entry(reference: &SecretReference) -> ConnectionResult<keyring_core::Entry> {
+        use keyring_core::api::CredentialStoreApi as _;
+        // Explicit credentials bypass process-global defaults and mock stores:
+        // each call builds its own store handle instead of a registered default.
         #[cfg(target_os = "macos")]
-        let credential = keyring::macos::MacCredential::new_with_target(
-            None,
-            "org.dallay.cortex.huginn.connections",
-            &reference.account(),
-        );
+        let store = apple_native_keyring_store::keychain::Store::new();
         #[cfg(target_os = "linux")]
-        let credential = keyring::secret_service::SsCredential::new_with_target(
-            None,
-            "org.dallay.cortex.huginn.connections",
-            &reference.account(),
-        );
-        credential
-            .map(|c| keyring::Entry::new_with_credential(Box::new(c)))
+        let store = zbus_secret_service_keyring_store::Store::new();
+        let store = store.map_err(Self::error)?;
+        store
+            .build(
+                "org.dallay.cortex.huginn.connections",
+                &reference.account(),
+                None,
+            )
             .map_err(Self::error)
     }
-    fn error(error: keyring::Error) -> ConnectionError {
+    fn error(error: keyring_core::Error) -> ConnectionError {
         // Never format source errors: vendor errors may contain credential bytes.
         match error {
-            keyring::Error::NoEntry => ConnectionError::MissingSecret,
-            keyring::Error::NoStorageAccess(_) => ConnectionError::Locked,
-            keyring::Error::PlatformFailure(_) => ConnectionError::BackendUnavailable,
+            keyring_core::Error::NoEntry => ConnectionError::MissingSecret,
+            keyring_core::Error::NoStorageAccess(_) => ConnectionError::Locked,
+            keyring_core::Error::PlatformFailure(_) => ConnectionError::BackendUnavailable,
             _ => ConnectionError::SecretStore,
         }
     }
@@ -192,7 +191,7 @@ impl SecretStore for OsSecrets {
             tokio::task::spawn_blocking(move || {
                 let _guard = guard;
                 match Self::entry(&reference)?.delete_credential() {
-                    Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+                    Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
                     Err(error) => Err(Self::error(error)),
                 }
             })
