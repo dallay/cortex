@@ -1,6 +1,7 @@
 """Inventory regressions; scanner integration is exercised by the gate itself."""
 
 import importlib.util
+import io
 import json
 from pathlib import Path
 import shutil
@@ -40,7 +41,11 @@ class InventoryTests(unittest.TestCase):
             gate.main()
         self.assertEqual(scanner_controls.call_args.args[0], Path(output))
 
-        with patch("sys.argv", ["check-semgrep-path-exceptions.py", "--semgrep-command", "sh"]):
+        stderr_capture = io.StringIO()
+        with (
+            patch("sys.argv", ["check-semgrep-path-exceptions.py", "--semgrep-command", "sh"]),
+            patch("sys.stderr", stderr_capture),
+        ):
             with self.assertRaises(SystemExit) as error:
                 gate.main()
         self.assertEqual(error.exception.code, 2)
