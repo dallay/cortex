@@ -599,7 +599,7 @@ mod vector_metadata_tests {
             if properties.len() > 1 {
                 let mut reversed = properties.clone();
                 reversed.reverse();
-                let mut incompatible = row.clone();
+                let mut incompatible = row;
                 incompatible["properties"] = json!(reversed);
                 assert!(validate_schema_definition(
                     &[incompatible],

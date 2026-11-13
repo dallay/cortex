@@ -56,7 +56,7 @@ pub fn resolve(
                 is_duplicate: true,
                 action: config.action(score),
                 matched_entity_id: Some(hit.item.id),
-                matched_entity_name: Some(hit.item.name.clone()),
+                matched_entity_name: Some(hit.item.name),
                 similarity_score: score,
                 match_type: Some("embedding".into()),
             });

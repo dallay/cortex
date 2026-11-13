@@ -1001,7 +1001,7 @@ mod tests {
         );
         assert_eq!(outcome.provider.as_deref(), Some("wikimedia"));
         assert_eq!(outcome.attributes, None);
-        assert_eq!(outcome.persisted, false);
+        assert!(!outcome.persisted);
         let requests = received.lock().unwrap().clone();
         assert_eq!(requests.len(), 1, "{requests:?}");
         assert!(
