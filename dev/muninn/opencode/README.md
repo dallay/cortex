@@ -169,6 +169,13 @@ PYTHONPATH=dev/muninn/opencode python3 -m membench.cli run \
   --authorize-inference
 ```
 
+The pinned bundle travels in a Docker volume, not in a bind mount. The artifact
+contract verifies the bundle with native descriptor checks: it accepts a local
+Linux filesystem whose ownership belongs to the process that opens it, and it
+rejects a bind mount from a macOS host. The harness copies the bundle into the
+volume before the run, so `--embedding-bundle-path` points at the bundle
+directory on the host and every container sees it under `/bundle/<bundle-id>`.
+
 Verify the retrieval path without any model call. The direct mode calls the MCP
 tool directly, so this run performs no inference and needs no authorization:
 
