@@ -943,6 +943,222 @@ async fn settings_apply_reenters_ui_once_and_late_receipt_cannot_alter_approval(
     }
 }
 
+/// Owned snapshot of the open Settings copy: `(last_error, theme_index)`.
+fn settings_view(ui: &Ui) -> (Option<String>, usize) {
+    let state = ui.lock();
+    let view = {
+        let dialog = state.settings().expect("Settings is open");
+        (dialog.last_error.clone(), dialog.working.theme.name_index)
+    };
+    drop(state);
+    view
+}
+
+/// Persistence the test controls: every call reports itself on `entered`, then
+/// blocks until the test sends one `release`.
+struct ControlledSave {
+    ui: Arc<Ui>,
+    entered: tokio::sync::mpsc::UnboundedReceiver<()>,
+    release: std::sync::mpsc::Sender<()>,
+    saved: Arc<std::sync::Mutex<Vec<huginn_presentation::settings::UiConfig>>>,
+}
+fn controlled_save() -> ControlledSave {
+    let (entered_tx, entered) = tokio::sync::mpsc::unbounded_channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let released = std::sync::Mutex::new(released);
+    let saved = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let ui = Ui::new(
+        &Session::new(".".into()),
+        Arc::new(Contributions::default()),
+        CancellationToken::new(),
+        Arc::new(huginn_presentation::settings::UiConfig::defaults()),
+        Arc::new({
+            let saved = saved.clone();
+            move |config| {
+                saved.lock().unwrap().push(config.clone());
+                entered_tx.send(()).unwrap();
+                released.lock().unwrap().recv().unwrap();
+                Ok(())
+            }
+        }),
+    )
+    .0;
+    ControlledSave {
+        ui,
+        entered,
+        release,
+        saved,
+    }
+}
+
+#[tokio::test]
+async fn settings_success_with_newer_edits_stays_open_and_next_apply_saves_them() {
+    let mut save = controlled_save();
+    let ui = save.ui.clone();
+    ui.dispatch_command("/settings");
+    ui.lock().settings_mut().unwrap().working.sound.bell = true;
+    let notifications = ui.lock().notifications.len();
+    assert!(ui.apply_settings());
+    save.entered.recv().await.unwrap();
+    // Editing stays available while the write is pending.
+    ui.lock().settings_mut().unwrap().working.theme.name_index = 1;
+    save.release.send(()).unwrap();
+    receipt(&ui).await;
+    {
+        let state = ui.lock();
+        let dialog = state.settings().expect("newer edits keep Settings open");
+        assert!(dialog.working.sound.bell);
+        assert_eq!(dialog.working.theme.name_index, 1);
+        assert!(dialog.last_error.is_none());
+        assert_eq!(
+            state.notifications.len(),
+            notifications,
+            "no `Settings saved`"
+        );
+    }
+    // The saved snapshot holds only the submitted values.
+    assert!(save.saved.lock().unwrap()[0].sound.bell);
+    assert_eq!(
+        save.saved.lock().unwrap()[0].theme,
+        huginn_presentation::settings::UiConfig::defaults().theme
+    );
+    // The next Apply is accepted against the advanced revision and saves the edits.
+    assert!(ui.apply_settings());
+    save.entered.recv().await.unwrap();
+    save.release.send(()).unwrap();
+    receipt(&ui).await;
+    assert!(ui.lock().overlays.snapshot().is_none());
+    assert_eq!(save.saved.lock().unwrap().len(), 2);
+    assert_ne!(
+        save.saved.lock().unwrap()[1].theme,
+        huginn_presentation::settings::UiConfig::defaults().theme
+    );
+}
+
+#[tokio::test]
+async fn settings_input_stays_available_while_apply_is_pending() {
+    let mut save = controlled_save();
+    let ui = save.ui.clone();
+    ui.dispatch_command("/settings");
+    assert!(ui.apply_settings());
+    save.entered.recv().await.unwrap();
+    overlay_key(&ui, KeyCode::Tab);
+    assert_eq!(ui.lock().settings().unwrap().active_tab, 1);
+    // Repeated Enter never starts a second write.
+    overlay_key(&ui, KeyCode::Enter);
+    assert!(!ui.apply_settings());
+    save.release.send(()).unwrap();
+    receipt(&ui).await;
+    assert_eq!(save.saved.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn settings_stale_copy_is_rejected_without_persistence() {
+    let mut save = controlled_save();
+    let ui = save.ui.clone();
+    ui.dispatch_command("/settings");
+    ui.lock().settings_mut().unwrap().working.sound.bell = true;
+    assert!(ui.apply_settings());
+    save.entered.recv().await.unwrap();
+    overlay_key(&ui, KeyCode::Esc);
+    // A second instance opens before the first receipt: it is based on the old snapshot.
+    ui.dispatch_command("/settings");
+    ui.lock().settings_mut().unwrap().working.theme.name_index = 1;
+    save.release.send(()).unwrap();
+    receipt(&ui).await;
+    assert!(!ui.apply_settings(), "stale copy must not be accepted");
+    let (last_error, theme_index) = settings_view(&ui);
+    assert!(last_error.is_some(), "the body shows the error");
+    assert_eq!(theme_index, 1, "edits are preserved");
+    assert_eq!(save.saved.lock().unwrap().len(), 1);
+    // Reopening loads the latest snapshot and allows Apply.
+    overlay_key(&ui, KeyCode::Esc);
+    ui.dispatch_command("/settings");
+    assert!(ui.lock().settings().unwrap().working.sound.bell);
+    assert!(ui.apply_settings());
+    save.entered.recv().await.unwrap();
+    save.release.send(()).unwrap();
+    receipt(&ui).await;
+    assert_eq!(save.saved.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn settings_queued_write_rechecks_revision_after_previous_write_publishes() {
+    let mut save = controlled_save();
+    let ui = save.ui.clone();
+    ui.dispatch_command("/settings");
+    ui.lock().settings_mut().unwrap().working.sound.bell = true;
+    assert!(ui.apply_settings());
+    save.entered.recv().await.unwrap();
+    overlay_key(&ui, KeyCode::Esc);
+    // Accepted while the first write is still unpublished, so it queues behind it.
+    ui.dispatch_command("/settings");
+    ui.lock().settings_mut().unwrap().working.theme.name_index = 1;
+    assert!(ui.apply_settings());
+    save.release.send(()).unwrap();
+    // First receipt publishes the snapshot, then the queued write is re-checked.
+    receipt(&ui).await;
+    receipt(&ui).await;
+    assert_eq!(
+        save.saved.lock().unwrap().len(),
+        1,
+        "the queued write must not overwrite the first one"
+    );
+    let (last_error, theme_index) = settings_view(&ui);
+    assert!(last_error.is_some());
+    assert_eq!(theme_index, 1);
+}
+
+#[tokio::test]
+async fn settings_queued_write_does_not_start_after_the_ui_is_dropped() {
+    let (entered, mut entering) = tokio::sync::mpsc::unbounded_channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let released = std::sync::Mutex::new(released);
+    let calls = Arc::new(AtomicU64::new(0));
+    let ui = Ui::new(
+        &Session::new(".".into()),
+        Arc::new(Contributions::default()),
+        CancellationToken::new(),
+        Arc::new(huginn_presentation::settings::UiConfig::defaults()),
+        Arc::new({
+            let calls = calls.clone();
+            move |_| {
+                let call = calls.fetch_add(1, Ordering::SeqCst);
+                entered.send(()).unwrap();
+                if call == 0 {
+                    // The first write stays outstanding until the test releases it.
+                    released.lock().unwrap().recv().unwrap();
+                }
+                Ok(())
+            }
+        }),
+    )
+    .0;
+    ui.dispatch_command("/settings");
+    ui.lock().settings_mut().unwrap().working.sound.bell = true;
+    assert!(ui.apply_settings());
+    entering.recv().await.unwrap();
+    overlay_key(&ui, KeyCode::Esc);
+    ui.dispatch_command("/settings");
+    ui.lock().settings_mut().unwrap().working.theme.name_index = 1;
+    assert!(ui.apply_settings());
+    // Both writes are outstanding when the runtime drops the UI.
+    drop(ui);
+    release.send(()).unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(2), entering.recv())
+            .await
+            .expect("settings workers must finish")
+            .is_none(),
+        "the queued write must not enter persistence"
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "the queued write must not start without the previous publication"
+    );
+}
+
 #[tokio::test]
 async fn settings_failed_apply_preserves_copy_and_error_and_can_retry() {
     let calls = Arc::new(AtomicU64::new(0));
@@ -1291,7 +1507,7 @@ async fn settings_started_write_finishes_after_shutdown_without_reopening_or_not
 }
 
 #[tokio::test]
-async fn replaced_settings_writes_remain_serialized_in_submission_order() {
+async fn replaced_settings_write_is_rejected_as_stale_after_the_first_publishes() {
     let (entered, mut entering) = tokio::sync::mpsc::unbounded_channel();
     let (release, released) = std::sync::mpsc::channel();
     let released = std::sync::Mutex::new(released);
@@ -1323,6 +1539,7 @@ async fn replaced_settings_writes_remain_serialized_in_submission_order() {
         .name;
     assert!(ui.apply_settings());
     assert_eq!(entering.recv().await.unwrap(), first);
+    // A replacement instance opens before the first receipt arrives.
     ui.dispatch_command("/settings");
     ui.lock().settings_mut().unwrap().working.theme.name_index = 2;
     let second = ui
@@ -1334,21 +1551,18 @@ async fn replaced_settings_writes_remain_serialized_in_submission_order() {
         .name;
     assert!(ui.apply_settings());
     release.send(()).unwrap();
-    assert_eq!(entering.recv().await.unwrap(), second);
+    // The first write publishes its snapshot before the queued write starts.
+    receipt(&ui).await;
+    receipt(&ui).await;
     assert_eq!(
         saved.lock().unwrap().as_slice(),
-        std::slice::from_ref(&first)
+        std::slice::from_ref(&first),
+        "the queued write must not overwrite the published snapshot"
     );
-    release.send(()).unwrap();
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while ui.lock().settings().is_some() {
-            ui.refresh_contributions();
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
-    assert_eq!(*saved.lock().unwrap(), [first, second.clone()]);
+    let (last_error, theme_index) = settings_view(&ui);
+    assert!(last_error.is_some());
+    assert_eq!(theme_index, 2, "edits are preserved");
+    // Reopening loads the published snapshot and allows a new Apply.
     ui.dispatch_command("/settings");
     assert_eq!(
         ui.lock()
@@ -1357,9 +1571,11 @@ async fn replaced_settings_writes_remain_serialized_in_submission_order() {
             .projected_ui_config()
             .theme
             .name,
-        second
+        first
     );
+    assert_ne!(second, first);
 }
+
 #[test]
 fn approval_preview_matches_line_adapter_semantics() {
     use huginn_presentation::state::approval_preview;
