@@ -50,6 +50,15 @@ function yamlPath(text, keys) {
   return current;
 }
 
+// Las actions de terceros se fijan por SHA de commit y Renovate es quien
+// actualiza esa revisión. El contrato comprueba la forma del pin y el
+// comentario de versión, no la revisión concreta, para que una actualización
+// de dependencias no rompa el contrato de CI.
+function pinnedAction(action, version) {
+  const escaped = action.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`uses: ${escaped}@[0-9a-f]{40} # v${version}`);
+}
+
 // Extrae los valores capturados de una lista YAML, por ejemplo `- "apps/**"`.
 function yamlListItems(block, item) {
   if (block === null) return null;
@@ -365,8 +374,7 @@ it('fails only on active Semgrep findings, not on SARIF exceptions in source',
 
 it('pins the Semgrep toolchain instead of inheriting the runner Python', () => {
   const scan = jobBlock('semgrep-pr');
-  assert.match(scan,
-      /uses: actions\/setup-python@[0-9a-f]{40} # v5\.\d+\.\d+/);
+  assert.match(scan, pinnedAction('actions/setup-python', '\\d+\\.\\d+\\.\\d+'));
   assert.match(scan, /python-version: '3\.11'/);
   assert.match(scan,
       /run: python -m pip install semgrep==1\.126\.0 'setuptools<81'/);
@@ -378,11 +386,40 @@ it('pins the Semgrep toolchain instead of inheriting the runner Python', () => {
       /^  semgrep-full:\n([\s\S]*?)(?=^  [\w-]+:|$(?![\s\S]))/m)?.[1];
   assert.ok(full, 'job semgrep-full');
   assert.match(full,
-      /uses: actions\/setup-python@[0-9a-f]{40} # v5\.\d+\.\d+/);
+      pinnedAction('actions/setup-python', '\\d+\\.\\d+\\.\\d+'));
   assert.match(full, /python-version: '3\.11'/);
   assert.match(full,
       /run: python -m pip install semgrep==1\.126\.0 'setuptools<81'/);
   assert.doesNotMatch(full, /^        run: pip install semgrep/m);
+});
+
+it('keeps the Semgrep interpreter aligned across the workflow, the local ' +
+    'recipe and Renovate', () => {
+  const justfile = fs.readFileSync(
+      path.join(__dirname, '../../justfile'), 'utf8');
+  const recipe = justfile.match(
+      /^ci-semgrep:[^\n]*\n([\s\S]*?)(?=^[\w-]+(?:\s[^\n]*)?:)/m)?.[1];
+  assert.ok(recipe, 'just recipe ci-semgrep');
+  const local = recipe.match(/--python (\d+\.\d+)/)?.[1];
+  assert.ok(local, 'the ci-semgrep recipe pins the interpreter');
+
+  const deep = fs.readFileSync(
+      path.join(__dirname, '../workflows/security-deep.yml'), 'utf8');
+  const full = deep.match(
+      /^  semgrep-full:\n([\s\S]*?)(?=^  [\w-]+:|$(?![\s\S]))/m)?.[1];
+  assert.ok(full, 'job semgrep-full');
+  for (const source of [jobBlock('semgrep-pr'), full]) {
+    const version = source.match(/python-version: '(\d+\.\d+)'/)?.[1];
+    assert.equal(version, local,
+        'the workflow pins the same interpreter as the local recipe');
+  }
+
+  const renovate = JSON.parse(fs.readFileSync(
+      path.join(__dirname, '../../renovate.json'), 'utf8'));
+  const rule = (renovate.packageRules ?? []).find((entry) =>
+    entry.matchDatasources?.includes('python-version'));
+  assert.ok(rule, 'renovate.json must block python-version updates');
+  assert.equal(rule.enabled, false);
 });
 
 it('authenticates the checks and the Semgrep scan with the CI secret', () => {
@@ -566,7 +603,7 @@ it('generates and uploads Rust JUnit results without losing doctests', () => {
   assert.match(upload,
       /if: \$\{\{ !cancelled\(\) && github\.actor != 'dependabot\[bot\]' &&/);
   assert.match(upload,
-      /uses: codecov\/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7/);
+      pinnedAction('codecov/codecov-action', '\\d+'));
   assert.match(upload, /report_type: test_results/);
   assert.match(upload, /files: target\/nextest\/ci\/junit\.xml/);
   assert.match(upload, /flags: backend/);
@@ -577,7 +614,7 @@ it('generates and uploads Rust JUnit results without losing doctests', () => {
   assert.match(artifact,
       /if: \$\{\{ !cancelled\(\) && hashFiles\('target\/nextest\/ci\/junit\.xml'\) != '' \}\}/);
   assert.match(artifact,
-      /uses: actions\/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7\.0\.2/);
+      pinnedAction('actions/upload-artifact', '\\d+\\.\\d+\\.\\d+'));
   assert.match(artifact, /path: target\/nextest\/ci\/junit\.xml/);
   assert.match(artifact, /retention-days: 7/);
   assert.match(artifact, /continue-on-error: true/);
@@ -596,7 +633,7 @@ it('generates and uploads Vitest JUnit results after the frontend job', () => {
   assert.match(upload,
       /if: \$\{\{ !cancelled\(\) && github\.actor != 'dependabot\[bot\]' &&/);
   assert.match(upload,
-      /uses: codecov\/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7/);
+      pinnedAction('codecov/codecov-action', '\\d+'));
   assert.match(upload, /report_type: test_results/);
   assert.match(upload, /files: apps\/rook\/dashboard\/junit\.xml/);
   assert.match(upload, /flags: frontend/);
@@ -608,7 +645,7 @@ it('generates and uploads Vitest JUnit results after the frontend job', () => {
   assert.match(artifact,
       /if: \$\{\{ !cancelled\(\) && hashFiles\('apps\/rook\/dashboard\/junit\.xml'\) != '' \}\}/);
   assert.match(artifact,
-      /uses: actions\/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7\.0\.2/);
+      pinnedAction('actions/upload-artifact', '\\d+\\.\\d+\\.\\d+'));
   assert.match(artifact, /path: apps\/rook\/dashboard\/junit\.xml/);
   assert.match(artifact, /retention-days: 7/);
   assert.match(artifact, /continue-on-error: true/);
