@@ -69,6 +69,9 @@ The policy covers vulnerabilities in the cortex monorepo, including:
 - Frontend dependencies are audited via `pnpm audit` where applicable.
 - **Do not** add dependencies with known high/critical vulnerabilities.
 - Keep lock files (`Cargo.lock`, `pnpm-lock.yaml`) up to date and committed.
+- Cargo resolves Rust dependencies with a three-day publish-age cooldown (`.cargo/config.toml`), so a compromised release has time to be detected before it reaches `Cargo.lock`. See the [development guide](docs/development.md#dependency-cooldown) for the override procedure.
+- `cargo install` ignores that cooldown. CI pins the versions of the tools it installs (`cargo-audit`, `cargo-llvm-cov`) in `.github/workflows/ci.yml`.
+- The cooldown reduces supply-chain risk but does not replace review. Keep reviewing dependency updates.
 
 ### Input Validation
 

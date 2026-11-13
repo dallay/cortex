@@ -177,9 +177,6 @@ impl Payload {
         if cancel {
             return Effect::DiscardSettings(settings_pending);
         }
-        if settings_pending {
-            return Effect::None;
-        }
         match key.code {
             // REQ-05: cycle rows consume horizontal arrows; both
             // directions may advance. Tab/BackTab always change section.
