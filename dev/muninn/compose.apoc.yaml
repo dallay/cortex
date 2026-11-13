@@ -1,0 +1,40 @@
+name: muninn-apoc-smoke
+
+services:
+  neo4j:
+    extends:
+      file: compose.yaml
+      service: neo4j
+    image: muninn-neo4j-reference:local
+    build:
+      context: .
+      dockerfile: Dockerfile.neo4j-reference
+    environment:
+      NEO4J_dbms_security_procedures_allowlist: apoc.version
+  probe:
+    build:
+      context: .
+      dockerfile: Dockerfile.oracle
+    user: "${MUNINN_ORACLE_UID:-7474}:${MUNINN_ORACLE_GID:-7474}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    secrets: [neo4j_auth]
+    volumes:
+      - ./apoc_smoke.py:/probe.py:ro
+      - ../../dev/muninn/fixtures/artifact-lock.json:/manifest.json:ro
+      - ./artifacts:/artifacts
+    networks: [oracle]
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    command: [/probe.py, --manifest, /manifest.json, --output, /artifacts/apoc-smoke.json]
+
+secrets:
+  neo4j_auth:
+    file: .cache/neo4j.auth
+networks:
+  oracle:
+    internal: true

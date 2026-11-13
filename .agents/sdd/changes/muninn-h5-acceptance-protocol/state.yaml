@@ -1,0 +1,5 @@
+change: muninn-h5-acceptance-protocol
+current_phase: tasks
+completed: [explore, propose, spec, design, tasks]
+next: apply
+updated: 2026-11-08

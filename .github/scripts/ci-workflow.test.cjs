@@ -9,7 +9,7 @@ const {evaluateRequiredChecks} = require('./ci-required.cjs');
 const workflow = fs.readFileSync(path.join(__dirname, '../workflows/ci.yml'),
     'utf8');
 const categories = ['backend', 'doctor', 'frontend', 'docker', 'github', 'docs',
-  'labeler'];
+  'labeler', 'muninn_c1'];
 
 function jobBlock(id) {
   const block = workflow.match(
@@ -211,7 +211,23 @@ const routeCases = [
   ['.github/scripts/make-shell', ['backend', 'github']],
   ['Makefile', ['backend', 'github']],
   ['scripts/setup-codegraph.sh', ['backend', 'github']],
-  ['.github/ci-path-filters.json', ['github']],
+  ['.github/ci-path-filters.json', ['github', 'muninn_c1']],
+  ['dev/muninn/product_tck.py', ['backend', 'muninn_c1']],
+  ['dev/muninn/tests/test_product_tck.py', ['backend', 'muninn_c1']],
+  ['dev/muninn/c1_runner.py', ['backend', 'muninn_c1']],
+  ['dev/muninn/c1_attempt_plan.json', ['backend', 'muninn_c1']],
+  ['dev/muninn/api_inventory.py', ['backend']],
+  ['dev/muninn/tests/test_api_baseline_profiles.py', ['backend', 'muninn_c1']],
+  ['crates/muninn/c1-exporter/src/lib.rs', ['backend', 'muninn_c1']],
+  ['crates/muninn/application/tests/short_term_flows.rs', ['backend', 'muninn_c1']],
+  ['apps/muninn/src/main.rs', ['backend', 'muninn_c1']],
+  ['third_party/candle-core/src/lib.rs', ['backend', 'muninn_c1']],
+  ['dev/muninn/fixtures/artifact-lock.json', ['muninn_c1']],
+  ['docs/muninn/specs/tck-baseline.csv', ['docs', 'muninn_c1']],
+  ['docs/muninn/reference-tck.md', ['docs']],
+  ['.agents/rpi/goal/muninn-functional-parity/attempt68-bundle-verify.jsonl', ['docs', 'muninn_c1']],
+  ['.github/workflows/ci.yml', ['github', 'muninn_c1']],
+  ['apps/rook/src/main.rs', ['backend']],
   ['.github/ci-quality-policy.json', ['github']],
   ['.config/nextest.toml', ['backend']],
   ['.cargo/config.toml', ['backend']],
@@ -259,7 +275,7 @@ for (const [file, expected] of routeCases) {
     for (const eventName of ['push', 'pull_request']) {
       for (const id of
           ['doctor', 'build-dashboard', 'fmt', 'markdown', 'test-labeler',
-            'clippy', 'check', 'test', 'test-frontend', 'coverage',
+            'clippy', 'check', 'test', 'test-muninn-c1', 'test-frontend', 'coverage',
             'coverage-frontend', 'test-e2e', 'doc', 'audit', 'trivy-fs',
             'semgrep-pr', 'sonar']) {
         const applicable = condition(id, selected, eventName);
@@ -327,12 +343,25 @@ it('waits for the quality gate for 300 seconds and keeps both coverage reports',
       assert.match(sonar, /-Dsonar\.qualitygate\.timeout=300/);
       assert.match(sonar, /pnpm exec vitest run --coverage/);
       assert.match(sonar,
-          /cargo llvm-cov --workspace --all-features --lcov --output-path coverage\/rust-lcov\.info/);
+          /cargo llvm-cov report --lcov --output-path coverage\/rust-lcov\.info/);
       const scan = sonar.slice(sonar.indexOf('      - name: SonarQube Scan'));
       assert.doesNotMatch(scan, /^        if:/m);
       assert.doesNotMatch(workflow, /pull_request_target/);
       assert.match(sonar, /permissions:\n      contents: read\n    steps:/);
     });
+
+it('keeps the 87% Rust threshold and includes the Muninn product packages', () => {
+  const coverage = jobBlock('coverage');
+  assert.match(coverage, /cargo llvm-cov clean --workspace/);
+  assert.match(coverage, /cargo llvm-cov --workspace --all-features --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn --no-report/);
+  assert.match(coverage, /cargo llvm-cov -p muninn-providers -p muninn --no-report/);
+  assert.match(coverage, /cargo llvm-cov report --fail-under-lines 87 --lcov --output-path lcov\.info/);
+  const sonar = jobBlock('sonar');
+  assert.match(sonar, /cargo llvm-cov clean --workspace/);
+  assert.match(sonar, /cargo llvm-cov --workspace --all-features --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn --no-report/);
+  assert.match(sonar, /cargo llvm-cov -p muninn-providers -p muninn --no-report/);
+  assert.match(sonar, /cargo llvm-cov report --lcov --output-path coverage\/rust-lcov\.info/);
+});
 
 it('Gitleaks has the full history without persisting credentials', () => {
   const gitleaks = jobBlock('gitleaks-pr');
@@ -446,6 +475,59 @@ it('always runs the CI tests and requires their real result', () => {
   assert.match(jobBlock('required'),
       /RESULT_CI_CONTRACT: \$\{\{ needs\.ci-contract\.result \}\}/);
   assert.doesNotMatch(jobBlock('required'), /continue-on-error:/);
+});
+
+it('combines default providers and app coverage in the same 87% Rust gate', () => {
+  const root = path.resolve(__dirname, '../..');
+  const local = fs.readFileSync(path.join(root, 'justfile'), 'utf8');
+  const recipe = local.split('ci-coverage-rust:\n')[1].split('\n# ')[0];
+  for (const block of [jobBlock('coverage'), jobBlock('sonar'), recipe]) {
+    assert.match(block, /cargo llvm-cov clean --workspace/);
+    assert.match(block, /cargo llvm-cov --workspace --all-features --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn --no-report/);
+    assert.match(block, /cargo llvm-cov -p muninn-providers -p muninn --no-report/);
+    assert.match(block, /cargo llvm-cov report[^\n]*--lcov/);
+    assert.doesNotMatch(block, /cargo llvm-cov report[^\n]*--exclude/);
+  }
+  assert.match(jobBlock('coverage'), /cargo llvm-cov report --fail-under-lines 87 --lcov/);
+  assert.match(recipe, /cargo llvm-cov report --fail-under-lines 87 --lcov/);
+});
+
+it('runs Muninn with default features in addition to the opt-in C1 gate', () => {
+  const command = /cargo test --locked -p muninn-providers -p muninn/;
+  assert.match(jobBlock('test'), command);
+  assert.match(jobBlock('test-multi'), command);
+  const justfile = fs.readFileSync(path.resolve(__dirname, '../../justfile'), 'utf8');
+  assert.match(justfile, /cargo test --locked -p muninn-providers -p muninn/);
+  assert.match(justfile, /run_step "Muninn C1 opt-in tests" just ci-muninn-c1/);
+});
+
+it('filters the C1 job by its own materials, uses cache and cancels stale runs', () => {
+  const c1 = jobBlock('test-muninn-c1');
+  assert.match(c1, /^    runs-on: macos-15$/m);
+  assert.match(c1, /needs: \[changes\]/);
+  assert.match(c1, /needs\.changes\.outputs\.muninn_c1 == 'true'/);
+  assert.match(c1, /timeout-minutes: 45/);
+  assert.match(c1, /concurrency:/);
+  assert.match(c1, /cancel-in-progress: true/);
+  assert.match(c1, /Swatinem\/rust-cache@/);
+  assert.match(c1, /cargo test --locked -p muninn-c1-exporter --features cpu-f32 --target aarch64-apple-darwin/);
+  assert.match(c1, /cargo test --locked -p muninn-providers -p muninn --features minilm-cpu --target aarch64-apple-darwin/);
+  assert.match(c1, /permissions:\n      contents: read/);
+  assert.match(jobBlock('changes'), /muninn_c1: \$\{\{ steps\.filter\.outputs\.muninn_c1 \}\}/);
+});
+
+it('attests only on protected main after the C1 test and limits permissions to the privileged job', () => {
+  const attest = jobBlock('attest-muninn-c1');
+  assert.match(attest, /needs: \[changes, test-muninn-c1\]/);
+  assert.match(attest, /github\.event_name == 'push'/);
+  assert.match(attest, /github\.ref == 'refs\/heads\/main'/);
+  assert.match(attest, /github\.ref_protected == true/);
+  assert.match(attest, /needs\.changes\.outputs\.muninn_c1 == 'true'/);
+  assert.match(attest, /permissions:\n      contents: read\n      id-token: write\n      attestations: write/);
+  const c1Test = jobBlock('test-muninn-c1');
+  assert.match(c1Test, /permissions:\n      contents: read/);
+  assert.doesNotMatch(c1Test, /id-token: write|attestations: write/);
+  assert.doesNotMatch(jobBlock('required'), /^      - attest-muninn-c1\s*$/m);
 });
 
 it('requires Huginn Seatbelt enforcement on macOS PRs without filtering tests',

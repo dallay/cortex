@@ -1,0 +1,30 @@
+[package]
+name = "muninn-providers"
+version.workspace = true
+edition.workspace = true
+publish = false
+license = "Apache-2.0"
+description = "Embedding and LLM provider adapters for Muninn"
+
+[features]
+default = []
+minilm-cpu = ["dep:muninn-c1-exporter"]
+
+[dependencies]
+muninn-c1-exporter = { path = "../c1-exporter", optional = true, features = ["cpu-f32"] }
+# Required by the enrichment rate limiter and by the optional MiniLM runtime.
+tokio.workspace = true
+muninn-core = { path = "../core" }
+async-trait.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+tracing.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+wiremock = "0.6"
+
+[lints]
+workspace = true

@@ -1,0 +1,236 @@
+{
+  "schema_version": 1,
+  "corpus_id": "c0-v1",
+  "status": "human_hypotheses_not_results",
+  "label_origin_es": "Juicios semánticos redactados para revisión humana; no son resultados del modelo ni garantía de calidad en español.",
+  "reference_format": "batch_id/zero_based_index",
+  "coverage": {
+    "spanish": [
+      "semantic_es/0",
+      "unicode/0"
+    ],
+    "english": [
+      "semantic_en/0"
+    ],
+    "low_lexical_overlap": [
+      "semantic_es/6",
+      "semantic_es/7",
+      "semantic_en/3",
+      "semantic_en/4"
+    ],
+    "lexical_negatives": [
+      "semantic_es/2",
+      "semantic_en/2"
+    ],
+    "unicode": [
+      "unicode/0",
+      "unicode/1",
+      "unicode/4"
+    ],
+    "empty": [
+      "empty/0"
+    ],
+    "rust": [
+      "technical/0",
+      "technical/1",
+      "technical/2"
+    ],
+    "cypher": [
+      "technical/3",
+      "technical/4",
+      "technical/5"
+    ],
+    "technical_decisions": [
+      "technical/6",
+      "technical/9"
+    ],
+    "length_boundaries": [
+      "lengths/0",
+      "lengths/1",
+      "lengths/2",
+      "lengths/3",
+      "lengths/4",
+      "lengths/5"
+    ],
+    "prefix_tail": [
+      "prefix_tail/0",
+      "prefix_tail/1",
+      "prefix_tail/2",
+      "prefix_tail/3",
+      "prefix_tail/4",
+      "prefix_tail/5"
+    ],
+    "batch_composition": [
+      "single_es/0",
+      "mixed/0"
+    ],
+    "batch_order": [
+      "mixed/0",
+      "mixed_reverse/3"
+    ],
+    "batch_repetition": [
+      "repeat/0",
+      "repeat/2"
+    ]
+  },
+  "triplets": [
+    {
+      "id": "semantic_es_0",
+      "query": "semantic_es/0",
+      "positive": "semantic_es/1",
+      "negative": "semantic_es/2",
+      "rationale_es": "Paráfrasis de intención frente a inversión de la decisión con vocabulario cercano."
+    },
+    {
+      "id": "semantic_es_1",
+      "query": "semantic_es/3",
+      "positive": "semantic_es/4",
+      "negative": "semantic_es/5",
+      "rationale_es": "Paráfrasis de intención frente a inversión de la decisión con vocabulario cercano."
+    },
+    {
+      "id": "semantic_es_2",
+      "query": "semantic_es/6",
+      "positive": "semantic_es/7",
+      "negative": "semantic_es/8",
+      "rationale_es": "Paráfrasis de intención frente a inversión de la decisión con vocabulario cercano."
+    },
+    {
+      "id": "semantic_en_0",
+      "query": "semantic_en/0",
+      "positive": "semantic_en/1",
+      "negative": "semantic_en/2",
+      "rationale_es": "Equivalencia de intención con poco vocabulario compartido; distractor léxico contradictorio."
+    },
+    {
+      "id": "semantic_en_1",
+      "query": "semantic_en/3",
+      "positive": "semantic_en/4",
+      "negative": "semantic_en/5",
+      "rationale_es": "Equivalencia de intención con poco vocabulario compartido; distractor léxico contradictorio."
+    },
+    {
+      "id": "semantic_en_2",
+      "query": "semantic_en/6",
+      "positive": "semantic_en/7",
+      "negative": "semantic_en/8",
+      "rationale_es": "Equivalencia de intención con poco vocabulario compartido; distractor léxico contradictorio."
+    },
+    {
+      "id": "technical_0",
+      "query": "technical/0",
+      "positive": "technical/1",
+      "negative": "technical/2",
+      "rationale_es": "Respuesta técnica alineada con la consulta frente a una decisión opuesta."
+    },
+    {
+      "id": "technical_1",
+      "query": "technical/3",
+      "positive": "technical/4",
+      "negative": "technical/5",
+      "rationale_es": "Respuesta técnica alineada con la consulta frente a una decisión opuesta."
+    },
+    {
+      "id": "technical_2",
+      "query": "technical/6",
+      "positive": "technical/7",
+      "negative": "technical/8",
+      "rationale_es": "Respuesta técnica alineada con la consulta frente a una decisión opuesta."
+    },
+    {
+      "id": "technical_3",
+      "query": "technical/9",
+      "positive": "technical/10",
+      "negative": "technical/11",
+      "rationale_es": "Respuesta técnica alineada con la consulta frente a una decisión opuesta."
+    },
+    {
+      "id": "unicode_semantics",
+      "query": "unicode/0",
+      "positive": "unicode/2",
+      "negative": "unicode/3",
+      "rationale_es": "Misma ubicación implícita frente a negación explícita."
+    },
+    {
+      "id": "tail_intent",
+      "query": "prefix_tail/4",
+      "positive": "prefix_tail/0",
+      "negative": "prefix_tail/1",
+      "rationale_es": "La intención está al final; posible pérdida por truncamiento, no expectativa de que el encoder la preserve."
+    },
+    {
+      "id": "head_intent",
+      "query": "prefix_tail/4",
+      "positive": "prefix_tail/2",
+      "negative": "prefix_tail/3",
+      "rationale_es": "La intención está al inicio del texto largo."
+    }
+  ],
+  "length_hypotheses": [
+    {
+      "ref": "lengths/0",
+      "hello_repetitions": 125,
+      "expected_encoded_length_before_truncation": 127,
+      "tokenizer_verified": false
+    },
+    {
+      "ref": "lengths/1",
+      "hello_repetitions": 126,
+      "expected_encoded_length_before_truncation": 128,
+      "tokenizer_verified": false
+    },
+    {
+      "ref": "lengths/2",
+      "hello_repetitions": 127,
+      "expected_encoded_length_before_truncation": 129,
+      "tokenizer_verified": false
+    },
+    {
+      "ref": "lengths/3",
+      "hello_repetitions": 253,
+      "expected_encoded_length_before_truncation": 255,
+      "tokenizer_verified": false
+    },
+    {
+      "ref": "lengths/4",
+      "hello_repetitions": 254,
+      "expected_encoded_length_before_truncation": 256,
+      "tokenizer_verified": false
+    },
+    {
+      "ref": "lengths/5",
+      "hello_repetitions": 255,
+      "expected_encoded_length_before_truncation": 257,
+      "tokenizer_verified": false
+    }
+  ],
+  "length_note_es": "Hipótesis: un token por hello más dos especiales; verificar con tokenizer real posteriormente. 257 es longitud previa al truncamiento, no tamaño observado.",
+  "equal_text_groups": [
+    [
+      "semantic_es/0",
+      "single_es/0",
+      "mixed/0",
+      "mixed_reverse/3",
+      "repeat/0",
+      "repeat/2"
+    ],
+    [
+      "lengths/5",
+      "mixed/1",
+      "mixed_reverse/2",
+      "repeat/1",
+      "repeat/4"
+    ],
+    [
+      "empty/0",
+      "mixed/2",
+      "mixed_reverse/1",
+      "repeat/3"
+    ],
+    [
+      "unicode/1",
+      "mixed/3",
+      "mixed_reverse/0"
+    ]
+  ]
+}

@@ -1,0 +1,206 @@
+name: muninn-h5-pilot-v1
+services:
+  neo4j:
+    image: neo4j:5.26-community@sha256:414adfe41c6ff32abb752be37f265c77607c166cab298f65a917fc4f05776218
+    pull_policy: never
+    user: "7474:7474"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 2
+    mem_limit: 2g
+    environment:
+      NEO4J_AUTH_FILE: /run/secrets/neo4j_auth
+      NEO4J_server_memory_heap_initial__size: 256m
+      NEO4J_server_memory_heap_max__size: 512m
+      NEO4J_server_memory_pagecache_size: 256m
+    volumes:
+      - credentials:/run/secrets:ro
+    tmpfs:
+      - /data:uid=7474,gid=7474,mode=0700
+      - /logs:uid=7474,gid=7474,mode=0700
+    networks: [h5]
+    depends_on:
+      credentials:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, wget, --quiet, --spider, http://localhost:7474]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
+  bridge:
+    image: ${MUNINN_H5_BRIDGE_IMAGE:?Set locally available immutable bridge image digest}
+    pull_policy: never
+    user: "7474:7474"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1536m
+    cpus: 2
+    environment:
+      MUNINN_ARTIFACT_ROOT: /artifacts
+      MUNINN_ARTIFACT_BUNDLE: ee963db150ae720729aebee53794830f1d0e60960c9253e575a049b799758ac1
+      MUNINN_H5_DISPOSABLE: muninn-h5-v1
+      MUNINN_H5_COMPOSE_PROJECT: muninn-h5-pilot-v1
+    volumes:
+      - artifacts:/artifacts:ro
+      - credentials:/run/secrets:ro
+    networks: [h5]
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      artifacts:
+        condition: service_completed_successfully
+      credentials:
+        condition: service_completed_successfully
+  artifacts:
+    image: ${MUNINN_H5_BRIDGE_IMAGE:?Set locally available immutable bridge image digest}
+    pull_policy: never
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        set -eu;
+        mkdir -p /artifacts/ee963db150ae720729aebee53794830f1d0e60960c9253e575a049b799758ac1;
+        cp -R --no-preserve=mode,ownership /source/. /artifacts/ee963db150ae720729aebee53794830f1d0e60960c9253e575a049b799758ac1/;
+        find /artifacts -type d -exec chmod 0500 {} +;
+        find /artifacts -type f -exec chmod 0400 {} +;
+        chown -R 7474:7474 /artifacts
+    network_mode: none
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - type: bind
+        source: ${MUNINN_H5_MODEL_BUNDLE:?Set existing local model bundle directory}
+        target: /source
+        read_only: true
+        bind:
+          create_host_path: false
+      - artifacts:/artifacts
+  credentials:
+    image: ${MUNINN_H5_BRIDGE_IMAGE:?Set locally available immutable bridge image digest}
+    pull_policy: never
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        set -eu;
+        cp /neo4j_auth /credentials/neo4j_auth;
+        cp /bridge_token /credentials/bridge_token;
+        chown 7474:7474 /credentials/neo4j_auth /credentials/bridge_token;
+        chmod 0400 /credentials/neo4j_auth /credentials/bridge_token
+    network_mode: none
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - type: bind
+        source: ${MUNINN_H5_NEO4J_AUTH_FILE:?Set dedicated H5 Neo4j auth file}
+        target: /neo4j_auth
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MUNINN_H5_BRIDGE_TOKEN_FILE:?Set dedicated H5 bridge token file}
+        target: /bridge_token
+        read_only: true
+        bind:
+          create_host_path: false
+      - credentials:/credentials
+  runner-output-init:
+    profiles: [evaluation]
+    image: ${MUNINN_H5_BRIDGE_IMAGE:?Set locally available immutable bridge image digest}
+    pull_policy: never
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        set -eu;
+        chown 7474:7474 /out;
+        chmod 0700 /out
+    network_mode: none
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - runner-output:/out
+  runner:
+    profiles: [evaluation]
+    image: ${MUNINN_H5_BRIDGE_IMAGE:?Set locally available immutable bridge image digest}
+    pull_policy: never
+    user: "7474:7474"
+    entrypoint: [python3, /runner/retrieval_h5_runner.py]
+    command:
+      - --corpus
+      - /input/retrieval-pilot-v1-corpus.json
+      - --annotations
+      - /input/completed-annotations.csv
+      - --raw-csv-sha256
+      - ${MUNINN_H5_RAW_CSV_SHA256:?Set completed annotation CSV SHA-256}
+      - --bridge-identity
+      - ${MUNINN_H5_BRIDGE_IDENTITY:?Set verified bridge image identity}
+      - --model-bundle-id
+      - ee963db150ae720729aebee53794830f1d0e60960c9253e575a049b799758ac1
+      - --source-build-identity
+      - ${MUNINN_H5_SOURCE_BUILD_IDENTITY:?Set runner source/build identity}
+      - --endpoint
+      - http://bridge:8080
+      - --limit
+      - "5"
+      - --threshold
+      - "0"
+      - --output
+      - /out/report.json
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - "/tmp:rw,noexec,nosuid,size=16m"
+    environment:
+      MUNINN_H5_DISPOSABLE: muninn-h5-v1
+      MUNINN_H5_COMPOSE_PROJECT: muninn-h5-pilot-v1
+      MUNINN_H5_INTERNAL_RUNNER: muninn-h5-v1
+      MUNINN_BRIDGE_TOKEN_FILE: /run/secrets/bridge_token
+    volumes:
+      - type: bind
+        source: ${MUNINN_H5_RUNNER_FILE:?Set current runner Python file}
+        target: /runner/retrieval_h5_runner.py
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MUNINN_H5_QUALITY_MODULE_FILE:?Set current quality module Python file}
+        target: /runner/retrieval_quality.py
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MUNINN_H5_CORPUS_FILE:?Set exact H5 pilot corpus file}
+        target: /input/retrieval-pilot-v1-corpus.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MUNINN_H5_ANNOTATIONS_FILE:?Set completed annotation CSV}
+        target: /input/completed-annotations.csv
+        read_only: true
+        bind:
+          create_host_path: false
+      - credentials:/run/secrets:ro
+      - runner-output:/out
+    networks: [h5]
+    depends_on:
+      runner-output-init:
+        condition: service_completed_successfully
+      bridge:
+        condition: service_started
+      credentials:
+        condition: service_completed_successfully
+networks:
+  h5:
+    internal: true
+volumes:
+  artifacts: {}
+  credentials: {}
+  runner-output: {}

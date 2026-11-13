@@ -4,6 +4,8 @@ displayName: Providers UI
 version: 1.0.0
 status: active
 kind: frontend
+model: nan/deepseek-v4-flash
+thinking: high
 description: >
 model: nan/deepseek-v4-flash
 thinking: high

@@ -30,6 +30,7 @@ jobs:
       github: ${{ steps.filter.outputs.github }}
       labeler: ${{ steps.filter.outputs.labeler }}
       doctor: ${{ steps.filter.outputs.doctor }}
+      muninn_c1: ${{ steps.filter.outputs.muninn_c1 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -234,7 +235,11 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
       - name: Run unit and integration tests
-        run: cargo nextest run --workspace --all-features --profile ci
+        run: cargo nextest run --workspace --all-features --profile ci --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn
+      - name: Run default-feature Muninn tests
+        run: cargo test --locked -p muninn-providers -p muninn
+      - name: Run unit and integration tests
+        run: cargo nextest run --workspace --all-features --profile ci --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn
       - name: Run doctests
         if: ${{ !cancelled() }}
         run: cargo test --workspace --all-features --doc
@@ -256,6 +261,93 @@ jobs:
           path: target/nextest/ci/junit.xml
           retention-days: 7
         continue-on-error: true
+
+  test-muninn-c1:
+    name: Test (Muninn C1 opt-in)
+    runs-on: macos-15
+    timeout-minutes: 45
+    needs: [changes]
+    if: needs.changes.outputs.muninn_c1 == 'true'
+    concurrency:
+      group: muninn-c1-test-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Assert standard ARM64 host
+        run: test "$(uname -m)" = arm64
+      - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
+        with:
+          components: clippy
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+      - name: Test dedicated cpu-f32 feature
+        run: cargo test --locked -p muninn-c1-exporter --features cpu-f32 --target aarch64-apple-darwin
+      - name: Test product opt-in feature
+        run: cargo test --locked -p muninn-providers -p muninn --features minilm-cpu --target aarch64-apple-darwin
+      - name: Clippy dedicated feature gates
+        run: |
+          cargo clippy --locked -p muninn-c1-exporter --features cpu-f32 --all-targets --target aarch64-apple-darwin -- -D warnings
+          cargo clippy --locked -p muninn-providers -p muninn --features minilm-cpu --all-targets --target aarch64-apple-darwin -- -D warnings
+      - name: Test C1 and product harness contracts (no inference or database)
+        run: PYTHONPATH=dev/muninn python3 -m unittest discover -s dev/muninn/tests -p 'test_c1*.py'
+      - name: Test TCK result validation
+        run: PYTHONPATH=dev/muninn python3 -m unittest discover -s dev/muninn/tests -p 'test_product_tck.py'
+      - name: Test fixture cleanup paths
+        run: PYTHONPATH=dev/muninn python3 -m unittest discover -s dev/muninn/tests -p 'test_product_chain_fixture_lifecycle.py'
+      - name: Test normative TCK lock
+        run: PYTHONPATH=dev/muninn python3 -m unittest discover -s dev/muninn/tests -p 'test_normative_tck.py'
+      - name: Test historical baseline profile separation
+        run: PYTHONPATH=dev/muninn python3 -m unittest discover -s dev/muninn/tests -p 'test_api_baseline_profiles.py'
+
+  attest-muninn-c1:
+    name: Attest (Muninn C1)
+    runs-on: macos-15
+    timeout-minutes: 30
+    needs: [changes, test-muninn-c1]
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      github.ref_protected == true &&
+      needs.changes.outputs.muninn_c1 == 'true'
+    concurrency:
+      group: muninn-c1-attest-${{ github.ref }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build without inference
+        run: |
+          test "$(uname -m)" = arm64
+          cargo build --locked --release -p muninn-c1-exporter --features cpu-f32 --target aarch64-apple-darwin
+          mkdir -p artifacts/muninn/c1
+          cp target/aarch64-apple-darwin/release/export_minilm_c1 artifacts/muninn/c1/
+          python3 dev/muninn/c1_build_record.py --binary artifacts/muninn/c1/export_minilm_c1 --output artifacts/muninn/c1/build-record.json
+      - name: Attest binary and build record together
+        id: attest
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: |
+            artifacts/muninn/c1/export_minilm_c1
+            artifacts/muninn/c1/build-record.json
+      - name: Retain Sigstore bundle
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: cp "$BUNDLE" artifacts/muninn/c1/attestation.jsonl
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: muninn-c1-authenticated-build
+          path: artifacts/muninn/c1/
+          if-no-files-found: error
+          retention-days: 30
 
   test-frontend:
     name: Test (Frontend)
@@ -555,7 +647,11 @@ jobs:
         # Pinned because `cargo install` ignores registry.global-min-publish-age.
         run: cargo install cargo-llvm-cov --locked --version 0.9.1
       - name: Generate coverage report
-        run: cargo llvm-cov --workspace --all-features --fail-under-lines 87 --lcov --output-path lcov.info
+        run: |
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov --workspace --all-features --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn --no-report
+          cargo llvm-cov -p muninn-providers -p muninn --no-report
+          cargo llvm-cov report --fail-under-lines 87 --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
         with:
@@ -660,7 +756,10 @@ jobs:
       - name: Generate Rust coverage
         run: |
           mkdir -p coverage
-          cargo llvm-cov --workspace --all-features --lcov --output-path coverage/rust-lcov.info
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov --workspace --all-features --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn --no-report
+          cargo llvm-cov -p muninn-providers -p muninn --no-report
+          cargo llvm-cov report --lcov --output-path coverage/rust-lcov.info
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@e805d875275f728fac1885b413934be6d7c63f65 # v8.4.1
         with:
@@ -689,6 +788,7 @@ jobs:
       - clippy
       - check
       - test
+      - test-muninn-c1
       - test-huginn-seatbelt
       - test-frontend
       - test-e2e
@@ -713,6 +813,7 @@ jobs:
           CHANGES_DOCS: ${{ needs.changes.outputs.docs }}
           CHANGES_LABELER: ${{ needs.changes.outputs.labeler }}
           CHANGES_DOCTOR: ${{ needs.changes.outputs.doctor }}
+          CHANGES_MUNINN_C1: ${{ needs.changes.outputs.muninn_c1 }}
           RESULT_CHANGES: ${{ needs.changes.result }}
           RESULT_CI_CONTRACT: ${{ needs.ci-contract.result }}
           RESULT_DOCTOR: ${{ needs.doctor.result }}
@@ -723,6 +824,7 @@ jobs:
           RESULT_CLIPPY: ${{ needs.clippy.result }}
           RESULT_CHECK: ${{ needs.check.result }}
           RESULT_TEST: ${{ needs.test.result }}
+          RESULT_TEST_MUNINN_C1: ${{ needs.test-muninn-c1.result }}
           RESULT_TEST_HUGINN_SEATBELT: ${{ needs.test-huginn-seatbelt.result }}
           RESULT_TEST_FRONTEND: ${{ needs.test-frontend.result }}
           RESULT_COVERAGE: ${{ needs.coverage.result }}
@@ -854,11 +956,15 @@ jobs:
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
       - name: Run tests
         if: runner.os != 'Windows'
-        run: cargo test --workspace --all-features
+        run: |
+          cargo test --workspace --all-features --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn
+          cargo test --locked -p muninn-providers -p muninn
       # The personal Huginn MVP targets macOS/Linux; keep Rook's Windows gates.
       - name: Run Windows tests
         if: runner.os == 'Windows'
-        run: cargo test --workspace --all-features --exclude huginn-core --exclude huginn-application --exclude huginn-runtime --exclude huginn-presentation --exclude huginn
+        run: |
+          cargo test --workspace --all-features --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn --exclude huginn-core --exclude huginn-application --exclude huginn-runtime --exclude huginn-presentation --exclude huginn
+          cargo test --locked -p muninn-providers -p muninn
       - name: Run clippy
         if: runner.os != 'Windows'
         run: cargo clippy --workspace --all-targets -- -D warnings

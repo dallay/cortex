@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "corpus_id": "c1-v1-draft",
+  "lifecycle": "draft_not_frozen",
+  "label_origin": "agent_generated_hypotheses_not_human_annotations",
+  "token_lengths_status": "not_verified",
+  "boundary_targets": [
+    127,
+    128,
+    129,
+    255,
+    256,
+    257
+  ],
+  "boundary_batch": "boundary_candidates",
+  "triplets": [
+    {
+      "batch": "semantic_es",
+      "query": 0,
+      "positive": 1,
+      "negative": 2
+    },
+    {
+      "batch": "semantic_en",
+      "query": 0,
+      "positive": 1,
+      "negative": 2
+    },
+    {
+      "batch": "lexical_es",
+      "query": 0,
+      "positive": 1,
+      "negative": 2
+    },
+    {
+      "batch": "rust",
+      "query": 0,
+      "positive": 1,
+      "negative": 2
+    },
+    {
+      "batch": "cypher",
+      "query": 0,
+      "positive": 1,
+      "negative": 2
+    },
+    {
+      "batch": "decision",
+      "query": 0,
+      "positive": 1,
+      "negative": 2
+    }
+  ],
+  "coverage": [
+    "spanish",
+    "english",
+    "paraphrase_candidates",
+    "lexical_negatives",
+    "unicode",
+    "empty",
+    "rust",
+    "cypher",
+    "technical_decisions",
+    "boundary_candidates",
+    "prefix_tail",
+    "batch_reordering"
+  ],
+  "empty_overlap_exception": "user_authorized_2026-10-30_only_empty_string",
+  "limits": [
+    "No tokenizer or inference executed. Repetition counts are candidate construction, not verified token lengths.",
+    "Paraphrase and relevance labels are hypotheses; no independent annotation or product-quality acceptance.",
+    "Not frozen; requires coverage review, token-length verification, runtime/space binding and numerical policy before acceptance."
+  ]
+}

@@ -93,9 +93,10 @@ fmt-check:
 
 # === Test ===
 
-# Run all tests across the workspace with all features enabled
+# Run all workspace tests, plus Muninn default features; C1 opt-in is a separate gate.
 test:
-    cargo test --workspace --all-features
+    cargo test --workspace --all-features --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn
+    cargo test --locked -p muninn-providers -p muninn
 
 # Build the independent Rust outline guest and wrap its versioned component metadata
 huginn-wasm-build:
@@ -396,7 +397,8 @@ ci-dashboard-build:
     @test ! -f apps/rook/dashboard/pnpm-workspace.yaml && test ! -f apps/rook/dashboard/pnpm-lock.yaml
     @pnpm --filter @dallay/rook-dashboard run build
 
-# Run Rust tests with llvm-cov enforcing the 87% line coverage gate
+# Merge the all-feature workspace and Muninn default-feature profile under the same 87% gate.
+# Keep the optional C1 inference feature in its dedicated test gate, not the baseline report.
 ci-coverage-rust:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -404,7 +406,10 @@ ci-coverage-rust:
     mkdir -p "$coverage_parent"
     report="$(mktemp "$coverage_parent/cortex-rust-coverage.XXXXXX")"
     trap 'rm -f "$report"' EXIT
-    cargo llvm-cov --workspace --all-features --fail-under-lines 87 --lcov --output-path "$report"
+    cargo llvm-cov clean --workspace
+    cargo llvm-cov --workspace --all-features --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn --no-report
+    cargo llvm-cov -p muninn-providers -p muninn --no-report
+    cargo llvm-cov report --fail-under-lines 87 --lcov --output-path "$report"
 
 # Run dashboard frontend tests enforcing line/branch/func coverage thresholds
 ci-coverage-frontend:
@@ -490,7 +495,8 @@ ci-check: (_ci-header "cargo check...")
 
 # Run all Rust workspace tests
 ci-test-rust: (_ci-header "cargo test (Rust)...")
-    @cargo test --workspace --all-features
+    @cargo test --workspace --all-features --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn
+    @cargo test --locked -p muninn-providers -p muninn
 
 # Run dashboard frontend typecheck, Biome lint, and Vitest suite
 ci-test-vitest: (_ci-header "typecheck + biome + vitest (Frontend)...")
@@ -539,6 +545,7 @@ ci-local:
     run_step "Clippy" just ci-clippy
     run_step "Huginn architecture + cargo check" just ci-check
     run_step "Rust tests" just ci-test-rust
+    run_step "Muninn C1 opt-in tests" just ci-muninn-c1
     run_step "Frontend typecheck, Biome and tests" just ci-test-vitest
     run_step "Rust documentation" just ci-doc
     run_step "Cargo audit" just ci-audit
@@ -603,7 +610,9 @@ ci-ci:
     run_step "3/9 fmt-check"       cargo fmt --all -- --check
     run_step "4/9 clippy"          cargo clippy --workspace --all-targets -- -D warnings
     run_step "5/9 cargo check"     cargo check --workspace
-    run_step "6/9 cargo test"      cargo test --workspace --all-features
+    run_step "6/9 cargo test"      cargo test --workspace --all-features --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn
+    run_step "Muninn default feature tests" cargo test --locked -p muninn-providers -p muninn
+    run_step "Muninn C1 opt-in tests" just ci-muninn-c1
     run_step "7/9 typecheck + biome + vitest" bash -c 'cd apps/rook/dashboard && pnpm run typecheck && pnpm exec biome ci . && pnpm exec vitest run'
     run_step "8/9 cargo doc"       bash -c 'RUSTDOCFLAGS="--document-private-items -D warnings" cargo doc --workspace --no-deps'
     run_step "9/9 cargo audit"     just ci-audit
@@ -688,6 +697,34 @@ help:
     @echo "  {{ GREEN }}just doctor{{ RESET }}          - Diagnose required and optional development tools"
     @echo "  {{ GREEN }}just doctor-test{{ RESET }}     - Test the doctor checks"
     @echo ""
+    @echo "{{ BOLD }}{{ YELLOW }}Dev Container (Docker — no host pollution):{{ RESET }}"
+    @echo "  {{ GREEN }}just dev-run{{ RESET }}      - Build image + start container (waits for /health)"
+    @echo "  {{ GREEN }}just dev-up{{ RESET }}       - Start container (builds image if missing)"
+    @echo "  {{ GREEN }}just dev-build{{ RESET }}    - Build the rook:dev image only"
+    @echo "  {{ GREEN }}just dev-down{{ RESET }}     - Stop and remove container"
+    @echo "  {{ GREEN }}just dev-logs{{ RESET }}     - Tail container logs"
+    @echo "  {{ GREEN }}just dev-shell{{ RESET }}    - Shell into the running container"
+    @echo "  {{ GREEN }}just dev-restart{{ RESET }}  - Restart the container"
+    @echo "  {{ GREEN }}just dev-status{{ RESET }}   - Container + /health status"
+    @echo "  {{ GREEN }}just dev-clean{{ RESET }}    - Remove image and container"
+    @echo ""
     @echo "{{ BOLD }}{{ YELLOW }}Doc:{{ RESET }}"
-    @echo "  {{ GREEN }}just doc{{ RESET }}             - Generate docs"
-    @echo "  {{ GREEN }}just doc-open{{ RESET }}        - Generate and open docs"
+    @echo "  {{ GREEN }}just doc{{ RESET }}          - Generate docs"
+    @echo "  {{ GREEN }}just doc-open{{ RESET }}     - Generate and open docs"
+
+# Dedicated opt-in C1 coverage; no inference or database access.
+ci-muninn-c1:
+    cargo test --locked -p muninn-c1-exporter --features cpu-f32
+    cargo test --locked -p muninn-providers -p muninn --features minilm-cpu
+    cargo clippy --locked -p muninn-c1-exporter --features cpu-f32 --all-targets -- -D warnings
+    cargo clippy --locked -p muninn-providers -p muninn --features minilm-cpu --all-targets -- -D warnings
+    PYTHONPATH=dev/muninn python3 -m unittest discover -s dev/muninn/tests -p "test_c1*.py"
+    PYTHONPATH=dev/muninn python3 -m unittest discover -s dev/muninn/tests -p "test_product_tck.py"
+    PYTHONPATH=dev/muninn python3 -m unittest discover -s dev/muninn/tests -p "test_product_chain_fixture_lifecycle.py"
+    PYTHONPATH=dev/muninn python3 -m unittest discover -s dev/muninn/tests -p "test_normative_tck.py"
+    PYTHONPATH=dev/muninn python3 -m unittest discover -s dev/muninn/tests -p "test_api_baseline_profiles.py"
+
+# Unit tests of the OpenCode + Muninn memory benchmark harness. No inference,
+# no database, no Docker.
+ci-muninn-opencode:
+    PYTHONPATH=dev/muninn/opencode python3 -m unittest discover -s dev/muninn/opencode/tests -p "test_*.py"

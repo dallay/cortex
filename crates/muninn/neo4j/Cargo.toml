@@ -1,0 +1,23 @@
+[package]
+name = "muninn-neo4j"
+version.workspace = true
+edition.workspace = true
+publish = false
+license = "Apache-2.0"
+description = "Neo4j adapter for Muninn (schema, Cypher queries ported from neo4j-labs/agent-memory)"
+
+[dependencies]
+muninn-core = { path = "../core" }
+async-trait.workspace = true
+chrono.workspace = true
+neo4rs = "=0.8.0"
+serde_json.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+muninn-application = { path = "../application" }
+
+[lints]
+workspace = true

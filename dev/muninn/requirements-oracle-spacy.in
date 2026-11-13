@@ -1,0 +1,11 @@
+# Direct requirement of the H4 spaCy extraction oracle image.
+# Closure file: dev/muninn/requirements-oracle-spacy.txt
+# Regenerate it from the pinned reference lock instead of resolving again:
+#   uv export --frozen --no-dev --extra spacy --no-emit-project \
+#     --project dev/muninn/.cache/sources/agent-memory \
+#     > dev/muninn/requirements-oracle-spacy.txt
+# Then drop colorama (win32) and numpy 2.4.6 (python < 3.12): this image
+# targets a single platform and installs no conditional requirements.
+spacy==3.8.16
+# en_core_web_sm-3.8.0-py3-none-any.whl is a cached local file installed
+# separately by digest; it is never an index requirement.

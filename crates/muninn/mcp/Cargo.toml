@@ -1,0 +1,23 @@
+[package]
+name = "muninn-mcp"
+version.workspace = true
+edition.workspace = true
+publish = false
+license = "Apache-2.0"
+description = "Muninn MCP stdio protocol and explicit tool registry"
+
+[[bin]]
+name = "muninn-mcp"
+path = "src/main.rs"
+
+[dependencies]
+async-trait.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,25 @@
+# H4 spaCy extraction oracle for linux/arm64.
+# New image; it does not modify, retag or replace muninn-gm05-oracle:20261104.
+# The reference project's own pins plus its pinned `spacy` extra come from
+# requirements-oracle-spacy.txt (hash-pinned, lock-derived).
+# The English model is the cached en_core_web_sm-3.8.0 wheel copied from the
+# build context and verified by digest; nothing is fetched from a model index.
+FROM python:3.13.18-slim@sha256:76baad6037690d6e8c4397fbcaef17bca6f19eecef822b708fe8fa3417d30bb5 AS dependencies
+# The venv is created at its final path so the `pip` and model console scripts
+# keep a live interpreter shebang after the copy into the runtime stage.
+RUN mkdir -p /opt/venv && chown 7474:7474 /opt/venv
+USER 7474:7474
+WORKDIR /tmp
+COPY requirements-oracle-spacy.txt /opt/requirements-oracle-spacy.txt
+RUN python -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir --require-hashes -r /opt/requirements-oracle-spacy.txt
+COPY .cache/model-evidence/en_core_web_sm-3.8.0-py3-none-any.whl /tmp/model/en_core_web_sm-3.8.0-py3-none-any.whl
+RUN echo "1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85  /tmp/model/en_core_web_sm-3.8.0-py3-none-any.whl" \
+        | sha256sum -c - \
+    && /opt/venv/bin/pip install --no-cache-dir --no-deps --no-index /tmp/model/en_core_web_sm-3.8.0-py3-none-any.whl
+
+FROM python:3.13.18-slim@sha256:76baad6037690d6e8c4397fbcaef17bca6f19eecef822b708fe8fa3417d30bb5
+COPY --from=dependencies /opt/venv /opt/venv
+USER 7474:7474
+WORKDIR /harness
+ENTRYPOINT ["/opt/venv/bin/python"]

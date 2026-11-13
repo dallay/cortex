@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "corpus_id": "c1-v1-draft",
+  "source_labels": "dev/muninn/fixtures/minilm-c1-v1-acceptance-labels.json",
+  "source_labels_sha256": "c0f72613dad704b318c09aa1aeef8843164481cf50e61acd837bbe77532f10fb",
+  "disposition_origin": "user_reviewed",
+  "reviewed_by": "user",
+  "reviewed_at": "2026-10-30",
+  "dispositions": [
+    {
+      "id": "hypothesis_1",
+      "query": "semantic_es/0",
+      "positive": "semantic_es/1",
+      "negative": "semantic_es/2",
+      "disposition": "correct"
+    },
+    {
+      "id": "hypothesis_2",
+      "query": "semantic_en/0",
+      "positive": "semantic_en/1",
+      "negative": "semantic_en/2",
+      "disposition": "correct"
+    },
+    {
+      "id": "hypothesis_3",
+      "query": "lexical_es/0",
+      "positive": "lexical_es/1",
+      "negative": "lexical_es/2",
+      "disposition": "correct"
+    },
+    {
+      "id": "hypothesis_4",
+      "query": "rust/0",
+      "positive": "rust/1",
+      "negative": "rust/2",
+      "disposition": "correct"
+    },
+    {
+      "id": "hypothesis_5",
+      "query": "cypher/0",
+      "positive": "cypher/1",
+      "negative": "cypher/2",
+      "disposition": "correct"
+    },
+    {
+      "id": "hypothesis_6",
+      "query": "decision/0",
+      "positive": "decision/1",
+      "negative": "decision/2",
+      "disposition": "correct"
+    }
+  ],
+  "corpus_modified": false,
+  "source_hypothesis_labels_modified": false,
+  "warning": "Human endorsement of the relationships does not change the measured 0/6 semantic ranking result in attempt 61 and does not imply model acceptance."
+}
