@@ -24,17 +24,19 @@ HOST="$(uname -n 2>/dev/null || echo unknown)"
 note() { printf '==> %s\n' "$*"; }
 die()  { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
-# 1. Toolchain — Rust 1.89 is the floor declared in rust-toolchain.toml.
+# 1. Toolchain — Rust 1.89 is the minimum supported version. rust-toolchain.toml
+#    pins the development toolchain. Compare versions numerically so a two-digit
+#    minor version (1.100) is not mistaken for an older release.
 note "checking toolchain"
 command -v rustc >/dev/null 2>&1 || die "rustc not on PATH"
 command -v cargo  >/dev/null 2>&1 || die "cargo not on PATH"
 command -v just   >/dev/null 2>&1 || die "just not on PATH (cargo install just)"
 
 RUSTC_VERSION="$(rustc --version | awk '{print $2}')"
-case "$RUSTC_VERSION" in
-  1.89.*|1.9[0-9].*|2.*) ;; # 1.89 floor and any later stable.
-  *) die "Rust 1.89+ required, found $RUSTC_VERSION" ;;
-esac
+RUSTC_MINOR="$(printf '%s\n' "$RUSTC_VERSION" | cut -d. -f1,2)"
+if [ "$(printf '%s\n' "1.89" "$RUSTC_MINOR" | sort -V | head -n1)" != "1.89" ]; then
+  die "Rust 1.89+ required, found $RUSTC_VERSION"
+fi
 
 # 2. Compile check — fails fast if the toolchain or workspace is broken.
 note "cargo check -p huginn"

@@ -381,7 +381,8 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        # Pinned because `cargo install` ignores registry.global-min-publish-age.
+        run: cargo install cargo-audit --locked --version 0.23.0
       - name: Run cargo audit
         run: cargo audit
 
@@ -551,7 +552,8 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
       - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov
+        # Pinned because `cargo install` ignores registry.global-min-publish-age.
+        run: cargo install cargo-llvm-cov --locked --version 0.9.1
       - name: Generate coverage report
         run: cargo llvm-cov --workspace --all-features --fail-under-lines 87 --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
@@ -653,7 +655,8 @@ jobs:
         working-directory: apps/rook/dashboard
         run: pnpm exec vitest run --coverage --coverage.reporter=lcov --coverage.reportsDirectory=coverage
       - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov
+        # Pinned because `cargo install` ignores registry.global-min-publish-age.
+        run: cargo install cargo-llvm-cov --locked --version 0.9.1
       - name: Generate Rust coverage
         run: |
           mkdir -p coverage
