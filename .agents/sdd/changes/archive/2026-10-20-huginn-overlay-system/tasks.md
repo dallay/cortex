@@ -1,563 +1,563 @@
-# Tareas: sistema de overlays de Huginn
+# Tasks: Huginn overlay system
 
-## Contrato de ejecución y revisión
+## Execution and review contract
 
-Cierre de Apply 2026-10-20: 21/21 tareas completas, incluidas 6.2–6.3.
-`just ci-local` final PASS 9/9 (431 s); detalles, fallos previos y límites en
-`apply-validation.md` y `apply-progress.md`. Verify/QA independientes siguen
-pendientes; ningún checkpoint anterior sustituye esta evidencia nueva.
+Apply closure 2026-10-20: 21/21 tasks complete, including 6.2–6.3.
+Final `just ci-local` PASS 9/9 (431 s); details, earlier failures and limits are in
+`apply-validation.md` and `apply-progress.md`. Independent Verify/QA remain
+pending; no earlier checkpoint replaces this new evidence.
 
-Estado del worktree validado el 2026-10-19 sobre `HEAD=442e34b`: 1.1–1.3, 2.1–2.6 y 3.1–3.3 completas como implementación, con evidencia propia en `apply-progress.md`. El HEAD sin estos cambios y los checks históricos no acreditan esta implementación. Staging previo preservado, incluidos `event.rs`, `overlay.rs` y artifacts. El contrato 2.1 permite Help/Settings desnudos y exige workflows reales para las demás superficies; 2.2 conecta aperturas, payloads, continuaciones, render e input a `UiState.overlays`, sin slots activos paralelos. 2.3–2.6 endurecen/cubren esos contratos; Clippy focal all-targets/test-driver pasa tras refactor pequeño de event.rs y limpieza de lints en tests del cambio. Verify/QA y CI completa no ejecutados; no se afirma aceptación de producto ni preparación para PR. Prevalecen propuesta,
-cuatro delta specs y diseño sobre sugerencias incompatibles de exploración. Solo el
-orquestador modifica `state.yaml`; este documento no autoriza commits, ramas,
-publicación, merge ni archive.
+Worktree state validated on 2026-10-19 against `HEAD=442e34b`: 1.1–1.3, 2.1–2.6 and 3.1–3.3 complete as implementation, with their own evidence in `apply-progress.md`. HEAD without these changes and historical checks do not accredit this implementation. Earlier staging preserved, including `event.rs`, `overlay.rs` and artifacts. Contract 2.1 allows bare Help/Settings and requires real workflows for the other surfaces; 2.2 connects openings, payloads, continuations, render and input to `UiState.overlays`, with no parallel active slots. 2.3–2.6 harden and cover those contracts; focused Clippy all-targets/test-driver passes after a small refactor of event.rs and lint cleanup in the change tests. Verify/QA and full CI not executed; no claim of product acceptance or PR readiness. The proposal,
+four delta specs and design prevail over incompatible exploration suggestions. Only the
+orchestrator modifies `state.yaml`; this document authorizes no commits, branches,
+publication, merge or archive.
 
-### Previsión de carga de revisión
+### Review load forecast
 
-- Presupuesto: 400 líneas modificadas, adiciones más eliminaciones.
-- Carga estimada: alta; aproximadamente 2500–5500 líneas, incluidos consumidores,
-  pruebas, fixtures y documentación. Estimación de planificación, no diff medido.
-- Estrategia: `size-exception`, una entrega P0+P1 en un PR, autorizada expresamente
-  por la misión y la propuesta. Justificación: migración transversal con rollback
-  conjunto de contratos y consumidores, sin imponer otra decisión de entrega.
-- Las cadenas serían recomendables por tamaño; **no se adoptan** contra la entrega
-  única autorizada. Los paquetes siguientes son unidades de revisión dentro del PR,
-  no PRs nuevos ni commits obligatorios.
+- Budget: 400 modified lines, additions plus deletions.
+- Estimated load: high; approximately 2500–5500 lines, including consumers,
+  tests, fixtures and documentation. Planning estimate, not a measured diff.
+- Strategy: `size-exception`, one P0+P1 delivery in one PR, expressly authorized
+  by the mission and the proposal. Rationale: cross-cutting migration with joint
+  rollback of contracts and consumers, without imposing another delivery decision.
+- Stacking would be advisable by size; it is **not adopted** against the authorized
+  single delivery. The following packages are review units inside the PR,
+  not new PRs and not mandatory commits.
 
-Decisión de entrega pendiente: No; se mantiene la autorización de un solo PR P0+P1.
-La autorización del usuario integró 2.2 en una sola misión, ahora implementada y
-probada técnicamente; no equivale a aceptación de producto ni inicia automáticamente tareas dependientes. La estimación sigue
-siendo planificación, no diff medido.
+Delivery decision pending: No; the authorization for a single P0+P1 PR stands.
+The user authorization merged 2.2 into one mission, now implemented and
+technically tested; it is not product acceptance and does not automatically start dependent tasks. The estimate remains
+planning, not a measured diff.
 
-Paquetes revisables después del rebaselining:
+Reviewable packages after rebaselining:
 
-- A: eventos/categorías/deduplicación (1.1–1.3), completo en worktree con evidencia focal; no implica cambios ya integrados en HEAD.
-- B1: contrato plugin (2.1), completo en worktree con pruebas de invocación, metadata, continuación y rechazo sin reemplazo.
-- B2: autoridad host, adaptadores, lifecycle e input/render (2.2), completo en el
-  worktree con pruebas host y PTY propias; pendiente de revisión del orquestador,
-  sin sustituir verify/QA posteriores.
-- B3: endurecimiento de workflow/Approval/input y providers (2.3–2.6), completo
-  como implementación y suites focales; no sustituye verify/QA.
-- C–F: Settings, conexión/barra y retiro de legacy; dependen de la autoridad común.
+- A: events/categories/dedup (1.1–1.3), complete in the worktree with focused evidence; it does not imply changes already integrated in HEAD.
+- B1: plugin contract (2.1), complete in the worktree with tests for invocation, metadata, continuation and rejection without replacement.
+- B2: host authority, adapters, lifecycle and input/render (2.2), complete in the
+  worktree with its own host and PTY tests; pending orchestrator review,
+  without replacing later verify/QA.
+- B3: hardening of workflow/Approval/input and providers (2.3–2.6), complete
+  as implementation and focused suites; it does not replace verify/QA.
+- C–F: Settings, connection/bar and legacy removal; they depend on the shared authority.
 
-No se crearon PRs ni commits separados; los paquetes son puntos de revisión dentro
-de la entrega única autorizada.
+No separate PRs or commits were created; the packages are review points inside
+the authorized single delivery.
 
-Paquetes revisables, dependencias y esfuerzo orientativo:
+Reviewable packages, dependencies and indicative effort:
 
-- A: eventos/categorías/dedup (1.1–1.3), 2–3 sesiones.
-- B: contratos, autoridad integrada, adaptadores y flujos de overlay (2.1–2.6), depende de A, estimación original 5–7 sesiones; revisar tras el rebaselining.
-- C: Settings con persistencia asíncrona (3.1–3.3), depende de B, 2–3 sesiones.
-- D: selección observable y lifecycle (4.1–4.4), depende de A; integración con B/C,
-  3–5 sesiones. Contratos nuevos y todos sus implementadores cambian juntos.
-- E: barra/viewport real (5.1–5.2), depende de B/C/D, 2–3 sesiones.
-- F: retirada legacy y cierre verificable (6.1–6.3), depende de A–E, 1–2 sesiones.
+- A: events/categories/dedup (1.1–1.3), 2–3 sessions.
+- B: contracts, integrated authority, adapters and overlay flows (2.1–2.6), depends on A, original estimate 5–7 sessions; review after rebaselining.
+- C: Settings with asynchronous persistence (3.1–3.3), depends on B, 2–3 sessions.
+- D: observable selection and lifecycle (4.1–4.4), depends on A; integration with B/C,
+  3–5 sessions. New contracts and all their implementers change together.
+- E: real bar/viewport (5.1–5.2), depends on B/C/D, 2–3 sessions.
+- F: legacy removal and verifiable closure (6.1–6.3), depends on A–E, 1–2 sessions.
 
-Cada sesión cubre una unidad lógica; si excede la sesión, subdividir conservando
-pruebas y comportamiento juntos, sin cambiar entrega. Los puntos de pausa seguros
-son finales de tareas con consumidores adaptados y verificación focalizada verde;
-RED es un estado de trabajo local, nunca un checkpoint entregable deliberadamente
-incompilable. Adaptadores strangler-fig temporales tienen un solo dueño por
-transición: nunca doble input/render, emisión ni escritura. Rollback de entrega:
-revertir el PR completo, sin migraciones destructivas ni reset de datos.
+Each session covers one logical unit; if it exceeds the session, subdivide while keeping
+tests and behavior together, without changing delivery. Safe pause points
+are task ends with adapted consumers and focused verification green;
+RED is a local working state, never a deliberately non-compilable deliverable
+checkpoint. Temporary strangler-fig adapters have a single owner per
+transition: never double input/render, emission or write. Delivery rollback:
+revert the whole PR, with no destructive migrations and no data reset.
 
-### Modo de pruebas y evidencia
+### Testing mode and evidence
 
-La configuración heredada declara `testing.strict_tdd: false`; no hay activación
-explícita de strict TDD en esta misión. No se impone RED global para cada tipo
-nuevo. **Todo comportamiento incorrecto exige regresión que falle antes del fix**.
-En cada tarea: preparar prueba/fixture, registrar RED de regresión, implementar,
-comprobar GREEN y refactorizar volviendo a comprobar. Incorporar esas pruebas
-con la tarea, nunca aplazarlas a un bloque final genérico.
+The inherited configuration declares `testing.strict_tdd: false`; there is no explicit
+activation of strict TDD in this mission. No global RED is imposed for every new
+type. **Every incorrect behavior requires a regression that fails before the fix**.
+In each task: prepare the test/fixture, record the regression RED, implement,
+check GREEN and refactor while checking again. Land those tests
+with the task, never defer them to a generic final block.
 
-Para cada RED registrar comando exacto, filtro, caso, código de salida y aserción
-fallida saneada; un fallo de compilación por API inexistente no demuestra la
-regresión. Si exige un seam nuevo, introducirlo compatible y demostrar el fallo
-conductual antes del fix. GREEN registra la repetición del mismo comando y su
-salida; ningún caso omitido se marca aprobado. Barreras/canales y reloj fake,
-sin sleeps para demostrar orden, dedup o concurrencia; timeouts solo como watchdog.
+For every RED record the exact command, filter, case, exit code and sanitized
+failing assertion; a compilation failure caused by a missing API does not prove the
+regression. If it requires a new seam, introduce it compatibly and demonstrate the
+behavioral failure before the fix. GREEN records the repetition of the same command and its
+output; no omitted case is marked approved. Barriers/channels and fake clock,
+no sleeps to demonstrate order, dedup or concurrency; timeouts only as a watchdog.
 
-Runners comprobados por lectura de manifests, targets y `justfile`, **no ejecutados**.
-En tareas, `P`, `A`, `R`, `U`, `X`, `H`, `C` abrevian respectivamente los paquetes
+Runners verified by reading manifests, targets and `justfile`, **not executed**.
+In tasks, `P`, `A`, `R`, `U`, `X`, `H`, `C` abbreviate respectively the packages
 `huginn-presentation`, `huginn-application`, `huginn-runtime`, `huginn-plugin-api`,
 `huginn-reference-extension`, `huginn`, `huginn-core`. `T(P; state,workflows)`
-significa `cargo test -p huginn-presentation --test state --test workflows`;
-`L(P)` significa `cargo test -p huginn-presentation --lib`. Expandir siempre los
-alias en los informes. Agregar un filtro existente para el RED y repetir el
-target completo para GREEN.
+means `cargo test -p huginn-presentation --test state --test workflows`;
+`L(P)` means `cargo test -p huginn-presentation --lib`. Always expand the
+aliases in reports. Add an existing filter for RED and repeat the
+full target for GREEN.
 
-PTY significa `cargo test -p huginn-presentation --features test-driver --test pty`;
-parser significa el mismo comando con `--test input_parser`. Ambos requieren Unix;
-`pty` contiene las pruebas, `tui-fixture` es el bin auxiliar, no su runner.
-`--all-features` **sí** activa `test-driver`; comprobar número de tests ejecutados,
-no confundir compilación del fixture o cero tests con evidencia PTY.
+PTY means `cargo test -p huginn-presentation --features test-driver --test pty`;
+parser means the same command with `--test input_parser`. Both require Unix;
+`pty` contains the tests, `tui-fixture` is the auxiliary binary, not their runner.
+`--all-features` **does** enable `test-driver`; check the number of tests executed,
+do not confuse fixture compilation or zero tests with PTY evidence.
 
-Rutas abreviadas: `P/`, `A/`, `R/`, `U/`, `X/`, `C/` son
+Abbreviated paths: `P/`, `A/`, `R/`, `U/`, `X/`, `C/` are
 `crates/huginn/{presentation,application,runtime,plugin-api,reference-extension,core}/`;
-`H/` es `apps/huginn/`. Son rutas concretas relativas al workspace.
+`H/` is `apps/huginn/`. They are concrete paths relative to the workspace.
 
-## Fase 1 — Categorías, conversación y errores acotados
+## Phase 1 — Categories, conversation and scoped errors
 
-- [x] **1.1 Separar superficies explícitas** — `P/src/{event,lib,state}.rs`,
+- [x] **1.1 Separate explicit surfaces** — `P/src/{event,lib,state}.rs`,
   `H/src/main.rs`, `P/tests/support/fixture.rs`, `P/tests/{state,extensions}.rs`.
-  Dependencia: ninguna. EVT-01/02. Sustituir puerto `notice` por métodos object-safe
-  de cinco categorías; adaptar todos los implementadores/callers del puerto en
-  esta unidad. Renombrar `committed` a `conversation` con compatibilidad interna
-  temporal solo donde la migración lo necesite. Pruebas: mismo texto en categorías
-  distintas, Session/Workspace fuera de conversación, tool error completo,
-  streaming, reproyección idempotente y mensajes idénticos legítimos.
-  Aceptación/verificación: solo Conversation alimenta scrollback; `T(P; state,extensions)`.
-  Riesgo: perder renderers o introducir clasificación por texto; prohibir ambos.
-  Evidencia apply 2026-10-19: se reemplazó el puerto `notice` de Interaction con métodos object-safe para cinco categorías; migrados callers del host/app/fixture y `committed` renombrado a `conversation`. Session/Workspace se proyectan como Status; ToolFinished mantiene su payload íntegro en conversación/stream; errores engine se proyectan diagnóstico sin texto heurístico. Tests `state`, `extensions`, `workflows`, `providers_ui`, `apps/huginn providers_flow` pasan. Hay RED/GREEN observado en el histórico de aviso contaminando conversación; reproyección y repetición legítima están probadas. Resultado completo de las suites focales abajo en apply-progress.
+  Dependency: none. EVT-01/02. Replace the `notice` port with object-safe methods
+  for five categories; adapt every implementer/caller of the port in
+  this unit. Rename `committed` to `conversation` with temporary internal
+  compatibility only where the migration needs it. Tests: same text in different
+  categories, Session/Workspace outside conversation, full tool error,
+  streaming, idempotent reprojection and legitimate identical messages.
+  Acceptance/verification: only Conversation feeds scrollback; `T(P; state,extensions)`.
+  Risk: losing renderers or introducing classification by text; forbid both.
+  Apply evidence 2026-10-19: the Interaction `notice` port was replaced with object-safe methods for five categories; host/app/fixture callers migrated and `committed` renamed to `conversation`. Session/Workspace are projected as Status; ToolFinished keeps its payload intact in conversation/stream; engine errors are projected as diagnostics without heuristic text. Tests `state`, `extensions`, `workflows`, `providers_ui`, `apps/huginn providers_flow` pass. RED/GREEN was observed in the history of a notice contaminating conversation; reprojection and legitimate repetition are tested. Full result of the focused suites is below in apply-progress.
 
-- [x] **1.2 Implementar retención y dedup** — `P/src/{event,state}.rs`, pruebas
-  unitarias de `event.rs` y `P/tests/state.rs`. Depende de 1.1. EVT-03/04.
-  Probar hash+igualdad por operación, colisión forzada, t=0/1,999/2s,
-  reanclaje solo en emisión visible e intercalación A/B. Probar FIFO 256/257,
-  dedup 256 entradas/256KiB, 4096 bytes exactos y mensaje mayor no cacheado
-  ni truncado para comparar; purga expirada y expulsión de la emisión más antigua.
-  Aceptación/verificación: saturación nunca oculta error nuevo, ningún secreto
-  retenido; `L(P)` y `T(P; state)`, reloj fake monotónico sin sleeps.
-  Riesgo: dedup por hash solo o ventana extendida por supresión.
-  Reconciliación (continuación 2026-10-19): criterios funcionales EVT-03/04 de 1.2 cubiertos por pruebas unitarias y de productor UI; `T(P; state)` corrido y pasa (17), pero el task requería explícitamente completar 1.3 antes de esta aceptación integrada; **1.2 queda [x]** tras separar sus criterios funcionales de los de integración 1.3; acceptance suites requeridas ejecutadas en este worktree (27 lib y 17 state). La propagación de scope y recuperación autoritativa son criterios propios de 1.3, no criterios añadidos a 1.2. El deduplicador conserva igualdad exacta cifrada AES-256-GCM con clave aleatoria por instancia, nonce de contador y tamaño cifrado contabilizado (mensaje + 28 bytes); mantiene hash+igualdad ante colisiones, límite de 256 entradas/256 KiB, ventana y limpieza. El oversized (4097 bytes) pasa sin cache/truncado, 4096 exactos se comparan, hay prueba de ausencia del secreto en estado retenido y saturación/expulsión. RED observado en esta continuación:
-  `cargo test -p huginn-presentation --lib event::tests::dedup_nonce_exhaustion_emits_without_panicking_or_caching` falló por panic al agotar contador; GREEN tras cambiar agotamiento a emisión visible sin cache, limpiando entradas para impedir reutilización de nonce. RED adicional: `cargo test -p huginn-presentation --lib event::tests::dedup_enforces_entry_byte_and_oversize_bounds_without_truncation` mostró que la prueba de FIFO erróneamente asumía que el segundo-oldest seguía retenido después de reinsertar el oldest, que vuelve a expulsar otra entrada; se corrigió el test para comprobar lo requerido: oldest expulsado y reinserción visible. Checks exactos más recientes: `cargo test -p huginn-presentation --lib` (26 passed, antes de la última aserción de FIFO; focal de bounds pasó luego), `cargo test -p huginn-presentation --lib event::tests::dedup_enforces_entry_byte_and_oversize_bounds_without_truncation` (1 passed),
-  `cargo test -p huginn-presentation --lib event::tests::dedup_nonce_exhaustion_emits_without_panicking_or_caching` (1 passed), `cargo test -p huginn-presentation --test state` (17 passed), `cargo test -p huginn-application --test contracts` (4 passed). No se reejecutaron todas las suites del workspace ni `L(P)` completa. `cargo fmt --all -- --check` y `git diff --check` pendientes al cierre de esta continuación. La propagación y verificación de 1.3 siguen siendo prerrequisito; no afirmar aceptación 1.2 antes de ese gate.
-- [x] **1.3 Completar scopes y conservación autoritativa** — `P/src/{lib,state}.rs`,
+- [x] **1.2 Implement retention and dedup** — `P/src/{event,state}.rs`, unit
+  tests of `event.rs` and `P/tests/state.rs`. Depends on 1.1. EVT-03/04.
+  Test hash plus equality per operation, forced collision, t=0/1.999/2s,
+  re-anchoring only on visible emission and A/B interleaving. Test FIFO 256/257,
+  dedup 256 entries/256KiB, exactly 4096 bytes and a larger message not cached
+  and not truncated for comparison; expired purge and eviction of the oldest emission.
+  Acceptance/verification: saturation never hides a new error, no secret
+  retained; `L(P)` and `T(P; state)`, fake monotonic clock without sleeps.
+  Risk: dedup by hash alone or window extended by suppression.
+  Reconciliation (continuation 2026-10-19): functional criteria EVT-03/04 of 1.2 covered by unit and UI producer tests; `T(P; state)` ran and passes (17), but the task explicitly required completing 1.3 before this integrated acceptance; **1.2 is [x]** after separating its functional criteria from the 1.3 integration criteria; required acceptance suites executed in this worktree (27 lib and 17 state). Scope propagation and authoritative recovery are criteria of 1.3 itself, not criteria added to 1.2. The deduplicator keeps exact equality encrypted with AES-256-GCM with a random key per instance, counter nonce and accounted encrypted size (message + 28 bytes); it keeps hash plus equality against collisions, the 256-entry/256 KiB limit, window and cleanup. The oversized message (4097 bytes) passes without caching or truncation, exactly 4096 bytes are compared, there is a test for the absence of the secret in retained state, and saturation/eviction. RED observed in this continuation:
+  `cargo test -p huginn-presentation --lib event::tests::dedup_nonce_exhaustion_emits_without_panicking_or_caching` failed because of a panic when the counter was exhausted; GREEN after changing exhaustion to a visible emission without caching, clearing entries to prevent nonce reuse. Additional RED: `cargo test -p huginn-presentation --lib event::tests::dedup_enforces_entry_byte_and_oversize_bounds_without_truncation` showed that the FIFO test wrongly assumed the second-oldest entry was still retained after reinserting the oldest, which evicts another entry again; the test was corrected to check what is required: oldest evicted and reinsertion visible. Most recent exact checks: `cargo test -p huginn-presentation --lib` (26 passed, before the last FIFO assertion; the focused bounds test passed later), `cargo test -p huginn-presentation --lib event::tests::dedup_enforces_entry_byte_and_oversize_bounds_without_truncation` (1 passed),
+  `cargo test -p huginn-presentation --lib event::tests::dedup_nonce_exhaustion_emits_without_panicking_or_caching` (1 passed), `cargo test -p huginn-presentation --test state` (17 passed), `cargo test -p huginn-application --test contracts` (4 passed). Not all workspace suites were re-run, nor the full `L(P)`. `cargo fmt --all -- --check` and `git diff --check` pending at the close of this continuation. Propagation and verification of 1.3 remain a prerequisite; do not claim 1.2 acceptance before that gate.
+- [x] **1.3 Complete scopes and authoritative preservation** — `P/src/{lib,state}.rs`,
   `H/src/main.rs`, `P/tests/support/fixture.rs`, `A/src/loop_engine.rs`,
   `A/tests/contracts.rs`, `R/tests/{coding_workflow,stream_persistence,sessions_persistence}.rs`.
-  Depende de 1.2. EVT-01–04. `begin` retorna OperationId; fallback app/fixture y
-  Event::Error comparten el id del turno. Continuaciones heredan el suyo; nuevas
-  invocaciones y tareas independientes no adoptan el turno. Finalizar después de
-  todos los productores/resultados; filtrar una vez antes de elegir destino UI.
-  Probar error engine+fallback sin doble superficie y limpieza de operaciones;
-  sesión >256 eventos recuperable íntegra, sin cambiar `record` ni Session.events.
-  Aceptación/verificación: `T(A; contracts)`, `T(R; coding_workflow,stream_persistence,sessions_persistence)`
-  y `T(P; state)`. Riesgo: liberar scope antes del fallback o capar persistencia.
-  Evidencia apply 2026-10-19: flujo engine-error/fallback en `main.rs` pasa por el mismo `ScopedEventSink` antes de `finish_operation`; `engine_and_host_fallback_errors_share_one_operation_diagnostic` verifica una sola superficie. El runtime usa un sink prestado (`&dyn EventSink`) a través de awaits de loop, turn y ejecución secuencial de tools; no lo clona ni lo entrega a tareas `'static`, por lo que no hay productor UI independiente que pueda heredar scope implícitamente en el alcance actual. Test `operation_scope_survives_tool_continuation_and_is_distinct_per_run` captura `emit_for` con `OperationId` real de cada emisión: herramienta, respuesta de continuación y fin de turno guardan el mismo ID; segunda llamada `run` registra otro ID. `explicit_event_operation_scope_survives_interleaved_producers` verifica dedup por operación en la proyección de producción; emisión posterior a finish se rechaza. Persistencia de sesión conserva 300 eventos; `record`/`Session.events` no se capan.
-  Suites focales requeridas ejecutadas: application contracts 4, runtime coding_workflow 28, stream_persistence 4, sessions_persistence 2, presentation state 18, todas pass. Por tanto 1.3 queda completa.
+  Depends on 1.2. EVT-01–04. `begin` returns OperationId; app/fixture fallback and
+  Event::Error share the turn id. Continuations inherit theirs; new
+  invocations and independent tasks do not adopt the turn. Finish after
+  all producers/results; filter once before choosing the UI destination.
+  Test engine error plus fallback without a double surface and operation cleanup;
+  a session with more than 256 events fully recoverable, without changing `record` or Session.events.
+  Acceptance/verification: `T(A; contracts)`, `T(R; coding_workflow,stream_persistence,sessions_persistence)`
+  and `T(P; state)`. Risk: releasing scope before the fallback or capping persistence.
+  Apply evidence 2026-10-19: the engine-error/fallback flow in `main.rs` goes through the same `ScopedEventSink` before `finish_operation`; `engine_and_host_fallback_errors_share_one_operation_diagnostic` verifies a single surface. The runtime uses a borrowed sink (`&dyn EventSink`) across loop, turn and sequential tool execution awaits; it does not clone it or hand it to `'static` tasks, so no independent UI producer can implicitly inherit scope in the current scope. Test `operation_scope_survives_tool_continuation_and_is_distinct_per_run` captures `emit_for` with the real `OperationId` of each emission: tool, continuation response and turn end keep the same ID; a second `run` call records another ID. `explicit_event_operation_scope_survives_interleaved_producers` verifies dedup per operation in the production projection; an emission after finish is rejected. Session persistence keeps 300 events; `record`/`Session.events` are not capped.
+  Required focused suites executed: application contracts 4, runtime coding_workflow 28, stream_persistence 4, sessions_persistence 2, presentation state 18, all pass. Therefore 1.3 is complete.
 
-## Fase 2 — Un dueño de overlay, efectos y foco
+## Phase 2 — One overlay owner, effects and focus
 
-- [x] **2.1 Añadir contratos plugin completos** — `U/src/v1.rs`,
+- [x] **2.1 Add complete plugin contracts** — `U/src/v1.rs`,
   `U/src/v1/workflow.rs`, `U/tests/{contract,workflows}.rs`, `X/tests/smoke.rs`,
-  `P/src/state.rs` y `P/tests/workflows.rs`. Depende de 1.1. OVL-02/05.
-  Añadir OverlayKind sin Approval, `CommandResult::Overlay`, metadata opcional y
-  validadores exhaustivos en Command::run y Workflow::execute; actualizar ambos
-  dispatch y smoke juntos. Help/Settings desnudos permitidos; los demás requieren
-  workflow real, builder solo Provider/Login/ModelPicker/Confirm. Mantener Notice
-  saneado y Dialog compatible, y rechazo de lookup de diálogo desde async workflow.
-  Probar allowlist, rechazo sin reemplazo y binding de registration exacta.
-  Aceptación/verificación: `T(U; contract,workflows)`, `T(X; smoke)`, `T(P; workflows)`.
-  Riesgo: perder payload/callback o convertir Confirm en aprobación host. Evidencia 2026-10-19: validadores exhaustivos y builder ya presentes caracterizados sin RED ficticio; pruebas nuevas cubren las seis superficies por invocación, cuatro tipos de workflow, metadata propia de continuación (incluida None), definición/callback/campos, revocación y re-registro sin usar sustituta, Notice saneado/acotado y rechazo de Dialog async. RED conductual en presentation por categoría Overlay en lugar de Notification y mensaje async sin rechazo explícito; GREEN tras corregir ambos dispatch. Rechazos preservan payload, selección y workflow_focus actuales y conversación. Suites PASS: plugin-api contract 11/workflows 9, reference-extension smoke 1, presentation workflows 6/extensions 2. Apertura real y autoridad única siguen siendo aceptación de 2.2, no precondición circular de este contrato.
+  `P/src/state.rs` and `P/tests/workflows.rs`. Depends on 1.1. OVL-02/05.
+  Add OverlayKind without Approval, `CommandResult::Overlay`, optional metadata and
+  exhaustive validators in Command::run and Workflow::execute; update both
+  dispatch paths and smoke together. Bare Help/Settings allowed; the others require
+  a real workflow, builder only for Provider/Login/ModelPicker/Confirm. Keep Notice
+  sanitized and Dialog compatible, and reject dialog lookup from an async workflow.
+  Test allowlist, rejection without replacement and exact registration binding.
+  Acceptance/verification: `T(U; contract,workflows)`, `T(X; smoke)`, `T(P; workflows)`.
+  Risk: losing payload/callback or turning Confirm into a host approval. Evidence 2026-10-19: exhaustive validators and the builder are already present and characterized without a fictitious RED; new tests cover the six surfaces by invocation, four workflow types, continuation metadata (including None), definition/callback/fields, revocation and re-registration without using a substitute, sanitized/scoped Notice and rejection of async Dialog. Behavioral RED in presentation by Overlay category instead of Notification and async message without explicit rejection; GREEN after fixing both dispatch paths. Rejections preserve the current payload, selection and workflow_focus, and the conversation. Suites PASS: plugin-api contract 11/workflows 9, reference-extension smoke 1, presentation workflows 6/extensions 2. Real opening and single authority remain 2.2 acceptance, not a circular precondition of this contract.
 
-- [x] **2.2 — Migración vertical de autoridad overlay (misión coordinada; no marcar
-  completa hasta satisfacer todo el checklist y la aceptación host-level)** —
+- [x] **2.2 — Vertical migration of overlay authority (coordinated mission; do not mark
+  complete until the whole checklist and host-level acceptance are satisfied)** —
   `P/src/{overlay,lib,state,workflow,contributions,approval,settings,terminal,input}.rs`,
-  unitarias de `overlay.rs`, `P/tests/{state,workflows,extensions,input_parser,pty}.rs`,
-  `P/tests/support/{fixture,pty}.rs`. Depende de 2.1; OVL-01–05, EVT-01, SET-12.
-  Los subpasos a/b/c son fases internas dependency-ordered de esta única tarea, no
-  tareas autorizables ni aceptables por separado. No detener ni declarar éxito tras
-  crear la autoridad: ambos consumidores y payloads deben migrar en el mismo corte.
+  unit tests of `overlay.rs`, `P/tests/{state,workflows,extensions,input_parser,pty}.rs`,
+  `P/tests/support/{fixture,pty}.rs`. Depends on 2.1; OVL-01–05, EVT-01, SET-12.
+  Sub-steps a/b/c are internal dependency-ordered phases of this single task, not
+  separately authorizable or acceptable tasks. Do not stop or declare success after
+  creating the authority: both consumers and payloads must migrate in the same cut.
 
-  Subchecklist interno — no marcar parcial como tarea completa:
-    - [x] **a. Autoridad y transiciones:** crear `Overlay`, `ActiveOverlay`, origen,
-      operación, ticket, revisión y lease; `UiState` dueño activo único. Abrir/cerrar
-      realmente todas las superficies con payload exacto; stale revision/lease y
-      rechazo sin alterar foco/copia. Snapshots seguros, sin exponer secretos.
-    - [x] **b. Adaptadores y lifecycle:** migrar Dialog/Handle, HostWorkflow/Pending,
-      Approval host-only con oneshot/epoch y preemption, SettingsDialog y widgets como
-      payloads; preservar callbacks, continuación, registro exacto, workflow lifecycle
-      y receipts. Cancelación/revocación/abort y Drop fuera del mutex. Settings conserva
-      DTOs/imports públicos y semántica; sin slot paralelo ni persistencia accidental.
-    - [x] **c. Render/input y aceptación host-level:** snapshot, render e input consumen
-      la misma autoridad; sin ownership activo duplicado. Approval solo host, one-shot,
-      preempta y rechaza aperturas ordinarias. Mantener stale revision/lease, ownership
-      de paste y cierre consumido. Sin toast layer; `conversation` mantiene semántica.
-      Efectos/callbacks/drop fuera del mutex. Adaptar fixture/PTY y todos los consumidores.
+  Internal sub-checklist — do not mark a partial step as a complete task:
+    - [x] **a. Authority and transitions:** create `Overlay`, `ActiveOverlay`, origin,
+      operation, ticket, revision and lease; `UiState` single active owner. Open/close
+      every surface for real with the exact payload; stale revision/lease and
+      rejection without altering focus/copy. Safe snapshots, without exposing secrets.
+    - [x] **b. Adapters and lifecycle:** migrate Dialog/Handle, HostWorkflow/Pending,
+      host-only Approval with oneshot/epoch and preemption, SettingsDialog and widgets as
+      payloads; preserve callbacks, continuation, exact registration, workflow lifecycle
+      and receipts. Cancellation/revocation/abort and Drop outside the mutex. Settings keeps
+      public DTOs/imports and semantics; no parallel slot and no accidental persistence.
+    - [x] **c. Render/input and host-level acceptance:** snapshot, render and input consume
+      the same authority; no duplicated active ownership. Approval host-only, one-shot,
+      preempts and rejects ordinary openings. Keep stale revision/lease, paste
+      ownership and consumed close. No toast layer; `conversation` keeps its semantics.
+      Effects/callbacks/drop outside the mutex. Adapt fixture/PTY and every consumer.
 
-  Pruebas RED/GREEN dentro de la misma misión para reemplazo válido/rechazado, payload
-  exacto, stale ticket/continuation, secretos en snapshot, callback/Drop reentrantes,
-  cancelación local, Approval/preemption, workflow lifecycle/receipt, Settings sin
-  escritura prematura, y equivalencia de fuente de render/input. La aceptación exige
-  conjuntamente `L(P)`, `T(P; state,workflows,extensions)`, parser y PTY con tests
-  ejecutados, además de aceptación host-level: cada superficie se abre, actualiza y
-  cierra a través de la autoridad común; payloads se preservan; no quedan escritores,
-  renderers ni lectores de input activos alternativos. Un subpaso verde no acepta 2.2.
-  Riesgo: migración incompleta, doble autoridad o pérdida de funcionalidad.
+  RED/GREEN tests inside the same mission for valid/rejected replacement, exact
+  payload, stale ticket/continuation, secrets in snapshot, reentrant callback/Drop,
+  local cancellation, Approval/preemption, workflow lifecycle/receipt, Settings without
+  premature write, and render/input source equivalence. Acceptance requires
+  together `L(P)`, `T(P; state,workflows,extensions)`, parser and PTY with tests
+  executed, plus host-level acceptance: every surface opens, updates and
+  closes through the shared authority; payloads are preserved; no alternative
+  writers, renderers or input readers remain active. A green sub-step does not accept 2.2.
+  Risk: incomplete migration, double authority or lost functionality.
 
-  Evidencia apply 2026-10-19: `UiState.overlays: OverlayMachine<Payload>` es el
-  único dueño; retirados slots y leases paralelos. Help real, Settings con copia y
-  receipts serializados, Dialog con handle exacto, workflows con secretos/callbacks/
-  continuaciones y Approval host-only conservan sus payloads. Tickets/leases se
-  revalidan antes de efectos; recursos retirados, cancel/abort, callbacks, save y
-  renderers se procesan fuera del mutex de UI. RED conductuales observados para
-  Help, reemplazo por Settings, waiter abortado, renderer bajo mutex, agotamiento
-  al cerrar y asignación de operación desde ticket obsoleto; GREEN del mismo
-  comando para cada caso. Suites finales sin filtros de casos:
+  Apply evidence 2026-10-19: `UiState.overlays: OverlayMachine<Payload>` is the
+  single owner; parallel slots and leases removed. Real Help, Settings with copy and
+  serialized receipts, Dialog with the exact handle, workflows with secrets/callbacks/
+  continuations and host-only Approval keep their payloads. Tickets/leases are
+  revalidated before effects; retired resources, cancel/abort, callbacks, save and
+  renderers are processed outside the UI mutex. Behavioral RED observed for
+  Help, replacement by Settings, aborted waiter, renderer under mutex, exhaustion
+  on close and operation assignment from a stale ticket; GREEN of the same
+  command for each case. Final suites without case filters:
   `cargo test -p huginn-presentation --features test-driver -- --test-threads=1`
   (132 tests: 31 lib, 24 state, 12 workflows, 2 extensions, 9 parser, 35 PTY,
-  19 adicionales), y `cargo test -p huginn --test providers_flow` (6), exit 0.
-  Formato y diff check pasan. Clippy opcional falla exclusivamente en dos lints
-  del `event.rs` previo, documentados en progreso; CI/verify/QA no ejecutados.
+  19 additional), and `cargo test -p huginn --test providers_flow` (6), exit 0.
+  Format and diff check pass. Optional Clippy fails exclusively in two lints
+  of the earlier `event.rs`, documented in progress; CI/verify/QA not executed.
 
-- [x] **2.3 Endurecer workflow/dialog y resultados exhaustivos residuales** —
+- [x] **2.3 Harden workflow/dialog and residual exhaustive results** —
   `P/src/{contributions,workflow,state,terminal}.rs`,
-  `P/tests/{workflows,extensions,completion}.rs`. Depende de la aceptación completa de 2.2; OVL-01/02/04/05,
-  EVT-01. No volver a migrar ownership ni crear otro router: cubrir `prepare_submission`,
-  datos capturados, campos vacíos autoejecutables, secretos Zeroizing hasta 4096 bytes,
-  `FormInput.secrets`, máscara constante y routing exhaustivo de resultados/continuaciones.
-  RED/GREEN para revocar y re-registrar mismo nombre y completion tardía. Verificar
-  `T(P; workflows,extensions,completion)`. Riesgo: callback ligado a registro sustituto.
-  Evidencia 2026-10-19: se reutilizan regresiones de revocación/re-registro y resultado
-  tardío de 2.2; nueva caracterización comprueba UTF-8/4096 bytes, máscara constante,
-  borrado/saneado, FormInput separado, captura inmutable y submission única. Conducta
-  ya implementada: sin RED artificial ni segundo router. Suites completas 13/2/9 PASS.
+  `P/tests/{workflows,extensions,completion}.rs`. Depends on the full acceptance of 2.2; OVL-01/02/04/05,
+  EVT-01. Do not migrate ownership again or create another router: cover `prepare_submission`,
+  captured data, self-executable empty fields, Zeroizing secrets up to 4096 bytes,
+  `FormInput.secrets`, constant mask and exhaustive routing of results/continuations.
+  RED/GREEN to revoke and re-register the same name and for a late completion. Verify
+  `T(P; workflows,extensions,completion)`. Risk: callback bound to a substitute registration.
+  Evidence 2026-10-19: revocation/re-registration and late result regressions from 2.2
+  are reused; new characterization checks UTF-8/4096 bytes, constant mask,
+  wipe/sanitize, separate FormInput, immutable capture and single submission. Behavior
+  already implemented: no artificial RED and no second router. Full suites 13/2/9 PASS.
 
-- [x] **2.4 Endurecer Approval host-only y fail-closed** —
-  `P/src/{approval,overlay,state,terminal}.rs`, `P/tests/{state,pty}.rs` y
-  `P/tests/support/fixture.rs`. Depende de la aceptación completa de 2.2 y 2.3; OVL-03/04, SET-12.
-  Mantener sender único, requests serializadas, epoch/challenge/armed y resolución
-  exactamente una vez; no reconstruir ni reubicar Approval. RED/GREEN para lease/epoch
-  viejo, callback tardío, cancelación prioritaria, Esc/Ctrl+C, canal cerrado, shutdown,
-  driver drop y aceptación solo con input fresco post-draw. Verificar `T(P; state)` y
-  PTY con restauración síncrona. Riesgo: cualquier aceptación indebida bloquea.
-  Evidencia 2026-10-19: caracterización determinista mediante poll de futures reales
-  demuestra serialización, lease anterior inoperante, cancelación prioritaria con
-  answer ya ready y shutdown de waiter activo/en cola. Se conservan pruebas de abort,
-  epoch/challenge, preemption y PTY de armado/input fresco/paste/restauración. Sin
-  duplicar Approval ni inventar RED para garantías existentes. State 26 y PTY serial 35 PASS.
+- [x] **2.4 Harden host-only, fail-closed Approval** —
+  `P/src/{approval,overlay,state,terminal}.rs`, `P/tests/{state,pty}.rs` and
+  `P/tests/support/fixture.rs`. Depends on the full acceptance of 2.2 and 2.3; OVL-03/04, SET-12.
+  Keep a single sender, serialized requests, epoch/challenge/armed and resolution
+  exactly once; do not rebuild or relocate Approval. RED/GREEN for stale lease/epoch,
+  late callback, priority cancellation, Esc/Ctrl+C, closed channel, shutdown,
+  driver drop and acceptance only with fresh input after draw. Verify `T(P; state)` and
+  PTY with synchronous restoration. Risk: any improper acceptance blocks.
+  Evidence 2026-10-19: deterministic characterization through polling of real futures
+  demonstrates serialization, an earlier lease being inoperative, priority cancellation with
+  the answer already ready, and shutdown of an active/queued waiter. Tests for abort,
+  epoch/challenge, preemption and PTY arming/fresh input/paste/restoration are kept. Without
+  duplicating Approval or inventing RED for existing guarantees. State 26 and serial PTY 35 PASS.
 
-- [x] **2.5 Endurecer input/paste sin segundo ownership** —
-  `P/src/{input,terminal,overlay}.rs`, `P/tests/{input_parser,pty}.rs` y fixture.
-  Depende de la aceptación completa de 2.2 y 2.4; OVL-04. Conservar generación terminal, drenaje hasta tick
-  quieto, dueño de paste hasta delimitador, cancelación local por Ctrl+C y rechazo/
-  zeroización de paste obsoleto. RED/GREEN para centinela secreto partido y teclas
-  desconocidas/textuales y no textuales consumidas en todas las superficies; nunca
-  entregar fragmentos al editor/completion ni aceptar Approval. Verificar parser y
-  PTY. Riesgo: fuga al cambiar foco o armado con input previo.
-  Evidencia 2026-10-19: regresión RED real por sufijo CSI desconocido >64 bytes
-  liberado como texto; GREEN al conservar cuarentena hasta byte final, incluso con
-  nuevo foco. Se mantiene parser/ownership existente; pruebas reutilizadas cubren
-  centinela partido, Ctrl+C local, zeroización y nueva generación. Se ampliaron
-  superficies tipadas con eventos desconocidos/no textuales/release consumidos.
-  Parser 10, workflows 13, PTY serial 35 PASS.
+- [x] **2.5 Harden input/paste without a second ownership** —
+  `P/src/{input,terminal,overlay}.rs`, `P/tests/{input_parser,pty}.rs` and fixture.
+  Depends on the full acceptance of 2.2 and 2.4; OVL-04. Keep terminal generation, draining until a quiet
+  tick, paste owner until the delimiter, local cancellation by Ctrl+C and rejection/
+  zeroization of stale paste. RED/GREEN for a split secret sentinel and
+  unknown/textual and non-textual keys consumed on all surfaces; never
+  deliver fragments to the editor/completion or accept Approval. Verify parser and
+  PTY. Risk: leak when focus changes or arming with earlier input.
+  Evidence 2026-10-19: real RED regression for an unknown CSI suffix longer than 64 bytes
+  released as text; GREEN after keeping the quarantine until the final byte, even with
+  a new focus. The existing parser/ownership is kept; reused tests cover a
+  split sentinel, local Ctrl+C, zeroization and a new generation. Typed
+  surfaces were extended with unknown/non-textual/release events consumed.
+  Parser 10, workflows 13, serial PTY 35 PASS.
 
-- [x] **2.6 Preservar flujos Provider funcionales sobre autoridad integrada** —
-  `P/src/{providers,overlay,terminal}.rs`, `P/tests/providers_ui.rs` y
-  `H/tests/providers_flow.rs`. Depende obligatoriamente de 2.2 aceptada y de 2.4–2.5;
-  OVL-05, EVT-01. Etiquetar carga y cada continuación de login/connection_form,
-  providers, model_form y logout Confirm sin sustituir payloads ni workflow real.
-  RED/GREEN para apertura host, recover/list/status/save/select_model/revoke,
-  endpoint/modelo inválido, elección Secure/Ephemeral explícita, fallo sin fallback,
-  OAuth no soportado y cancelación recuperable. Verificar `T(P; providers_ui)` y
-  `T(H; providers_flow)`; cero placeholders y resultados fuera de conversación.
-  Riesgo: Provider funcional antes de tener autoridad integrada o perder continuación.
-  Evidencia 2026-10-19: RED real Workflow != Login en apertura del flujo existente;
-  GREEN etiquetando carga y continuaciones Login/Provider/ModelPicker/Confirm sin
-  sustituir callbacks ni datos. Pruebas reales de save/select/update/revoke ampliadas
-  con etiquetas, Confirm desde Providers/cancelación recuperable y endpoint/modelo
-  inválidos antes de escribir credenciales. Reutilizados secure failure sin fallback,
-  Ephemeral explícito, OAuth y persistencia/revocación. Providers UI 7 y app flow 6 PASS.
+- [x] **2.6 Preserve functional Provider flows on the integrated authority** —
+  `P/src/{providers,overlay,terminal}.rs`, `P/tests/providers_ui.rs` and
+  `H/tests/providers_flow.rs`. Mandatorily depends on 2.2 accepted and on 2.4–2.5;
+  OVL-05, EVT-01. Label loading and each continuation of login/connection_form,
+  providers, model_form and logout Confirm without replacing payloads or the real workflow.
+  RED/GREEN for host opening, recover/list/status/save/select_model/revoke,
+  invalid endpoint/model, explicit Secure/Ephemeral choice, failure without fallback,
+  unsupported OAuth and recoverable cancellation. Verify `T(P; providers_ui)` and
+  `T(H; providers_flow)`; zero placeholders and results outside conversation.
+  Risk: functional Provider before having the integrated authority or losing the continuation.
+  Evidence 2026-10-19: real RED Workflow != Login when opening the existing flow;
+  GREEN by labeling loading and Login/Provider/ModelPicker/Confirm continuations without
+  replacing callbacks or data. Real save/select/update/revoke tests extended
+  with labels, Confirm from Providers/recoverable cancellation and invalid
+  endpoint/model before writing credentials. Reused secure failure without fallback,
+  explicit Ephemeral, OAuth and persistence/revocation. Providers UI 7 and app flow 6 PASS.
 
-## Fase 3 — Settings, copia y receipts
+## Phase 3 — Settings, copy and receipts
 
-- [x] **3.1 Integrar Settings sin cambiar su shell** —
+- [x] **3.1 Integrate Settings without changing its shell** —
   `P/src/{settings,overlay,state,terminal,contributions}.rs`,
-  `P/tests/{completion,plugins,state}.rs`, unitarias de `settings.rs`.
-  Depende de 2.6 y usa exclusivamente la autoridad aceptada en 2.2. SET-01–06/08/12–16. Mantener DTOs/imports públicos en settings.rs,
-  cinco tabs, filas/orden/markers, navegación y copia sin persistir al moverse;
-  `Settings` es payload de la autoridad compartida, nunca un slot `SettingsDialog`.
-  Esc consume tecla, no cancela turno; antes Apply no escribe. `/settings` y
-  whitespace no envían prompt; catálogo independiente de modelo; Add provider
-  conserva cierre/aviso Notification sin tocar providers ni guardar.
-  Probar reemplazo autorizado y rechazo conservando copia/lease, sin restauración.
-  Aceptación/verificación: `L(P)`, `T(P; completion,plugins,state)`.
-  Riesgo: confundir selección con valor guardado o activar onboarding/tema live.
-  Evidencia 2026-10-19: shell integrado en 2.2 conservado; nueva caracterización
-  host de catálogo con/sin modelo, whitespace, navegación por cinco tabs, selección
-  distinta del marker, copia descartada y Add provider sin persistencia ni apertura
-  Provider. Se reutiliza reemplazo Settings→Dialog y rechazo/preemption de 2.2/2.4.
-  Lib 31, completion 9, plugins 2 y state 27 PASS al checkpoint de esta tarea.
+  `P/tests/{completion,plugins,state}.rs`, unit tests of `settings.rs`.
+  Depends on 2.6 and uses exclusively the authority accepted in 2.2. SET-01–06/08/12–16. Keep public DTOs/imports in settings.rs,
+  five tabs, rows/order/markers, navigation and copy without persisting on move;
+  `Settings` is a payload of the shared authority, never a `SettingsDialog` slot.
+  Esc consumes the key, does not cancel the turn; before Apply it does not write. `/settings` and
+  whitespace do not send a prompt; model-independent catalog; Add provider
+  keeps the close/Notification warning without touching providers and without saving.
+  Test authorized replacement and rejection while keeping copy/lease, without restoration.
+  Acceptance/verification: `L(P)`, `T(P; completion,plugins,state)`.
+  Risk: confusing selection with saved value or activating onboarding/live theme.
+  Evidence 2026-10-19: shell integrated in 2.2 preserved; new host
+  characterization of the catalog with/without model, whitespace, navigation across five tabs, selection
+  different from the marker, discarded copy and Add provider without persistence or Provider
+  opening. The Settings→Dialog replacement and rejection/preemption from 2.2/2.4 are reused.
+  Lib 31, completion 9, plugins 2 and state 27 PASS at this task checkpoint.
 
-- [x] **3.2 Coordinar Apply fuera del lock** — `P/src/{settings,overlay,state}.rs`,
-  `P/tests/state.rs` y unitarias de `settings.rs`. Depende de 3.1. SET-07/08/12,
-  OVL-03/04. Worker bloqueante invoca closure inyectada; coordinador separado
-  serializa guardados y receipts retienen solo copia/resultado necesarios.
-  Regresiones RED previas: closure reentrante no bloquea input, disk full conserva
-  copia/error solo en cuerpo y Enter repetido no duplica. Barreras para orden de
-  dos guardados, fallo/reintento, Esc/reemplazo/Approval tras iniciar escritura,
-  receipt éxito/error con otro Settings abierto, shutdown y completion tardía.
-  Aceptación/verificación: `L(P)`, `T(P; state)`; éxito actualiza snapshot, cierra y
-  notifica solo overlay vigente; tardío nunca reabre ni altera nueva copia/Approval;
-  fallo tardío no publica valores fallidos. Riesgo: rollback prometido o doble write.
-  Evidencia 2026-10-19: coordinador real ya integrado en 2.2, sin duplicarlo. Pruebas
-  de barreras existentes cubren closure reentrante, Enter único, error/reintento,
-  orden entre dos guardados y receipt con otro Settings/Approval. Se amplía Esc con
-  turno activo durante escritura y se añade shutdown con éxito/error tardío sin
-  reapertura/aviso ni segunda escritura. Lib 31 y state 28 PASS; sin RED ficticio.
+- [x] **3.2 Coordinate Apply outside the lock** — `P/src/{settings,overlay,state}.rs`,
+  `P/tests/state.rs` and unit tests of `settings.rs`. Depends on 3.1. SET-07/08/12,
+  OVL-03/04. A blocking worker invokes the injected closure; a separate coordinator
+  serializes saves and receipts keep only the required copy/result.
+  Earlier RED regressions: reentrant closure does not block input, disk full keeps
+  copy/error only in the body and repeated Enter does not duplicate. Barriers for the order of
+  two saves, failure/retry, Esc/replacement/Approval after writing starts,
+  success/error receipt with another Settings open, shutdown and late completion.
+  Acceptance/verification: `L(P)`, `T(P; state)`; success updates the snapshot, closes and
+  notifies only the current overlay; a late one never reopens or alters a new copy/Approval;
+  a late failure does not publish failed values. Risk: promised rollback or double write.
+  Evidence 2026-10-19: real coordinator already integrated in 2.2, without duplicating it. Tests
+  of existing barriers cover reentrant closure, single Enter, error/retry,
+  order between two saves and receipt with another Settings/Approval. Esc is extended with
+  an active turn during a write and shutdown is added with a late success/error without
+  reopening/warning or a second write. Lib 31 and state 28 PASS; no fictitious RED.
 
-- [x] **3.3 Preservar persistencia/config y modo línea** —
+- [x] **3.3 Preserve persistence/config and line mode** —
   `H/src/{config,ui_settings,main,terminal}.rs`, `H/tests/{config_compat,cli,tui}.rs`,
-  `H/config.example.toml`; conservar/regresar unitarias del helper.
-  Depende de 3.2. SET-09/10/11/15 y 07. Probar TOML completo/parcial/ausente,
-  unknown internos, comentarios/orden y bytes fuera de ui, Apply conjunto;
-  line-mode sin catálogo/overlay Settings. No mover UiConfig ni modificar schema.
-  Aceptación/verificación: `T(H; config_compat,cli,tui)` y `cargo test -p huginn --bin huginn`.
-  Riesgo: prueba antigua de Settings-modal no ejecutada tomada como evidencia;
-  obtener evidencia propia y no activar consumidores live de preferencias.
-  Evidencia 2026-10-19: regresión RED Config::load con ui ausente cargaba strings
-  vacíos/indicators false en vez de defaults documentados; GREEN al unificar
-  UiConfig::defaults/Default y defaults de DTOs anidados, sin mover tipos/schema.
-  Ausente/parcial/nested parcial probados por Config::load; helper ampliado con
-  round-trip completo, unknown anidados y bytes externos estables. Modo línea
-  recibe /settings sin overlay ni secuencias TUI. Bin 15, config_compat 5, cli 7 y
-  tui serial 7 PASS, sin evidencia prestada de settings-modal ni consumidores live.
+  `H/config.example.toml`; keep/restore the helper unit tests.
+  Depends on 3.2. SET-09/10/11/15 and 07. Test complete/partial/absent TOML,
+  internal unknowns, comments/order and bytes outside ui, joint Apply;
+  line mode without catalog/Settings overlay. Do not move UiConfig or modify the schema.
+  Acceptance/verification: `T(H; config_compat,cli,tui)` and `cargo test -p huginn --bin huginn`.
+  Risk: an old Settings-modal test not executed is taken as evidence;
+  obtain own evidence and do not activate live preference consumers.
+  Evidence 2026-10-19: RED regression Config::load with ui absent loaded empty
+  strings/false indicators instead of the documented defaults; GREEN after unifying
+  UiConfig::defaults/Default and the defaults of nested DTOs, without moving types/schema.
+  Absent/partial/partially nested tested through Config::load; helper extended with
+  full round-trip, nested unknowns and stable external bytes. Line mode
+  receives /settings without overlay or TUI sequences. Bin 15, config_compat 5, cli 7 and
+  serial tui 7 PASS, without borrowed evidence from settings-modal or live consumers.
 
-## Fase 4 — Selección confirmada observable y lifecycle
+## Phase 4 — Observable confirmed selection and lifecycle
 
-- [x] **4.1 Publicar snapshot versionado desde router** — `C/src/{lib,connections,providers}.rs`,
+- [x] **4.1 Publish a versioned snapshot from the router** — `C/src/{lib,connections,providers}.rs`,
   `A/src/{providers,connections}.rs`, `A/tests/{providers_contracts,connections}.rs`,
-  `A/examples/providers_headless.rs`. Depende de 1.3. BAR-02/03.
-  Añadir ConnectionChanged y snapshot serializable seguro, UUID source por
-  activación, revision creciente, phase y selección opcional; watch con suscripción
-  y send_replace bajo mismo mutex. Ampliar ambos puertos/implementadores/wrappers,
-  StageSelection y publish_selection exacto, mantener Select directo Unmanaged y
-  Legacy distinguido. Probar ausencia/candidato/confirmación y serde sin secretos.
-  Aceptación/verificación: `T(A; providers_contracts,connections)` y
-  `cargo check -p huginn-application --examples`. Riesgo: anunciar Connected por selección.
+  `A/examples/providers_headless.rs`. Depends on 1.3. BAR-02/03.
+  Add ConnectionChanged and a safe serializable snapshot, source UUID per
+  activation, increasing revision, phase and optional selection; watch with subscription
+  and send_replace under the same mutex. Extend both ports/implementers/wrappers,
+  StageSelection and exact publish_selection, keep direct Select Unmanaged and
+  Legacy distinguished. Test absence/candidate/confirmation and serde without secrets.
+  Acceptance/verification: `T(A; providers_contracts,connections)` and
+  `cargo check -p huginn-application --examples`. Risk: announcing Connected by selection.
 
-- [x] **4.2 Generalizar guardias de publicación a todas las rutas** —
+- [x] **4.2 Generalize publication guards to all routes** —
   `A/src/connections.rs`, `A/tests/connections.rs::PublicationFault`,
   `A/tests/providers_turns.rs`, `R/tests/providers_integration.rs`.
-  Depende de 4.1. BAR-02/03, OVL-05. StageSelection instala candidata sin anunciar
-  Selected; confirmar solo tras persistencia/publicación y comparación exacta
-  bajo operación serializada. ModelPublication cubre select_locked, cambio modelo,
-  restore/recover y resolve explícito; error/drop/cancel limpia fail-closed.
-  Wrapper reenvía subscribe/publish e intercepta StageSelection además de Select.
-  Probar con barreras fallo antes/después de publicar, Err/Pending después de
-  efecto, drop/cancel en cada ruta y comparación invalidada; MetadataMutation e
-  invalidate_all no toman mutex async desde Drop. Aceptación/verificación:
-  `T(A; connections,providers_turns)`, `T(R; providers_integration)`; nunca B ficticia.
-  Riesgo alto: fault injection inoperante o guard desarmado antes de confirmar.
+  Depends on 4.1. BAR-02/03, OVL-05. StageSelection installs the candidate without announcing
+  Selected; confirm only after persistence/publication and exact comparison
+  under a serialized operation. ModelPublication covers select_locked, model change,
+  restore/recover and explicit resolve; error/drop/cancel clears fail-closed.
+  The wrapper forwards subscribe/publish and intercepts StageSelection in addition to Select.
+  Test with barriers for failure before/after publishing, Err/Pending after an
+  effect, drop/cancel on each route and invalidated comparison; MetadataMutation and
+  invalidate_all do not take an async mutex from Drop. Acceptance/verification:
+  `T(A; connections,providers_turns)`, `T(R; providers_integration)`; never a fictitious B.
+  High risk: inoperative fault injection or guard disarmed before confirmation.
 
-- [x] **4.3 Cerrar observabilidad en todos los teardowns** —
+- [x] **4.3 Close observability in all teardowns** —
   `A/src/{providers,connections}.rs`, `A/tests/{connections,providers_contracts}.rs`,
   `C/tests/{kernel_lifecycle,registration_ownership}.rs`.
-  Depende de 4.2. BAR-02/03. RegistrationLease, revocación/Replace del seleccionado,
-  cancelación/unload adapter, ManagerLease y CoreLease publican ausencia con
-  Revoked/Unavailable antes de teardown. Comprobar owner: manager retirado no borra
-  nueva generación; revocar otra conexión no borra seleccionada.
-  Probar cada hook y reactivación source nuevo con barreras, incluyendo teardown
-  concurrente a publicación. Aceptación/verificación: `T(A; connections,providers_contracts)`
-  y `T(C; kernel_lifecycle,registration_ownership)`. Riesgo: publicación por owner obsoleto.
+  Depends on 4.2. BAR-02/03. RegistrationLease, revocation/Replace of the selected one,
+  cancellation/unload adapter, ManagerLease and CoreLease publish absence with
+  Revoked/Unavailable before teardown. Check the owner: a retired manager does not erase
+  a new generation; revoking another connection does not erase the selected one.
+  Test each hook and reactivation of a new source with barriers, including teardown
+  concurrent with publication. Acceptance/verification: `T(A; connections,providers_contracts)`
+  and `T(C; kernel_lifecycle,registration_ownership)`. Risk: publication by a stale owner.
 
-- [x] **4.4 Conectar watch sin carrera y migrar consumidores Event** —
+- [x] **4.4 Connect watch without races and migrate Event consumers** —
   `H/src/{main,terminal}.rs`, `P/src/{lib,state,event}.rs`, `P/tests/state.rs`,
   `P/tests/support/fixture.rs`, `A/tests/{contracts,providers_turns}.rs`,
   `R/tests/{coding_workflow,providers_integration,stream_persistence}.rs`.
-  Depende de 3.3 y 4.3. BAR-02/03, EVT-02. Inyectar receiver desde manager o router;
-  cada open clona y usa borrow_and_update antes del primer draw, luego changed.
-  Attachment fija source y acepta solo revisiones mayores; canal cerrado produce
-  Unavailable únicamente si attachment vigente. Probar arranque concurrente,
-  A→B y A tardío, duplicado B, reconexión/source distinto y cierre task retirado.
-  Output::emit trata ConnectionChanged explícito: no conversación, JSON público
-  seguro si recibe evento. Probar serde aditivo/sesión antigua sin backfill y sinks
-  sin cap UI. Aceptación/verificación: `T(P; state)`, `T(A; contracts,providers_turns)`,
+  Depends on 3.3 and 4.3. BAR-02/03, EVT-02. Inject the receiver from the manager or router;
+  each open clones it and uses borrow_and_update before the first draw, then changed.
+  Attachment fixes the source and accepts only greater revisions; a closed channel produces
+  Unavailable only if the attachment is current. Test concurrent startup,
+  A→B and late A, duplicate B, reconnection/different source and retired task close.
+  Output::emit treats explicit ConnectionChanged: not conversation, safe public
+  JSON if it receives the event. Test additive serde/old session without backfill and sinks
+  without a UI cap. Acceptance/verification: `T(P; state)`, `T(A; contracts,providers_turns)`,
   `T(R; coding_workflow,providers_integration,stream_persistence)`, `T(H; providers_flow)`.
-  Riesgo: snapshot independiente antes de suscribir o fallback antiguo borra B.
+  Risk: independent snapshot before subscribing or an old fallback erasing B.
 
-## Fase 5 — Barra persistente en terminal inline real
+## Phase 5 — Persistent bar in a real inline terminal
 
-Checkpoint actualizado 2026-10-20 tras auditar pruebas/código. Se comprueba barra PTY
-con selección en composer sin overlay y en Provider, además de matriz a 100x30 y 20x8
-para Help, Settings, Provider, Login, ModelPicker y Confirm. Approval se verifica a
-20x8 con challenge/campo; TestBackend 0x0 prueba no-armado y draw viable con identidad
-vigente. El caso `approval_resize_below_minimum_disarms_until_a_fresh_draw` adicional
-prueba PTY: captura challenge, resize a 1x1, envía el código válido y comprueba que no
-se aprueba; al restaurar 8x20 el mismo código solo se acepta tras redraw. Drop comprueba
-restauración síncrona de raw mode, ICANON y ECHO; cancelación/salida normal comprueba
-ICANON/ECHO, bracketed-paste disable y ausencia de alternate screen. Caso PTY serial
-37/37 anterior a esta actualización; ejecutar suite serial de nuevo para evidencia
-consolidada. No queda vacío de escenario para los criterios de 5.1/5.2; confirmar
-resultado de nueva suite y fmt/diff-check antes de marcar.
+Checkpoint updated 2026-10-20 after auditing tests/code. The PTY bar is checked
+with a selection in the composer without an overlay and in Provider, plus a 100x30 and 20x8 matrix
+for Help, Settings, Provider, Login, ModelPicker and Confirm. Approval is verified at
+20x8 with challenge/field; TestBackend 0x0 tests not-armed and a viable draw with a current
+identity. The additional case `approval_resize_below_minimum_disarms_until_a_fresh_draw`
+tests PTY: captures the challenge, resizes to 1x1, sends the valid code and checks that it is not
+approved; after restoring 8x20 the same code is accepted only after a redraw. Drop checks
+synchronous restoration of raw mode, ICANON and ECHO; cancellation/normal exit checks
+ICANON/ECHO, bracketed-paste disable and absence of alternate screen. Serial PTY case
+37/37 before this update; run the serial suite again for consolidated evidence. No scenario
+gap remains for the 5.1/5.2 criteria; confirm the new suite result and fmt/diff-check
+before marking.
 
-Evidencia de implementación fase 4 (2026-10-19): snapshot seguro con UUID por
-activación, revisión monotónica y watch publicado/suscrito bajo mutex del router.
-StageSelection no permite admisión ni anuncia selección; publish_selection exige
-candidata exacta y activa. Select directo conserva modo Unmanaged; seed Legacy
-distinguido. Guardias de publicación cubren select, modelo, restore/recover y
-resolve explícito. Fault injection real antes/después de StageSelection (Err o
-Pending/drop), Err después de commit y candidata invalidada cubren todas esas
-rutas. Revocación/Replace, registration, cancelación propia, manager/core teardown
-publican ausencia; lease viejo no borra nueva generación. Cada open clona watch,
-lee borrow_and_update y atiende changed; attachment/source/revisión bloquean
-actualizaciones y cierre retirados. Event aditivo fuera de conversación y sesión
-antigua sin backfill probados. RED reales y comandos completos en apply-progress.
-Suites focales: core 5, application 55, runtime 40, presentation state 31 y app
-providers_flow 6 PASS; examples/check y Clippy focal all-targets PASS. Esto no
-equivale a verify/QA, CI completa ni PR-ready.
+Phase 4 implementation evidence (2026-10-19): safe snapshot with a UUID per
+activation, monotonic revision and watch published/subscribed under the router mutex.
+StageSelection allows no admission and announces no selection; publish_selection requires the exact
+active candidate. Direct Select keeps Unmanaged mode; Legacy seed
+distinguished. Publication guards cover select, model, restore/recover and
+explicit resolve. Real fault injection before/after StageSelection (Err or
+Pending/drop), Err after commit and invalidated candidate cover all those
+routes. Revocation/Replace, registration, own cancellation, manager/core teardown
+publish absence; an old lease does not erase a new generation. Each open clones the watch,
+reads borrow_and_update and serves changed; attachment/source/revision block
+retired updates and close. Additive Event outside conversation and an old
+session without backfill tested. Real RED and full commands in apply-progress.
+Focused suites: core 5, application 55, runtime 40, presentation state 31 and app
+providers_flow 6 PASS; examples/check and focused Clippy all-targets PASS. This does not
+equal verify/QA, full CI or PR-ready.
 
-- [x] **5.1 Reservar barra antes de renderizar contenido** —
-  `P/src/{status_bar,overlay,terminal,state}.rs`, unitarias de status_bar/terminal,
-  `P/tests/state.rs`. Depende de 4.4. BAR-01/03, EVT-01.
-  Snapshot tipado seguro: actividad/uso/conexión/aviso/diagnóstico; no servicios
-  ni callbacks bajo render-lock. Reservar primero fila inferior para todos los
-  overlays y composer; panel largo no conversacional, resumen visible con Approval,
-  widgets lexicales en estado/detalle. Probar actividad, error y ausencia explícita;
-  selección «siguiente turno» nunca implica Connected ni descubrimiento remoto.
-  Aceptación/verificación: `L(P)`, `T(P; state)`; renderers plugins fuera del lock.
-  Riesgo: early return oculta barra o error UI se degrada a log invisible.
-  Evidencia: `status_bar::tests` cubre actividad, diagnóstico/feedback, ausencia/no
-  false Connected y clipping Unicode; PTY `overlays_keep_status_visible_at_minimum_inline_size`
-  cubre overlays estrechos. Suite status_bar 5/5 y PTY serial 37/37.
+- [x] **5.1 Reserve the bar before rendering content** —
+  `P/src/{status_bar,overlay,terminal,state}.rs`, unit tests of status_bar/terminal,
+  `P/tests/state.rs`. Depends on 4.4. BAR-01/03, EVT-01.
+  Safe typed snapshot: activity/usage/connection/warning/diagnostic; no services
+  or callbacks under the render lock. Reserve the bottom row first for all
+  overlays and the composer; long non-conversational panel, summary visible with Approval,
+  lexical widgets in state/detail. Test activity, error and explicit absence;
+  a "next turn" selection never implies Connected or remote discovery.
+  Acceptance/verification: `L(P)`, `T(P; state)`; plugin renderers outside the lock.
+  Risk: an early return hides the bar or a UI error degrades to an invisible log.
+  Evidence: `status_bar::tests` covers activity, diagnostic/feedback, absence/no
+  false Connected and Unicode clipping; PTY `overlays_keep_status_visible_at_minimum_inline_size`
+  covers narrow overlays. status_bar suite 5/5 and serial PTY 37/37.
 
-- [x] **5.2 Asegurar clipping, resize y restauración PTY** —
+- [x] **5.2 Ensure clipping, resize and PTY restoration** —
   `P/src/{terminal,status_bar,overlay}.rs`, `P/tests/{pty,input_parser}.rs`,
-  `P/tests/support/{fixture,pty}.rs`. Depende de 5.1. BAR-01, OVL-03/04,
-  SET-02/05/13. Mantener Viewport::Inline real acotado (20x8: siete filas inline,
-  una de barra), sin alternate screen; solo conversation va a insert_before.
-  Probar cada Overlay y sin overlay en ancho normal/20x8, Unicode por celdas,
-  clipping/zero-size y resize bajo mínimo: sin panic ni aceptación positiva hasta
-  recuperar espacio/redibujar/armar. Mantener campo/controles, challenge y preview
-  completo desplazable PgUp/PgDn; feedback por OverlayId+epoch.
-  Aceptación/verificación: `L(P)`, parser y PTY; inspeccionar termios/bracketed paste
-  tras Ctrl+C/drop/shutdown. Riesgo: snapshot de buffer artificial no prueba viewport real.
-  Evidencia: matrix PTY ambos tamaños; Approval 20x8; TestBackend 0x0 no-arm + viable
-  draw/identity; resize 1x1 → 8x20 con código válido rechazado durante tamaño inviable
-  y aceptado tras redraw; preview desplazable; composer cancel/salida comprueba ICANON,
-  ECHO, bracketed-paste disable y no alternate screen. Drop PTY comprueba cierre
-  síncrono y `is_raw_mode_enabled()==false`; el assert de termios explícito está en la
-  prueba de cancel/salida. Suites focales: PTY serial 37/37, status_bar 5/5, state 32/32.
+  `P/tests/support/{fixture,pty}.rs`. Depends on 5.1. BAR-01, OVL-03/04,
+  SET-02/05/13. Keep a real bounded Viewport::Inline (20x8: seven inline rows,
+  one for the bar), without alternate screen; only conversation goes to insert_before.
+  Test each Overlay and no overlay at normal width/20x8, Unicode by cells,
+  clipping/zero-size and resize below the minimum: no panic and no positive acceptance until
+  space is recovered/redrawn/armed. Keep field/controls, challenge and a full preview
+  scrollable with PgUp/PgDn; feedback by OverlayId+epoch.
+  Acceptance/verification: `L(P)`, parser and PTY; inspect termios/bracketed paste
+  after Ctrl+C/drop/shutdown. Risk: an artificial buffer snapshot does not test the real viewport.
+  Evidence: PTY matrix both sizes; Approval 20x8; TestBackend 0x0 not-armed + viable
+  draw/identity; resize 1x1 → 8x20 with a valid code rejected during the unviable size
+  and accepted after redraw; scrollable preview; composer cancel/exit checks ICANON,
+  ECHO, bracketed-paste disable and no alternate screen. PTY Drop checks synchronous
+  close and `is_raw_mode_enabled()==false`; the explicit termios assert is in the
+  cancel/exit test. Focused suites: serial PTY 37/37, status_bar 5/5, state 32/32.
 
-## Fase 6 — Retirada y gates de la entrega
+## Phase 6 — Removal and delivery gates
 
-- [x] **6.1 Retirar adaptadores y slots legacy** — `P/src/{lib,state,terminal,workflow,settings}.rs`,
+- [x] **6.1 Remove legacy adapters and slots** — `P/src/{lib,state,terminal,workflow,settings}.rs`,
   `P/tests/{state,workflows,extensions,providers_ui,completion}.rs`,
-  `P/tests/support/fixture.rs`, `H/tests/providers_flow.rs` y `docs/huginn/README.md`.
-  Depende de 5.2. OVL-01, EVT-01/02. Borrar slots UiState/View modal/plugin_dialog/
-  workflow/settings, workflow_focus/settings_focus_epoch, committed, notice genérico,
-  status/status_error soberanos; actualizar comentario de FIFO no autoritativa.
-  Conservar nombres legítimos de módulos/DTOs/CommandResult::Notice; ninguna búsqueda
-  global ciega justifica borrarlos. Revisar con `rg -n` scoped a P/src y H/src:
+  `P/tests/support/fixture.rs`, `H/tests/providers_flow.rs` and `docs/huginn/README.md`.
+  Depends on 5.2. OVL-01, EVT-01/02. Delete UiState/View slots modal/plugin_dialog/
+  workflow/settings, workflow_focus/settings_focus_epoch, committed, generic notice,
+  sovereign status/status_error; update the non-authoritative FIFO comment.
+  Keep legitimate names of modules/DTOs/CommandResult::Notice; no blind global search
+  justifies deleting them. Review with `rg -n` scoped to P/src and H/src:
   `\bnotice\s*\(`, `\bcommitted\b`, `workflow_focus|settings_focus_epoch|status_error`
-  y referencias `(state|view)\.(modal|plugin_dialog|workflow|settings)\b`;
-  inspeccionar definición completa de UiState/View y justificar cada excepción.
-  Aceptación/verificación: cero slots paralelos y cero UI en conversation;
+  and references `(state|view)\.(modal|plugin_dialog|workflow|settings)\b`;
+  inspect the full definition of UiState/View and justify every exception.
+  Acceptance/verification: zero parallel slots and zero UI in conversation;
   `T(P; state,workflows,extensions,providers_ui,completion)`, `T(H; providers_flow)`.
-  Riesgo: legacy oculto por alias; inspección manual además de búsqueda negativa.
-  Evidencia 2026-10-20: inspección de `UiState` y `View` muestra solo
-  `overlays`/`overlay_identity`, sin slots paralelos. Métodos `modal()`,
-  `workflow()`, `plugin_dialog()` y `settings()` son proyecciones del payload
-  único, no almacenamiento soberano. `notice()` en providers.rs retorna
-  `CommandResult::Notice` legítimo. No hay `committed`, `workflow_focus`,
-  `settings_focus_epoch` ni `status_error`; comentario FIFO actualizado como
-  proyección no autoritativa. Suites state 32, workflows 13, extensions 2,
-  providers_ui 7, completion 9 y huginn/providers_flow 6: PASS, log
+  Risk: legacy hidden by an alias; manual inspection in addition to the negative search.
+  Evidence 2026-10-20: inspection of `UiState` and `View` shows only
+  `overlays`/`overlay_identity`, without parallel slots. Methods `modal()`,
+  `workflow()`, `plugin_dialog()` and `settings()` are projections of the single
+  payload, not sovereign storage. `notice()` in providers.rs returns the legitimate
+  `CommandResult::Notice`. There is no `committed`, `workflow_focus`,
+  `settings_focus_epoch` or `status_error`; the FIFO comment updated as a
+  non-authoritative projection. Suites state 32, workflows 13, extensions 2,
+  providers_ui 7, completion 9 and huginn/providers_flow 6: PASS, log
   `/private/var/folders/zz/d4kl1hfj1j15nxm43d24px300000gn/T/huginn-phase6-1-focused.log`.
 
-- [x] **6.2 Ejecutar QA dirigido con evidencia propia** — usar y, si falta un caso,
-  ampliar `P/tests/{pty,providers_ui,state}.rs`, `P/tests/support/fixture.rs` y
-  `H/tests/{tui,providers_flow}.rs` dentro de la unidad que entrega esa cobertura.
-  Depende de 6.1. Recorrer matriz siguiente durante streaming, todos los overlays,
-  guardados bloqueados, resize y reconexión; repetir comandos UI tras >2s mediante
-  clock fake en integración. PTY verifica ausencia de UI en scrollback, no solo
-  substrings. Centinela secreto ausente de pantalla/capturas, scrollback, JSON/logs;
-  paste partido, challenge fresco, revocar/re-registrar y cierre restaurado.
-  Aceptación/verificación: PTY y `T(H; tui,providers_flow)` con evidencias saneadas
-  para futuro qa-report propio. Riesgo: backend real inaccesible; registrar caso
-  no probado, no inventar éxito ni usar archive Settings-modal como evidencia.
-  Evidencia 2026-10-20: aceptación técnica dirigida de Apply, no fase QA independiente.
-  Nueva PTY con streaming retenido por cancelación, seis overlays ordinarios y
-  centinela secreto comprueba scrollback real reconstruido con control positivo
-  conversacional; no compara únicamente substrings del transcript. RED de harness:
-  LF inferior sobrescribía en vez de desplazar; GREEN conserva filas expulsadas.
-  RED productivo: Help no abría durante streaming por guard `!busy`; GREEN permite
-  comandos UI y mantiene bloqueado el envío de otro prompt. Integración con reloj
-  fake repite Help/Providers/Login/Model/Settings/Logout tras 2001 ms sin alterar
-  conversación, tail ni cancelación. Matriz previa cubre Approval, resize, paste
-  partido, revocación/re-registro y restauración; state cubre writes con barreras
-  y reconexión. Presentation completa: 155 PASS (39 PTY, 10 parser, 32 state,
-  13 workflows, 8 providers_ui y 53 restantes). App tui 8 + providers_flow 6 PASS.
-  Logs completos y relación REQ→prueba en `apply-validation.md`; sin proveedor
-  externo ni almacén seguro real, sin evidencia prestada de Settings-modal.
+- [x] **6.2 Run targeted QA with own evidence** — use and, if a case is missing,
+  extend `P/tests/{pty,providers_ui,state}.rs`, `P/tests/support/fixture.rs` and
+  `H/tests/{tui,providers_flow}.rs` inside the unit that delivers that coverage.
+  Depends on 6.1. Walk the following matrix during streaming, all overlays,
+  blocked saves, resize and reconnection; repeat UI commands after more than 2 s using
+  a fake clock in integration. PTY verifies the absence of UI in scrollback, not only
+  substrings. Secret sentinel absent from screen/captures, scrollback, JSON/logs;
+  split paste, fresh challenge, revoke/re-register and restored close.
+  Acceptance/verification: PTY and `T(H; tui,providers_flow)` with sanitized evidence
+  for a future own qa-report. Risk: real backend unreachable; record the case
+  not tested, do not invent success or use the Settings-modal archive as evidence.
+  Evidence 2026-10-20: targeted technical acceptance of Apply, not an independent QA phase.
+  New PTY with streaming retained by cancellation, six ordinary overlays and a
+  secret sentinel checks the real reconstructed scrollback with a positive conversational
+  control; it does not compare only transcript substrings. Harness RED:
+  the bottom LF overwrote instead of scrolling; GREEN keeps the ejected rows.
+  Productive RED: Help did not open during streaming because of the `!busy` guard; GREEN allows
+  UI commands and keeps sending another prompt blocked. Integration with fake clock
+  repeats Help/Providers/Login/Model/Settings/Logout after 2001 ms without altering
+  conversation, tail or cancellation. The earlier matrix covers Approval, resize, split
+  paste, revocation/re-registration and restoration; state covers writes with barriers
+  and reconnection. Full presentation: 155 PASS (39 PTY, 10 parser, 32 state,
+  13 workflows, 8 providers_ui and 53 remaining). App tui 8 + providers_flow 6 PASS.
+  Full logs and REQ→test mapping in `apply-validation.md`; without an external
+  provider or a real secure store, without borrowed evidence from Settings-modal.
 
-- [x] **6.3 Consolidar validación y entregar reporte sin publicar** — comprobar
-  todos los runners de las unidades y `just ci-local` completo con requisitos de
-  `docs/development.md` y `dev/README.md`: tooling/dependencias, Docker disponible,
-  browsers e imagen `just test-e2e-build`. No copiar el manual ni resetear datos.
-  Depende de 6.2. Revisar diff/estadística real, consumidores exhaustivos Event,
-  CommandResult y ProviderAction, incluidos ejemplos/fixtures/wrappers, sin wildcards
-  que oculten variantes nuevas. `just ci-ci` omite E2E: no sustituye ci-local.
-  Aceptación: reporte al orquestador con tarea/REQ/escenario→prueba/comando/evidencia,
-  RED/GREEN, gates ejecutados/fallidos/no ejecutados, riesgos y tamaño real;
-  distinguir COMPLIANT/FAILING/UNTESTED y conservar bloqueos para verify/qa propios.
-  Riesgo: gate parcial presentado como CI completa. No commits vacíos de validación,
-  publicación ni archive; faltan verify-report y qa-report hasta sus fases.
-  Evidencia 2026-10-20: siete paquetes Huginn completos PASS con all-features;
-  Clippy adicional all-features/all-targets PASS; ejemplo providers_headless PASS.
-  CI final sin alterar runner/paralelismo: `just ci-local` exit 0, 9/9, 431 s,
-  Rust PASS (39 PTY incluidos), Vitest 24 archivos/210 tests y E2E 90/90 en tres
-  browsers. `cargo audit --no-fetch` directo exit 0 sin máscara. Logs completos
-  `opencode/huginn-apply6/ci-local-verified.log` bajo el temp aprobado; relación
-  REQ→test, fallos anteriores, `just doctor` inexistente, dos ignores opt-in,
-  límites de entorno y tamaño real en `apply-validation.md`. Sin Verify/QA,
-  publicación, archive, reset de datos, modificación de state ni del index.
+- [x] **6.3 Consolidate validation and deliver the report without publishing** — check
+  all runners of the units and the full `just ci-local` with the requirements of
+  `docs/development.md` and `dev/README.md`: tooling/dependencies, Docker available,
+  browsers and the `just test-e2e-build` image. Do not copy the manual and do not reset data.
+  Depends on 6.2. Review the real diff/statistics, exhaustive Event consumers,
+  CommandResult and ProviderAction, including examples/fixtures/wrappers, without wildcards
+  that hide new variants. `just ci-ci` skips E2E: it does not replace ci-local.
+  Acceptance: report to the orchestrator with task/REQ/scenario→test/command/evidence,
+  RED/GREEN, gates executed/failed/not executed, risks and real size;
+  distinguish COMPLIANT/FAILING/UNTESTED and keep blockers for their own verify/qa.
+  Risk: a partial gate presented as full CI. No empty validation commits,
+  publication or archive; verify-report and qa-report are missing until their phases.
+  Evidence 2026-10-20: seven complete Huginn packages PASS with all-features;
+  additional Clippy all-features/all-targets PASS; providers_headless example PASS.
+  Final CI without altering runner/parallelism: `just ci-local` exit 0, 9/9, 431 s,
+  Rust PASS (39 PTY included), Vitest 24 files/210 tests and E2E 90/90 in three
+  browsers. `cargo audit --no-fetch` directly exit 0 without a mask. Full logs
+  `opencode/huginn-apply6/ci-local-verified.log` under the approved temp; REQ→test mapping,
+  earlier failures, missing `just doctor`, two opt-in ignores,
+  environment limits and real size in `apply-validation.md`. Without Verify/QA,
+  publication, archive, data reset, state or index modification.
 
-## Matriz completa de cobertura y barreras
+## Full coverage and barrier matrix
 
-Los identificadores SET remiten a REQ de ui-settings; su delta sustituye solo
-07/08/12. Cada asociación exige evidencia en verify, no es un veredicto anticipado.
+The SET identifiers refer to REQ of ui-settings; its delta replaces only
+07/08/12. Each association requires evidence at verify; it is not an anticipated verdict.
 
-- **EVT-01 A/B** → 1.1, 1.3, 2.2, 2.3, 2.6, 3.1, 5.1, 6.1/2: mismo texto por categoría,
-  aperturas/cierres repetidos tras 2s sin prompt ni historial UI; diagnóstico visible.
-- **EVT-02 A/B** → 1.1/3, 4.4: repetición legítima, streaming y tool error íntegros,
-  FIFO 256/257 sin afectar Session.events, persistencia/replay ni reabrir sesión.
-- **EVT-03 A/B/C** → 1.2/3: fake t=0/1,999/2s, A/B intercalados, colisión inyectada,
-  fallback compartido; ninguna supresión prolonga ventana ni cambia de superficie.
-- **EVT-04 A** → 1.2/3: límites de entradas/bytes/4096, L+1, expiración y finish;
-  saturación visible, sin truncar comparación ni almacenar secretos.
-- **OVL-01 A** → 2.2, 2.3, 3.1, 6.1: Help/foco/cierre consumido, autoridad única final.
-- **OVL-02 A/B** → 2.1, 2.2, 2.3: allowlist/metadatos y coincidencia exhaustiva,
-  Confirm sin autoridad, rechazo conserva overlay. Pruebas contract/workflows y smoke.
-- **OVL-03 A/B/C** → 2.2, 2.4, 3.2, 5.2: sender único, input fresco,
-  cancelación/Drop/canal/shutdown y respuesta anterior; ordinarias bloqueadas y nunca restauradas.
-- **OVL-04 A/B** → 2.2, 2.3–2.5, 3.2, 5.2/6.2: paste partido,
-  reentrancia incluso Drop de Pending, lease/epoch, revocación/re-registro, tarea tardía,
-  centinela y PTY.
-- **OVL-05 A/B** → 2.2, 2.3, 2.6, 4.2/4: callbacks/payloads/secretos conservados
-  en cada continuación; login/providers/model/logout reales; Secure sin fallback,
-  Ephemeral explícito, validación/OAuth y fijación del turno/revocación.
-- **BAR-01 A** → 5.1/2, 6.2: todos los overlays incluida Approval, viewport inline,
-  Unicode, 20x8, resize/zero-size, clipping y scrollback solo conversacional.
-- **BAR-02 A/B/C** → 4.1–4: barreras snapshot/subscribe y A/B tardío; stage/confirm
-  exactos en todas las rutas; faults antes/después de publicar y Pending/drop/cancel;
-  adapter/registration/manager/core teardown, owner/source/revision y reconexión.
-- **BAR-03 A/B** → 4.1–4, 5.1, 6.2: selección local/Legacy/Unmanaged sin Connected,
-  ningún éxito anterior promete salud; ausencia/error/aprobación siempre observables.
-- **SET-07 A/B/C/D** → 3.2/3: closure reentrante, write barrier, Enter único,
-  disk full preserva copia, reintento y receipt tardío con otro Settings abierto;
-  snapshot guardado solo en éxito, TOML conjunto sin live theme.
-- **SET-08 A/B** → 3.1/2: Esc durante streaming antes/después de iniciar write,
-  bytes intactos solo antes de Apply, un write y receipt sin rollback ni reapertura.
-- **SET-12 A/B/C/D** → 2.2, 2.4, 3.1/2: reemplazo válido/rechazado, Approval antes/
-  durante Apply y receipt éxito/error, lease obsoleto no cruza al sustituto.
-- **SET-01** → 3.1 y completion/plugins: registro, descripción, whitespace, editor
-  limpio y cero prompts; **SET-02** → 3.1/5.2: header/body/footer y markers.
-- **SET-03/04/05** → 3.1/5.2: tabs/navegación/selección, filas concretas y pickers; **SET-06** → 3.1: copia independiente y movimientos sin I/O.
-- **SET-09** → 3.3: round-trip, bytes externos/comments/orden; **SET-10** → 3.3:
-  defaults sin ui, parcial y completo; **SET-11** → 3.3: unknown internos preservados.
-- **SET-13** → 3.1/2, 5.2: Esc no cancela turno; **SET-14** → 3.1: Add provider sin
-  mutación/providers/persistencia; **SET-15** → 3.3: line-mode excluido; **SET-16** → 3.1: catálogo chat con/sin modelo.
+- **EVT-01 A/B** → 1.1, 1.3, 2.2, 2.3, 2.6, 3.1, 5.1, 6.1/2: same text per category,
+  repeated openings/closings after 2 s without a prompt or UI history; visible diagnostic.
+- **EVT-02 A/B** → 1.1/3, 4.4: legitimate repetition, streaming and tool error intact,
+  FIFO 256/257 without affecting Session.events, persistence/replay or reopening the session.
+- **EVT-03 A/B/C** → 1.2/3: fake t=0/1.999/2s, interleaved A/B, injected collision,
+  shared fallback; no suppression extends the window or changes surface.
+- **EVT-04 A** → 1.2/3: entry/byte/4096 limits, L+1, expiration and finish;
+  visible saturation, without truncating the comparison or storing secrets.
+- **OVL-01 A** → 2.2, 2.3, 3.1, 6.1: Help/focus/consumed close, final single authority.
+- **OVL-02 A/B** → 2.1, 2.2, 2.3: allowlist/metadata and exhaustive matching,
+  Confirm without authority, rejection keeps the overlay. contract/workflows and smoke tests.
+- **OVL-03 A/B/C** → 2.2, 2.4, 3.2, 5.2: single sender, fresh input,
+  cancellation/Drop/channel/shutdown and earlier answer; ordinary ones blocked and never restored.
+- **OVL-04 A/B** → 2.2, 2.3–2.5, 3.2, 5.2/6.2: split paste,
+  reentrancy including Drop of Pending, lease/epoch, revocation/re-registration, late task,
+  sentinel and PTY.
+- **OVL-05 A/B** → 2.2, 2.3, 2.6, 4.2/4: callbacks/payloads/secrets preserved
+  in each continuation; real login/providers/model/logout; Secure without fallback,
+  explicit Ephemeral, validation/OAuth and turn pinning/revocation.
+- **BAR-01 A** → 5.1/2, 6.2: all overlays including Approval, inline viewport,
+  Unicode, 20x8, resize/zero-size, clipping and conversational-only scrollback.
+- **BAR-02 A/B/C** → 4.1–4: snapshot/subscribe barriers and late A/B; exact
+  stage/confirm on all routes; faults before/after publishing and Pending/drop/cancel;
+  adapter/registration/manager/core teardown, owner/source/revision and reconnection.
+- **BAR-03 A/B** → 4.1–4, 5.1, 6.2: local/Legacy/Unmanaged selection without Connected,
+  no earlier success promises health; absence/error/approval always observable.
+- **SET-07 A/B/C/D** → 3.2/3: reentrant closure, write barrier, single Enter,
+  disk full keeps copy, retry and late receipt with another Settings open;
+  snapshot saved only on success, joint TOML without live theme.
+- **SET-08 A/B** → 3.1/2: Esc during streaming before/after starting the write,
+  bytes intact only before Apply, one write and receipt without rollback or reopening.
+- **SET-12 A/B/C/D** → 2.2, 2.4, 3.1/2: valid/rejected replacement, Approval before/
+  during Apply and success/error receipt, stale lease does not cross to the substitute.
+- **SET-01** → 3.1 and completion/plugins: registration, description, whitespace, clean
+  editor and zero prompts; **SET-02** → 3.1/5.2: header/body/footer and markers.
+- **SET-03/04/05** → 3.1/5.2: tabs/navigation/selection, specific rows and pickers; **SET-06** → 3.1: independent copy and moves without I/O.
+- **SET-09** → 3.3: round-trip, external bytes/comments/order; **SET-10** → 3.3:
+  defaults without ui, partial and complete; **SET-11** → 3.3: internal unknowns preserved.
+- **SET-13** → 3.1/2, 5.2: Esc does not cancel the turn; **SET-14** → 3.1: Add provider without
+  mutation/providers/persistence; **SET-15** → 3.3: line-mode excluded; **SET-16** → 3.1: chat catalog with/without model.
 
-## Bloqueos y salida requerida
+## Blockers and required output
 
-No hay gaps de producto bloqueantes identificados para planificar. No se presupone
-tooling instalado, CI verde ni evidencia heredada: fallos conductuales, carreras,
-filtraciones, ausencia de coverage de una ruta de publicación o teardown y QA
-incompleto son bloqueos reales de aceptación que deben comunicarse, no silenciarse.
-La excepción de tamaño ya está autorizada; no se añade otra pregunta de entrega.
+No blocking product gaps were identified for planning. Installed tooling is not assumed,
+nor green CI or inherited evidence: behavioral failures, races,
+leaks, missing coverage of a publication or teardown route and incomplete QA
+are real acceptance blockers that must be communicated, not silenced.
+The size exception is already authorized; no other delivery question is added.
 
-Próximo paso del orquestador: revisar evidencia de Apply y delegar Verify, después
-QA; actualizar state corresponde solo al orquestador. Los informes propios deberán documentar todos
-los casos no probados y bloqueos antes de archive. Settings-modal archived sin
-verify/qa no acredita ninguno de esos gates.
+Orchestrator next step: review Apply evidence and delegate Verify, then
+QA; updating state is the orchestrator's task alone. The reports themselves must document all
+untested cases and blockers before archive. Settings-modal archived without
+verify/qa does not accredit any of those gates.

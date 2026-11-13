@@ -100,7 +100,7 @@ function evaluateBooleanExpression(expression) {
     tokenPattern.lastIndex = offset;
     const match = tokenPattern.exec(expression);
     assert.ok(match,
-        `token inesperado en expresión: ${expression.slice(offset)}`);
+        `unexpected token in expression: ${expression.slice(offset)}`);
     tokens.push(match[1]);
     offset = tokenPattern.lastIndex;
   }
@@ -113,7 +113,7 @@ function evaluateBooleanExpression(expression) {
   };
   const literal = () => {
     const token = tokens[position++];
-    assert.ok(token !== undefined, 'literal esperado');
+    assert.ok(token !== undefined, 'expected literal');
     if (token === 'true') {
       return true;
     }
@@ -135,7 +135,7 @@ function evaluateBooleanExpression(expression) {
       consume('==');
       return left === literal();
     }
-    assert.equal(typeof left, 'boolean', 'se esperaba una comparación');
+    assert.equal(typeof left, 'boolean', 'expected a comparison');
     return left;
   };
   const conjunction = () => {
@@ -158,7 +158,7 @@ function evaluateBooleanExpression(expression) {
   };
 
   const result = disjunction();
-  assert.equal(position, tokens.length, 'tokens restantes');
+  assert.equal(position, tokens.length, 'remaining tokens');
   return result;
 }
 
@@ -169,7 +169,7 @@ function condition(id, selected, eventName = 'pull_request') {
     expression = block.match(
         /^    if: \|\n((?:      .+\n)+)/m)?.[1];
   }
-  assert.ok(expression, `condición de ${id}`);
+  assert.ok(expression, `condition for ${id}`);
   const resolved = expression.trim()
       .replaceAll('github.event_name', JSON.stringify(eventName))
       .replace(/needs\.changes\.outputs\.(\w+)/g,
@@ -188,7 +188,7 @@ const routeCases = [
   ['apps/rook/tests/api.rs', ['backend']],
   ['apps/rook/examples/demo.rs', ['backend']],
   ['apps/rook/benches/router.rs', ['backend']],
-  ['apps/rook/nuevo-directorio/datos.bin', ['backend']],
+  ['apps/rook/new-directory/data.bin', ['backend']],
   ['.github/scripts/check-huginn-architecture.py', ['backend']],
   ['.dockerignore', ['docker']],
   ['.semgrepignore', ['github']],
@@ -221,29 +221,29 @@ const routeCases = [
   ['apps/rook/src/main.rs', ['backend']],
   ['.github/ci-quality-policy.json', ['github']],
   ['.config/nextest.toml', ['backend']],
-  // El paquete completo incluye el dashboard: se aceptan controles backend adicionales.
+  // The whole package includes the dashboard: extra backend checks are accepted.
   ['apps/rook/dashboard/src/main.tsx', ['frontend', 'backend']],
   ['apps/huginn/src/main.rs', ['backend']],
   ['crates/rook-core/src/lib.rs', ['backend']],
   ['Dockerfile.dev', ['docker']],
   ['apps/rook/Dockerfile', ['backend', 'docker']],
   ['dev/Dockerfile.runtime', ['docker']],
-  ['nuevo/directorio/Dockerfile.ci', ['docker']],
+  ['new/directory/Dockerfile.ci', ['docker']],
   ['dev/e2e/run-api-keys-e2e.sh', ['docker']],
   ['apps/rook/dashboard/e2e/login.spec.ts', ['frontend', 'docker']],
   ['docs/development.md', ['docs']],
 ];
 
-it('cubre todo el paquete Rook sin enumerar directorios', () => {
+it('covers the whole Rook package without listing directories', () => {
   const filters = JSON.parse(
       fs.readFileSync(path.join(__dirname, '../ci-path-filters.json'), 'utf8'));
-  // Dorny usa picomatch con dot:true; este patrón también cubre rutas ocultas.
-  // No se usa matchesGlob para rutas ocultas porque Node aplica otra semántica.
+  // Dorny uses picomatch with dot:true; this pattern also covers hidden paths.
+  // matchesGlob is not used for hidden paths because Node applies different semantics.
   assert.ok(filters.backend.includes('apps/rook/**'));
 });
 
 for (const [file, expected] of routeCases) {
-  it(`enruta ${file} a sus controles`, () => {
+  it(`routes ${file} to its checks`, () => {
     const filters = JSON.parse(
         fs.readFileSync(path.join(__dirname, '../ci-path-filters.json'),
             'utf8'));
@@ -287,7 +287,7 @@ for (const [file, expected] of routeCases) {
   });
 }
 
-it('usa los filtros probados en el detector', () => {
+it('uses the filters tested by the detector', () => {
   assert.match(jobBlock('changes'),
       /filters:\s*\.github\/ci-path-filters\.json\s*$/m);
   for (const category of categories) {
@@ -298,34 +298,34 @@ it('usa los filtros probados en el detector', () => {
   }
 });
 
-it('ejecuta Sonar y su entrada dashboard en PR de documentación o metadatos',
+it('runs Sonar and its dashboard input for documentation or metadata PRs',
     () => {
       for (const selected of
           [Object.fromEntries(categories.map((key) => [key, 'false'])),
             Object.fromEntries(categories.map(
                 (key) => [key, key === 'docs' ? 'true' : 'false']))]) {
         for (const id of ['sonar', 'build-dashboard']) {
-          assert.equal(condition(id, selected), true, `${id} en PR`);
+          assert.equal(condition(id, selected), true, `${id} on PR`);
           assert.equal(condition(id, selected, 'push'), false,
-              `${id} en push sin código`);
+              `${id} on push without code`);
         }
       }
     });
 
-it('valida SONAR_TOKEN antes de ejecutar acciones de la PR y no tiene excepciones',
+it('validates SONAR_TOKEN before running PR actions and has no exceptions',
     () => {
       const sonar = jobBlock('sonar');
       const validation = sonar.match(
           /^        run: \|\n((?:          .*\n)+)/m)?.[1];
       assert.ok(validation);
       assert.ok(sonar.indexOf('run: |') < sonar.indexOf('uses:'),
-          'validación anterior a acciones y código de la PR');
+          'validation before PR actions and code');
       assert.match(validation, /if \[ -z "\$SONAR_TOKEN" \]; then/);
       assert.match(validation, /exit 1/);
       assert.doesNotMatch(sonar, /sonar_exempt|continue-on-error:/);
     });
 
-it('espera el quality gate con 300 segundos y conserva ambas coberturas',
+it('waits for the quality gate for 300 seconds and keeps both coverage reports',
     () => {
       const sonar = jobBlock('sonar');
       assert.match(sonar, /^    timeout-minutes: 60\s*$/m);
@@ -340,7 +340,7 @@ it('espera el quality gate con 300 segundos y conserva ambas coberturas',
       assert.match(sonar, /permissions:\n      contents: read\n    steps:/);
     });
 
-it('mantiene el umbral Rust de 87% e incluye los paquetes de producto Muninn', () => {
+it('keeps the 87% Rust threshold and includes the Muninn product packages', () => {
   const coverage = jobBlock('coverage');
   assert.match(coverage, /cargo llvm-cov clean --workspace/);
   assert.match(coverage, /cargo llvm-cov --workspace --all-features --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn --no-report/);
@@ -353,7 +353,7 @@ it('mantiene el umbral Rust de 87% e incluye los paquetes de producto Muninn', (
   assert.match(sonar, /cargo llvm-cov report --lcov --output-path coverage\/rust-lcov\.info/);
 });
 
-it('Gitleaks dispone del historial completo sin persistir credenciales', () => {
+it('Gitleaks has the full history without persisting credentials', () => {
   const gitleaks = jobBlock('gitleaks-pr');
   assert.match(gitleaks, /fetch-depth: 0\s*\n\s*persist-credentials: false/);
   assert.match(gitleaks,
@@ -364,10 +364,10 @@ it('Gitleaks dispone del historial completo sin persistir credenciales', () => {
 });
 
 for (const eventName of ['pull_request', 'push']) {
-  it(`Gitleaks configura el rango completo en ${eventName} sin operaciones remotas`,
+  it(`Gitleaks configures the full range on ${eventName} without remote operations`,
       () => {
         const scan = jobBlock('gitleaks-pr').match(
-            /^      - name: Analizar historial de commits\n([\s\S]*?)(?=^      - )/m)?.[1];
+            /^      - name: Analyze commit history\n([\s\S]*?)(?=^      - )/m)?.[1];
         const script = scan?.match(
             /^        run: \|\n((?:          .*\n)+)/m)?.[1];
         assert.ok(script);
@@ -383,7 +383,7 @@ for (const eventName of ['pull_request', 'push']) {
       });
 }
 
-it('falla solo ante findings Semgrep activos, no ante excepciones SARIF en source',
+it('fails only on active Semgrep findings, not on SARIF exceptions in source',
     () => {
       const scan = jobBlock('semgrep-pr');
       assert.match(scan, /FINDINGS_COUNT=.*suppressions/);
@@ -391,7 +391,7 @@ it('falla solo ante findings Semgrep activos, no ante excepciones SARIF en sourc
           /select\(\(\.suppressions \/\/ \[\]\) \| length == 0\)/);
     });
 
-it('autentica los controles y el escaneo Semgrep con el secret de CI', () => {
+it('authenticates the checks and the Semgrep scan with the CI secret', () => {
   const scan = jobBlock('semgrep-pr');
   for (const name of ['Check exact path exceptions and scanner controls',
     'Run Semgrep SAST scan']) {
@@ -404,7 +404,7 @@ it('autentica los controles y el escaneo Semgrep con el secret de CI', () => {
   }
 });
 
-it('ejecuta siempre las pruebas CI y exige su resultado real', () => {
+it('always runs the CI tests and requires their real result', () => {
   const contract = jobBlock('ci-contract');
   assert.match(contract, /^    if: always\(\)\s*$/m);
   assert.doesNotMatch(contract, /^    needs:/m);
@@ -417,7 +417,7 @@ it('ejecuta siempre las pruebas CI y exige su resultado real', () => {
   assert.doesNotMatch(jobBlock('required'), /continue-on-error:/);
 });
 
-it('combina cobertura default de providers y app en el mismo gate Rust de 87%', () => {
+it('combines default providers and app coverage in the same 87% Rust gate', () => {
   const root = path.resolve(__dirname, '../..');
   const local = fs.readFileSync(path.join(root, 'justfile'), 'utf8');
   const recipe = local.split('ci-coverage-rust:\n')[1].split('\n# ')[0];
@@ -432,7 +432,7 @@ it('combina cobertura default de providers y app en el mismo gate Rust de 87%', 
   assert.match(recipe, /cargo llvm-cov report --fail-under-lines 87 --lcov/);
 });
 
-it('ejecuta Muninn en default features además del gate C1 opt-in', () => {
+it('runs Muninn with default features in addition to the opt-in C1 gate', () => {
   const command = /cargo test --locked -p muninn-providers -p muninn/;
   assert.match(jobBlock('test'), command);
   assert.match(jobBlock('test-multi'), command);
@@ -441,7 +441,7 @@ it('ejecuta Muninn en default features además del gate C1 opt-in', () => {
   assert.match(justfile, /run_step "Muninn C1 opt-in tests" just ci-muninn-c1/);
 });
 
-it('filtra el job C1 por materiales propios, usa caché y cancela ejecuciones obsoletas', () => {
+it('filters the C1 job by its own materials, uses cache and cancels stale runs', () => {
   const c1 = jobBlock('test-muninn-c1');
   assert.match(c1, /^    runs-on: macos-15$/m);
   assert.match(c1, /needs: \[changes\]/);
@@ -456,7 +456,7 @@ it('filtra el job C1 por materiales propios, usa caché y cancela ejecuciones ob
   assert.match(jobBlock('changes'), /muninn_c1: \$\{\{ steps\.filter\.outputs\.muninn_c1 \}\}/);
 });
 
-it('attesta solo en main protegido después del test C1 y limita permisos al job privilegiado', () => {
+it('attests only on protected main after the C1 test and limits permissions to the privileged job', () => {
   const attest = jobBlock('attest-muninn-c1');
   assert.match(attest, /needs: \[changes, test-muninn-c1\]/);
   assert.match(attest, /github\.event_name == 'push'/);
@@ -470,7 +470,7 @@ it('attesta solo en main protegido después del test C1 y limita permisos al job
   assert.doesNotMatch(jobBlock('required'), /^      - attest-muninn-c1\s*$/m);
 });
 
-it('exige enforcement Seatbelt de Huginn en PR sobre macOS sin filtrar tests',
+it('requires Huginn Seatbelt enforcement on macOS PRs without filtering tests',
     () => {
       const seatbelt = jobBlock('test-huginn-seatbelt');
       assert.match(seatbelt, /^    runs-on: macos-latest\s*$/m);
@@ -500,30 +500,30 @@ it('exige enforcement Seatbelt de Huginn en PR sobre macOS sin filtrar tests',
           /RESULT_TEST_HUGINN_SEATBELT: \$\{\{ needs\.test-huginn-seatbelt\.result \}\}/);
     });
 
-it('acota la excepción de Gitleaks del fixture GM-05 a su archivo y su valor',
+it('scopes the Gitleaks exception for the GM-05 fixture to its file and value',
     () => {
       const {globalSection, rules} = gitleaksRules(gitleaksConfig);
       const generic = rules.find((rule) => rule.id === 'generic_secret');
-      assert.ok(generic, 'regla generic_secret presente');
+      assert.ok(generic, 'generic_secret rule present');
 
       const scoped = generic.allowlists.filter(
           (section) => section.includes('dev/muninn'));
       assert.equal(scoped.length, 1,
-          'una sola allowlist de la regla menciona dev/muninn');
+          'only one rule allowlist mentions dev/muninn');
       const block = scoped[0];
       assert.ok(block.includes('condition = "AND"'),
-          'condición AND para acotar la coincidencia');
+          'AND condition to scope the match');
       assert.ok(block.includes('regexTarget = "match"'),
-          'el objetivo es la coincidencia completa');
+          'the target is the full match');
       assert.ok(
           block.includes(
               `paths = ['''^dev/muninn/tests/test_gm05_build\\.py$''']`),
-          'ruta exacta del test GM-05',
+          'exact path of the GM-05 test',
       );
       assert.ok(
           block.includes(
               `regexes = ['''(?i)^token\\s*=\\s*"synthetic-test-value$''']`),
-          'valor exacto del token sintético',
+          'exact value of the synthetic token',
       );
       assert.doesNotMatch(block, /condition = "OR"/);
 
@@ -533,36 +533,36 @@ it('acota la excepción de Gitleaks del fixture GM-05 a su archivo y su valor',
             !rule.allowlists.some(
                 (section) => section.includes('dev/muninn') || section.includes(
                     'synthetic-test-value')),
-            `la regla ${rule.id} no declara excepciones del fixture GM-05`,
+            `rule ${rule.id} declares no exceptions for the GM-05 fixture`,
         );
       }
 
       assert.doesNotMatch(globalSection, /dev\/muninn|synthetic-test-value/,
-          'sin allowlist global para el fixture');
+          'no global allowlist for the fixture');
     });
 
-it('acota los marcadores sintéticos de Seatbelt a su archivo y sus valores', () => {
+it('scopes the Seatbelt synthetic markers to their file and values', () => {
   const {globalSection, rules} = gitleaksRules(gitleaksConfig);
   const generic = rules.find((rule) => rule.id === 'generic_secret');
-  assert.ok(generic, 'regla generic_secret presente');
+  assert.ok(generic, 'generic_secret rule present');
 
   const scoped = generic.allowlists.filter(
       (section) => section.includes('crates/huginn/runtime/src/tools'));
-  assert.equal(scoped.length, 1, 'una allowlist acotada para tools.rs');
+  assert.equal(scoped.length, 1, 'one scoped allowlist for tools.rs');
   const block = scoped[0];
   assert.ok(block.includes('condition = "AND"'),
-      'condición AND para acotar la coincidencia');
+      'AND condition to scope the match');
   assert.ok(block.includes('regexTarget = "match"'),
-      'el objetivo es la coincidencia completa');
+      'the target is the full match');
   assert.ok(
       block.includes(
           `paths = ['''^crates/huginn/runtime/src/tools\\.rs$''']`),
-      'ruta exacta del módulo de herramientas',
+      'exact path of the tools module',
   );
   assert.ok(
       block.includes(
           `'''(?i)^secret\\s*=\\s*"(other-workspace-secret-value|credential-fixture-secret-not-real|external-fixture-secret|unassigned-temp-fixture-secret|cwd-does-not-expand-permissions|symlink-target-fixture-secret)$'''`),
-      'solo los marcadores sintéticos de las pruebas de denegación',
+      'only the synthetic markers of the denial tests',
   );
   assert.doesNotMatch(block, /condition = "OR"/);
 
@@ -571,15 +571,15 @@ it('acota los marcadores sintéticos de Seatbelt a su archivo y sus valores', ()
     assert.ok(
         !rule.allowlists.some(
             (section) => section.includes('crates/huginn/runtime/src/tools')),
-        `la regla ${rule.id} no declara excepciones de Seatbelt`,
+        `rule ${rule.id} declares no Seatbelt exceptions`,
     );
   }
 
   assert.doesNotMatch(globalSection, /crates\/huginn\/runtime\/src\/tools\.rs/,
-      'sin allowlist global para los fixtures de Seatbelt');
+      'no global allowlist for the Seatbelt fixtures');
 });
 
-it('conecta cada dependencia de Required con el runner sin perder resultados',
+it('connects every Required dependency to the runner without losing results',
     () => {
       const block = jobBlock('required');
       const needs = block.match(/^    needs:\n((?:      - [\w-]+\n)+)/m)?.[1];
@@ -604,9 +604,9 @@ function namedStep(id, name) {
   return step[1];
 }
 
-it('genera y sube resultados JUnit de Rust sin perder doctests', () => {
+it('generates and uploads Rust JUnit results without losing doctests', () => {
   const nextestConfigPath = path.join(__dirname, '../../.config/nextest.toml');
-  assert.ok(fs.existsSync(nextestConfigPath), 'perfil CI de Nextest presente');
+  assert.ok(fs.existsSync(nextestConfigPath), 'Nextest CI profile present');
   const nextestConfig = fs.readFileSync(nextestConfigPath, 'utf8');
   assert.match(nextestConfig, /^\[profile\.ci\]$/m);
   assert.match(nextestConfig, /^\[profile\.ci\.junit\]$/m);
@@ -642,7 +642,7 @@ it('genera y sube resultados JUnit de Rust sin perder doctests', () => {
   assert.match(artifact, /continue-on-error: true/);
 });
 
-it('genera y sube resultados JUnit de Vitest tras el job de frontend', () => {
+it('generates and uploads Vitest JUnit results after the frontend job', () => {
   const frontend = jobBlock('test-frontend');
   assert.match(frontend,
       /pnpm exec vitest run --reporter=default --reporter=junit --outputFile\.junit=junit\.xml/);
@@ -673,7 +673,7 @@ it('genera y sube resultados JUnit de Vitest tras el job de frontend', () => {
   assert.match(artifact, /continue-on-error: true/);
 });
 
-it('activa Bundle Analysis solo para cambios frontend y limita el token', () => {
+it('enables Bundle Analysis only for frontend changes and scopes the token', () => {
   const build = namedStep('build-dashboard', 'Build dashboard');
   assert.match(build,
       /CODECOV_BUNDLE_ANALYSIS: \$\{\{ needs\.changes\.outputs\.frontend == 'true' && github\.actor != 'dependabot\[bot\]' \}\}/);
@@ -689,7 +689,7 @@ it('activa Bundle Analysis solo para cambios frontend y limita el token', () => 
   assert.match(viteConfig, /gitService: "github"/);
 });
 
-it('publica pronto comentarios de cobertura y conserva los flags carryforward', () => {
+it('publishes coverage comments early and keeps the carryforward flags', () => {
   const codecovConfig = fs.readFileSync(
       path.join(__dirname, '../../codecov.yml'), 'utf8');
   assert.match(codecovConfig, /^  after_n_builds: 1$/m);

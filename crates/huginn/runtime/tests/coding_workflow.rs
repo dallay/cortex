@@ -1120,7 +1120,7 @@ async fn stale_diff_and_symlink_escape_are_rejected() {
 #[test]
 fn sse_assembles_fragmented_arguments_and_utf8_and_rejects_truncation() {
     let frames = [
-        json!({"choices":[{"delta":{"content":"Hola 🧠"},"finish_reason":null}]}),
+        json!({"choices":[{"delta":{"content":"Hello 🧠"},"finish_reason":null}]}),
         json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"read_file","arguments":"{\"pa"}}]},"finish_reason":null}]}),
         json!({"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"th\":\"x\"}"}}]},"finish_reason":"tool_calls"}]}),
     ];
@@ -1136,7 +1136,7 @@ fn sse_assembles_fragmented_arguments_and_utf8_and_rejects_truncation() {
     }
     assert!(deltas
         .iter()
-        .any(|d| matches!(d,ModelDelta::Text(t) if t=="Hola 🧠")));
+        .any(|d| matches!(d,ModelDelta::Text(t) if t=="Hello 🧠")));
     assert!(deltas
         .iter()
         .any(|d| matches!(d,ModelDelta::ToolCall(c) if c.arguments==json!({"path":"x"}))));

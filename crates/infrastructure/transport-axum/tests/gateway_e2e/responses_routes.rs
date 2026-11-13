@@ -11,7 +11,7 @@ async fn post_response(app: axum::Router, model: &str, stream: bool) -> axum::re
             .header("content-type", "application/json")
             .header("authorization", "Bearer e2e-key-1")
             .body(axum::body::Body::from(
-                json!({"model":model,"input":"hola","stream":stream}).to_string(),
+                json!({"model":model,"input":"hello","stream":stream}).to_string(),
             ))
             .unwrap(),
     )
@@ -27,7 +27,7 @@ async fn post_budgeted_response(app: axum::Router, stream: bool) -> axum::respon
             .header("content-type", "application/json")
             .header("authorization", "Bearer e2e-key-1")
             .body(axum::body::Body::from(
-                json!({"model":"gpt-4o","input":"hola","stream":stream}).to_string(),
+                json!({"model":"gpt-4o","input":"hello","stream":stream}).to_string(),
             ))
             .unwrap(),
     )
@@ -56,7 +56,7 @@ async fn assert_route_failure(
         json!({"error":{
             "type":code,
             "code":code,
-            "message":"No se pudo completar la solicitud",
+            "message":"The request could not be completed",
             "param":null
         }})
     );

@@ -26,7 +26,7 @@ fn completion() -> CompletionResponse {
 
 fn context() -> ResponseContext {
     let request: ResponsesRequest =
-        serde_json::from_value(json!({"model":"test","input":"hola"})).unwrap();
+        serde_json::from_value(json!({"model":"test","input":"hello"})).unwrap();
     ResponseContext::new(&request.into_domain().unwrap())
 }
 

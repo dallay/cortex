@@ -27,6 +27,9 @@ use crate::eligibility::{
     evaluate_candidates, AuthState, CandidateFacts, EligibilityResult, RejectionReason, TargetRef,
 };
 use crate::route_selection::is_virtual_model;
+use crate::scoring::{
+    build_selection_reason, build_signals_snapshot, SelectionMethod, SelectionReason,
+};
 use crate::PricingConfig;
 
 #[path = "route_request/combo_stream.rs"]
@@ -136,6 +139,18 @@ struct StreamSelection {
     connection_id: Option<ConnectionId>,
     upstream: futures::stream::BoxStream<'static, Result<StreamChunk, CortexError>>,
     trial_permit: rook_core::RouterTrialPermit,
+    /// Explanation of why this provider was selected.
+    /// Stored for future telemetry emission (DALLAY-779).
+    #[expect(dead_code, reason = "consumed by DALLAY-779 telemetry emission")]
+    selection_reason: Option<SelectionReason>,
+}
+
+impl StreamSelection {
+    /// Access the selection reason for telemetry (DALLAY-779).
+    #[expect(dead_code, reason = "consumed by DALLAY-779 telemetry emission")]
+    pub fn take_selection_reason(&mut self) -> Option<SelectionReason> {
+        self.selection_reason.take()
+    }
 }
 
 /// Mutable state carried across the steps of one combo execution.
@@ -174,6 +189,7 @@ struct AttemptCursor {
 }
 
 struct RoutingEligibility {
+    quota_observations: std::collections::HashMap<ProviderId, rook_core::QuotaObservation>,
     result: EligibilityResult,
     connections_by_target: std::collections::HashMap<ProviderId, ProviderConnectionRoutingState>,
     providers_by_target: std::collections::HashMap<ProviderId, Arc<dyn rook_core::ProviderPort>>,
@@ -204,6 +220,18 @@ struct EligibleAttempt {
     provider_req: CompletionRequest,
     trial_permit: rook_core::RouterTrialPermit,
     spending_reservation: PendingSpendingAdmission,
+    /// Explanation of why this provider was selected.
+    /// Stored for future telemetry emission (DALLAY-779).
+    #[expect(dead_code, reason = "consumed by DALLAY-779 telemetry emission")]
+    selection_reason: Option<SelectionReason>,
+}
+
+impl EligibleAttempt {
+    /// Access the selection reason for telemetry (DALLAY-779).
+    #[expect(dead_code, reason = "consumed by DALLAY-779 telemetry emission")]
+    pub fn take_selection_reason(&mut self) -> Option<SelectionReason> {
+        self.selection_reason.take()
+    }
 }
 
 /// A durable budget reservation that must be released unless upstream I/O starts.
@@ -808,6 +836,22 @@ impl RouteRequest {
             &cursor.excluded,
             eligibility.as_ref().map(|snapshot| &snapshot.result),
         );
+
+        // Build scoring snapshot from eligible candidates before selection.
+        // The snapshot is immutable for this invocation; discarded on Reevaluate.
+        let scoring_snapshot = self.build_scoring_snapshot(
+            context.req,
+            eligibility.as_ref().map(|snapshot| &snapshot.result),
+            &selection_excluded,
+            &eligibility
+                .as_ref()
+                .map(|snapshot| snapshot.quota_observations.clone())
+                .unwrap_or_default(),
+            eligibility
+                .as_ref()
+                .map(|snapshot| &snapshot.connections_by_target),
+        );
+
         let provider = match self
             .router
             .select_excluding(context.req, &selection_excluded)
@@ -824,6 +868,25 @@ impl RouteRequest {
             }
         };
         let provider_id = provider.id().clone();
+
+        // Build selection reason from the actual selected provider and scoring evidence.
+        let selection_reason = scoring_snapshot.as_ref().and_then(|snapshot| {
+            let selected_target = TargetRef(provider_id.clone());
+            let method = self.router.selection_strategy();
+            let method = match method {
+                rook_core::SelectionStrategy::Priority => SelectionMethod::Priority,
+                rook_core::SelectionStrategy::RoundRobin => SelectionMethod::RoundRobin,
+                rook_core::SelectionStrategy::WeightedRandom => SelectionMethod::WeightedRandom,
+            };
+            build_selection_reason(snapshot, &selected_target, method)
+        });
+        // Log selection reason for debugging and future telemetry (DALLAY-779).
+        if selection_reason.is_some() {
+            tracing::debug!(
+                provider = %provider_id,
+                "selection reason captured for provider"
+            );
+        }
         // Check key authorization before any connection-state lookup so an unavailable
         // repository does not replace the established 403 classification.
         if let Err(error) = self.check_provider_restriction(context.req, &provider_id) {
@@ -948,6 +1011,7 @@ impl RouteRequest {
             provider_req,
             trial_permit,
             spending_reservation,
+            selection_reason,
         }))
     }
 
@@ -1090,7 +1154,8 @@ impl RouteRequest {
             })
             .filter(|connection| connection.is_active)
             .collect();
-        let exhausted_connections = self.exhausted_connection_ids(&candidate_connections).await;
+        let (exhausted_connections, quota_by_connection) =
+            self.exhausted_connection_ids(&candidate_connections).await;
         for candidate in &mut facts {
             if !candidate.requires_quota_check() {
                 continue;
@@ -1117,28 +1182,117 @@ impl RouteRequest {
             }
         }
 
+        let quota_observations = connection_states_by_target
+            .iter()
+            .filter_map(|(target, connection)| {
+                let observation = quota_by_connection.get(&connection.as_ref()?.id)?;
+                Some((target.clone(), observation.clone()))
+            })
+            .collect();
         let connections_by_target = connection_states_by_target
             .into_iter()
             .filter_map(|(target, connection)| connection.map(|connection| (target, connection)))
             .collect();
         Ok(Some(RoutingEligibility {
+            quota_observations,
             result: evaluate_candidates(facts),
             connections_by_target,
             providers_by_target,
         }))
     }
 
+    /// Build an immutable scoring snapshot from eligible candidates.
+    ///
+    /// Returns None when eligibility is not available (legacy path).
+    /// The snapshot is built once per selection invocation and discarded on Reevaluate.
+    ///
+    /// IMPORTANT: This method must NOT call `router.eligibility_candidates()` again,
+    /// since the eligibility result was already obtained. Calling it again could trigger
+    /// side effects (e.g., registry churn in tests) or return stale data.
+    ///
+    /// `excluded` providers are filtered out so they don't affect normalization bounds.
+    fn build_scoring_snapshot(
+        &self,
+        req: &CompletionRequest,
+        eligibility: Option<&EligibilityResult>,
+        excluded: &[ProviderId],
+        quota_observations: &std::collections::HashMap<ProviderId, rook_core::QuotaObservation>,
+        connections: Option<&std::collections::HashMap<ProviderId, ProviderConnectionRoutingState>>,
+    ) -> Option<crate::scoring::SignalsSnapshot> {
+        let result = eligibility?;
+        let eligible = &result.eligible;
+        if eligible.is_empty() {
+            return None;
+        }
+
+        // Filter out excluded providers from the scoring snapshot.
+        // Only candidates actually considered for this selection should affect normalization.
+        let considered: Vec<_> = eligible
+            .iter()
+            .filter(|t| !excluded.contains(&t.0))
+            .collect();
+        if considered.is_empty() {
+            return None;
+        }
+
+        // Gather circuit states from the router for considered candidates.
+        // Use HashSet for O(1) lookup instead of O(n²) linear scan.
+        let considered_ids: std::collections::HashSet<_> =
+            considered.iter().map(|t| &t.0).collect();
+        let circuit_states: std::collections::HashMap<ProviderId, rook_core::CircuitStateSnapshot> =
+            self.router
+                .circuit_states()
+                .into_iter()
+                .filter(|(id, _)| considered_ids.contains(id))
+                .collect();
+
+        // Build snapshot with real priority from connection routing state.
+        let snapshot = build_signals_snapshot(
+            &considered,
+            &req.model,
+            &self.telemetry.clone(),
+            &self.pricing,
+            &circuit_states,
+            quota_observations,
+        );
+
+        // Inject real priority from connection routing state into the snapshot.
+        Some(self.inject_priorities(snapshot, connections))
+    }
+
+    /// Look up each candidate's priority from connection routing state and inject it into the snapshot.
+    /// Candidates without a resolved connection keep priority as Unknown(Missing).
+    fn inject_priorities(
+        &self,
+        mut snapshot: crate::scoring::SignalsSnapshot,
+        connections: Option<&std::collections::HashMap<ProviderId, ProviderConnectionRoutingState>>,
+    ) -> crate::scoring::SignalsSnapshot {
+        if let Some(conns) = connections {
+            for (target, signals) in snapshot.candidates.iter_mut() {
+                if let Some(conn) = conns.get(&target.0) {
+                    signals.priority = crate::scoring::RawEvidence::Known(conn.priority);
+                }
+                // If no connection resolved, priority stays Unknown(Missing) from build_signals_snapshot.
+            }
+        }
+        snapshot
+    }
+
     /// Read quota series per connection under one deadline; unavailable or capped evidence stays eligible.
     async fn exhausted_connection_ids(
         &self,
         connections: &[&ProviderConnectionRoutingState],
-    ) -> std::collections::HashSet<ConnectionId> {
+    ) -> (
+        std::collections::HashSet<ConnectionId>,
+        std::collections::HashMap<ConnectionId, rook_core::QuotaObservation>,
+    ) {
         let mut exhausted = std::collections::HashSet::new();
+        let mut retained = std::collections::HashMap::new();
         let Some(reader) = self.quota_reader.as_ref() else {
-            return exhausted;
+            return (exhausted, retained);
         };
         if connections.is_empty() {
-            return exhausted;
+            return (exhausted, retained);
         }
 
         let mut queried_connections = std::collections::HashSet::new();
@@ -1188,6 +1342,21 @@ impl RouteRequest {
                     now,
                     &self.quota_policy,
                 );
+                if let rook_core::QuotaState::Available(evidence)
+                | rook_core::QuotaState::Exhausted(evidence) = &quota
+                {
+                    if let Some(observation) = observations.iter().find(|observation| {
+                        observation.connection_id == evidence.connection_id
+                            && observation.provider == evidence.provider
+                            && observation.metric == evidence.metric
+                            && observation.source == evidence.source
+                            && observation.scope == evidence.scope
+                            && observation.window == evidence.window
+                            && observation.observed_at == evidence.observed_at
+                    }) {
+                        retained.insert(connection.id, observation.clone());
+                    }
+                }
                 if quota.is_exhausted() {
                     exhausted.insert(connection.id);
                 }
@@ -1203,7 +1372,7 @@ impl RouteRequest {
                 "quota eligibility deadline reached; unread connections remain eligible"
             );
         }
-        exhausted
+        (exhausted, retained)
     }
 
     /// Exclude key-disallowed targets when at least one registered target is allowed.
@@ -1673,6 +1842,21 @@ impl RouteRequest {
                 &excluded,
                 eligibility.as_ref().map(|snapshot| &snapshot.result),
             );
+
+            // Build scoring snapshot from eligible candidates before selection.
+            let scoring_snapshot = self.build_scoring_snapshot(
+                req,
+                eligibility.as_ref().map(|snapshot| &snapshot.result),
+                &selection_excluded,
+                &eligibility
+                    .as_ref()
+                    .map(|snapshot| snapshot.quota_observations.clone())
+                    .unwrap_or_default(),
+                eligibility
+                    .as_ref()
+                    .map(|snapshot| &snapshot.connections_by_target),
+            );
+
             let provider = match self.router.select_excluding(req, &selection_excluded).await {
                 Ok(provider) => provider,
                 Err(error) => {
@@ -1680,6 +1864,25 @@ impl RouteRequest {
                 }
             };
             let provider_id = provider.id().clone();
+
+            // Build selection reason from the actual selected provider.
+            let selection_reason = scoring_snapshot.as_ref().and_then(|snapshot| {
+                let selected_target = TargetRef(provider_id.clone());
+                let method = self.router.selection_strategy();
+                let method = match method {
+                    rook_core::SelectionStrategy::Priority => SelectionMethod::Priority,
+                    rook_core::SelectionStrategy::RoundRobin => SelectionMethod::RoundRobin,
+                    rook_core::SelectionStrategy::WeightedRandom => SelectionMethod::WeightedRandom,
+                };
+                build_selection_reason(snapshot, &selected_target, method)
+            });
+            // Log selection reason for debugging and future telemetry (DALLAY-779).
+            if selection_reason.is_some() {
+                tracing::debug!(
+                    provider = %provider_id,
+                    "stream selection reason captured for provider"
+                );
+            }
             if !req.restrictions.allowed_providers.is_empty()
                 && !req.restrictions.allowed_providers.contains(&provider_id)
             {
@@ -1826,6 +2029,7 @@ impl RouteRequest {
                         connection_id,
                         upstream,
                         trial_permit,
+                        selection_reason,
                     });
                 }
                 AttemptOutcome::LocalBackpressure(error) => {

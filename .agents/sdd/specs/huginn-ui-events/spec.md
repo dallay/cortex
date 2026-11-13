@@ -1,105 +1,113 @@
-# huginn-ui-events — Especificación
+# huginn-ui-events — Specification
 
-## Propósito
+## Purpose
 
-Separar conversación y superficies UI durante emisión, proyección y recuperación.
-Esta capacidad es nueva; `proposal.md` prevalece sobre sugerencias de exploración.
+Separate conversation and UI surfaces during emission, projection, and
+recovery. This capability is new; `proposal.md` prevails over exploration
+suggestions.
 
 ## Requirements
 
-### Requirement: EVT-01 — Clasificación explícita antes de deduplicar
+### Requirement: EVT-01 — Explicit classification before deduplication
 
-El sistema MUST distinguir `Conversation`, `Overlay`, `Notification`, `Status`
-y `Diagnostic` mediante métodos explícitos por categoría, sin `notice` genérico
-ni clasificación por prefijos. Solamente `Conversation` MUST alimentar
-`conversation`. Ningún evento UI MUST convertirse en conversación por repetición,
-expiración de dedup o sincronización. Avisos y diagnósticos MUST ser observables
-en superficies no conversacionales, sin una capa de toasts.
+The system MUST distinguish `Conversation`, `Overlay`, `Notification`, `Status`
+and `Diagnostic` through explicit methods per category, without a generic
+`notice` nor classification by prefixes. Only `Conversation` MUST feed
+`conversation`. No UI event MUST become conversation through repetition, dedup
+expiry, or synchronization. Notices and diagnostics MUST be observable on
+non-conversational surfaces, without a toast layer.
 
-#### Scenario: EVT-01-A — QA de apertura y cierre sin contaminación
+#### Scenario: EVT-01-A — QA of opening and closing without contamination
 
-- GIVEN una conversación cuyo contenido y número de entradas se han registrado
-- WHEN se abre y cierra cada uno de `/help`, `/providers`, `/login`, `/model` y `/settings`, y se repite después de más de 2 segundos
-- THEN el contenido y número de entradas de conversación no cambian
-- AND ayuda, formularios, resultados UI y avisos se muestran fuera de conversación
-- AND estos comandos no se envían al modelo como prompts
+- GIVEN a conversation whose content and entry count have been recorded
+- WHEN each of `/help`, `/providers`, `/login`, `/model` and `/settings` is opened and closed, and repeated after more than 2 seconds
+- THEN the conversation content and entry count do not change
+- AND help, forms, UI results, and notices are shown outside the conversation
+- AND these commands are not sent to the model as prompts
 
-#### Scenario: EVT-01-B — Clasificación independiente del texto
+#### Scenario: EVT-01-B — Classification independent of the text
 
-- GIVEN el mismo texto emitido explícitamente como `Conversation`, `Notification`, `Status` y `Diagnostic`
-- WHEN se proyectan las cuatro emisiones
-- THEN solo la emisión `Conversation` se añade a conversación
-- AND los prefijos del texto no alteran la categoría
+- GIVEN the same text emitted explicitly as `Conversation`, `Notification`, `Status` and `Diagnostic`
+- WHEN the four emissions are projected
+- THEN only the `Conversation` emission is added to the conversation
+- AND the text prefixes do not alter the category
 
-### Requirement: EVT-02 — Conversación y persistencia conservadas
+### Requirement: EVT-02 — Conversation and persistence preserved
 
-El sistema MUST renombrar `committed` a `conversation` y conservar mensajes
-de usuario/agente y resultados relevantes de herramientas, incluidos errores
-de herramientas que constituyan resultados conversacionales. MUST NOT deduplicar
-mensajes conversacionales legítimos. El streaming y la sincronización MUST
-conservar orden, contenido y ausencia de duplicados por reproyección. El límite
-del buffer UI MUST NOT truncar la sesión persistida ni su recuperación.
+The system MUST rename `committed` to `conversation` and preserve user/agent
+messages and relevant tool results, including tool errors that constitute
+conversational results. It MUST NOT deduplicate legitimate conversational
+messages. Streaming and synchronization MUST preserve order, content, and the
+absence of duplicates caused by reprojection. The UI buffer limit MUST NOT
+truncate the persisted session nor its recovery.
 
-#### Scenario: EVT-02-A — Repetición legítima y streaming
+#### Scenario: EVT-02-A — Legitimate repetition and streaming
 
-- GIVEN dos mensajes legítimos idénticos en un intervalo inferior a 2 segundos y una respuesta en streaming
-- WHEN termina la respuesta y se sincroniza de nuevo la misma sesión
-- THEN permanecen ambos mensajes en orden y una sola respuesta completa
-- AND el resultado relevante de una herramienta permanece en conversación, no convertido en aviso UI
+- GIVEN two legitimate identical messages within an interval below 2 seconds and a streaming response
+- WHEN the response ends and the same session is synchronized again
+- THEN both messages remain in order and a single complete response
+- AND the relevant result of a tool remains in the conversation, not converted into a UI notice
 
-#### Scenario: EVT-02-B — Límite exacto y recuperación
+#### Scenario: EVT-02-B — Exact limit and recovery
 
-- GIVEN una sesión con más de 256 eventos persistidos y un buffer UI vacío
-- WHEN se incorporan 256 eventos retenibles y después uno más
-- THEN el buffer UI contiene exactamente 256 eventos, los más recientes en orden
-- AND el evento más antiguo sale únicamente del buffer UI
-- AND reabrir la sesión permite recuperar todos los mensajes y resultados persistidos, incluidos los anteriores al límite
+- GIVEN a session with more than 256 persisted events and an empty UI buffer
+- WHEN 256 retainable events are incorporated and then one more
+- THEN the UI buffer contains exactly 256 events, the most recent ones in order
+- AND the oldest event leaves only the UI buffer
+- AND reopening the session allows recovering all persisted messages and results, including those before the limit
 
-### Requirement: EVT-03 — Errores deduplicados por operación
+### Requirement: EVT-03 — Errors deduplicated per operation
 
-El sistema MUST deduplicar errores UI usando hash, igualdad del mensaje e identidad
-de operación. El hash solo MUST NOT determinar igualdad. Con reloj controlable,
-un error igual de la misma operación MUST suprimirse durante los 2 segundos
-posteriores a su última emisión visible; a los 2 segundos exactos MUST poder
-reaparecer. Suprimir MUST NOT prolongar esa ventana. Operaciones independientes
-MUST NOT suprimirse mutuamente; una nueva invocación MUST tener identidad distinta.
-Un error suprimido MUST NOT producir otro aviso equivalente en una superficie UI
-distinta. Esta regla MUST NOT eliminar resultados conversacionales.
+The system MUST deduplicate UI errors using the hash, the message equality, and
+the operation identity. The hash alone MUST NOT determine equality. With a
+controllable clock, an equal error of the same operation MUST be suppressed
+during the 2 seconds following its last visible emission; at exactly 2 seconds
+it MUST be able to reappear. Suppression MUST NOT extend that window.
+Independent operations MUST NOT suppress each other; a new invocation MUST have
+a distinct identity. A suppressed error MUST NOT produce another equivalent
+notice on a different UI surface. This rule MUST NOT remove conversational
+results.
 
-#### Scenario: EVT-03-A — Fronteras temporales sin esperas reales
+<!-- coderabbit-ai-generated:v1 -->
 
-- GIVEN un error visible de la operación A en t=0 y un reloj controlado
-- WHEN el mismo error de A llega en t=1,999 segundos y en t=2 segundos
-- THEN la primera repetición no genera una segunda presentación del error
-- AND la segunda se presenta una vez fuera de conversación
-- AND la repetición suprimida no ha desplazado el vencimiento
+<!-- coderabbit-ai-generated-section:v1:e39ffd7ce76aeebb2b39300e0bbeea81eb8006df5c8b9b60efd9a5f082ba1d92 -->
 
-#### Scenario: EVT-03-B — Operaciones distintas e intercaladas
+#### Scenario: EVT-03-A — Temporal boundaries without real waits
 
-- GIVEN un error M de A visible en t=0
-- WHEN en t=0,5 llega M de B y en t=1 llega M de A
-- THEN M de B se presenta porque B es independiente
-- AND M de A sigue suprimido aunque se haya intercalado B
+- GIVEN a visible error of operation A at t=0 and a controlled clock
+- WHEN the same error of A arrives at t=1.999 seconds and at t=2 seconds
+- THEN the first repetition does not generate a second presentation of the error
+- AND the second is presented once outside the conversation
+- AND the suppressed repetition has not shifted the expiry
 
-#### Scenario: EVT-03-C — Colisión y mensaje distinto
+#### Scenario: EVT-03-B — Distinct and interleaved operations
 
-- GIVEN dos mensajes distintos con el mismo hash dentro de una misma operación
-- WHEN ambos se emiten en menos de 2 segundos
-- THEN ambos se presentan, pues su contenido no es igual
+- GIVEN an error M of A visible at t=0
+- WHEN at t=0.5 M of B arrives and at t=1 M of A arrives
+- THEN M of B is presented because B is independent
+- AND M of A stays suppressed even though B was interleaved
 
-### Requirement: EVT-04 — Retención UI y dedup acotadas
+<!-- /coderabbit-ai-generated:v1 -->
 
-El buffer UI MUST retener como máximo 256 eventos y expulsar primero los más
-antiguos. El estado de dedup MUST tener un límite finito documentado de entradas
-y de tamaño retenido, liberar operaciones finalizadas y registros expirados,
-y no conservar secretos. Agotar ese límite MUST NOT ocultar errores nuevos:
-la expulsión MAY permitir mostrar de nuevo un error previamente visto.
-El límite concreto de dedup queda al diseño, no la obligación de acotarlo.
+#### Scenario: EVT-03-C — Collision and different message
 
-#### Scenario: EVT-04-A — Saturación y expiración
+- GIVEN two different messages with the same hash within the same operation
+- WHEN both are emitted in less than 2 seconds
+- THEN both are presented, because their content is not equal
 
-- GIVEN el límite documentado L de dedup y un reloj controlado
-- WHEN llegan errores de L+1 identidades y después expiran sus ventanas o finalizan sus operaciones
-- THEN la retención nunca supera el límite documentado
-- AND cada error nuevo sigue siendo observable
-- AND los registros expirados o finalizados se liberan sin alterar la sesión persistida
+### Requirement: EVT-04 — Bounded UI retention and dedup
+
+The UI buffer MUST retain at most 256 events and evict the oldest ones first.
+The dedup state MUST have a documented finite limit of entries and of retained
+size, release finished operations and expired records, and not keep secrets.
+Exhausting that limit MUST NOT hide new errors: the eviction MAY allow showing
+a previously seen error again. The concrete dedup limit is left to the design,
+not the obligation to bound it.
+
+#### Scenario: EVT-04-A — Saturation and expiry
+
+- GIVEN the documented dedup limit L and a controlled clock
+- WHEN errors from L+1 identities arrive and then their windows expire or their operations finish
+- THEN retention never exceeds the documented limit
+- AND every new error remains observable
+- AND expired or finished records are released without altering the persisted session

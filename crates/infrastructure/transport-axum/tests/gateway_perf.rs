@@ -37,7 +37,7 @@ use tower::ServiceExt;
 use transport_axum::authz::AuthzConfig;
 
 // ---------------------------------------------------------------------------
-// Instant provider — respuesta inmediata, aisla overhead del gateway
+// Instant provider — immediate response, isolates gateway overhead
 // ---------------------------------------------------------------------------
 
 struct InstantProvider {
@@ -573,7 +573,7 @@ async fn streaming_cancel_drops_in_flight() {
     assert_eq!(
         in_flight.load(Ordering::SeqCst),
         0,
-        "cancel no liberó in-flight tras drop del body SSE"
+        "cancel did not release in-flight requests after the SSE body drop"
     );
     println!("PERF cancel_ok in_flight=0 tras drop via gateway");
 }

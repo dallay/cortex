@@ -722,7 +722,7 @@ async fn tui_chat(
                 "{} {} [{}]",
                 entry.description,
                 entry.argument_hint,
-                if entry.project { "proyecto" } else { "usuario" }
+                if entry.project { "project" } else { "user" }
             ),
         )
     }));

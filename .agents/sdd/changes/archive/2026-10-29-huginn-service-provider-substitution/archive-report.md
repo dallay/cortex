@@ -1,29 +1,29 @@
-# Informe de archivo — `huginn-service-provider-substitution`
+# Archive Report — `huginn-service-provider-substitution`
 
-## Resultado
+## Result
 
-- **Fecha:** 2026-10-29.
-- **Modo:** `openspec`.
-- **Archivo:** `.agents/sdd/changes/archive/2026-10-29-huginn-service-provider-substitution/`.
-- **Spec sincronizado:** `.agents/sdd/specs/huginn-kernel/spec.md`.
-- **Aceptación del operador:** no afirmada.
+- **Date:** 2026-10-29.
+- **Mode:** `openspec`.
+- **Archive:** `.agents/sdd/changes/archive/2026-10-29-huginn-service-provider-substitution/`.
+- **Synced spec:** `.agents/sdd/specs/huginn-kernel/spec.md`.
+- **Operator acceptance:** not asserted.
 
-## Gate de aceptación evaluado antes del movimiento
+## Acceptance gate evaluated before the move
 
-- **Verify:** `PASS WITH WARNINGS` según el resultado vigente de `verify-report.md`. V-01 y V-02 están resueltos; no hay hallazgos CRITICAL/P0/P1 abiertos. Permanecen advertencias por el runner `fallback`, dos tests `ignored` dependientes del entorno y CI completa no ejecutada.
-- **QA:** `PASS WITH WARNINGS` según `qa-report.md`. QA-01 está resuelto con tests in-process de los builders runtime. QA-02 (sustitución desde una TUI ya abierta) está `NOT TESTED`, pero el informe la identifica como fuera de los escenarios de aceptación de la spec y no bloqueante. QA-03 es una advertencia P3 por la ausencia del runner QA. No hay hallazgos CRITICAL/P0/P1 abiertos ni escenarios `BLOCKED` o `NOT TESTED` relevantes para aceptación.
-- **Decisión:** gate satisfecho; se permite archivar conservando visibles las advertencias y la evidencia original.
+- **Verify:** `PASS WITH WARNINGS` according to the current result in `verify-report.md`. V-01 and V-02 are resolved; there are no open CRITICAL/P0/P1 findings. Warnings remain because of the `fallback` runner, two environment-dependent `ignored` tests, and full CI not being executed.
+- **QA:** `PASS WITH WARNINGS` according to `qa-report.md`. QA-01 is resolved with in-process tests of the runtime builders. QA-02 (substitution from an already open TUI) is `NOT TESTED`, but the report identifies it as outside the spec acceptance scenarios and non-blocking. QA-03 is a P3 warning due to the absence of the QA runner. There are no open CRITICAL/P0/P1 findings and no `BLOCKED` or `NOT TESTED` scenarios relevant to acceptance.
+- **Decision:** gate satisfied; archiving is allowed while keeping the warnings and the original evidence visible.
 
-## Spec sincronizado
+## Synced spec
 
-La spec del cambio declara `Type: New spec`. `.agents/sdd/specs/huginn-kernel/spec.md` no existía antes de la sincronización. Se creó como copia íntegra de `specs/huginn-kernel/spec.md`; no había requisitos previos que combinar o preservar. Se verificó que ambas copias fueran idénticas antes del movimiento.
+The change spec declares `Type: New spec`. `.agents/sdd/specs/huginn-kernel/spec.md` did not exist before the sync. It was created as a full copy of `specs/huginn-kernel/spec.md`; there were no prior requirements to merge or preserve. It was verified that both copies were identical before the move.
 
-## Estado y contenido archivado
+## State and archived content
 
-Antes de mover la carpeta, `state.yaml` se actualizó con `current_phase: archive`, la fase `archive` completada y `next: none`. La carpeta completa se conserva como rastro de auditoría, incluidos proposal, spec, design, tasks, apply-progress, verify report, QA report, state y este informe.
+Before moving the folder, `state.yaml` was updated with `current_phase: archive`, the `archive` phase completed, and `next: none`. The complete folder is kept as an audit trail, including proposal, spec, design, tasks, apply-progress, verify report, QA report, state, and this report.
 
-La configuración `.agents/sdd/config.yaml` confirma `artifact_store.mode: openspec` y no define reglas adicionales `rules.archive`.
+The configuration `.agents/sdd/config.yaml` confirms `artifact_store.mode: openspec` and defines no additional `rules.archive`.
 
-## Límites
+## Limits
 
-No se modificó código. No se ejecutó CI completa durante el archivado. No se hicieron commits, push ni publicación. Este cierre de ciclo SDD no representa aceptación del operador.
+No code was modified. Full CI was not executed during the archiving. No commits, pushes, or publications were made. This SDD cycle closure does not represent operator acceptance.

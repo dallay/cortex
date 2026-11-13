@@ -12,7 +12,7 @@ pub struct CortexError {
 }
 
 impl CortexError {
-    /// Permite recuperar contexto tipado sin acoplar el kernel a sus consumidores.
+    /// Allows recovering typed context without coupling the kernel to its consumers.
     pub fn downcast_ref<E: std::error::Error + 'static>(&self) -> Option<&E> {
         self.source.downcast_ref()
     }
@@ -69,6 +69,17 @@ impl CortexError {
         Self {
             source: Box::new(AllProvidersExhaustedError),
         }
+    }
+
+    /// Weighted routing configuration is invalid (length mismatch, negative weights, etc.).
+    pub fn weighted_config_error(msg: impl Into<String>) -> Self {
+        Self {
+            source: Box::new(WeightedConfigError(msg.into())),
+        }
+    }
+
+    pub fn is_weighted_config_error(&self) -> bool {
+        self.source.is::<WeightedConfigError>()
     }
 
     pub fn auth_failed(msg: impl Into<String>) -> Self {
@@ -320,6 +331,17 @@ impl fmt::Display for AllProvidersExhaustedError {
 }
 
 impl std::error::Error for AllProvidersExhaustedError {}
+
+#[derive(Debug)]
+pub struct WeightedConfigError(pub String);
+
+impl fmt::Display for WeightedConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "weighted routing configuration error: {}", self.0)
+    }
+}
+
+impl std::error::Error for WeightedConfigError {}
 
 #[derive(Debug)]
 pub struct AuthFailedError(pub String);

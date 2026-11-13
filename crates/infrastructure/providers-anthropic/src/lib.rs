@@ -342,7 +342,7 @@ fn normalize_tool_id(id: &providers_core::tool_id::ToolId, responses: bool) -> O
 fn deserialize_initial_input<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<serde_json::Value>, D::Error> {
-    // Distinguir input omitido de input:null para rechazar el segundo.
+    // Distinguish omitted input from input:null to reject the latter.
     serde_json::Value::deserialize(deserializer).map(Some)
 }
 

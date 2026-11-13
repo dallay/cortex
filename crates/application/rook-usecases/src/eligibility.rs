@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use shared_kernel::ProviderId;
 
 /// Stable identity of a provider target considered by routing.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct TargetRef(pub ProviderId);
 

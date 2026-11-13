@@ -614,6 +614,16 @@ pub struct CircuitStateSnapshot {
     pub rate_limit_reset: Option<u64>,
 }
 
+/// Selection strategy used by the router for explanation purposes.
+/// Mirrors the strategies available in `FallbackRouter`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SelectionStrategy {
+    Priority,
+    RoundRobin,
+    WeightedRandom,
+}
+
 // ============================================================================
 // Combo — multi-step fallback chains
 // ============================================================================

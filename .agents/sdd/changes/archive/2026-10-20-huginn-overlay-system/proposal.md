@@ -1,122 +1,123 @@
-# Propuesta: sistema de overlays de Huginn
+# Proposal: Huginn overlay system
 
-## Intención
+## Intent
 
-Separar las interacciones de la TUI de la conversación: ayuda, formularios,
-configuración y avisos no deben contaminar el historial. Unificar foco, render
-y cierre de overlays, conservando los flujos funcionales y las garantías de seguridad.
+Separate the TUI interactions from the conversation: help, forms,
+configuration and notices must not contaminate the history. Unify overlay
+focus, render and close, preserving the functional flows and the security guarantees.
 
-Esta propuesta fija las decisiones aprobadas y sustituye las sugerencias
-incompatibles de `exploration.md` (toasts, placeholders y dedup de conversación).
-El plan RPI referenciado allí no existe en la ruta indicada; no se presupone su contenido.
+This proposal fixes the approved decisions and replaces the incompatible
+suggestions from `exploration.md` (toasts, placeholders and conversation dedup).
+The RPI plan referenced there does not exist at the given path; its content is not presumed.
 
-## Alcance
+## Scope
 
-### Incluido: P0 + P1, un solo PR
+### Included: P0 + P1, a single PR
 
-- Enum de overlays en presentation: Settings, Provider, Login, ModelPicker,
-  Help, Confirm y Approval, además de alojar los diálogos/workflows existentes.
-  Settings absorbe `SettingsDialog`; Approval conserva su `oneshot` propio,
-  separado de las confirmaciones ordinarias.
-- Cinco categorías: Conversation, Overlay, Notification, Status y Diagnostic,
-  con métodos explícitos por categoría, sin `notice` genérico ni clasificación
-  por prefijos. Notifications y diagnostics usan superficies no conversacionales.
-- `CommandResult::Overlay(OverlayKind)` en plugin-api para solicitar overlays
-  permitidos del host, sin exponer a plugins la facultad de aprobar acciones.
-- Barra compacta siempre visible, también con overlay abierto; proveedor,
-  modelo y modo actualizados mediante `Event::ConnectionChanged` en core.
-- Renombrar `committed` a `conversation`; limitar el buffer de eventos de la
-  proyección UI a un `VecDeque` de 256 entradas, sin truncar la sesión persistida.
-- Deduplicar errores por hash de mensaje en ventana de 2 segundos, con reloj
-  inyectable, ámbito de operación y comprobación de igualdad ante colisiones.
-- Migrar consumidores, fixtures y pruebas junto al cambio; conservar providers,
-  login y model funcionales, persistencia de Settings, secretos y leases/paste.
+- Overlay enum in presentation: Settings, Provider, Login, ModelPicker,
+  Help, Confirm and Approval, plus hosting the existing dialogs/workflows.
+  Settings absorbs `SettingsDialog`; Approval keeps its own `oneshot`,
+  separate from the ordinary confirmations.
+- Five categories: Conversation, Overlay, Notification, Status and Diagnostic,
+  with explicit methods per category, without a generic `notice` nor classification
+  by prefixes. Notifications and diagnostics use non-conversational surfaces.
+- `CommandResult::Overlay(OverlayKind)` in plugin-api to request the overlays
+  allowed by the host, without giving plugins the ability to approve actions.
+- Compact bar always visible, also with an overlay open; provider,
+  model and mode updated through `Event::ConnectionChanged` in core.
+- Rename `committed` to `conversation`; limit the UI projection event buffer
+  to a `VecDeque` of 256 entries, without truncating the persisted session.
+- Deduplicate errors by message hash in a 2 second window, with an injectable
+  clock, operation scope and equality check on collisions.
+- Migrate consumers, fixtures and tests together with the change; keep providers,
+  login and model functional, Settings persistence, secrets and leases/paste.
 
-### Exclusiones
+### Exclusions
 
-- Toast layer, aplicación live del tema y onboarding P2.
-- Sustituir providers/login/model por placeholders, ampliar permisos de plugins
-  o cambiar contratos de persistencia/configuración sin necesidad de la migración.
-- Reabrir o modificar `settings-modal/state.yaml`, ni considerar sus gates cumplidos
-  por figurar como archived sin informes verify/qa.
+- Toast layer, live theme application and P2 onboarding.
+- Replace providers/login/model with placeholders, widen plugin permissions
+  or change persistence/configuration contracts without migration need.
+- Reopen or modify `settings-modal/state.yaml`, nor consider its gates met
+  for appearing as archived without verify/qa reports.
 
-## Capacidades
+## Capabilities
 
-- **Nuevas:** `huginn-overlays` (ciclo de vida, foco, comandos y Approval),
-  `huginn-ui-events` (categorías, historial y dedup), `huginn-status-bar`
-  (visibilidad y sincronización de conexión).
-- **Modificada:** `ui-settings`, para integrar Settings y sus avisos sin perder
-  working copy, apply/discard ni persistencia. `providers-ui` describe el dashboard
-  Rook, no estos flujos TUI; no se modifica por coincidencia de nombre.
+- **New:** `huginn-overlays` (lifecycle, focus, commands and Approval),
+  `huginn-ui-events` (categories, history and dedup), `huginn-status-bar`
+  (visibility and connection synchronization).
+- **Modified:** `ui-settings`, to integrate Settings and its notices without losing
+  working copy, apply/discard or persistence. `providers-ui` describes the Rook
+  dashboard, not these TUI flows; it is not modified because of a name coincidence.
 
-## Enfoque
+## Approach
 
-Migración strangler-fig: introducir las nuevas superficies, trasladar cada flujo
-con sus verificaciones y retirar los campos legacy solo al final. El host conserva
-la autoridad de Approval y revoca el foco al cerrar, reemplazar o cancelar overlays.
-El enrutamiento por categoría ocurre antes de deduplicar: una interacción UI nunca
-se convierte en conversación, tampoco al vencer la ventana. No se deduplican
-mensajes conversacionales legítimos ni se mezclan errores de operaciones independientes.
+Strangler-fig migration: introduce the new surfaces, move each flow
+with its verifications and remove the legacy fields only at the end. The host keeps
+the Approval authority and revokes focus when closing, replacing or cancelling overlays.
+Category routing happens before deduplication: a UI interaction never
+becomes conversation, not even when the window expires. Legitimate conversational
+messages are not deduplicated and errors from independent operations are not mixed.
 
-## Áreas afectadas
+## Affected areas
 
-- `crates/huginn/presentation/src/{state.rs,terminal.rs}`: proyección, historial,
-  input, snapshots y render; nuevos módulos de overlays, categorías y barra.
+- `crates/huginn/presentation/src/{state.rs,terminal.rs}`: projection, history,
+  input, snapshots and render; new overlay, category and bar modules.
 - `crates/huginn/presentation/src/{settings.rs,providers.rs,contributions.rs,workflow.rs}`:
-  adaptación de flujos reales y sus resultados.
-- `crates/huginn/plugin-api/src/v1.rs`: resultado declarativo de overlay.
-- `crates/huginn/core/src/lib.rs` y
-  `crates/huginn/application/src/connections.rs`: evento y publicación de selección.
-- `apps/huginn/src/` y consumidores de eventos: cableado inicial y compatibilidad.
-- `crates/huginn/presentation/tests/` y `apps/huginn/tests/providers_flow.rs`:
-  regresiones de historial, overlays, conexión, seguridad y PTY.
+  adaptation of the real flows and their results.
+- `crates/huginn/plugin-api/src/v1.rs`: declarative overlay result.
+- `crates/huginn/core/src/lib.rs` and
+  `crates/huginn/application/src/connections.rs`: selection event and publication.
+- `apps/huginn/src/` and event consumers: initial wiring and compatibility.
+- `crates/huginn/presentation/tests/` and `apps/huginn/tests/providers_flow.rs`:
+  history, overlay, connection, security and PTY regressions.
 
-## Riesgos y gaps técnicos
+## Risks and technical gaps
 
-- **Alto — foco/Approval:** evitar aprobaciones accidentales, respuestas tardías y
-  filtración de secretos al reemplazar overlays; cancelación/cierre/shutdown fail-closed.
-- **Medio — contrato incompleto:** `ConnectionChanged` aún no existe; design debe
-  concretar payload, emisor, snapshot inicial y orden frente a cambios asíncronos.
-- **Medio — dedup:** concretar identidad de operación, límite y expiración del estado
-  y anclaje temporal de la ventana; el hash no basta y su implementación queda a design,
-  sin imponer una dependencia nueva como fxhash.
-- **Medio — precedencia:** `ui-settings` REQ-12 contiene una cadena y un escenario de
-  plugin/Settings contradictorios; spec debe hacer coherente el contrato de reemplazo
-  sin cambiar la prioridad de Approval ni las garantías de foco.
-- **Alto — regresiones y revisión:** un PR P0+P1 puede exceder el presupuesto de revisión;
-  tasks debe estimarlo y dejar visible el riesgo, manteniendo la entrega única aprobada.
+- **High, focus/Approval:** avoid accidental approvals, late responses and
+  secret leakage when replacing overlays; cancellation/close/shutdown fail-closed.
+- **Medium, incomplete contract:** `ConnectionChanged` does not exist yet; design must
+  specify payload, emitter, initial snapshot and ordering against async changes.
+- **Medium, dedup:** specify operation identity, state limit and expiration
+  and the temporal anchoring of the window; the hash is not enough and its implementation
+  is left to design, without imposing a new dependency such as fxhash.
+- **Medium, precedence:** `ui-settings` REQ-12 contains a string and a contradictory
+  plugin/Settings scenario; spec must make the replacement contract consistent
+  without changing the Approval priority or the focus guarantees.
+- **High, regressions and review:** a P0+P1 PR can exceed the review budget;
+  tasks must estimate it and keep the risk visible, maintaining the approved single delivery.
 
 ## Rollback
 
-Revertir el PR P0+P1 completo, incluyendo plugin-api, evento core, consumidores y
-pruebas, para evitar contratos a medias. No requiere migración de datos: conservar
-sesiones, credenciales y `[ui]` existentes; nunca resetear la base de datos.
+Revert the complete P0+P1 PR, including plugin-api, the core event, consumers and
+tests, to avoid half-migrated contracts. It requires no data migration: keep
+the existing sessions, credentials and `[ui]`; never reset the database.
 
-## Dependencias y validación pendiente
+## Dependencies and pending validation
 
-Reutilizar Settings y los servicios de conexión existentes, sin dar por validado
-`settings-modal`: faltan informes verify/qa y no equivalen a un gate aprobado.
-Los próximos verify/qa deben aportar evidencia propia. El target `pty` está
-condicionado por `test-driver` y Unix; el bin `tui-fixture` no contiene esos tests.
-`--all-features` sí activa `test-driver`. No atribuir fallos a la base ni a flakiness
-sin comparación. Esta fase no ejecuta builds ni pruebas de runtime.
+Reuse Settings and the existing connection services, without taking
+`settings-modal` as validated: verify/qa reports are missing and they do not
+equal an approved gate. The next verify/qa must bring its own evidence. The `pty`
+target is conditioned by `test-driver` and Unix; the `tui-fixture` binary does not
+contain those tests. `--all-features` does activate `test-driver`. Do not attribute
+failures to the base or to flakiness without a comparison. This phase runs no builds
+nor runtime tests.
 
-## Criterios verificables de éxito
+## Verifiable success criteria
 
-- [ ] Abrir/cerrar ayuda, Settings y flujos providers/login/model no añade entradas
-  a conversación, incluso repitiendo la acción tras más de 2 segundos.
-- [ ] Mensajes de usuario/agente y resultados relevantes de herramientas siguen en
-  conversación; avisos, errores UI y diagnostics permanecen fuera.
-- [ ] Settings conserva apply/discard/errores de persistencia; providers/login/model
-  completan sus operaciones existentes sin placeholders.
-- [ ] Approval preempta otros overlays; cierre, cancelación, shutdown y callbacks
-  obsoletos no conceden permisos. Plugins no pueden crear ni resolver Approval.
-- [ ] Secretos no aparecen en historial/logs; input y paste obsoletos no cruzan leases.
-- [ ] Barra visible con y sin overlay refleja proveedor/modelo/modo al cambiar conexión.
-- [ ] Con reloj controlado, errores iguales de la misma operación se suprimen dentro
-  de 2 segundos y reaparecen fuera; operaciones distintas y colisiones no se suprimen.
-- [ ] La proyección conserva como máximo 256 eventos y elimina los más antiguos;
-  sincronización, streaming e historial persistido mantienen su comportamiento.
-- [ ] Se retiran campos legacy y se adaptan pruebas/fixtures al contrato nuevo;
-  los textos PTY pueden moverse a overlays, nunca permanecer en historial solo por un test.
-- [ ] Verify y QA propios documentan evidencia, fallos y casos no probados antes de archivar.
+- [ ] Opening/closing help, Settings and providers/login/model flows adds no entries
+  to the conversation, even when the action is repeated after more than 2 seconds.
+- [ ] User/agent messages and relevant tool results remain in the conversation;
+  notices, UI errors and diagnostics stay outside.
+- [ ] Settings preserves apply/discard/persistence errors; providers/login/model
+  complete their existing operations without placeholders.
+- [ ] Approval preempts other overlays; close, cancellation, shutdown and stale
+  callbacks do not grant permissions. Plugins cannot create or resolve Approval.
+- [ ] Secrets do not appear in history/logs; stale input and paste do not cross leases.
+- [ ] The bar visible with and without overlay reflects provider/model/mode when the connection changes.
+- [ ] With a controlled clock, equal errors from the same operation are suppressed within
+  2 seconds and reappear outside; distinct operations and collisions are not suppressed.
+- [ ] The projection keeps at most 256 events and drops the oldest ones;
+  synchronization, streaming and persisted history keep their behavior.
+- [ ] Legacy fields are removed and tests/fixtures are adapted to the new contract;
+  PTY texts may move to overlays, they never stay in the history just for a test.
+- [ ] Own Verify and QA document evidence, failures and untested cases before archiving.

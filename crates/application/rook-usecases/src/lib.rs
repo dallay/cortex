@@ -15,6 +15,7 @@ pub mod eligibility;
 pub mod route_request;
 pub mod route_selection;
 pub mod router_impl;
+pub mod scoring;
 pub mod spending_budget;
 
 pub use auth::{
@@ -41,6 +42,12 @@ pub use rook_core::{
 pub use route_request::RouteRequest;
 pub use route_selection::{classify_route, is_virtual_model, RouteError, RouteSelection};
 pub use router_impl::{FallbackRouter, RoutingStrategy};
+pub use scoring::{
+    all_components_unknown, build_score_components, build_selection_reason, build_signals_snapshot,
+    compare_candidates, CandidatePricing, CandidateScoreComponents, CandidateSignals, RawEvidence,
+    ScoreComponent, SelectionFallback, SelectionMethod, SelectionReason, SelectionResult,
+    SignalsSnapshot, UnknownReason,
+};
 
 pub mod authenticate_client_api;
 pub mod health_check;

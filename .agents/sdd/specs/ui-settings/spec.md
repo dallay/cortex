@@ -40,9 +40,9 @@ The system SHALL register a `/settings` command in the chat-mode `/`-completion 
 
 The system SHALL render a bordered modal with three regions:
 
-1. El encabezado de una línea SHALL mostrar las cinco pestañas (`theme`, `indicators`, `sound`, `toasts`, `integrations`) cuando quepan. Si no caben, SHALL mostrar la pestaña activa y su posición, por ejemplo `integrations (5/5)` en 20 columnas. La pestaña activa SHALL usar estilo invertido o subrayado.
+1. The one-line header SHALL show the five tabs (`theme`, `indicators`, `sound`, `toasts`, `integrations`) when they fit. If they do not fit, it SHALL show the active tab and its position, for example `integrations (5/5)` in 20 columns. The active tab SHALL use an inverted or underlined style.
 2. A body listing the items of the active tab in the format `▶ name ✓` where `▶` marks the currently selected item (one row per tab) and `✓` marks the working-copy value. Only rows whose value matches the working copy carry the `✓`; the selected row (the row with `▶`) MAY or MAY NOT carry `✓` (they are independent concerns).
-3. El diálogo SHALL indicar que Espacio modifica el valor, `↑/↓` mueve el cursor, `Tab` cambia de sección, Enter guarda y Esc descarta. Si las instrucciones no caben en una línea, SHALL distribuirlas en varias líneas sin ocultar la acción de Espacio en el viewport 20×8.
+3. The dialog SHALL indicate that Space modifies the value, `↑/↓` moves the cursor, `Tab` changes section, Enter saves, and Esc discards. If the instructions do not fit on one line, it SHALL spread them over several lines without hiding the Space action in the 20×8 viewport.
 
 #### Scenario: modal renders header body and footer
 
@@ -50,7 +50,7 @@ The system SHALL render a bordered modal with three regions:
 - **When** the next frame is drawn
 - **Then** the tab header shows `theme indicators sound toasts integrations` with `theme` highlighted
 - **And** the body lists all 13 themes as rows in the documented order with `▶ one-dark ✓` on the first row
-- **And** las instrucciones muestran Espacio para modificar el valor, además de selección, cambio de sección, guardado y descarte.
+- **And** the instructions show Space to modify the value, plus selection, section change, saving, and discard.
 
 ### REQ-03 — Tab navigation
 
@@ -140,9 +140,9 @@ The system SHALL render the following concrete items per tab. Each item's workin
 
 ### REQ-06 — Working copy
 
-Espacio SHALL modificar el valor de la fila seleccionada en la copia de trabajo:
-elige el tema, alterna un booleano o avanza un selector cíclico.
-Mover el cursor con `↑/↓` SHALL NOT modificar ese valor.
+Space SHALL modify the value of the selected row in the working copy: it
+chooses the theme, toggles a boolean, or advances a cyclic selector. Moving
+the cursor with `↑/↓` SHALL NOT modify that value.
 
 The system SHALL maintain a working copy of the values for every tab inside the dialog. Selection movements (`↑/↓`, `←/→` on cycle pickers, tab change) SHALL NOT persist to disk. The `✓` marker SHALL reflect the working copy, not the persisted `Config`. The working copy is committed only on Enter (REQ-07). The working copy is discarded on Esc (REQ-08).
 
@@ -157,86 +157,160 @@ The system SHALL maintain a working copy of the values for every tab inside the 
 
 ### REQ-07 — Apply on Enter
 
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:45798a3fb1cec6654e5d25b09115f18ff2cdd5aa5acc5f3ea30d98313da9459e -->
+
 Al pulsar Enter para aplicar, el sistema SHALL capturar la copia de trabajo en
-`UiConfig` e invocar una sola vez por Apply la función de persistencia inyectada
+`UiConfig` e invocar, solo tras superar la comprobación de revisión obsoleta,
+una sola vez por Apply aceptado la función de persistencia inyectada
 `Fn(&UiConfig) -> anyhow::Result<()>`, sin bloquear el input. Mientras ese Apply
 esté pendiente, Enter repetido SHALL NOT iniciar otra escritura. Los guardados
-SHALL serializarse para conservar su orden. En éxito SHALL actualizar el snapshot
-de preferencias guardadas para próximas aperturas; solo si el overlay y Apply
-siguen vigentes SHALL cerrar `Overlay::Settings` y mostrar `Settings saved` como
-`Notification` no conversacional. En fallo vigente SHALL mantenerlo abierto,
-conservar la copia enviada y mostrar el error en el cuerpo sin un segundo aviso
-equivalente. Un receipt tardío SHALL consumirse sin reabrir Settings, cerrar o
-modificar otro overlay, recuperar foco ni afectar Approval; un éxito tardío SHALL
-actualizar únicamente el snapshot guardado, no la copia editable de otro Settings
-ya abierto. Un fallo tardío SHALL NOT sustituir el snapshot guardado por valores
+SHALL serializarse para conservar su orden: una escritura serializada SHALL
+incluir procesar su receipt y publicar la revisión resultante guardada antes de
+que comience la siguiente escritura en cola. Un Apply en cola SHALL verificar
+contra esa revisión publicada y rechazar una copia de trabajo obsoleta sin
+invocar persistencia. En éxito SHALL actualizar el snapshot de preferencias
+guardadas para próximas aperturas; solo si el overlay y Apply siguen vigentes
+y no hubo nuevas ediciones durante el Apply pendiente
+SHALL cerrar `Overlay::Settings` y mostrar `Settings saved` como `Notification`
+no conversacional. Si hubo nuevas ediciones, SHALL mantener Settings abierto
+y conservarlas, conforme a SET-07-E.
+
+<!-- /coderabbit-ai-generated:v1 -->
+
+En fallo vigente SHALL mantenerlo abierto, conservar la copia
+enviada y mostrar el error en el cuerpo sin un segundo aviso equivalente. Un
+receipt tardío SHALL consumirse sin reabrir Settings, cerrar o modificar otro
+overlay, recuperar foco ni afectar Approval; un éxito tardío SHALL actualizar
+únicamente el snapshot guardado, no la copia editable de otro Settings ya
+abierto. Un fallo tardío SHALL NOT sustituir el snapshot guardado por valores
 fallidos. SHALL preservar la aplicación conjunta de todos los valores y los
 contratos TOML de REQ-09 a REQ-11; SHALL NOT aplicar tema live.
 
-Anteriormente: modal independiente con aviso de éxito; ahora integrado como overlay
-y con destino explícito no conversacional.
+<!-- coderabbit-ai-generated-section:v1:17ac322e423a66a5421da2a7614fba99186516a48de75a021180837a9058e97b -->
 
-#### Scenario: SET-07-A — Aplicación conjunta sin conversación
+When Enter is pressed for a non-stale Apply, the system SHALL capture the working copy into
+`UiConfig` and invoke the injected persistence function
+`Fn(&UiConfig) -> anyhow::Result<()>` exactly once per Apply, without blocking
+input. While that Apply is pending, repeated Enter SHALL NOT start another
+write. Editing SHALL remain available while Apply is pending; completion SHALL
+preserve any newer edits in the working copy. Saves SHALL be serialized to
+preserve their order. Each Settings instance SHALL track the saved snapshot
+revision on which its working copy is based. Before accepting Apply and again
+before starting its write, the system SHALL reject a copy whose base revision
+is stale, without invoking persistence, and show an error in the body while
+preserving its edits. Reopening Settings SHALL load the latest saved snapshot.
+On success it SHALL
+update the snapshot of saved preferences for later openings; only if the
+overlay and the Apply are still current and the working copy has no newer
+edits SHALL it close `Overlay::Settings` and
+show `Settings saved` as a non-conversational `Notification`. If the overlay and Apply are still current and newer edits
+exist, it SHALL keep Settings open without that notice, preserve those edits,
+and advance that instance's base revision to the successful saved snapshot so
+the next Apply can save them. On a current failure it SHALL keep it open, preserve the working copy including newer edits,
+and show the error in the body without a second equivalent notice. A late receipt SHALL be
+consumed without reopening Settings, closing or modifying another overlay,
+recovering focus, or affecting Approval; a late success SHALL update only the
+saved snapshot and its revision, not the editable copy or base revision of
+another Settings already open. A late
+failure SHALL NOT replace the saved snapshot with failed values. It SHALL
+preserve the joint application of all values and the TOML contracts of REQ-09
+to REQ-11; it SHALL NOT apply the live theme.
 
-- GIVEN `Settings` con tema `catppuccin` y valores modificados de indicators
-- WHEN se pulsa Enter y la persistencia tiene éxito
-- THEN se invoca exactamente una vez con todos los valores de la copia
-- AND se cierra el overlay y aparece `Settings saved` fuera de conversación
-- AND no hay escrituras parciales ni cambio live de tema
+<!-- /coderabbit-ai-generated:v1 -->
 
-#### Scenario: SET-07-B — Error mantiene abierto
+Previously: standalone modal with a success notice; now integrated as an overlay
+and with an explicit non-conversational destination.
 
-- GIVEN una copia modificada, un Apply vigente y persistencia que devuelve `disk full`
-- WHEN se pulsa Enter
-- THEN el overlay permanece abierto con la misma copia y error visible en el cuerpo
-- AND no aparece otra representación equivalente del error ni entrada conversacional
-- AND Esc sigue permitiendo descartar sin una nueva invocación de persistencia
+#### Scenario: SET-07-A — Joint application without conversation
 
-#### Scenario: SET-07-C — Apply pendiente no duplica y permite reintentar tras fallo
+- GIVEN `Settings` with theme `catppuccin` and modified indicators values
+- WHEN Enter is pressed and the persistence succeeds
+- THEN it is invoked exactly once with all values of the copy
+- AND the overlay closes and `Settings saved` appears outside the conversation
+- AND there are no partial writes nor a live theme change
 
-- GIVEN un Apply cuya persistencia controlada permanece pendiente
-- WHEN se pulsa Enter varias veces y después se completa con error
-- THEN solo se ha invocado una vez la persistencia y Settings conserva la copia enviada con el error
-- AND un nuevo Enter tras el fallo puede iniciar un único reintento
-- AND el éxito de ese reintento actualiza el snapshot para la siguiente apertura
+#### Scenario: SET-07-B — Error keeps it open
 
-#### Scenario: SET-07-D — Receipt tardío con otro Settings abierto
+- GIVEN a modified copy, a current Apply, and a persistence that returns `disk full`
+- WHEN Enter is pressed
+- THEN the overlay stays open with the same copy and the error visible in the body
+- AND no other equivalent representation of the error nor conversational entry appears
+- AND Esc still allows discarding without a new persistence invocation
 
-- GIVEN un Apply iniciado, su Settings cerrado y otro Settings abierto con su propia copia editable
-- WHEN llega el receipt anterior, con éxito y con error en casos separados
-- THEN el nuevo Settings conserva copia, foco y estado de su propia operación
-- AND el éxito actualiza el snapshot guardado que se usa en una apertura posterior
-- AND el error no reemplaza el snapshot guardado ni inserta un error en el nuevo Settings
+#### Scenario: SET-07-C — Pending Apply does not duplicate and allows a retry after a failure
+
+- GIVEN an Apply whose controlled persistence stays pending
+- WHEN Enter is pressed several times and then it completes with an error
+- THEN the persistence has been invoked only once and Settings keeps the submitted copy with the error
+- AND a new Enter after the failure can start a single retry
+- AND the success of that retry updates the snapshot for the next opening
+
+#### Scenario: SET-07-D — Late receipt with another Settings open
+
+- GIVEN a started Apply, its Settings closed, and another Settings open with its own editable copy
+- WHEN the earlier receipt arrives, with success and with error in separate cases
+- THEN the new Settings keeps the copy, focus, and state of its own operation
+- AND the success updates the saved snapshot used in a later opening
+- AND the error does not replace the saved snapshot nor insert an error in the new Settings
+
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:270a98dcded4de20dfbdae565def97750037c9fcffed3ce2caf4d2035db12468 -->
+
+#### Scenario: SET-07-E — Edits during Apply survive completion
+
+- GIVEN a current Apply with controlled persistence pending
+- WHEN the user changes the working copy after submission and the write succeeds
+- THEN the saved snapshot contains the submitted values
+- AND Settings stays open with the newer edits and without `Settings saved`
+- AND a subsequent Enter can apply those newer edits against the updated snapshot
+- AND in a separate failure case, Settings preserves the newer edits and shows the error in the body
+
+#### Scenario: SET-07-F — Late success makes another Settings copy stale
+
+- GIVEN a started Apply, its Settings closed, and another Settings opened before its receipt arrives
+- WHEN the earlier write succeeds and updates the saved snapshot
+- THEN the open Settings keeps its editable copy and original base revision
+- AND Enter is rejected with an error in the body and no persistence invocation
+- AND any Apply accepted before that receipt is rejected before its write starts if its base revision is now stale
+- AND reopening Settings loads the successful saved snapshot and allows Apply
 
 ### REQ-08 — Discard on Esc
 
-Al pulsar Esc fuera de un paste incompleto, el sistema SHALL cerrar
-`Overlay::Settings`, descartar su copia editable y revocar el lease sin cancelar
-el turno en curso. Antes de iniciar Apply SHALL mostrar `Settings discarded`
-como `Notification` no conversacional y SHALL NOT invocar persistencia ni modificar
-el archivo. Si Apply ya inició escritura, Esc SHALL NOT iniciar escritura adicional
-ni prometer rollback o que el archivo permanece intacto. El receipt del Apply
-iniciado SHALL seguir el contrato de REQ-07 sin reinstalar el overlay ni su foco.
+<!-- /coderabbit-ai-generated:v1 -->
 
-Anteriormente: descarte de modal y aviso; ahora cierre con revocación de foco y
-clasificación explícita, conservando REQ-13.
+When Esc is pressed outside an incomplete paste, the system SHALL close
+`Overlay::Settings`, discard its editable copy, and revoke the lease without
+canceling the current turn. Before starting an Apply it SHALL show
+`Settings discarded` as a non-conversational `Notification` and SHALL NOT
+invoke persistence nor modify the file. If the Apply already started a write,
+Esc SHALL NOT start an additional write nor promise a rollback or that the
+file stays intact. The receipt of the started Apply SHALL still follow the
+REQ-07 contract without reinstalling the overlay or its focus.
 
-#### Scenario: SET-08-A — Descarte durante streaming
+Previously: modal discard and notice; now a close with focus revocation and
+explicit classification, preserving REQ-13.
 
-- GIVEN `Settings` con cambios sin guardar, sin Apply iniciado y un turno en streaming
-- WHEN se pulsa Esc
-- THEN se cierra sin persistir y el archivo conserva sus bytes
-- AND el turno continúa y la tecla no llega al editor ni al cancelador del turno
-- AND `Settings discarded` se muestra fuera de conversación
+#### Scenario: SET-08-A — Discard during streaming
 
-#### Scenario: SET-08-B — Esc durante escritura iniciada
+- GIVEN `Settings` with unsaved changes, no Apply started, and a turn streaming
+- WHEN Esc is pressed
+- THEN it closes without persisting and the file keeps its bytes
+- AND the turn continues and the key does not reach the editor nor the turn canceler
+- AND `Settings discarded` is shown outside the conversation
 
-- GIVEN un Apply cuya escritura ha iniciado y está detenida por una barrera controlada, con un turno en streaming
-- WHEN se pulsa Esc y después se libera la escritura con éxito o fallo, en casos separados
-- THEN Settings se cierra inmediatamente, revoca su lease y no cancela el turno
-- AND la persistencia se ha invocado solo una vez, sin escritura de descarte ni rollback prometido
-- AND el receipt no reabre Settings ni recupera foco ni añade conversación
-- AND en éxito la siguiente apertura posterior al receipt usa el snapshot guardado; en fallo conserva el snapshot previo
+#### Scenario: SET-08-B — Esc during a started write
+
+- GIVEN an Apply whose write has started and is stopped by a controlled barrier, with a turn streaming
+- WHEN Esc is pressed and then the write is released with success or failure, in separate cases
+- THEN Settings closes immediately, revokes its lease, and does not cancel the turn
+- AND the persistence has been invoked only once, with no discard write and no promised rollback
+- AND the receipt does not reopen Settings nor recover focus nor add conversation
+- AND on success the next opening after the receipt uses the saved snapshot; on failure it keeps the previous snapshot
 
 ### REQ-09 — TOML round-trip
 
@@ -317,51 +391,53 @@ The system SHALL NOT reject `Config::load` when a user has added unknown keys in
 
 ### REQ-12 — Modal precedence
 
-El sistema SHALL usar `Approval > overlay ordinario activo > completion`.
-`Settings`, diálogos de plugin y workflows SHALL ser overlays ordinarios, no
-slots con prioridades simultáneas. Una nueva solicitud ordinaria autorizada y
-vigente SHALL reemplazar el overlay ordinario actual; la rechazada o revocada
-SHALL NOT hacerlo. Reemplazar Settings SHALL descartar su copia editable y
-revocar el lease; antes de iniciar Apply SHALL NOT escribir. Si la escritura ya
-inició, reemplazar SHALL NOT iniciar otra ni garantizar rollback, y su receipt
-SHALL cumplir REQ-07 sin alterar el overlay sustituto. Approval SHALL preemptar Settings y cualquier otro overlay;
-ningún overlay ordinario SHALL reemplazar Approval pendiente. Al resolver o
-cerrar Approval, Settings SHALL NOT restaurarse automáticamente.
+The system SHALL use `Approval > active ordinary overlay > completion`.
+`Settings`, plugin dialogs, and workflows SHALL be ordinary overlays, not slots
+with simultaneous priorities. A new authorized and current ordinary request
+SHALL replace the current ordinary overlay; a rejected or revoked one SHALL NOT
+do so. Replacing Settings SHALL discard its editable copy and revoke the lease;
+before starting an Apply it SHALL NOT write. If the write already started,
+replacing SHALL NOT start another one nor guarantee a rollback, and its receipt
+SHALL comply with REQ-07 without altering the substitute overlay. Approval SHALL
+preempt Settings and any other overlay; no ordinary overlay SHALL replace a
+pending Approval. When resolving or closing Approval, Settings SHALL NOT be
+restored automatically.
 
-Anteriormente: la cadena `Modal > Settings > PluginDialog > completion`
-contradecía el escenario que reemplazaba Settings por un diálogo de plugin.
-Esta sustitución conserva ese reemplazo autorizado sin rebajar Approval.
+Previously: the chain `Modal > Settings > PluginDialog > completion`
+contradicted the scenario that replaced Settings with a plugin dialog. This
+substitution preserves that authorized replacement without downgrading
+Approval.
 
-#### Scenario: SET-12-A — Approval preempta Settings
+#### Scenario: SET-12-A — Approval preempts Settings
 
-- GIVEN `Settings` abierto en `sound` con cambios sin guardar y sin Apply iniciado
-- WHEN el host solicita Approval para una herramienta
-- THEN se descarta Settings sin persistir y Approval ocupa el foco y render
-- AND al resolver Approval no reaparece Settings
+- GIVEN `Settings` open on `sound` with unsaved changes and no Apply started
+- WHEN the host requests Approval for a tool
+- THEN Settings is discarded without persisting and Approval takes the focus and render
+- AND when Approval is resolved, Settings does not reappear
 
-#### Scenario: SET-12-B — Diálogo autorizado reemplaza Settings
+#### Scenario: SET-12-B — Authorized dialog replaces Settings
 
-- GIVEN `Settings` abierto en `theme` sin Apply iniciado
-- WHEN un comando vigente autorizado devuelve un resultado `Dialog`
-- THEN se descarta Settings sin persistir y se renderiza el diálogo del plugin
-- AND entrada capturada bajo el lease anterior no llega al nuevo diálogo
+- GIVEN `Settings` open on `theme` with no Apply started
+- WHEN a current authorized command returns a `Dialog` result
+- THEN Settings is discarded without persisting and the plugin dialog is rendered
+- AND input captured under the previous lease does not reach the new dialog
 
-#### Scenario: SET-12-C — Solicitud rechazada no reemplaza
+#### Scenario: SET-12-C — Rejected request does not replace
 
-- GIVEN `Settings` abierto con una copia modificada, o Approval pendiente en otro caso
-- WHEN llega una solicitud ordinaria revocada, o una ordinaria mientras Approval está pendiente, respectivamente
-- THEN el overlay vigente conserva foco y contenido
-- AND la solicitud rechazada no inicia un guardado ni concede permiso, aunque un Apply anterior pueda completar su escritura
+- GIVEN `Settings` open with a modified copy, or a pending Approval in another case
+- WHEN a revoked ordinary request arrives, or an ordinary one while Approval is pending, respectively
+- THEN the current overlay keeps focus and content
+- AND the rejected request starts no save nor grants permission, even if an earlier Apply may complete its write
 
-#### Scenario: SET-12-D — Approval durante Apply y receipt tardío
+#### Scenario: SET-12-D — Approval during Apply and late receipt
 
-- GIVEN un Apply con escritura ya iniciada y pendiente bajo una barrera controlada
-- WHEN el host abre Approval y después llega el receipt con éxito o error, en casos separados
-- THEN Approval preempta inmediatamente Settings y revoca su lease sin iniciar otra escritura
-- AND el receipt no cierra, resuelve ni modifica Approval y no restaura Settings ni su foco
-- AND solo una aceptación explícita válida de Approval puede conceder permiso
-- AND el éxito actualiza el snapshot guardado para reapertura posterior; el error conserva el previo
-- AND ninguna cancelación afirma deshacer la escritura iniciada ni publica la copia como conversación
+- GIVEN an Apply with a write already started and pending under a controlled barrier
+- WHEN the host opens Approval and then the receipt arrives with success or error, in separate cases
+- THEN Approval immediately preempts Settings and revokes its lease without starting another write
+- AND the receipt does not close, resolve, or modify Approval and does not restore Settings nor its focus
+- AND only a valid explicit acceptance of Approval can grant permission
+- AND the success updates the saved snapshot for a later reopening; the error keeps the previous one
+- AND no cancellation asserts undoing the started write nor publishes the copy as conversation
 
 ### REQ-13 — `Esc` never cancels an in-flight turn
 

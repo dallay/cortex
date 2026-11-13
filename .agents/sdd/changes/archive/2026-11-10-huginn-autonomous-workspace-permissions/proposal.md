@@ -6,93 +6,93 @@
 
 <!-- coderabbit-ai-generated-section:v1:ed99815a5a04bdfc399ca33e91dc7bbf3a7b98f24938392e93bdb6bbb96d9bca -->
 
-# Propuesta: Permisos autónomos de espacio de trabajo para Huginn
+# Proposal: Autonomous workspace permissions for Huginn
 
-## Intención
+## Intent
 
-Implementar en macOS una frontera de sistema operativo para los comandos de shell de Huginn, siguiendo el patrón técnico de Codex: perfil Seatbelt SBPL generado dinámicamente, política de denegación predeterminada y ejecución del shell real dentro de `/usr/bin/sandbox-exec`, con confinamiento heredado por sus procesos descendientes. La referencia adopta el mecanismo de sandbox; no adopta toda la política de escalation de Codex.
+Implement on macOS an operating system boundary for Huginn shell commands, following the Codex technical pattern: a dynamically generated Seatbelt SBPL profile, a default-deny policy and execution of the real shell inside `/usr/bin/sandbox-exec`, with confinement inherited by its descendant processes. The reference adopts the sandbox mechanism; it does not adopt the whole Codex escalation policy.
 
-Apple depreca `sandbox-exec` y las interfaces Seatbelt relacionadas. La implementación debe comunicar esta limitación, fallar de forma cerrada y no afirmar compatibilidad con otros sistemas operativos.
+Apple deprecates `sandbox-exec` and the related Seatbelt interfaces. The implementation must communicate this limitation, fail closed and not claim compatibility with other operating systems.
 
-## Alcance
+## Scope
 
-### Incluido
+### Included
 
-- Implementar un backend de sandbox solo para macOS, basado en SBPL dinámico y el ejecutable absoluto `/usr/bin/sandbox-exec`, aplicado a `/bin/sh -c` y sus descendientes.
-- Mantener el sandbox activo por defecto en macOS, con `(deny default)`, permisos mínimos demostrados, escritura acotada al workspace, lectura del workspace y excepciones de runtime bajo `/bin` y `/usr/lib`, metadatos del padre inmediato del workspace y acceso de red denegado.
-- Separar el confinamiento técnico de la política de aprobación. Una aprobación ordinaria autoriza una operación según la política; no elimina ni amplía la frontera del sistema operativo.
-- Si falla la preparación, validación, instalación del perfil o el launcher, no ejecutar el comando. Informar un error al usuario; no reintentar fuera del sandbox.
-- Mantener las concesiones persistentes desactivadas y no crear, cargar ni honrar un registro de grants persistentes. Los grants de sesión de `HostPolicy` permanecen solo en memoria, vinculados a la sesión, acción y ruta canónica exactas para `native.write_file` y `native.edit_file` con procedencia nativa y recurso no sensible; no amplían el sandbox de shell.
-- Preservar las decisiones vigentes sobre resolución de política y alcance de operaciones: las restricciones administradas prevalecen y solo restringen; la confianza del proyecto no amplía permisos; `Deny` y `Allow once` conservan su alcance; no se añaden modos YOLO, Exit ni acceso total.
-- Preservar el ciclo de vida actual de ejecución, incluyendo entorno seleccionado, directorio de trabajo, entrada/salida, cancelación y timeout. Para las salidas controladas, realizar cleanup explícito y propagar su error; ante terminación abrupta o cancelación por `drop`, usar `Drop` como intento de mejor esfuerzo, sin prometer que los recursos se eliminen.
-- Documentar la deprecación de Apple, los límites del sandbox y la posibilidad de que algunos comandos existentes fallen.
+- Implement a sandbox backend for macOS only, based on dynamic SBPL and the absolute executable `/usr/bin/sandbox-exec`, applied to `/bin/sh -c` and its descendants.
+- Keep the sandbox active by default on macOS, with `(deny default)`, demonstrated minimum permissions, writes limited to the workspace, workspace reads and runtime exceptions under `/bin` and `/usr/lib`, metadata of the immediate parent of the workspace and network access denied.
+- Separate the technical confinement from the approval policy. An ordinary approval authorizes an operation according to the policy; it does not remove or widen the operating system boundary.
+- If preparation, validation, profile installation or the launcher fails, do not run the command. Report an error to the user; do not retry outside the sandbox.
+- Keep persistent grants disabled and do not create, load or honor a persistent grants registry. The session grants of `HostPolicy` remain only in memory, bound to the exact session, action and canonical path for `native.write_file` and `native.edit_file` with native provenance and non-sensitive resource; they do not widen the shell sandbox.
+- Preserve the current decisions on policy resolution and operation scope: managed restrictions prevail and only restrict; project trust does not widen permissions; `Deny` and `Allow once` keep their scope; no YOLO, Exit or total access modes are added.
+- Preserve the current execution lifecycle, including selected environment, working directory, input/output, cancellation and timeout. For controlled exits, perform explicit cleanup and propagate its error; on abrupt termination or cancellation by `drop`, use `Drop` as a best-effort attempt, without promising that resources are removed.
+- Document the Apple deprecation, the sandbox limits and the possibility that some existing commands fail.
 
-### Excluido
+### Excluded
 
-- Cualquier ejecución de shell sin sandbox, modo opt-out, configuración `sandbox = false` o bypass del launcher. En macOS, `run_shell` siempre debe ejecutarse bajo sandbox; si no es posible, debe fallar sin ejecutar.
-- Cualquier escalación de permisos o elevación fuera del sandbox. Una aprobación ordinaria de `HostPolicy` no constituye consentimiento para retirar el confinamiento. Cualquier elevación futura requiere un cambio separado con contrato explícito de consentimiento, identidad de operación, explicación del riesgo y razón obligatoria.
-- Copiar la política completa de escalation de Codex. Este cambio copia solo el mecanismo técnico Seatbelt y no importa sus flujos de consentimiento, excepciones o permisos amplios.
-- Linux y Windows, sus backends de aislamiento y cualquier afirmación de paridad entre plataformas.
-- Acceso de red, sockets o excepciones de proxy dentro del sandbox.
-- Grants persistentes, almacenamiento o interfaz de gestión de grants. El verificador de restricciones administradas sigue siendo requisito independiente para cualquier propuesta futura de grants.
-- Permisos amplios de Codex sin necesidad demostrada; App Sandbox firmado, helpers, bookmarks, empaquetado o firma. El POC de App Sandbox anterior no constituye evidencia de aislamiento.
-- Afirmar que el sandbox protege operaciones nativas, llamadas MCP u otros efectos fuera de la ejecución de shell cubierta por este cambio.
+- Any shell execution without a sandbox, opt-out mode, `sandbox = false` configuration or launcher bypass. On macOS, `run_shell` must always run under the sandbox; if that is not possible, it must fail without executing.
+- Any permission escalation or elevation outside the sandbox. An ordinary `HostPolicy` approval does not constitute consent to remove the confinement. Any future elevation requires a separate change with an explicit consent contract, operation identity, risk explanation and mandatory rationale.
+- Copying the full Codex escalation policy. This change copies only the technical Seatbelt mechanism and does not import its consent flows, exceptions or broad permissions.
+- Linux and Windows, their isolation backends and any claim of parity between platforms.
+- Network access, sockets or proxy exceptions inside the sandbox.
+- Persistent grants, grants storage or a grants management interface. The managed-restrictions verifier remains an independent requirement for any future grants proposal.
+- Broad Codex permissions without demonstrated need; signed App Sandbox, helpers, bookmarks, packaging or signing. The earlier App Sandbox POC is not isolation evidence.
+- Claiming that the sandbox protects native operations, MCP calls or other effects outside the shell execution covered by this change.
 
-## Enfoque
+## Approach
 
-Envolver el shell existente en el launcher fijo `/usr/bin/sandbox-exec` y generar una política SBPL segura a partir de rutas normalizadas y validadas. La generación debe tratar cada ruta como entrada no confiable, escapar correctamente la sintaxis SBPL y evitar que rutas con metacaracteres, enlaces simbólicos o condiciones de carrera amplíen permisos. No se interpolarán rutas del usuario en texto de shell. El cleanup explícito de las salidas controladas debe propagar errores observables; un `Drop` durante terminación abrupta o cancelación es solo un intento de mejor esfuerzo y no garantiza la eliminación. El error de cierre de `std::fs::File` no es observable mediante APIs safe y no constituye un criterio de verificación independiente.
+Wrap the existing shell in the fixed launcher `/usr/bin/sandbox-exec` and generate a safe SBPL policy from normalized and validated paths. The generation must treat each path as untrusted input, escape SBPL syntax correctly and prevent paths with metacharacters, symbolic links or race conditions from widening permissions. User paths are not interpolated into shell text. Explicit cleanup of controlled exits must propagate observable errors; a `Drop` during abrupt termination or cancellation is only a best-effort attempt and does not guarantee removal. The close error of `std::fs::File` is not observable through safe APIs and does not constitute an independent verification criterion.
 
-El perfil partirá de `(deny default)`. Solo incluirá los permisos mínimos demostrados para iniciar `/bin/sh`, ejecutar y mantener sus descendientes confinados, leer los componentes requeridos del sistema y acceder al workspace. La red permanecerá denegada. No se añadirán permisos generales para directorios temporales, preferencias, aplicaciones, proxies o servicios opcionales sin evidencia.
+The profile starts from `(deny default)`. It only includes the minimum permissions demonstrated to start `/bin/sh`, run and keep its descendants confined, read the required system components and access the workspace. Network stays denied. No general permissions are added for temporary directories, preferences, applications, proxies or optional services without evidence.
 
-El sandbox estará activo por defecto en macOS y no habrá opt-out ni fallback sin sandbox en este cambio. Si falla la configuración, generación, validación o aplicación del perfil, o no está disponible el launcher, Huginn no ejecutará el comando y mostrará un error. La aprobación ordinaria de shell no autoriza una ejecución sin confinamiento. Cualquier elevación fuera del sandbox requiere un cambio separado que defina un contrato de consentimiento específico. En sistemas distintos de macOS, este cambio no declara ni implementa aislamiento de shell.
+The sandbox is active by default on macOS and there is no opt-out nor sandbox-free fallback in this change. If configuration, generation, validation or profile application fails, or the launcher is unavailable, Huginn will not run the command and will show an error. Ordinary shell approval does not authorize execution without confinement. Any elevation outside the sandbox requires a separate change that defines a specific consent contract. On systems other than macOS, this change neither declares nor implements shell isolation.
 
-La validación incluirá pruebas adversariales en macOS: acceso permitido al workspace; denegación de credenciales, otros workspaces, rutas externas y red; confinamiento de descendientes; tratamiento seguro de rutas especiales; error sin ejecución cuando falle el perfil o launcher; y cancelación/timeout con cleanup explícito y propagación de errores cuando la salida sea controlada. Para terminación abrupta o cancelación por `drop`, se verificará únicamente el intento de mejor esfuerzo; no se afirmará garantía de eliminación ni de éxito ante fallos del sistema operativo. La matriz de versiones principales de macOS informará resultados observados, sin implicar respaldo de Apple.
+Validation includes adversarial tests on macOS: allowed workspace access; denial of credentials, other workspaces, external paths and network; descendant confinement; safe handling of special paths; error without execution when the profile or launcher fails; and cancellation/timeout with explicit cleanup and error propagation when the exit is controlled. For abrupt termination or cancellation by `drop`, only the best-effort attempt is verified; no removal guarantee is claimed for operating system failures. The matrix of major macOS versions reports observed results, without implying Apple endorsement.
 
-## Áreas afectadas
+## Affected areas
 
-| Área                                                                    | Impacto              | Descripción                                                                                                 |
+| Area                                                                    | Impact              | Description                                                                                                 |
 |-------------------------------------------------------------------------|----------------------|-------------------------------------------------------------------------------------------------------------|
-| `crates/huginn/runtime/src/tools.rs`                                    | Modificada           | Envolver la ejecución real de shell, preservar ciclo de vida y fallar cerradamente.                         |
-| `crates/huginn/runtime/`                                                | Modificada           | Generación segura de política y pruebas de unidad, integración y adversariales en macOS.                    |
-| `docs/huginn/README.md`, `docs/huginn/architecture.md` y ADR pertinente | Modificada           | Explicar límites, deprecación, default, impacto de compatibilidad y alcance de plataforma.                  |
-| `.github/workflows/ci.yml`                                              | Posible modificación | Incorporar pruebas macOS a una ruta bloqueante adecuada; definirlo en diseño y tareas.                      |
-| `.agents/sdd/changes/huginn-autonomous-workspace-permissions/`          | Actualizada          | Alinear la propuesta con fail-closed y dejar cualquier elevación fuera del sandbox para un cambio separado. |
+| `crates/huginn/runtime/src/tools.rs`                                    | Modified            | Wrap the real shell execution, preserve the lifecycle and fail closed.                                      |
+| `crates/huginn/runtime/`                                                | Modified            | Safe policy generation and unit, integration and adversarial tests on macOS.                                |
+| `docs/huginn/README.md`, `docs/huginn/architecture.md` and relevant ADR  | Modified            | Explain limits, deprecation, default, compatibility impact and platform scope.                             |
+| `.github/workflows/ci.yml`                                              | Possible modification | Bring macOS tests into a suitable blocking path; define it in design and tasks.                             |
+| `.agents/sdd/changes/huginn-autonomous-workspace-permissions/`          | Updated             | Align the proposal with fail-closed and leave any elevation outside the sandbox for a separate change.      |
 
-## Impacto de compatibilidad
+## Compatibility impact
 
-El default activo en macOS es un cambio intencional de comportamiento. Los comandos que lean o escriban fuera del workspace, usen red o sockets, dependan de servicios no permitidos o requieran rutas no incluidas pueden fallar y mostrar un error. No se ofrece una exclusión para recuperar compatibilidad mediante ejecución sin sandbox. La disponibilidad y el comportamiento de `sandbox-exec` pueden variar o desaparecer en futuras versiones de macOS. Linux y Windows mantienen su comportamiento actual y quedan fuera del alcance; esto no afirma que esos sistemas estén aislados.
+The active default on macOS is an intentional behavior change. Commands that read or write outside the workspace, use network or sockets, depend on disallowed services or require paths that are not included can fail and show an error. No exclusion is offered to recover compatibility through sandbox-free execution. The availability and behavior of `sandbox-exec` can vary or disappear in future macOS versions. Linux and Windows keep their current behavior and are out of scope; this does not claim that those systems are isolated.
 
-## Riesgos
+## Risks
 
-| Riesgo                                                                                                                                                          | Probabilidad | Mitigación                                                                                                                                                                           |
+| Risk                                                                                                                                                          | Probability | Mitigation                                                                                                                                                                           |
 |-----------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Apple cambia o elimina una interfaz deprecada.                                                                                                                  | Alta         | Probar versiones macOS objetivo, informar errores y no habilitar fallback no confinado.                                                                                              |
-| El sandbox bloquea comandos válidos por el perfil mínimo.                                                                                                       | Alta         | Documentar el impacto, probar herramientas representativas y devolver errores accionables; no permitir opt-out en este cambio.                                                       |
-| Un error en generación o escape de SBPL amplía permisos.                                                                                                        | Media        | Generador pequeño y testeable, entradas validadas, pruebas adversariales y denegación predeterminada.                                                                                |
-| Carreras de rutas, enlaces simbólicos o descriptores heredados eluden el confinamiento esperado.                                                                | Media        | Normalización segura, revisión y pruebas de rutas, enlaces, descriptores y descendientes; no afirmar garantías no verificadas.                                                       |
-| El wrapper altera timeout, cancelación o señales al grupo de procesos; el cleanup puede no completarse ante terminación abrupta o fallos del sistema operativo. | Media        | Probar salidas controladas y propagación de errores observables; tratar `Drop` como mejor esfuerzo, sin prometer eliminación ante cancelación abrupta o fallo del sistema operativo. |
-| El default activo afecta a usuarios actuales de macOS.                                                                                                          | Alta         | Tratarlo como cambio de compatibilidad explícito y proporcionar errores claros; no ejecutar fuera del sandbox.                                                                       |
+| Apple changes or removes a deprecated interface.                                                                                                                 | High         | Test target macOS versions, report errors and do not enable an unconfined fallback.                                                                                              |
+| The sandbox blocks valid commands because of the minimum profile.                                                                                               | High         | Document the impact, test representative tools and return actionable errors; do not allow an opt-out in this change.                                                       |
+| An error in SBPL generation or escaping widens permissions.                                                                                                    | Medium       | Small and testable generator, validated inputs, adversarial tests and default deny.                                                                                |
+| Path races, symbolic links or inherited descriptors elude the expected confinement.                                                                               | Medium       | Safe normalization, review and tests of paths, links, descriptors and descendants; do not claim unverified guarantees.                                                       |
+| The wrapper alters timeout, cancellation or signals to the process group; cleanup may not complete on abrupt termination or operating system failures. | Medium       | Test controlled exits and observable error propagation; treat `Drop` as best effort, without promising removal on abrupt cancellation or operating system failure. |
+| The active default affects current macOS users.                                                                                                                | High         | Treat it as an explicit compatibility change and provide clear errors; do not run outside the sandbox.                                                                       |
 
-## Plan de reversión
+## Rollback plan
 
-Si la matriz de macOS, las pruebas adversariales o la confiabilidad de la interfaz deprecada no cumplen los criterios, detener el lanzamiento y mantener los comandos sin ejecutar bajo este cambio (fail-closed), sin fallback automático. Una reversión posterior puede retirar el backend en un cambio explícito; no debe convertir silenciosamente el default en ejecución sin sandbox. No hay grants persistentes que migrar o revertir.
+If the macOS matrix, the adversarial tests or the reliability of the deprecated interface do not meet the criteria, stop the launch and keep commands unexecuted under this change (fail-closed), without automatic fallback. A later rollback can remove the backend in an explicit change; it must not silently turn the default into sandbox-free execution. There are no persistent grants to migrate or roll back.
 
-## Dependencias
+## Dependencies
 
-- macOS con `/usr/bin/sandbox-exec` disponible para desarrollo y pruebas; su ausencia produce error y no ejecución.
-- Acceso a runners o entornos macOS para probar las versiones objetivo.
-- Cualquier consentimiento para elevar permisos fuera del sandbox queda fuera de este cambio y requiere un cambio separado.
+- macOS with `/usr/bin/sandbox-exec` available for development and testing; its absence produces an error and no execution.
+- Access to macOS runners or environments to test the target versions.
+- Any consent to elevate permissions outside the sandbox is out of scope for this change and requires a separate change.
 
-## Criterios de éxito
+## Success criteria
 
-- [ ] En macOS, `run_shell` usa por defecto el perfil SBPL mínimo generado dinámicamente y `/usr/bin/sandbox-exec`.
-- [ ] El shell y sus descendientes quedan dentro de la política probada; si falla el perfil o launcher, el usuario recibe un error y el comando no se ejecuta.
-- [ ] No hay opt-out, configuración `sandbox = false` ni fallback a ejecución sin sandbox.
-- [ ] La aprobación ordinaria no elimina ni amplía el sandbox; cualquier elevación futura requiere otro cambio y contrato de consentimiento explícito.
-- [ ] El perfil deniega red y limita escrituras al workspace; no importa permisos amplios de Codex sin evidencia.
-- [ ] Las pruebas adversariales cubren rutas, límites de archivos, red, descendientes, fallos del launcher y cancelación/timeout; en salidas controladas, el cleanup explícito propaga los errores observables. En terminación abrupta o cancelación por `drop`, cleanup es best-effort y no garantiza eliminación. El error de cierre de `std::fs::File` no se verifica por separado porque no es observable mediante APIs safe.
-- [ ] La matriz de versiones principales de macOS informa resultados reproducibles y límites observados.
-- [ ] Grants persistentes siguen desactivados; Linux y Windows quedan fuera del alcance, sin claims de paridad.
-- [ ] La documentación explica la deprecación de Apple, el cambio de default y la posibilidad de que algunos comandos fallen.
+- [ ] On macOS, `run_shell` uses by default the dynamically generated minimum SBPL profile and `/usr/bin/sandbox-exec`.
+- [ ] The shell and its descendants stay inside the tested policy; if the profile or launcher fails, the user receives an error and the command does not run.
+- [ ] There is no opt-out, no `sandbox = false` configuration and no fallback to sandbox-free execution.
+- [ ] Ordinary approval does not remove or widen the sandbox; any future elevation requires another change and an explicit consent contract.
+- [ ] The profile denies network and limits writes to the workspace; it does not import broad Codex permissions without evidence.
+- [ ] Adversarial tests cover paths, file limits, network, descendants, launcher failures and cancellation/timeout; on controlled exits, explicit cleanup propagates observable errors. On abrupt termination or cancellation by `drop`, cleanup is best-effort and does not guarantee removal. The close error of `std::fs::File` is not verified separately because it is not observable through safe APIs.
+- [ ] The matrix of major macOS versions reports reproducible results and observed limits.
+- [ ] Persistent grants stay disabled; Linux and Windows remain out of scope, without parity claims.
+- [ ] The documentation explains the Apple deprecation, the default change and the possibility that some commands fail.
 
 <!-- /coderabbit-ai-generated:v1 --><!-- /coderabbit-ai-generated:v1 -->
