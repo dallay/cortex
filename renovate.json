@@ -104,6 +104,13 @@
       ]
     },
     {
+      "description": "The Semgrep gate pins semgrep==1.126.0, which aborts while importing protobuf on Python 3.14 and newer, so the setup-python interpreter must stay on the version that the just ci-semgrep recipe uses. Updating the interpreter requires updating the Semgrep pin in the same review.",
+      "matchDatasources": [
+        "python-version"
+      ],
+      "enabled": false
+    },
+    {
       "matchManagers": [
         "dockerfile"
       ],
