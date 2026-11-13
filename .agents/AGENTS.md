@@ -43,6 +43,7 @@ Hexagonal architecture is a dependency and responsibility model, not a requireme
 - Never hardcode, expose, or log credentials, tokens, secrets, or sensitive payloads.
 - Preserve workspace `unsafe_code = "deny"` and clippy with `-D warnings`. Do not weaken them to make a change compile.
 - Preserve the blocking CI security gates: gitleaks (`.gitleaks.toml`), semgrep ERROR findings for Rust, Dockerfiles and GitHub Actions, trivy, and cargo audit. `just ci-audit` executes `cargo audit` as a blocking gate: if the audit fails, CI fails. It does not replace other security controls.
+- Resolve Rust dependencies through the Cargo publish-age cooldown configured in `.cargo/config.toml`. Keep that window aligned with the Renovate `minimumReleaseAge`, and review dependency updates as before: a cooldown reduces supply-chain risk but does not replace review.
 - Fail securely on authorization and integrity violations. Do not silently bypass security controls to maintain availability.
 - Protect against injection, path traversal, unauthorized execution, sensitive data disclosure, and resource exhaustion where applicable.
 - Evaluate the security impact of new dependencies, external integrations, and changes to execution permissions.

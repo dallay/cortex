@@ -19,7 +19,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_TOOLCHAIN: "1.89"
+  RUST_TOOLCHAIN: "1.100"
 
 jobs:
   validate-release-config:
