@@ -1145,15 +1145,17 @@ async fn settings_queued_write_does_not_start_after_the_ui_is_dropped() {
     // Both writes are outstanding when the runtime drops the UI.
     drop(ui);
     release.send(()).unwrap();
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        tokio::time::timeout(Duration::from_secs(2), entering.recv())
+            .await
+            .expect("settings workers must finish")
+            .is_none(),
+        "the queued write must not enter persistence"
+    );
     assert_eq!(
         calls.load(Ordering::SeqCst),
         1,
         "the queued write must not start without the previous publication"
-    );
-    assert!(
-        entering.try_recv().is_err(),
-        "the queued write must not enter persistence"
     );
 }
 
