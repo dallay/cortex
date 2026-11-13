@@ -16,6 +16,9 @@ SECRET_KEY_PATTERN = re.compile(
 )
 EMBEDDING_KEY_PATTERN = re.compile(r"^(embedding|embeddings|vector|vectors)$", re.IGNORECASE)
 BEARER_PATTERN = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._\-]{8,}")
+EMBEDDING_ARRAY_PATTERN = re.compile(
+    r'"(embedding|embeddings|vector|vectors)"\s*:\s*\[[^\[\]]*\]', re.IGNORECASE
+)
 KEY_LIKE_PATTERN = re.compile(r"\b(sk|pk|ghp|gho|glpat|xox[baprs])-[A-Za-z0-9._\-]{8,}")
 
 REDACTED = "[REDACTED]"
@@ -27,6 +30,7 @@ def redact_text(value: str, max_length: int = MAX_STRING_LENGTH) -> str:
 
     cleaned = BEARER_PATTERN.sub(REDACTED, value)
     cleaned = KEY_LIKE_PATTERN.sub(REDACTED, cleaned)
+    cleaned = EMBEDDING_ARRAY_PATTERN.sub('"embedding":[EMBEDDING_REDACTED]', cleaned)
     if len(cleaned) > max_length:
         cleaned = cleaned[:max_length] + f"...[truncated {len(cleaned) - max_length} chars]"
     return cleaned

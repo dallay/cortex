@@ -17,7 +17,10 @@ from typing import Any, Mapping, Sequence
 
 from .errors import BenchError
 
-PROTOCOL_VERSION = "2024-11-05"
+# The Muninn MCP server speaks this revision of the protocol.
+PROTOCOL_VERSION = "2026-07-28"
+CLIENT_NAME = "membench"
+CLIENT_VERSION = "1.0.0"
 
 
 @dataclass
@@ -117,8 +120,18 @@ class McpStdioClient:
         self._next_id += 1
         request_id = self._next_id
         payload = {"jsonrpc": "2.0", "id": request_id, "method": method}
-        if params is not None:
-            payload["params"] = dict(params)
+        request_params = dict(params) if params is not None else {}
+        # The server requires the protocol metadata on every request that
+        # follows the initialization.
+        meta = dict(request_params.get("_meta") or {})
+        meta.setdefault("io.modelcontextprotocol/protocolVersion", PROTOCOL_VERSION)
+        meta.setdefault("io.modelcontextprotocol/clientCapabilities", {})
+        meta.setdefault(
+            "io.modelcontextprotocol/clientInfo",
+            {"name": CLIENT_NAME, "version": CLIENT_VERSION},
+        )
+        request_params["_meta"] = meta
+        payload["params"] = request_params
         assert self._process.stdin is not None
         self._process.stdin.write(json.dumps(payload) + "\n")
         self._process.stdin.flush()
@@ -136,8 +149,12 @@ class McpStdioClient:
         if self._process is None:
             raise BenchError("the MCP client is not started")
         payload: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
-        if params is not None:
-            payload["params"] = dict(params)
+        notification_params = dict(params) if params is not None else {}
+        meta = dict(notification_params.get("_meta") or {})
+        meta.setdefault("io.modelcontextprotocol/protocolVersion", PROTOCOL_VERSION)
+        meta.setdefault("io.modelcontextprotocol/clientCapabilities", {})
+        notification_params["_meta"] = meta
+        payload["params"] = notification_params
         assert self._process.stdin is not None
         self._process.stdin.write(json.dumps(payload) + "\n")
         self._process.stdin.flush()
@@ -148,7 +165,7 @@ class McpStdioClient:
             {
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {},
-                "clientInfo": {"name": "membench", "version": "0.1.0"},
+                "clientInfo": {"name": CLIENT_NAME, "version": CLIENT_VERSION},
             },
         )
         self.notify("notifications/initialized")

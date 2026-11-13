@@ -69,7 +69,11 @@ async fn only_registered_handlers_are_visible_and_callable() {
         .is_err());
     let listed = call(&mut server, "tools/list", json!({})).await;
     assert_eq!(listed["result"]["tools"].as_array().unwrap().len(), 1);
-    assert_eq!(listed["result"]["tools"][0], Catalog::Core.tools()[0]);
+    let listed_tool = &listed["result"]["tools"][0];
+    let catalog_tool = &Catalog::Core.tools()[0];
+    assert_eq!(listed_tool["name"], catalog_tool["name"]);
+    assert_eq!(listed_tool["inputSchema"], catalog_tool["inputSchema"]);
+    assert_eq!(listed_tool["outputSchema"], catalog_tool["outputSchema"]);
     let response = call(
         &mut server,
         "tools/call",
@@ -91,4 +95,32 @@ async fn only_registered_handlers_are_visible_and_callable() {
         .await["error"]["code"],
         -32602
     );
+}
+
+#[tokio::test]
+async fn listed_tools_declare_the_metadata_of_the_protocol_revision() {
+    let mut server = Server::default();
+    server
+        .register(
+            Catalog::ScopedRetrieval,
+            "muninn_search_messages",
+            Box::new(Echo),
+        )
+        .unwrap();
+    server
+        .register(
+            Catalog::ScopedRetrieval,
+            "muninn_search_preferences",
+            Box::new(Echo),
+        )
+        .unwrap();
+    let listed = call(&mut server, "tools/list", json!({})).await;
+    assert!(listed["result"]["ttlMs"].is_number());
+    assert_eq!(listed["result"]["cacheScope"], "private");
+    let tools = listed["result"]["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 2);
+    for tool in tools {
+        assert!(tool["_meta"]["ttlMs"].is_number());
+        assert_eq!(tool["_meta"]["cacheScope"], "private");
+    }
 }

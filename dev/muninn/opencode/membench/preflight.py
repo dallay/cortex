@@ -9,10 +9,10 @@ narrow: ``CATALOG_VERIFIED`` never means "quota available".
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Mapping
 
 from .compose import Topology, validate_rendered
-from .docker import DockerRunner
+from .docker import DockerRunner, home_prepare_command
 from .errors import BenchError
 from .mcpclient import McpStdioClient
 
@@ -141,13 +141,33 @@ def check_topology(topology: Topology, preflight: Preflight) -> None:
         )
 
 
-def check_model_catalog(runner: DockerRunner, topology: Topology, model: str, preflight: Preflight) -> None:
-    """Verify that OpenCode recognises the requested model identifier."""
+def check_model_catalog(
+    runner: DockerRunner,
+    topology: Topology,
+    model: str,
+    preflight: Preflight,
+    provider_env: Mapping[str, str] | None = None,
+    inference_required: bool = True,
+) -> None:
+    """Verify that OpenCode recognises the requested model identifier.
 
+    A plan that performs no model inference does not need a model, so the
+    catalog is not queried and the check does not block the run.
+    """
+
+    if not inference_required:
+        preflight.add(
+            "MODEL_CATALOG",
+            NOT_TESTED,
+            "the plan performs no model inference; the catalog is not required",
+            blocking=False,
+        )
+        return
     result = runner.compose_exec(
-        "opencode",
-        "models",
-        env={"HOME": "/run/home/preflight", "OPENCODE_DB": "/run/home/preflight/opencode.db"},
+        "sh",
+        "-c",
+        home_prepare_command("opencode models"),
+        env={"HOME": "/run/home/preflight", **(provider_env or {})},
         timeout=180.0,
     )
     if not result.ok:
@@ -167,14 +187,19 @@ def check_model_catalog(runner: DockerRunner, topology: Topology, model: str, pr
         )
 
 
-def check_auth(runner: DockerRunner, topology: Topology, preflight: Preflight) -> None:
+def check_auth(
+    runner: DockerRunner,
+    topology: Topology,
+    preflight: Preflight,
+    provider_env: Mapping[str, str] | None = None,
+) -> None:
     """Verify that at least one provider credential is configured."""
 
     result = runner.compose_exec(
-        "opencode",
-        "auth",
-        "list",
-        env={"HOME": "/run/home/preflight", "OPENCODE_DB": "/run/home/preflight/opencode.db"},
+        "sh",
+        "-c",
+        home_prepare_command("opencode auth list"),
+        env={"HOME": "/run/home/preflight", **(provider_env or {})},
         timeout=180.0,
     )
     if not result.ok:
@@ -248,11 +273,15 @@ def run_runtime_preflight(
     model: str,
     owner_scope: str,
     preflight: Preflight,
+    provider_env: Mapping[str, str] | None = None,
+    inference_required: bool = True,
 ) -> Preflight:
     """Run the checks that need the running containers."""
 
-    check_model_catalog(runner, topology, model, preflight)
-    check_auth(runner, topology, preflight)
+    check_model_catalog(
+        runner, topology, model, preflight, provider_env, inference_required
+    )
+    check_auth(runner, topology, preflight, provider_env)
     check_mcp(runner, topology, owner_scope, preflight)
     preflight.add(
         "MODEL_INFERENCE",

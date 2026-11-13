@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from membench.errors import BenchError
-from membench.runner import Bench, RunOptions
+from membench.runner import Bench, RunOptions, direct_evidence
 from membench.scenario import load_scenario
 
 SCENARIO_PATH = (
@@ -79,6 +79,29 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(modes, {"A", "B", "C", "D"})
         oracle_entries = [entry for entry in entries if entry["mode"] == "D"]
         self.assertTrue(all(entry["condition"] == "C2" for entry in oracle_entries))
+
+
+class DirectEvidenceTests(unittest.TestCase):
+    """The evidence of a direct retrieval keeps the retrieved text."""
+
+    def test_retrieved_text_is_kept(self) -> None:
+        evidence = direct_evidence([{"content": "Juniper Harbor", "category": "reports"}])
+        self.assertEqual(evidence[0]["text"], "Juniper Harbor")
+        self.assertEqual(evidence[0]["category"], "reports")
+
+    def test_only_five_hits_are_kept(self) -> None:
+        hits = [{"content": f"hit {index}"} for index in range(9)]
+        self.assertEqual(len(direct_evidence(hits)), 5)
+
+    def test_the_text_is_truncated(self) -> None:
+        evidence = direct_evidence([{"content": "x" * 900}])
+        self.assertEqual(len(evidence[0]["text"]), 500)
+
+    def test_the_embedding_is_not_kept(self) -> None:
+        evidence = direct_evidence(
+            [{"content": "Juniper Harbor", "embedding": [0.1, 0.2]}]
+        )
+        self.assertNotIn("embedding", evidence[0])
 
 
 if __name__ == "__main__":

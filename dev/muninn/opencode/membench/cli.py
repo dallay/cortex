@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import secrets
 import sys
 from pathlib import Path
 from typing import Sequence
 
 from . import __version__
-from .compose import Topology
+from .compose import DEFAULT_AUTH_DIR, RUNNER_IMAGE, Topology
 from .docker import DockerRunner
 from .errors import BenchError
-from .metrics import MODES
+from .manifest import write_text
+from .metrics import MODES, requires_inference_authorization
 from .runner import DEFAULT_EVIDENCE_ROOT, Bench, RunOptions
 from .scenario import load_scenario
 
@@ -51,7 +54,23 @@ def build_parser() -> argparse.ArgumentParser:
         )
         target.add_argument("--embedding-bundle-path", type=Path, default=None)
         target.add_argument("--embedding-bundle-id", default=None)
+        target.add_argument(
+            "--auth-dir",
+            type=Path,
+            default=DEFAULT_AUTH_DIR,
+            help="directory that holds the credential for the runner",
+        )
         target.add_argument("--timeout", type=float, default=900.0)
+        target.add_argument(
+            "--provider-env",
+            action="append",
+            default=[],
+            metavar="NAME",
+            help=(
+                "name of an environment variable that holds a provider credential; "
+                "the value is forwarded to the container without touching the disk"
+            ),
+        )
 
     plan = subparsers.add_parser("plan", help="print the run plan without touching Docker")
     plan.add_argument("--scenario", required=True, type=Path)
@@ -87,6 +106,12 @@ def build_parser() -> argparse.ArgumentParser:
     auth_sub = auth.add_subparsers(dest="auth_command", required=True)
     auth_import = auth_sub.add_parser("import", help="import an OpenCode credential export")
     auth_import.add_argument("--file", required=True, type=Path)
+    auth_import.add_argument(
+        "--auth-dir",
+        type=Path,
+        default=DEFAULT_AUTH_DIR,
+        help="directory that receives the credential for the runner",
+    )
     return parser
 
 
@@ -104,6 +129,7 @@ def _options(arguments: argparse.Namespace) -> RunOptions:
         embedding_bundle_id=arguments.embedding_bundle_id,
         authorize_inference=bool(getattr(arguments, "authorize_inference", False)),
         keep_containers=bool(getattr(arguments, "keep_containers", False)),
+        provider_env=tuple(getattr(arguments, "provider_env", []) or ()),
     )
 
 
@@ -160,13 +186,18 @@ def command_run(arguments: argparse.Namespace) -> int:
     bench = Bench(options, scenario)
     bench.prepare()
     entries = bench.plan()
-    if not options.authorize_inference:
+    if requires_inference_authorization(entries) and not options.authorize_inference:
         print(
             "The plan contains "
-            f"{len(entries)} runs, each of which performs a model inference. "
+            f"{len(entries)} runs, at least one of which performs a model inference. "
             "Re-run with --authorize-inference to execute them."
         )
         return 2
+    if not requires_inference_authorization(entries):
+        print(
+            f"The plan contains {len(entries)} runs and performs no model inference. "
+            "The inference authorization is not required."
+        )
     try:
         preflight = bench.preflight_static()
         for check in preflight.checks:
@@ -192,45 +223,49 @@ def command_run(arguments: argparse.Namespace) -> int:
 
 
 def command_auth(arguments: argparse.Namespace) -> int:
-    """Import provider credentials into the runner's auth volume."""
+    """Import provider credentials into the runner credential directory."""
 
     if arguments.auth_command != "import":
         return 2
     if not arguments.file.is_file():
         print(f"credential file not found: {arguments.file}")
         return 1
-    compose_dir = Path(__file__).resolve().parent.parent
-    topology = Topology(
-        project="membench-auth",
-        compose_dir=compose_dir,
-        run_dir=Path("/tmp"),
-        scenario_file=compose_dir / "scenarios" / "synthetic-memory-recall-v2.json",
-        config_dir=Path("/tmp"),
-        env_file=Path("/tmp/bench.env"),
-    )
-    if not topology.env_file.is_file():
-        topology.env_file.write_text("BENCH_NEO4J_PASSWORD=unused\n", encoding="utf-8")
-    runner = DockerRunner(topology)
-    result = runner.compose_run(
-        "run",
-        "--rm",
-        "-T",
-        "-v",
-        f"{arguments.file}:/tmp/auth.json:ro",
-        "-e",
-        "HOME=/opencode/auth",
-        "--entrypoint",
-        "opencode",
-        "runner",
-        "auth",
-        "import",
-        "/tmp/auth.json",
+    auth_dir = arguments.auth_dir.expanduser()
+    auth_dir.mkdir(parents=True, exist_ok=True)
+    auth_dir.chmod(0o700)
+    runner = DockerRunner.for_image(RUNNER_IMAGE)
+    result = runner.run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "--interactive",
+            "--user",
+            f"{os.getuid()}:{os.getgid()}",
+            "-v",
+            f"{auth_dir}:/opencode/auth",
+            "-e",
+            "HOME=/opencode/auth",
+            "--entrypoint",
+            "opencode",
+            RUNNER_IMAGE,
+            "auth",
+            "import",
+        ],
         timeout=300.0,
+        stdin=arguments.file.read_text(encoding="utf-8"),
     )
     if not result.ok:
         print(result.summary())
         return 1
-    print("credentials imported into the runner auth volume")
+    store = auth_dir / ".local" / "share" / "opencode" / "opencode.db"
+    if not store.is_file():
+        print("the credential was not written into the runner credential directory")
+        return 1
+    store.chmod(0o600)
+    print(f"credentials imported into {auth_dir}")
     return 0
 
 

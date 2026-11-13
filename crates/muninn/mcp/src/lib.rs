@@ -81,6 +81,22 @@ fn error(id: Value, code: i32, message: &str) -> Value {
     json!({"jsonrpc":"2.0", "id":id, "error":{"code":code,"message":message}})
 }
 
+/// Complete a tool definition with the metadata of the protocol revision.
+///
+/// The `2026-07-28` revision requires every listed tool to declare its cache
+/// lifetime and its cache scope. A client that validates the revision strictly
+/// rejects a tool definition without those two fields, so the server states
+/// them for every tool it lists.
+fn tool_definition(definition: &Value) -> Value {
+    let mut definition = definition.clone();
+    if !definition["_meta"].is_object() {
+        definition["_meta"] = json!({});
+    }
+    definition["_meta"]["ttlMs"] = json!(0);
+    definition["_meta"]["cacheScope"] = json!("private");
+    definition
+}
+
 impl Server {
     pub fn register(
         &mut self,
@@ -179,9 +195,11 @@ impl Server {
                 "cacheScope":"private"
             }})),
             "ping" => Some(json!({"jsonrpc":"2.0","id":id,"result":{}})),
-            "tools/list" => Some(
-                json!({"jsonrpc":"2.0","id":id,"result":{"tools":self.tools.values().map(|t| &t.definition).collect::<Vec<_>>()}}),
-            ),
+            "tools/list" => Some(json!({"jsonrpc":"2.0","id":id,"result":{
+                "tools":self.tools.values().map(|t| tool_definition(&t.definition)).collect::<Vec<_>>(),
+                "ttlMs":0,
+                "cacheScope":"private"
+            }})),
             "tools/call" => {
                 let Some(name) = params["name"].as_str() else {
                     return Some(error(id, -32602, "Invalid tool name"));

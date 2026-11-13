@@ -10,6 +10,13 @@ from .errors import BenchError
 
 
 @dataclass(frozen=True)
+class _ImageOnly:
+    """A minimal topology stand-in for one-off container commands."""
+
+    image: str
+
+
+@dataclass(frozen=True)
 class CommandResult:
     """The outcome of one command invocation."""
 
@@ -39,6 +46,16 @@ class DockerRunner:
         from .compose import compose_command
 
         return compose_command(self.topology, *args)
+
+    @classmethod
+    def for_image(cls, image: str) -> "DockerRunner":
+        """Build a runner for one-off commands that do not need a topology."""
+
+        return cls(_ImageOnly(image))
+
+    @property
+    def image(self) -> str:
+        return getattr(self.topology, "image", "")
 
     def run(
         self,
@@ -70,16 +87,51 @@ class DockerRunner:
     def compose_exec(
         self,
         *args: str,
+        service: str = "runner",
         env: Mapping[str, str] | None = None,
         timeout: float = 900.0,
         stdin: str | None = None,
     ) -> CommandResult:
+        """Run a command inside a service of the topology."""
+
         argv = self.compose("exec", "-T")
         for key, value in (env or {}).items():
             argv.extend(["-e", f"{key}={value}"])
+        argv.append(service)
         argv.extend(args)
         return self.run(argv, timeout=timeout, stdin=stdin)
 
     def image_exists(self, image: str) -> bool:
         result = self.run(["docker", "image", "inspect", image], timeout=60.0)
         return result.ok
+
+
+HOME_PREPARE_SCRIPT = """
+set -eu
+mkdir -p "$HOME/.local/share/opencode"
+# OpenCode keeps the provider credential in its SQLite store, so the whole
+# state directory is copied into the ephemeral home of the run.
+if [ -d /opencode/auth/.local/share/opencode ]; then
+  cp -a /opencode/auth/.local/share/opencode/. "$HOME/.local/share/opencode/" 2>/dev/null || true
+  chmod 700 "$HOME/.local/share/opencode"
+fi
+# OpenCode only registers the MCP servers declared in the global
+# configuration, so it is copied into the home of the run.
+if [ -n "${BENCH_CONFIG_DIR:-}" ] && [ -f "$BENCH_CONFIG_DIR/global/opencode.json" ]; then
+  mkdir -p "$HOME/.config/opencode"
+  cp "$BENCH_CONFIG_DIR/global/opencode.json" "$HOME/.config/opencode/opencode.json"
+  chmod 600 "$HOME/.config/opencode/opencode.json"
+fi
+"""
+
+
+def home_prepare_command(command: str) -> str:
+    """Return a shell command that prepares the ephemeral home and runs a command.
+
+    The credential lives in a host directory owned by the operator. Each run
+    gets a fresh home on tmpfs; the OpenCode state directory that holds the
+    credential is copied into it before the command starts, and the copy is
+    discarded with the container.
+    """
+
+    return f"{HOME_PREPARE_SCRIPT}\n{command}"

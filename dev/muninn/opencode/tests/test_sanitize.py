@@ -20,6 +20,16 @@ class SanitizeTests(unittest.TestCase):
         self.assertEqual(result["embedding"], "[EMBEDDING OMITTED]")
         self.assertEqual(result["content"], "keep")
 
+    def test_embedding_vectors_are_removed_from_text(self) -> None:
+        payload = (
+            '[{"category":"report","embedding":[0.011438,-0.038797,0.050863],'
+            '"confidence":1.0}]'
+        )
+        cleaned = redact_text(payload)
+        self.assertNotIn("0.011438", cleaned)
+        self.assertNotIn("-0.038797", cleaned)
+        self.assertIn("confidence", cleaned)
+
     def test_bearer_tokens_are_removed_from_text(self) -> None:
         cleaned = redact_text("Authorization: Bearer abcdef123456")
         self.assertNotIn("abcdef123456", cleaned)

@@ -17,8 +17,9 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from . import config as bench_config
-from .compose import Topology, validate
-from .docker import DockerRunner
+from .bundle import prepare_bundle_volume
+from .compose import Topology, validate, DEFAULT_AUTH_DIR, RUNNER_IMAGE
+from .docker import DockerRunner, home_prepare_command
 from .errors import BenchError
 from .events import parse_events
 from .manifest import render_report, utc_stamp, write_json, write_text
@@ -36,13 +37,45 @@ from .metrics import (
     evaluate_agent_run,
     evaluate_direct_retrieval,
     extract_hits,
+    requires_inference_authorization,
     summarize,
 )
 from .preflight import Preflight, run_runtime_preflight, run_static_preflight
 from .scenario import Case, Scenario
 
 DEFAULT_EVIDENCE_ROOT = Path(".agents/rpi/plan/tasks/opencode-docker-muninn-evaluation/evidence")
+RUNS_ROOT = Path.home() / ".local" / "share" / "membench" / "runs"
 SEMANTIC_PROVIDERS = ("minilm",)
+
+DIRECT_EVIDENCE_HITS = 5
+DIRECT_EVIDENCE_TEXT_LIMIT = 500
+DIRECT_EVIDENCE_TEXT_KEYS = ("content", "text", "preference", "value", "title")
+
+
+def direct_evidence(hits: Sequence[Any]) -> list[dict[str, Any]]:
+    """Summarize the hits of a direct retrieval for the evidence file.
+
+    The evidence keeps the text that the retrieval returned, so a failing
+    direct run can be audited. The embeddings never reach the file: the
+    sanitize rules of the writer remove them.
+    """
+
+    evidence: list[dict[str, Any]] = []
+    for hit in list(hits)[:DIRECT_EVIDENCE_HITS]:
+        if isinstance(hit, Mapping):
+            entry: dict[str, Any] = {}
+            for key in DIRECT_EVIDENCE_TEXT_KEYS:
+                value = hit.get(key)
+                if isinstance(value, str) and value.strip():
+                    entry["text"] = value[:DIRECT_EVIDENCE_TEXT_LIMIT]
+                    break
+            category = hit.get("category")
+            if isinstance(category, str) and category.strip():
+                entry["category"] = category
+            evidence.append(entry)
+        elif isinstance(hit, str) and hit.strip():
+            evidence.append({"text": hit[:DIRECT_EVIDENCE_TEXT_LIMIT]})
+    return evidence
 
 
 @dataclass
@@ -59,8 +92,11 @@ class RunOptions:
     embedding_provider: str = "minilm"
     embedding_bundle_path: Path | None = None
     embedding_bundle_id: str | None = None
+    auth_dir: Path = DEFAULT_AUTH_DIR
+    runner_image: str = RUNNER_IMAGE
     authorize_inference: bool = False
     keep_containers: bool = False
+    provider_env: tuple[str, ...] = ()
 
 
 @dataclass
@@ -134,7 +170,12 @@ class Bench:
         self.context.run_id = f"{self.scenario.version}-{stamp}-{secrets.token_hex(3)}"
         self.context.evidence_dir = self.options.evidence_root / self.context.run_id
         self.context.evidence_dir.mkdir(parents=True, exist_ok=True)
-        self.context.secret_dir = Path(tempfile.mkdtemp(prefix="membench-"))
+        # The run directory is mounted inside the containers, and Docker only
+        # shares the home directory of the host. A temporary directory under
+        # the system temporary folder would be invisible to the containers.
+        self.context.secret_dir = RUNS_ROOT / self.context.run_id
+        self.context.secret_dir.mkdir(parents=True, exist_ok=True)
+        self.context.secret_dir.chmod(0o700)
         self.context.config_dir = self.context.secret_dir / "config"
         self.context.config_dir.mkdir(parents=True, exist_ok=True)
 
@@ -167,10 +208,28 @@ class Bench:
             embedding_provider=self.options.embedding_provider,
             embedding_bundle_path=self.options.embedding_bundle_path,
             embedding_bundle_id=self.options.embedding_bundle_id,
+            auth_dir=self.options.auth_dir,
         )
         validate(self.topology)
         write_text(self.topology.compose_file(), self.topology.render())
+        self.prepare_bundle_volume()
         self.runner = DockerRunner(self.topology)
+
+    def prepare_bundle_volume(self) -> None:
+        """Copy the pinned bundle into the volume that the topology mounts."""
+
+        options = self.options
+        if options.embedding_provider != "minilm":
+            return
+        if options.embedding_bundle_path is None or not options.embedding_bundle_id:
+            return
+        prepare_bundle_volume(
+            options.embedding_bundle_path,
+            options.embedding_bundle_id,
+            options.runner_image,
+            os.getuid(),
+            os.getgid(),
+        )
 
     def _seed_plan(self) -> dict[str, Any]:
         """Build the ordered seed plan for the scenario."""
@@ -211,12 +270,35 @@ class Bench:
     # lifecycle
     # ------------------------------------------------------------------
     def start(self) -> None:
-        """Start the disposable database and the runner container."""
+        """Start the disposable database, seed it, and start the runner.
+
+        The seed applies the schema, so it has to run before the MCP server
+        opens the database.
+        """
+
+        self.start_database()
+        self.seed()
+        self.start_runner()
+
+    def start_database(self, recreate: bool = False) -> None:
+        """Start the disposable database and wait until it accepts queries."""
 
         assert self.runner is not None
-        result = self.runner.compose_run("up", "-d", "--wait", "neo4j", "runner", timeout=900.0)
+        arguments = ["up", "-d"]
+        if recreate:
+            arguments.append("--force-recreate")
+        arguments.extend(["--wait", "neo4j"])
+        result = self.runner.compose_run(*arguments, timeout=900.0)
         if not result.ok:
-            raise BenchError(f"could not start the containers: {result.summary()}")
+            raise BenchError(f"could not start the database: {result.summary()}")
+
+    def start_runner(self) -> None:
+        """Start the runner container and wait until it is healthy."""
+
+        assert self.runner is not None
+        result = self.runner.compose_run("up", "-d", "--wait", "runner", timeout=900.0)
+        if not result.ok:
+            raise BenchError(f"could not start the runner: {result.summary()}")
 
     def stop(self) -> None:
         """Remove the containers created by this run."""
@@ -250,8 +332,15 @@ class Bench:
             self.options.model,
             self.scenario.cases[0].owner,
             self.preflight,
+            self.provider_environment(),
+            self.inference_required(),
         )
         return self.preflight
+
+    def inference_required(self) -> bool:
+        """Return whether the planned runs call the model."""
+
+        return requires_inference_authorization(self.plan())
 
     def preflight_run(self) -> Preflight:
         """Run every preflight check."""
@@ -287,8 +376,24 @@ class Bench:
         rendered = bench_config.render_config(
             self.options.model, scope or "", mcp_enabled=scope is not None
         )
-        bench_config.write_config(rendered, target)
+        bench_config.write_config(rendered, target, scope or "")
         return target
+
+    def provider_environment(self) -> dict[str, str]:
+        """Return the provider credentials that the run forwards to the container.
+
+        The values never reach the disk: they are read from the environment of
+        the operator and passed to the container at execution time.
+        """
+
+        import os
+
+        environment: dict[str, str] = {}
+        for name in self.options.provider_env:
+            value = os.environ.get(name)
+            if value:
+                environment[name] = value
+        return environment
 
     def _run_agent(
         self,
@@ -307,13 +412,12 @@ class Bench:
         home = f"/run/home/{label}"
         env = {
             "HOME": home,
-            "OPENCODE_DB": f"{home}/opencode.db",
             "BENCH_PROMPT": prompt,
             "BENCH_MODEL": self.options.model,
+            "BENCH_CONFIG_DIR": f"/run-config/config/{label}",
         }
-        script = (
-            "mkdir -p \"$HOME/.local/share/opencode\"; "
-            "cp -a /opencode/auth/. \"$HOME/.local/share/opencode/\" 2>/dev/null || true; "
+        env.update(self.provider_environment())
+        script = home_prepare_command(
             "cd /run-config/config/" + label + " && "
             'exec opencode run --standalone --format json --archived '
             '--agent "$BENCH_AGENT" --model "$BENCH_MODEL" "$BENCH_PROMPT"'
@@ -374,7 +478,12 @@ class Bench:
         hits = extract_hits(_tool_text(payload))
         write_json(
             self.context.evidence_dir / "runs" / f"{case.id}-{MODE_DIRECT}-{condition}-{repetition}-direct.json",
-            {"case_id": case.id, "condition": condition, "hit_count": len(hits)},
+            {
+                "case_id": case.id,
+                "condition": condition,
+                "hit_count": len(hits),
+                "hits": direct_evidence(hits),
+            },
         )
         return evaluate_direct_retrieval(case, condition, repetition, hits, latency_ms=latency_ms)
 
@@ -407,7 +516,7 @@ class Bench:
         repetitions = self.options.repetitions
         for repetition in range(1, repetitions + 1):
             # Each repetition starts from a fresh database and a fresh fixture.
-            self.runner.compose_run("up", "-d", "--force-recreate", "--wait", "neo4j", timeout=900.0)
+            self.start_database(recreate=True)
             self.seed()
             for case in self.scenario.cases:
                 for condition in self.options.conditions:
@@ -429,7 +538,9 @@ class Bench:
                             continue
                         if mode == MODE_FORCED:
                             prompt = bench_config.forced_tool_prompt(
-                                case.prompt, case.direct_tool, dict(case.direct_arguments)
+                                case.prompt,
+                                bench_config.exposed_tool_name(case.direct_tool),
+                                dict(case.direct_arguments),
                             )
                         else:
                             prompt = case.prompt

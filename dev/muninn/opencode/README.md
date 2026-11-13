@@ -23,7 +23,10 @@ personal data.
   The harness never reads it and never writes it to the evidence.
 * The agent runs with least privilege: every tool is denied, and only the
   `muninn_*` MCP tools are allowed.
-* The harness never runs an inference without `--authorize-inference`.
+* The harness never runs an inference without `--authorize-inference`. The flag is
+  required only when the plan contains a mode that calls the model. A plan that
+  uses the direct mode only performs no model inference, so it does not require
+  the flag.
 
 ## Layout
 
@@ -96,7 +99,7 @@ The harness locates the first broken link:
 | Fixture | Seeded per repetition from the scenario file |
 | Agent state | Fresh `HOME` and `OPENCODE_DB` per run, on tmpfs |
 | Configuration | Rendered per run and mounted read-only |
-| Credentials | Docker volume, imported by the operator, never copied into the run |
+| Credentials | Docker volume `membench-opencode-auth`, imported by the operator, copied into the ephemeral home of each run and never copied into the evidence |
 | Provider | The model identifier is given per run; the harness stops if the catalog does not list it |
 
 ## Running it
@@ -119,6 +122,24 @@ Import the provider credential once (the file is an OpenCode credential export):
 ```sh
 PYTHONPATH=dev/muninn/opencode python3 -m membench.cli auth import --file ~/auth.json
 ```
+
+The import writes into the Docker volume `membench-opencode-auth`. Every run
+copies the credential into its own ephemeral home on tmpfs, uses it, and
+discards it. The credential never reaches the evidence directory.
+
+A provider that authenticates with an environment variable needs that variable
+in the container as well. The harness forwards it without writing it to the
+disk:
+
+```sh
+PYTHONPATH=dev/muninn/opencode python3 -m membench.cli run \
+  --model provider/model \
+  --provider-env PROVIDER_API_KEY \
+  ...
+```
+
+`--provider-env` names a variable of the environment of the operator. The
+harness reads the value and passes it to the container at execution time.
 
 Check the environment without running an inference:
 
@@ -148,11 +169,46 @@ PYTHONPATH=dev/muninn/opencode python3 -m membench.cli run \
   --authorize-inference
 ```
 
+Verify the retrieval path without any model call. The direct mode calls the MCP
+tool directly, so this run performs no inference and needs no authorization:
+
+```sh
+PYTHONPATH=dev/muninn/opencode python3 -m membench.cli run \
+  --model provider/model \
+  --scenario dev/muninn/opencode/scenarios/synthetic-memory-recall-v2.json \
+  --modes A \
+  --conditions C0,C1 \
+  --repetitions 1 \
+  --embedding-provider hash
+```
+
 Unit tests (no inference, no database, no Docker):
 
 ```sh
 just ci-muninn-opencode
 ```
+
+## OpenCode 2.2.7 interoperability
+
+The harness renders two configuration files, and both details are required by
+OpenCode 2.2.7:
+
+| File | Content | Reason |
+| --- | --- | --- |
+| `.opencode/opencode.jsonc` | Model, permissions | The project configuration |
+| `.opencode/agents/evaluation.md` | The agent and its permission rules | The agent definition |
+| `global/opencode.json` | The MCP server | OpenCode registers the MCP servers of the global configuration only; a project configuration with an `mcp` block is loaded for the model, but its servers never connect |
+
+The global configuration carries no `$schema` key: OpenCode 2.2.7 discards the
+whole global configuration when the schema reference is present. The MCP server
+declares `codemode: false` so the tools of Muninn reach the model as ordinary
+tool definitions instead of through the Code Mode interface.
+
+The MCP server speaks the `2026-07-28` revision of the protocol, and the
+revision is negotiated explicitly, because the server rejects the legacy
+handshake. Every tool that the server lists declares the metadata of that
+revision (`ttlMs` and `cacheScope`), because a strict client rejects a tool
+definition without them.
 
 ## Evidence
 

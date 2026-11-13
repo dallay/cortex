@@ -4,7 +4,57 @@ from __future__ import annotations
 
 import unittest
 
-from membench.preflight import auth_providers, model_in_catalog
+from membench.preflight import (
+    NOT_TESTED,
+    Preflight,
+    auth_providers,
+    check_model_catalog,
+    model_in_catalog,
+)
+
+
+class _FakeResult:
+    """Result of a command that was never executed."""
+
+    ok = False
+    stdout = ""
+    stderr = ""
+
+    def summary(self) -> str:
+        return "the command was not executed"
+
+
+class _FakeRunner:
+    """Runner that records the commands it was asked to execute."""
+
+    def __init__(self) -> None:
+        self.commands: list[list[str]] = []
+
+    def compose_exec(self, *args, **kwargs) -> _FakeResult:
+        self.commands.append(list(args))
+        return _FakeResult()
+
+
+class ModelCatalogTests(unittest.TestCase):
+    """The catalog check only applies to a plan that calls the model."""
+
+    def test_catalog_is_not_queried_when_no_inference_is_required(self) -> None:
+        runner = _FakeRunner()
+        preflight = Preflight()
+        check_model_catalog(runner, None, "provider/model", preflight, None, False)
+        self.assertEqual(runner.commands, [])
+        catalog = next(
+            check for check in preflight.checks if check.name == "MODEL_CATALOG"
+        )
+        self.assertEqual(catalog.state, NOT_TESTED)
+        self.assertFalse(catalog.blocking)
+        self.assertTrue(preflight.ok)
+
+    def test_catalog_is_queried_when_an_inference_is_required(self) -> None:
+        runner = _FakeRunner()
+        preflight = Preflight()
+        check_model_catalog(runner, None, "provider/model", preflight, None, True)
+        self.assertEqual(len(runner.commands), 1)
 
 
 class CatalogTests(unittest.TestCase):

@@ -70,11 +70,13 @@ def render_report(manifest: Mapping[str, Any], results: Sequence[Mapping[str, An
     lines.append("")
     lines.append("## Results")
     lines.append("")
-    lines.append("| Case | Mode | Condition | Run | MCP called | Evidence | Answer | Diagnosis |")
-    lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
+    lines.append(
+        "| Case | Mode | Condition | Run | MCP called | Evidence | Answer | Diagnosis | Failure |"
+    )
+    lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
     for result in results:
         lines.append(
-            "| {case} | {mode} | {condition} | {run} | {mcp} | {evidence} | {answer} | {diagnosis} |".format(
+            "| {case} | {mode} | {condition} | {run} | {mcp} | {evidence} | {answer} | {diagnosis} | {failure} |".format(
                 case=result.get("case_id"),
                 mode=result.get("mode"),
                 condition=result.get("condition"),
@@ -83,7 +85,32 @@ def render_report(manifest: Mapping[str, Any], results: Sequence[Mapping[str, An
                 evidence="yes" if result.get("evidence_retrieved") else "no",
                 answer="yes" if result.get("answer_correct") else "no",
                 diagnosis=result.get("diagnosis"),
+                failure=result.get("failure_code") or "-",
             )
         )
+    lines.append("")
+    excluded = [result for result in results if not result.get("evaluated", True)]
+    lines.append("## Not evaluated")
+    lines.append("")
+    if not excluded:
+        lines.append("Every run of this report was evaluated.")
+    else:
+        lines.append(
+            "These runs produced no answer. They are excluded from the counts "
+            "and they are no evidence about the system under test."
+        )
+        lines.append("")
+        lines.append("| Case | Mode | Condition | Run | Failure |")
+        lines.append("| --- | --- | --- | --- | --- |")
+        for result in excluded:
+            lines.append(
+                "| {case} | {mode} | {condition} | {run} | {failure} |".format(
+                    case=result.get("case_id"),
+                    mode=result.get("mode"),
+                    condition=result.get("condition"),
+                    run=result.get("repetition"),
+                    failure=result.get("failure_code") or "-",
+                )
+            )
     lines.append("")
     return "\n".join(lines)
