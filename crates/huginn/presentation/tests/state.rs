@@ -1110,6 +1110,54 @@ async fn settings_queued_write_rechecks_revision_after_previous_write_publishes(
 }
 
 #[tokio::test]
+async fn settings_queued_write_does_not_start_after_the_ui_is_dropped() {
+    let (entered, mut entering) = tokio::sync::mpsc::unbounded_channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let released = std::sync::Mutex::new(released);
+    let calls = Arc::new(AtomicU64::new(0));
+    let ui = Ui::new(
+        &Session::new(".".into()),
+        Arc::new(Contributions::default()),
+        CancellationToken::new(),
+        Arc::new(huginn_presentation::settings::UiConfig::defaults()),
+        Arc::new({
+            let calls = calls.clone();
+            move |_| {
+                let call = calls.fetch_add(1, Ordering::SeqCst);
+                entered.send(()).unwrap();
+                if call == 0 {
+                    // The first write stays outstanding until the test releases it.
+                    released.lock().unwrap().recv().unwrap();
+                }
+                Ok(())
+            }
+        }),
+    )
+    .0;
+    ui.dispatch_command("/settings");
+    ui.lock().settings_mut().unwrap().working.sound.bell = true;
+    assert!(ui.apply_settings());
+    entering.recv().await.unwrap();
+    overlay_key(&ui, KeyCode::Esc);
+    ui.dispatch_command("/settings");
+    ui.lock().settings_mut().unwrap().working.theme.name_index = 1;
+    assert!(ui.apply_settings());
+    // Both writes are outstanding when the runtime drops the UI.
+    drop(ui);
+    release.send(()).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "the queued write must not start without the previous publication"
+    );
+    assert!(
+        entering.try_recv().is_err(),
+        "the queued write must not enter persistence"
+    );
+}
+
+#[tokio::test]
 async fn settings_failed_apply_preserves_copy_and_error_and_can_retry() {
     let calls = Arc::new(AtomicU64::new(0));
     let ui = Ui::new(

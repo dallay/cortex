@@ -261,6 +261,7 @@ struct SettingsReceipt {
 }
 const STALE_SETTINGS: &str =
     "Settings changed since this copy was opened; close and reopen Settings";
+const SKIPPED_SETTINGS: &str = "Settings were not saved because a previous save did not complete";
 /// Ordinary selection only. It has no approval reply channel or policy access.
 pub struct PluginDialog {
     pub handle: DialogHandle,
@@ -1611,7 +1612,13 @@ impl Ui {
         let save = self.save_ui_config.clone();
         tokio::spawn(async move {
             if let Some(previous) = previous {
-                let _ = previous.await;
+                // The gate releases only after the previous write published its
+                // revision. A closed gate means the previous write never
+                // published, so this queued write must not persist.
+                if previous.await.is_err() {
+                    let _ = sender.send(Err(SKIPPED_SETTINGS.into()));
+                    return;
+                }
             }
             // The previous write is published before this point. A copy that
             // it made stale must not overwrite it.
