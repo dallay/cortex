@@ -1,0 +1,22 @@
+change: huginn-epic-01-microkernel-service-composition
+current_phase: archive
+completed:
+  - init
+  - explore
+  - "propose (2026-11-13: epic close-out, documentation only; the approved slice was already delivered)"
+  - "spec (2026-11-13: specs/huginn-microkernel/spec.md, epic acceptance contract; kernel spec remains normative)"
+  - "design (2026-11-13: close-out architecture, five decisions, artifact topology)"
+  - "tasks (2026-11-13: documentation-only checklist, review workload forecast Low)"
+  - "apply (2026-11-13: proposal, spec, traceability, design, tasks written; no production code change)"
+  - "verify (PASS WITH WARNINGS 2026-11-13: 469 passed / 0 failed / 1 ignored across 50 test-result lines; cargo check clean; markdownlint clean)"
+  - "qa (PASS WITH WARNINGS 2026-11-13: 12 of 12 acceptance scenarios with observable passing evidence; seven P3 findings, none blocking)"
+  - "archive (2026-11-13: huginn-microkernel spec synced; change moved to archive; no operator acceptance asserted)"
+next: none
+updated: "2026-11-13"
+epic: DALLAY-718
+epic_issue: 442
+policy: umbrella-epic
+slice: huginn-service-provider-substitution
+slice_issue: 509
+slice_status: delivered-and-archived
+slice_archive: .agents/sdd/changes/archive/2026-10-29-huginn-service-provider-substitution
