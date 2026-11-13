@@ -206,10 +206,59 @@ pub struct SelectionReason {
     pub components: CandidateScoreComponents,
     /// Fallback reason if applicable.
     pub fallback: Option<SelectionFallback>,
+    /// Auto policy resolution explanation; this is not a degradation.
+    pub resolution: Option<SelectionFallback>,
     /// The policy requested by the operator (for auto or fallback).
     pub requested_policy: Option<rook_core::PolicyKind>,
     /// The effective concrete policy that selected the target.
     pub effective_policy: Option<rook_core::PolicyKind>,
+}
+
+impl SelectionReason {
+    /// Stable bounded label for metric dimensions. This is not derived from `Debug`.
+    pub fn policy_metric_labels(&self) -> (&'static str, &'static str) {
+        (
+            policy_metric_label(self.requested_policy),
+            policy_metric_label(self.effective_policy),
+        )
+    }
+
+    /// Stable bounded label for degradation metrics. Resolution explanations
+    /// are deliberately excluded from this label.
+    pub fn fallback_metric_label(&self) -> &'static str {
+        self.fallback
+            .as_ref()
+            .map(SelectionFallback::metric_label)
+            .unwrap_or("none")
+    }
+}
+
+fn policy_metric_label(policy: Option<rook_core::PolicyKind>) -> &'static str {
+    match policy {
+        Some(rook_core::PolicyKind::Priority) => "priority",
+        Some(rook_core::PolicyKind::Weighted) => "weighted",
+        Some(rook_core::PolicyKind::RoundRobin) => "round-robin",
+        Some(rook_core::PolicyKind::LeastLatency) => "least-latency",
+        Some(rook_core::PolicyKind::LeastCost) => "least-cost",
+        Some(rook_core::PolicyKind::Auto) => "auto",
+        None => "unknown",
+    }
+}
+
+impl SelectionFallback {
+    fn metric_label(&self) -> &'static str {
+        match self {
+            Self::SingleCandidate => "single-candidate",
+            Self::WeightedConfigError => "weighted-config-error",
+            Self::MetricUnavailable => "metric-unavailable",
+            Self::NoComparableSignals => "no-comparable-signals",
+            Self::BudgetAware => "budget-aware",
+            Self::StreamingLatencyProxy => "streaming-latency-proxy",
+            Self::LatencyEvidenceAvailable => "latency-evidence-available",
+            Self::CostEvidenceAvailable => "cost-evidence-available",
+            Self::IncompatibleBasis => "incompatible-basis",
+        }
+    }
 }
 
 /// Result of one selection decision, combining the chosen provider with its explanation.
@@ -435,6 +484,7 @@ pub fn build_selection_reason(
         method,
         components,
         fallback: (snapshot.candidates.len() == 1).then_some(SelectionFallback::SingleCandidate),
+        resolution: None,
         requested_policy: None,
         effective_policy: None,
     })
@@ -486,11 +536,29 @@ pub fn build_selection_reason_from_policy(
         }
     });
 
+    let resolution = decision
+        .fallback_reason
+        .as_ref()
+        .and_then(|reason| match reason {
+            rook_core::PolicyFallbackReason::BudgetAware => Some(SelectionFallback::BudgetAware),
+            rook_core::PolicyFallbackReason::StreamingLatencyProxy => {
+                Some(SelectionFallback::StreamingLatencyProxy)
+            }
+            rook_core::PolicyFallbackReason::LatencyEvidenceAvailable => {
+                Some(SelectionFallback::LatencyEvidenceAvailable)
+            }
+            rook_core::PolicyFallbackReason::CostEvidenceAvailable => {
+                Some(SelectionFallback::CostEvidenceAvailable)
+            }
+            _ => None,
+        });
+
     Some(SelectionReason {
         selected_target: selected_target.clone(),
         method,
         components,
         fallback,
+        resolution,
         requested_policy: Some(decision.requested_policy),
         effective_policy: Some(decision.effective_policy),
     })

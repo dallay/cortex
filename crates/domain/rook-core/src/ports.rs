@@ -16,8 +16,8 @@ use shared_kernel::{
 
 use super::{
     ApiFormat, AuditEntry, CacheStats, CompletionRequest, CompletionResponse, CostBreakdown,
-    HealthStatus, Pagination, PolicyKind, QuotaObservation, SelectionStrategy, SignatureEntry,
-    StreamChunk, UsageEntry, UsageFilters, UsageSummary,
+    HealthStatus, Pagination, PolicyKind, QuotaObservation, SignatureEntry, StreamChunk,
+    UsageEntry, UsageFilters, UsageSummary,
 };
 use super::{
     ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeySubject, CircuitStateSnapshot, Combo,
@@ -188,12 +188,6 @@ pub trait RouterPort: Send + Sync {
         None
     }
 
-    /// Return the current selection strategy for explanation purposes.
-    /// Defaults to Priority for routers that don't expose this information.
-    fn selection_strategy(&self) -> SelectionStrategy {
-        SelectionStrategy::Priority
-    }
-
     /// Return the configured policy kind.
     fn policy_kind(&self) -> PolicyKind {
         PolicyKind::Priority
@@ -204,13 +198,11 @@ pub trait RouterPort: Send + Sync {
         std::collections::HashMap::new()
     }
 
-    /// Return the current round-robin index.
-    fn rr_index(&self) -> usize {
+    /// Atomically advance the round-robin cursor and return the index to use.
+    /// Implementations MUST perform the read and increment as one operation.
+    fn advance_rr_index(&self, _len: usize) -> usize {
         0
     }
-
-    /// Set the round-robin index after policy selection.
-    fn set_rr_index(&self, _index: usize) {}
 
     /// Return circuit breaker state for all registered providers.
     /// Returns an empty list by default for routers that don't expose this.

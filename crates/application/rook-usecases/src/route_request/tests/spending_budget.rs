@@ -93,6 +93,7 @@ struct BoundedProvider {
     bound: Option<u64>,
     realized_cost: Option<u64>,
     complete_error: Option<String>,
+    local_backpressure: bool,
     stream_error: Option<String>,
 }
 
@@ -104,6 +105,7 @@ impl BoundedProvider {
             bound: None,
             realized_cost: None,
             complete_error: None,
+            local_backpressure: false,
             stream_error: None,
         }
     }
@@ -120,6 +122,11 @@ impl BoundedProvider {
 
     fn failing(mut self, message: &str) -> Self {
         self.complete_error = Some(message.to_string());
+        self
+    }
+
+    fn locally_backpressured(mut self) -> Self {
+        self.local_backpressure = true;
         self
     }
 
@@ -171,6 +178,9 @@ impl ProviderPort for BoundedProvider {
     }
 
     async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
+        if self.local_backpressure {
+            return Err(CortexError::local_backpressure());
+        }
         self.events.lock().unwrap().push(BudgetEvent::UpstreamCall);
         if let Some(message) = &self.complete_error {
             return Err(CortexError::provider(message.clone()));
@@ -204,6 +214,9 @@ impl ProviderPort for BoundedProvider {
     ) -> CortexResult<
         futures::stream::BoxStream<'static, Result<rook_core::StreamChunk, CortexError>>,
     > {
+        if self.local_backpressure {
+            return Err(CortexError::local_backpressure());
+        }
         self.events.lock().unwrap().push(BudgetEvent::UpstreamCall);
         if let Some(message) = &self.stream_error {
             return Err(CortexError::provider(message.clone()));
@@ -457,6 +470,43 @@ async fn a_failed_upstream_call_keeps_the_reservation_charged_as_unresolved() {
 }
 
 #[tokio::test]
+async fn a_budgeted_request_advances_after_local_backpressure() {
+    let events: EventLog = Arc::new(Mutex::new(Vec::new()));
+    let first = Arc::new(
+        BoundedProvider::new("first-provider", events.clone())
+            .with_bound(500_000)
+            .locally_backpressured(),
+    );
+    let second =
+        Arc::new(BoundedProvider::new("second-provider", events.clone()).with_bound(500_000));
+    let ledger = Arc::new(RecordingLedger::new(events.clone()));
+    let usecase = usecase_with_router(Arc::new(PriorityFallbackRouter {
+        providers: vec![first, second],
+    }))
+    .with_spending_budget_ledger(ledger);
+    let mut req = budgeted_request();
+    req.stream = false;
+
+    let response = usecase
+        .execute(req)
+        .await
+        .expect("local admission pressure may advance provider");
+
+    assert_eq!(response.provider, ProviderId::new("second-provider"));
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec![
+            BudgetEvent::Reserve,
+            BudgetEvent::Release,
+            BudgetEvent::Reserve,
+            BudgetEvent::UpstreamCall,
+            BudgetEvent::Settle(None)
+        ],
+        "pre-upstream backpressure releases its reservation before the second provider is admitted"
+    );
+}
+
+#[tokio::test]
 async fn a_budgeted_request_is_not_retried_on_another_provider() {
     let events: EventLog = Arc::new(Mutex::new(Vec::new()));
     let first = Arc::new(
@@ -626,6 +676,70 @@ async fn a_budgeted_stream_reserves_before_the_stream_and_settles_as_unresolved(
             BudgetEvent::Settle(None),
         ],
         "a stream without an adapter-verified exact cost keeps the reservation charged"
+    );
+}
+
+#[tokio::test]
+async fn completion_traverses_local_backpressure_after_retry_limit_until_success() {
+    let events: EventLog = Arc::new(Mutex::new(Vec::new()));
+    let providers: Vec<Arc<dyn ProviderPort>> = vec![
+        Arc::new(BoundedProvider::new("upstream-failure", events.clone()).failing("failed")),
+        Arc::new(BoundedProvider::new("backpressure-1", events.clone()).locally_backpressured()),
+        Arc::new(BoundedProvider::new("backpressure-2", events.clone()).locally_backpressured()),
+        Arc::new(BoundedProvider::new("success", events.clone())),
+        Arc::new(BoundedProvider::new("unused", events.clone())),
+    ];
+    let usecase = usecase_with_router(Arc::new(PriorityFallbackRouter {
+        providers: providers.clone(),
+    }));
+    let mut req = request();
+    req.stream = false;
+
+    let response = usecase
+        .execute(req)
+        .await
+        .expect("candidate traversal must continue past upstream retry limit on local pressure");
+
+    assert_eq!(response.provider, ProviderId::new("success"));
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec![BudgetEvent::UpstreamCall, BudgetEvent::UpstreamCall],
+        "local backpressure must not count as an upstream retry"
+    );
+}
+
+#[tokio::test]
+async fn a_budgeted_stream_advances_after_local_backpressure() {
+    let events: EventLog = Arc::new(Mutex::new(Vec::new()));
+    let first = Arc::new(
+        BoundedProvider::new("first-provider", events.clone())
+            .with_bound(500_000)
+            .locally_backpressured(),
+    );
+    let second =
+        Arc::new(BoundedProvider::new("second-provider", events.clone()).with_bound(500_000));
+    let ledger = Arc::new(RecordingLedger::new(events.clone()));
+    let usecase = usecase_with_router(Arc::new(PriorityFallbackRouter {
+        providers: vec![first, second],
+    }))
+    .with_spending_budget_ledger(ledger);
+
+    let mut stream = usecase
+        .execute_stream(budgeted_request())
+        .await
+        .expect("local admission pressure may advance before stream data is exposed");
+    while stream.next().await.is_some() {}
+
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec![
+            BudgetEvent::Reserve,
+            BudgetEvent::Release,
+            BudgetEvent::Reserve,
+            BudgetEvent::UpstreamCall,
+            BudgetEvent::Settle(None),
+        ],
+        "local backpressure releases its reservation and permits the next provider"
     );
 }
 

@@ -17,7 +17,7 @@ use observability::{ObservationStatus, TelemetryTracker};
 use rook_core::{
     evaluate_connection_quota, AuditEntry, AuditPort, CachePort, ComboAliasRepositoryPort,
     ComboRepositoryPort, ComboStep, CompletionRequest, CompletionResponse, CortexError,
-    ModelAliasRepositoryPort, ProviderConnectionRoutingState, ProviderRepositoryPort,
+    ModelAliasRepositoryPort, PolicyKind, ProviderConnectionRoutingState, ProviderRepositoryPort,
     QuotaEligibilityPolicy, QuotaObservationQuery, QuotaObservationRecorderPort, QuotaState,
     RequestStatus, RouterPort, StreamChunk, TokenUsage, UsageEntry, UsageRecorderPort,
 };
@@ -33,6 +33,25 @@ use crate::scoring::{
     SelectionReason,
 };
 use crate::PricingConfig;
+
+fn input_token_bound(req: &CompletionRequest) -> Option<u64> {
+    if req.tools.is_some()
+        || req
+            .messages
+            .iter()
+            .any(|message| !message.tool_calls.is_empty())
+    {
+        return None;
+    }
+
+    req.messages
+        .iter()
+        .try_fold(0_u64, |total, message| match &message.content {
+            rook_core::MessageContent::Text(text) => Some(total.saturating_add(text.len() as u64)),
+            rook_core::MessageContent::ToolUse { .. }
+            | rook_core::MessageContent::ToolResult { .. } => None,
+        })
+}
 
 #[path = "route_request/combo_stream.rs"]
 mod combo_stream;
@@ -120,6 +139,7 @@ async fn notify_provider_success(router: &dyn RouterPort, provider: &ProviderId)
 /// Maximum number of retry attempts when a provider fails
 const MAX_RETRY_ATTEMPTS: usize = 4;
 const MAX_ELIGIBILITY_SNAPSHOT_RETRIES: usize = 1;
+const MAX_POLICY_RESELECTION_RETRIES: usize = 2;
 const MAX_PENDING_SPENDING_RELEASES: usize = 32;
 const QUOTA_READ_CONCURRENCY: usize = 8;
 const QUOTA_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
@@ -185,9 +205,10 @@ enum ComboStepOutcome {
 struct AttemptCursor {
     excluded: Vec<ProviderId>,
     local_backpressure: Option<CortexError>,
+    last_provider_failure: Option<(ProviderId, Option<ConnectionId>, u64, CortexError)>,
     provider_attempt_failed: bool,
     provider_attempts: usize,
-    snapshot_rechecks: usize,
+    policy_reselections: usize,
 }
 
 struct RoutingEligibility {
@@ -632,6 +653,8 @@ impl RouteRequest {
         let selection_budget = total_providers
             .max(1)
             .saturating_add(MAX_ELIGIBILITY_SNAPSHOT_RETRIES);
+        // Budgeted upstream errors remain terminal. Local admission pressure
+        // does not consume this upstream-attempt allowance.
         let max_attempts = if req.restrictions.spending_budget.is_some() {
             1
         } else {
@@ -671,9 +694,10 @@ impl RouteRequest {
         let mut cursor = AttemptCursor {
             excluded,
             local_backpressure,
+            last_provider_failure: None,
             provider_attempt_failed,
             provider_attempts,
-            snapshot_rechecks: 0,
+            policy_reselections: 0,
         };
         let context = AttemptContext {
             req: &req,
@@ -708,12 +732,10 @@ impl RouteRequest {
                 return AttemptStep::Retry;
             }
             AttemptPreparation::Reevaluate => {
-                if cursor.snapshot_rechecks >= MAX_ELIGIBILITY_SNAPSHOT_RETRIES {
-                    return AttemptStep::Done(Box::new(
-                        Err(CortexError::all_providers_exhausted()),
-                    ));
+                if cursor.policy_reselections >= MAX_POLICY_RESELECTION_RETRIES {
+                    return AttemptStep::Done(Box::new(Err(CortexError::routing_snapshot_churn())));
                 }
-                cursor.snapshot_rechecks += 1;
+                cursor.policy_reselections += 1;
                 return AttemptStep::Retry;
             }
             AttemptPreparation::Stop(error) => return AttemptStep::Done(Box::new(Err(error))),
@@ -757,6 +779,9 @@ impl RouteRequest {
                 return AttemptStep::Done(Box::new(response));
             }
             AttemptOutcome::LocalBackpressure(error) => {
+                // Admission pressure happens before upstream I/O, so it does not
+                // consume the upstream retry allowance.
+                cursor.provider_attempts -= 1;
                 // Local admission pressure releases the half-open reservation
                 // without touching the circuit state.
                 drop(attempt.trial_permit);
@@ -854,121 +879,44 @@ impl RouteRequest {
                 .map(|snapshot| &snapshot.connections_by_target),
         );
 
-        // Use policy engine for selection when scoring snapshot is available.
-        // This ensures the actual selected target matches the policy decision.
-        let (provider, selection_reason) = if let Some(ref snapshot) = scoring_snapshot {
-            let score_components = build_score_components(snapshot);
-
-            // Build eligible target refs in registry order (not HashMap iteration order).
-            // Filter to only those present in the scoring snapshot (eligible candidates).
-            let registry_ids = self.router.providers();
-            let eligible_targets: Vec<TargetRef> = registry_ids
-                .into_iter()
-                .map(TargetRef)
-                .filter(|t| snapshot.candidates.contains_key(t))
-                .collect();
-
-            if eligible_targets.is_empty() {
-                return AttemptPreparation::Stop(CortexError::all_providers_exhausted());
-            }
-
-            // Build policy selection context
-            let policy = self.router.policy_kind();
-            let weights = self.router.weights_snapshot();
-            let mut rr_index = self.router.rr_index();
-            let has_spending_budget = self.spending_guard.is_some();
-            let is_streaming = context.req.stream;
-
-            let mut ctx = PolicySelectionContext {
-                policy,
-                is_streaming,
-                has_spending_budget,
-                eligible_targets: &eligible_targets,
-                snapshot,
-                score_components: &score_components,
-                weights: &weights,
-                rr_index: &mut rr_index,
-                rng: None,
-            };
-
-            match select_policy(&mut ctx) {
-                Ok(decision) => {
-                    // Update RR index if changed
-                    self.router.set_rr_index(rr_index);
-
-                    // Resolve the selected target to a provider
-                    let selected_target = decision.selected_target.clone();
-                    let provider = match self.router.resolve_provider(&selected_target.0) {
-                        Some(p) => p,
-                        None => {
-                            // Fallback: use select_excluding if resolve fails
-                            match self
-                                .router
-                                .select_excluding(context.req, &selection_excluded)
-                                .await
-                            {
-                                Ok(p) => p,
-                                Err(error) => {
-                                    if !cursor.provider_attempt_failed {
-                                        if let Some(bp) = cursor.local_backpressure.take() {
-                                            return AttemptPreparation::Stop(bp);
-                                        }
-                                    }
-                                    return AttemptPreparation::Stop(error);
-                                }
-                            }
-                        }
-                    };
-                    let provider_id = provider.id().clone();
-
-                    // Build extended selection reason from policy decision
-                    let reason = build_selection_reason_from_policy(
-                        snapshot,
-                        &selected_target,
-                        &decision,
-                        &score_components,
-                    );
-                    let _ = provider_id; // suppress unused warning
-
-                    (provider, reason)
-                }
-                Err(error) => {
-                    if !cursor.provider_attempt_failed {
-                        if let Some(backpressure) = cursor.local_backpressure.take() {
-                            return AttemptPreparation::Stop(backpressure);
-                        }
+        let (provider, selection_reason) = match self
+            .select_with_policy(context.req, scoring_snapshot.as_ref(), &selection_excluded)
+            .await
+        {
+            Ok(Some(selection)) => selection,
+            Ok(None) => return AttemptPreparation::Reevaluate,
+            Err(error) => {
+                if !cursor.provider_attempt_failed {
+                    if let Some(backpressure) = cursor.local_backpressure.take() {
+                        return AttemptPreparation::Stop(backpressure);
                     }
-                    return AttemptPreparation::Stop(error);
                 }
+                return AttemptPreparation::Stop(error);
             }
-        } else {
-            // No scoring snapshot — fall back to router.select_excluding
-            let provider = match self
-                .router
-                .select_excluding(context.req, &selection_excluded)
-                .await
-            {
-                Ok(provider) => provider,
-                Err(error) => {
-                    if !cursor.provider_attempt_failed {
-                        if let Some(backpressure) = cursor.local_backpressure.take() {
-                            return AttemptPreparation::Stop(backpressure);
-                        }
-                    }
-                    return AttemptPreparation::Stop(error);
-                }
-            };
-            let _provider_id = provider.id().clone();
-            (provider, None)
         };
+
         let provider_id = provider.id().clone();
 
-        // Log selection reason for debugging and future telemetry (DALLAY-779).
-        if selection_reason.is_some() {
-            tracing::debug!(
+        if let Some(reason) = &selection_reason {
+            tracing::info!(
                 provider = %provider_id,
-                "selection reason captured for provider"
+                requested_policy = ?reason.requested_policy,
+                effective_policy = ?reason.effective_policy,
+                fallback_reason = ?reason.fallback,
+                resolution_reason = ?reason.resolution,
+                "routing policy selected provider"
             );
+            if reason.fallback.is_some() {
+                let (requested_policy, effective_policy) = reason.policy_metric_labels();
+                let fallback_reason = reason.fallback_metric_label();
+                metrics::counter!(
+                    "rook_routing_policy_degradations_total",
+                    "requested_policy" => requested_policy,
+                    "effective_policy" => effective_policy,
+                    "fallback_reason" => fallback_reason
+                )
+                .increment(1);
+            }
         }
         // Check key authorization before any connection-state lookup so an unavailable
         // repository does not replace the established 403 classification.
@@ -1289,11 +1237,78 @@ impl RouteRequest {
     /// Returns None when eligibility is not available (legacy path).
     /// The snapshot is built once per selection invocation and discarded on Reevaluate.
     ///
-    /// IMPORTANT: This method must NOT call `router.eligibility_candidates()` again,
-    /// since the eligibility result was already obtained. Calling it again could trigger
-    /// side effects (e.g., registry churn in tests) or return stale data.
-    ///
-    /// `excluded` providers are filtered out so they don't affect normalization bounds.
+    /// Apply the configured policy to the current eligible snapshot. Completion and
+    /// streaming use the same policy resolution and preserve the selected target identity.
+    async fn select_with_policy(
+        &self,
+        req: &CompletionRequest,
+        snapshot: Option<&crate::scoring::SignalsSnapshot>,
+        excluded: &[ProviderId],
+    ) -> Result<Option<(Arc<dyn rook_core::ProviderPort>, Option<SelectionReason>)>, CortexError>
+    {
+        let Some(snapshot) = snapshot else {
+            return self
+                .router
+                .select_excluding(req, excluded)
+                .await
+                .map(|provider| Some((provider, None)));
+        };
+        let score_components = build_score_components(snapshot);
+        let eligible_targets: Vec<TargetRef> = self
+            .router
+            .providers()
+            .into_iter()
+            .map(TargetRef)
+            .filter(|target| snapshot.candidates.contains_key(target))
+            .collect();
+        if eligible_targets.is_empty() {
+            return Err(CortexError::all_providers_exhausted());
+        }
+
+        let policy = self.router.policy_kind();
+        let weights = self.router.weights_snapshot();
+        let rr_index = if policy == PolicyKind::RoundRobin {
+            self.router.advance_rr_index(eligible_targets.len())
+        } else {
+            0
+        };
+        let input_token_bound = input_token_bound(req);
+        let context = PolicySelectionContext {
+            policy,
+            is_streaming: req.stream,
+            has_spending_budget: req.restrictions.spending_budget.is_some(),
+            eligible_targets: &eligible_targets,
+            snapshot,
+            score_components: &score_components,
+            weights: &weights,
+            rr_index,
+            input_token_bound,
+            output_token_bound: req.max_tokens.map(u64::from).unwrap_or(0),
+            rng: None,
+        };
+        let decision = select_policy(&context)?;
+        let selected_target = decision.selected_target.clone();
+        let provider = match self.router.resolve_provider(&selected_target.0) {
+            Some(provider) => provider,
+            // A policy decision is tied to the candidate snapshot and the
+            // configured policy. If registry churn invalidates its target,
+            // re-evaluate from a fresh snapshot for every policy rather than
+            // silently invoking the legacy selector (which can advance RR twice).
+            None => return Ok(None),
+        };
+        let reason = (provider.id() == &selected_target.0)
+            .then(|| {
+                build_selection_reason_from_policy(
+                    snapshot,
+                    &selected_target,
+                    &decision,
+                    &score_components,
+                )
+            })
+            .flatten();
+        Ok(Some((provider, reason)))
+    }
+
     fn build_scoring_snapshot(
         &self,
         req: &CompletionRequest,
@@ -1659,6 +1674,20 @@ impl RouteRequest {
             cursor,
         } = failure;
 
+        // Local backpressure is an admission result, not an upstream failure. Keep
+        // searching even when a spending budget limits upstream calls to one.
+        if error.is_local_backpressure() {
+            cursor.local_backpressure = Some(CortexError::local_backpressure());
+            cursor.excluded.push(provider_id.clone());
+            if cursor.excluded.len() < total_providers {
+                return AttemptStep::Retry;
+            }
+            if cursor.provider_attempt_failed {
+                return self.finish_exhausted_attempts(req, cursor).await;
+            }
+            return AttemptStep::Done(Box::new(Err(error)));
+        }
+
         // Non-retryable errors end the request; so does a budgeted request, because a second
         // attempt could spend more than the configured per-request limit.
         if !error.is_retryable() || req.restrictions.spending_budget.is_some() {
@@ -1683,24 +1712,24 @@ impl RouteRequest {
             "retry attempt"
         );
 
+        // Retain the last real upstream failure so later local admission pressure
+        // cannot be misattributed to that provider.
+        cursor.last_provider_failure =
+            Some((provider_id.clone(), connection_id, latency_ms, error));
+
         // Exclude this provider and retry
         cursor.excluded.push(provider_id.clone());
 
         if cursor.excluded.len() < total_providers {
             return AttemptStep::Retry;
         }
-        self.finish_exhausted_attempts(req, provider_id, connection_id, latency_ms, error, cursor)
-            .await
+        self.finish_exhausted_attempts(req, cursor).await
     }
 
     /// Ends the request once every provider has been excluded.
     async fn finish_exhausted_attempts(
         &self,
         req: &CompletionRequest,
-        provider_id: ProviderId,
-        connection_id: Option<ConnectionId>,
-        latency_ms: u64,
-        error: CortexError,
         cursor: &mut AttemptCursor,
     ) -> AttemptStep {
         if !cursor.provider_attempt_failed {
@@ -1713,14 +1742,18 @@ impl RouteRequest {
             excluded = ?cursor.excluded,
             "all providers exhausted"
         );
-        let status = if error.is_rate_limited() {
-            ObservationStatus::RateLimited
-        } else {
-            ObservationStatus::Failure
-        };
-        self.record_failure_audit_usage(req, &provider_id, connection_id, latency_ms, &error)
-            .await;
-        self.record_failure_observation(provider_id, latency_ms, status);
+        if let Some((provider_id, connection_id, latency_ms, error)) =
+            cursor.last_provider_failure.take()
+        {
+            let status = if error.is_rate_limited() {
+                ObservationStatus::RateLimited
+            } else {
+                ObservationStatus::Failure
+            };
+            self.record_failure_audit_usage(req, &provider_id, connection_id, latency_ms, &error)
+                .await;
+            self.record_failure_observation(provider_id, latency_ms, status);
+        }
         AttemptStep::Done(Box::new(Err(CortexError::all_providers_exhausted())))
     }
 
@@ -1895,6 +1928,7 @@ impl RouteRequest {
         let mut excluded = Vec::new();
         let mut local_backpressure = None;
         let mut snapshot_rechecks = 0;
+        let mut policy_reselections = 0;
         for _ in 0..selection_budget {
             if provider_attempts >= max_attempts {
                 break;
@@ -1909,7 +1943,7 @@ impl RouteRequest {
             {
                 if snapshot_rechecks >= MAX_ELIGIBILITY_SNAPSHOT_RETRIES {
                     return Err(
-                        local_backpressure.unwrap_or_else(CortexError::all_providers_exhausted)
+                        local_backpressure.unwrap_or_else(CortexError::routing_snapshot_churn)
                     );
                 }
                 snapshot_rechecks += 1;
@@ -1940,99 +1974,43 @@ impl RouteRequest {
                     .map(|snapshot| &snapshot.connections_by_target),
             );
 
-            // Use policy engine for selection when scoring snapshot is available.
-            // This ensures the actual selected target matches the policy decision.
-            let (provider, selection_reason) = if let Some(ref snapshot) = scoring_snapshot {
-                let score_components = build_score_components(snapshot);
-
-                // Build eligible target refs in registry order (not HashMap iteration order).
-                // Filter to only those present in the scoring snapshot (eligible candidates).
-                let registry_ids = self.router.providers();
-                let eligible_targets: Vec<TargetRef> = registry_ids
-                    .into_iter()
-                    .map(TargetRef)
-                    .filter(|t| snapshot.candidates.contains_key(t))
-                    .collect();
-
-                if eligible_targets.is_empty() {
-                    return Err(
-                        local_backpressure.unwrap_or_else(CortexError::all_providers_exhausted)
-                    );
-                }
-
-                // Build policy selection context
-                let policy = self.router.policy_kind();
-                let weights = self.router.weights_snapshot();
-                let mut rr_index = self.router.rr_index();
-                let has_spending_budget = self.spending_guard.is_some();
-                let is_streaming = req.stream;
-
-                let mut ctx = PolicySelectionContext {
-                    policy,
-                    is_streaming,
-                    has_spending_budget,
-                    eligible_targets: &eligible_targets,
-                    snapshot,
-                    score_components: &score_components,
-                    weights: &weights,
-                    rr_index: &mut rr_index,
-                    rng: None,
-                };
-
-                match select_policy(&mut ctx) {
-                    Ok(decision) => {
-                        // Update RR index if changed
-                        self.router.set_rr_index(rr_index);
-
-                        // Resolve the selected target to a provider
-                        let selected_target = decision.selected_target.clone();
-                        let provider = match self.router.resolve_provider(&selected_target.0) {
-                            Some(p) => p,
-                            None => {
-                                // Fallback: use select_excluding if resolve fails
-                                match self.router.select_excluding(req, &selection_excluded).await {
-                                    Ok(p) => p,
-                                    Err(error) => {
-                                        return Err(local_backpressure.unwrap_or(error));
-                                    }
-                                }
-                            }
-                        };
-                        let provider_id = provider.id().clone();
-
-                        // Build extended selection reason from policy decision
-                        let reason = build_selection_reason_from_policy(
-                            snapshot,
-                            &selected_target,
-                            &decision,
-                            &score_components,
+            let (provider, selection_reason) = match self
+                .select_with_policy(req, scoring_snapshot.as_ref(), &selection_excluded)
+                .await
+            {
+                Ok(Some(selection)) => selection,
+                Ok(None) => {
+                    if policy_reselections >= MAX_POLICY_RESELECTION_RETRIES {
+                        return Err(
+                            local_backpressure.unwrap_or_else(CortexError::routing_snapshot_churn)
                         );
-                        let _ = provider_id;
-
-                        (provider, reason)
                     }
-                    Err(error) => {
-                        return Err(error);
-                    }
+                    policy_reselections += 1;
+                    continue;
                 }
-            } else {
-                // No scoring snapshot — fall back to router.select_excluding
-                let provider = match self.router.select_excluding(req, &selection_excluded).await {
-                    Ok(provider) => provider,
-                    Err(error) => {
-                        return Err(local_backpressure.unwrap_or(error));
-                    }
-                };
-                let _provider_id = provider.id().clone();
-                (provider, None)
+                Err(error) => return Err(local_backpressure.unwrap_or(error)),
             };
             let provider_id = provider.id().clone();
-            // Log selection reason for debugging and future telemetry (DALLAY-779).
-            if selection_reason.is_some() {
-                tracing::debug!(
+            if let Some(reason) = &selection_reason {
+                tracing::info!(
                     provider = %provider_id,
-                    "stream selection reason captured for provider"
+                    requested_policy = ?reason.requested_policy,
+                    effective_policy = ?reason.effective_policy,
+                    fallback_reason = ?reason.fallback,
+                    resolution_reason = ?reason.resolution,
+                    "stream routing policy selected provider"
                 );
+                if reason.fallback.is_some() {
+                    let (requested_policy, effective_policy) = reason.policy_metric_labels();
+                    let fallback_reason = reason.fallback_metric_label();
+                    metrics::counter!(
+                        "rook_routing_policy_degradations_total",
+                        "requested_policy" => requested_policy,
+                        "effective_policy" => effective_policy,
+                        "fallback_reason" => fallback_reason
+                    )
+                    .increment(1);
+                }
             }
             if !req.restrictions.allowed_providers.is_empty()
                 && !req.restrictions.allowed_providers.contains(&provider_id)
@@ -2259,11 +2237,9 @@ impl RouteRequest {
         let provider_attempt_budget = total_providers.max(1);
         let selection_budget =
             provider_attempt_budget.saturating_add(MAX_ELIGIBILITY_SNAPSHOT_RETRIES);
-        let max_attempts = if req.restrictions.spending_budget.is_some() {
-            1
-        } else {
-            provider_attempt_budget.min(MAX_RETRY_ATTEMPTS)
-        };
+        // Stream upstream errors are terminal. The candidate count bounds
+        // pre-SSE local admission retries, including for budgeted requests.
+        let max_attempts = provider_attempt_budget;
         let selection = self
             .select_stream_provider(&req, selection_budget, max_attempts)
             .await?;

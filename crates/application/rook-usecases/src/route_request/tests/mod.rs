@@ -97,6 +97,13 @@ impl ProviderPort for TestProvider {
     }
 
     async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
+        if self
+            .complete_error
+            .as_ref()
+            .is_some_and(CortexError::is_local_backpressure)
+        {
+            return Err(CortexError::local_backpressure());
+        }
         if self.complete_error.is_some() {
             return Err(CortexError::provider("provider failed"));
         }
@@ -332,6 +339,176 @@ fn make_usecase_with_provider(provider: Arc<dyn ProviderPort>) -> RouteRequest {
         test_alias_config(),
         None,
     )
+}
+
+#[tokio::test]
+async fn policy_selected_completion_preserves_local_backpressure_classification() {
+    let (provider, holder) = busy_limited_test_provider().await;
+    let usecase = RouteRequest::new(
+        Arc::new(crate::FallbackRouter::new(
+            vec![provider],
+            rook_core::PolicyKind::Priority,
+        )),
+        Arc::new(TestCache {
+            get_calls: Mutex::new(0),
+            set_calls: Mutex::new(0),
+        }),
+        Arc::new(TestAudit {
+            entries: Mutex::new(Vec::new()),
+        }),
+        None,
+        None,
+        None,
+        Arc::new(crate::PricingConfig::default()),
+        Arc::new(TestAliasRepository),
+        test_alias_config(),
+        None,
+    );
+    let mut req = request();
+    req.stream = false;
+    req.metadata.cacheable = false;
+
+    let error = usecase
+        .execute(req)
+        .await
+        .expect_err("backpressure should be returned");
+    holder.abort();
+    assert!(error.is_local_backpressure(), "unexpected error: {error}");
+}
+
+#[test]
+fn input_token_bound_is_unknown_for_structured_tool_content_calls_and_declarations() {
+    let tool_content = rook_core::MessageContent::ToolUse {
+        id: "call-1".to_string(),
+        name: "search".to_string(),
+        input: serde_json::json!({ "query": "a structured query payload" }),
+    };
+    let mut message_tool_call = request();
+    message_tool_call.messages[0]
+        .tool_calls
+        .push(rook_core::MessageToolCall {
+            id: Some("call-2".to_string()),
+            name: "search".to_string(),
+            arguments: serde_json::json!({ "query": "another payload" }),
+        });
+    let mut declared_tools = request();
+    declared_tools.tools =
+        Some(serde_json::json!([{ "type": "function", "function": { "name": "search" } }]));
+
+    assert_eq!(
+        super::input_token_bound(&CompletionRequest {
+            messages: vec![Message {
+                role: Role::Assistant,
+                content: tool_content,
+                tool_calls: Vec::new(),
+            }],
+            ..request()
+        }),
+        None
+    );
+    assert_eq!(super::input_token_bound(&message_tool_call), None);
+    assert_eq!(super::input_token_bound(&declared_tools), None);
+    assert_eq!(super::input_token_bound(&request()), Some(5));
+}
+
+#[tokio::test]
+async fn completion_retries_eligible_provider_after_upstream_failure_then_backpressure() {
+    let failing = Arc::new(TestProvider {
+        id: ProviderId::new("upstream-failure"),
+        complete_error: Some(CortexError::provider("provider failed")),
+        stream_error: None,
+    });
+    let (busy, holder) = busy_limited_test_provider().await;
+    let audit = Arc::new(TestAudit {
+        entries: Mutex::new(Vec::new()),
+    });
+    let telemetry = Arc::new(TelemetryTracker::new(
+        observability::TelemetryConfig::default(),
+    ));
+    let mut usecase = usecase_with_router_and_audit(
+        Arc::new(PriorityFallbackRouter {
+            providers: vec![failing, busy],
+        }),
+        audit.clone(),
+    );
+    usecase.telemetry = Some(telemetry.clone());
+    let mut req = request();
+    req.stream = false;
+    req.metadata.cacheable = false;
+
+    let error = usecase
+        .execute(req)
+        .await
+        .expect_err("attempts exhaust after local backpressure");
+    holder.abort();
+
+    assert!(error.to_string().contains("all providers exhausted"));
+    assert_eq!(audit.entries.lock().unwrap().len(), 1);
+    assert_eq!(
+        audit.entries.lock().unwrap()[0].provider,
+        ProviderId::new("upstream-failure")
+    );
+    assert_eq!(
+        audit.entries.lock().unwrap()[0].status,
+        RequestStatus::Failure
+    );
+    let summary = telemetry
+        .get_provider_summary(&ProviderId::new("upstream-failure"))
+        .expect("upstream failure observation");
+    assert_eq!(summary.failure_count, 1);
+    assert!(
+        telemetry
+            .get_provider_summary(&ProviderId::new("test-provider"))
+            .is_none(),
+        "local backpressure must not be attributed as provider failure"
+    );
+}
+
+#[tokio::test]
+async fn policy_selected_completion_falls_back_after_local_backpressure() {
+    let (primary, holder) = busy_limited_test_provider().await;
+    let secondary = ordinary_provider("policy-secondary");
+    let usecase = usecase_with_router(Arc::new(crate::FallbackRouter::new(
+        vec![primary, secondary],
+        rook_core::PolicyKind::Priority,
+    )));
+    let mut req = request();
+    req.stream = false;
+    req.metadata.cacheable = false;
+
+    let response = usecase
+        .execute(req)
+        .await
+        .expect("an eligible provider should accept the request");
+    holder.abort();
+
+    assert_eq!(response.provider, ProviderId::new("policy-secondary"));
+}
+
+#[tokio::test]
+async fn policy_selected_stream_falls_back_after_local_backpressure() {
+    let (primary, holder) = busy_limited_test_provider().await;
+    let secondary: Arc<dyn ProviderPort> = Arc::new(TestProvider {
+        id: ProviderId::new("policy-secondary"),
+        complete_error: None,
+        stream_error: None,
+    });
+    let usecase = usecase_with_router(Arc::new(crate::FallbackRouter::new(
+        vec![primary, secondary],
+        rook_core::PolicyKind::Priority,
+    )));
+    let mut req = request();
+    req.stream = true;
+    req.metadata.cacheable = false;
+
+    let mut stream = usecase
+        .execute_stream(req)
+        .await
+        .expect("an eligible provider should accept the stream");
+    let first_chunk = stream.next().await.expect("first stream chunk").unwrap();
+    holder.abort();
+
+    assert_eq!(first_chunk.delta, "hel");
 }
 
 #[tokio::test]
@@ -1142,8 +1319,6 @@ fn request() -> CompletionRequest {
 
 #[tokio::test]
 async fn completion_failures_update_real_router_circuit() {
-    use rook_core::PolicyKind;
-
     let provider_id = ProviderId::new("completion-failing-provider");
     let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
         id: provider_id.clone(),
@@ -1168,8 +1343,6 @@ async fn completion_failures_update_real_router_circuit() {
 
 #[tokio::test]
 async fn stream_failures_are_counted_when_consumed_and_open_real_router_circuit() {
-    use rook_core::PolicyKind;
-
     let provider_id = ProviderId::new("stream-failing-provider");
     let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
         id: provider_id.clone(),
@@ -1196,7 +1369,6 @@ async fn stream_failures_are_counted_when_consumed_and_open_real_router_circuit(
 #[tokio::test]
 async fn real_router_holds_stream_trial_until_eof_and_releases_on_cancellation() {
     use crate::router_impl::CircuitClock;
-    use rook_core::PolicyKind;
     use std::time::Instant;
 
     struct TestClock(Mutex<Instant>);
@@ -2006,6 +2178,96 @@ async fn eligibility_fails_closed_before_state_query_above_4000_targets() {
     );
 }
 
+struct RegistryRefreshOnProviderResolutionRouter {
+    inner: Arc<crate::FallbackRouter>,
+    replacement: Vec<Arc<dyn ProviderPort>>,
+    refreshed: std::sync::atomic::AtomicBool,
+}
+
+#[async_trait]
+impl RouterPort for RegistryRefreshOnProviderResolutionRouter {
+    async fn select(&self, req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>> {
+        self.inner.select(req).await
+    }
+
+    async fn select_excluding(
+        &self,
+        req: &CompletionRequest,
+        excluded: &[ProviderId],
+    ) -> CortexResult<Arc<dyn ProviderPort>> {
+        self.inner.select_excluding(req, excluded).await
+    }
+
+    async fn on_failure(&self, provider: &ProviderId, error: &CortexError) {
+        self.inner.on_failure(provider, error).await;
+    }
+
+    fn providers(&self) -> Vec<ProviderId> {
+        self.inner.providers()
+    }
+
+    fn eligibility_candidates(&self) -> Option<Vec<rook_core::RouterCandidateSnapshot>> {
+        self.inner.eligibility_candidates()
+    }
+
+    fn resolve_provider(&self, provider: &ProviderId) -> Option<Arc<dyn ProviderPort>> {
+        if !self
+            .refreshed
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            rook_core::ProviderRegistryPort::replace_all(
+                self.inner.as_ref(),
+                self.replacement.clone(),
+            )
+            .expect("registry refresh succeeds");
+        }
+        rook_core::RouterPort::resolve_provider(self.inner.as_ref(), provider)
+    }
+
+    fn policy_kind(&self) -> rook_core::PolicyKind {
+        rook_core::PolicyKind::LeastLatency
+    }
+}
+
+#[tokio::test]
+async fn metric_policy_reselects_when_registry_removes_selected_provider() {
+    let removed_calls = Arc::new(Mutex::new(Vec::new()));
+    let removed: Arc<dyn ProviderPort> = Arc::new(SpyProvider {
+        id: ProviderId::new("removed-first"),
+        model: TEST_MODEL.clone(),
+        seen_models: removed_calls.clone(),
+    });
+    let retained_calls = Arc::new(Mutex::new(Vec::new()));
+    let retained: Arc<dyn ProviderPort> = Arc::new(SpyProvider {
+        id: ProviderId::new("retained-second"),
+        model: TEST_MODEL.clone(),
+        seen_models: retained_calls.clone(),
+    });
+    let router = Arc::new(RegistryRefreshOnProviderResolutionRouter {
+        inner: Arc::new(crate::FallbackRouter::new(
+            vec![removed],
+            rook_core::PolicyKind::LeastLatency,
+        )),
+        replacement: vec![retained],
+        refreshed: std::sync::atomic::AtomicBool::new(false),
+    });
+    let usecase = usecase_with_router(router);
+    let mut req = request();
+    req.metadata.cacheable = false;
+
+    let response = usecase
+        .execute(req)
+        .await
+        .expect("metric routing should reselect from the refreshed eligible registry");
+
+    assert_eq!(response.provider, ProviderId::new("retained-second"));
+    assert!(removed_calls.lock().unwrap().is_empty());
+    assert_eq!(
+        retained_calls.lock().unwrap().as_slice(),
+        [TEST_MODEL.to_string()]
+    );
+}
+
 struct RegistryRefreshDuringSelectionRouter {
     inner: Arc<crate::FallbackRouter>,
     replacement: Vec<Arc<dyn ProviderPort>>,
@@ -2023,16 +2285,6 @@ impl RouterPort for RegistryRefreshDuringSelectionRouter {
         req: &CompletionRequest,
         excluded: &[ProviderId],
     ) -> CortexResult<Arc<dyn ProviderPort>> {
-        if !self
-            .refreshed
-            .swap(true, std::sync::atomic::Ordering::SeqCst)
-        {
-            rook_core::ProviderRegistryPort::replace_all(
-                self.inner.as_ref(),
-                self.replacement.clone(),
-            )
-            .expect("registry refresh succeeds");
-        }
         self.inner.select_excluding(req, excluded).await
     }
 
@@ -2046,6 +2298,20 @@ impl RouterPort for RegistryRefreshDuringSelectionRouter {
 
     fn eligibility_candidates(&self) -> Option<Vec<rook_core::RouterCandidateSnapshot>> {
         self.inner.eligibility_candidates()
+    }
+
+    fn resolve_provider(&self, provider: &ProviderId) -> Option<Arc<dyn ProviderPort>> {
+        if !self
+            .refreshed
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            rook_core::ProviderRegistryPort::replace_all(
+                self.inner.as_ref(),
+                self.replacement.clone(),
+            )
+            .expect("registry refresh succeeds");
+        }
+        rook_core::RouterPort::resolve_provider(self.inner.as_ref(), provider)
     }
 }
 
@@ -2090,6 +2356,10 @@ impl RouterPort for RegistryRefreshAfterEligibilitySnapshotRouter {
             .expect("registry refresh succeeds");
         }
         snapshot
+    }
+
+    fn resolve_provider(&self, provider: &ProviderId) -> Option<Arc<dyn ProviderPort>> {
+        self.inner.resolve_provider(provider)
     }
 }
 
@@ -4194,7 +4464,6 @@ impl RouterPort for AuditOrderRouter {
 #[tokio::test]
 async fn combo_success_closes_real_router_circuit() {
     use crate::router_impl::CircuitClock;
-    use rook_core::PolicyKind;
     use std::time::Instant;
 
     struct TestClock(Mutex<Instant>);
@@ -4250,8 +4519,6 @@ async fn combo_success_closes_real_router_circuit() {
 
 #[tokio::test]
 async fn combo_upstream_failure_updates_real_router_circuit() {
-    use rook_core::PolicyKind;
-
     let provider_id = ProviderId::new("openai");
     let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
         id: provider_id.clone(),

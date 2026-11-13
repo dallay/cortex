@@ -18,22 +18,22 @@ use futures::{
     StreamExt,
 };
 use rook_core::{
-    ApiFormat, ApiKeyRestrictions, AuditEntry, AuditPort, CapabilityEvidence, CapabilityState,
-    CircuitStateSnapshot, CompletionRequest, CompletionResponse, CortexError, CortexResult,
-    FinishReason, HealthStatus, Message, ModelId, PolicyKind, ProviderId, ProviderPort,
-    RequestMetadata, RequestStatus, Role, RouterPort, StreamChunk, TokenUsage,
+    ApiFormat, ApiKeyRestrictions, CapabilityEvidence, CapabilityState, CompletionRequest,
+    CompletionResponse, CortexError, CortexResult, FinishReason, HealthStatus, Message, ModelId,
+    PolicyKind, ProviderId, ProviderPort, RequestMetadata, Role, RouterPort, StreamChunk,
+    TokenUsage,
 };
 use rook_usecases::policy::{select_policy, PolicySelectionContext};
 use rook_usecases::scoring::{
     build_selection_reason_from_policy, CandidateScoreComponents, CandidateSignals, RawEvidence,
-    SelectionReason, SignalsSnapshot, UnknownReason,
+    SignalsSnapshot, UnknownReason,
 };
 use rook_usecases::{
     router_impl::CircuitClock, FallbackRouter, PricingConfig, RouteRequest, TargetRef,
 };
 use shared_kernel::RequestId;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 mod common;
 use common::{NoOpAliasRepository, NoOpAudit, NoOpCache};
@@ -262,7 +262,7 @@ async fn priority_golden_failover_follows_registry_order() {
 async fn priority_golden_skips_open_circuit() {
     let p1 = FakeProvider::new("p1", Completion::Success);
     let p2 = FakeProvider::new("p2", Completion::Success);
-    let (router, clock) = router_with_policy(vec![p1.clone(), p2.clone()], PolicyKind::Priority);
+    let (router, _clock) = router_with_policy(vec![p1.clone(), p2.clone()], PolicyKind::Priority);
 
     // Open circuit on p1
     for _ in 0..3 {
@@ -417,8 +417,7 @@ fn policy_priority_selects_first_eligible() {
         (t1.clone(), make_components(None)),
         (t2.clone(), make_components(None)),
     ]);
-    let mut rr_index = 0;
-    let mut ctx = PolicySelectionContext {
+    let ctx = PolicySelectionContext {
         policy: PolicyKind::Priority,
         is_streaming: false,
         has_spending_budget: false,
@@ -426,10 +425,12 @@ fn policy_priority_selects_first_eligible() {
         snapshot: &snapshot,
         score_components: &components,
         weights: &HashMap::new(),
-        rr_index: &mut rr_index,
+        rr_index: 0,
+        input_token_bound: Some(0),
+        output_token_bound: 0,
         rng: None,
     };
-    let decision = select_policy(&mut ctx).unwrap();
+    let decision = select_policy(&ctx).unwrap();
     assert_eq!(decision.selected_target, t1);
     assert_eq!(decision.requested_policy, PolicyKind::Priority);
     assert_eq!(decision.effective_policy, PolicyKind::Priority);
@@ -454,23 +455,27 @@ fn policy_round_robin_rotates() {
         (t3.clone(), make_components(None)),
     ]);
 
-    let mut rr_index = 0;
-    let mut ctx = PolicySelectionContext {
-        policy: PolicyKind::RoundRobin,
-        is_streaming: false,
-        has_spending_budget: false,
-        eligible_targets: &targets,
-        snapshot: &snapshot,
-        score_components: &components,
-        weights: &HashMap::new(),
-        rr_index: &mut rr_index,
-        rng: None,
+    let select_at = |rr_index| {
+        select_policy(&PolicySelectionContext {
+            policy: PolicyKind::RoundRobin,
+            is_streaming: false,
+            has_spending_budget: false,
+            eligible_targets: &targets,
+            snapshot: &snapshot,
+            score_components: &components,
+            weights: &HashMap::new(),
+            rr_index,
+            input_token_bound: Some(0),
+            output_token_bound: 0,
+            rng: None,
+        })
+        .unwrap()
     };
 
-    let d1 = select_policy(&mut ctx).unwrap();
-    let d2 = select_policy(&mut ctx).unwrap();
-    let d3 = select_policy(&mut ctx).unwrap();
-    let d4 = select_policy(&mut ctx).unwrap();
+    let d1 = select_at(0);
+    let d2 = select_at(1);
+    let d3 = select_at(2);
+    let d4 = select_at(3);
 
     assert_eq!(d1.selected_target, t1);
     assert_eq!(d2.selected_target, t2);
@@ -514,13 +519,19 @@ async fn completion_and_streaming_use_same_policy() {
 
     // Completion request
     let r1 = route(router.clone()).execute(request(false)).await.unwrap();
-    // Streaming request
-    let _r2_stream = route(router.clone()).execute(request(true)).await;
+    // Streaming request must return a stream selected by the same policy.
+    let mut stream_request = request(true);
+    stream_request.restrictions.allowed_providers = vec![p1.id().clone()];
+    route(router.clone())
+        .execute(stream_request)
+        .await
+        .expect("stream selection succeeds");
 
-    // Both should select the same provider under Priority policy
-    // Note: streaming may have different behavior due to circuit state after completion
-    // The key is that both paths go through the same policy engine
+    // Both paths select p1 under Priority policy. The allowlist makes a
+    // discarded stream result observable: selecting any other provider fails.
     assert_eq!(r1.provider, *p1.id());
+    assert_eq!(p1.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(p2.calls.load(Ordering::SeqCst), 0);
 }
 
 /// Least-latency policy selects the provider with lowest p95.
@@ -537,8 +548,7 @@ fn policy_least_latency_selects_lowest_p95() {
         (t1.clone(), make_components(Some(100.0))),
         (t2.clone(), make_components(Some(50.0))),
     ]);
-    let mut rr_index = 0;
-    let mut ctx = PolicySelectionContext {
+    let ctx = PolicySelectionContext {
         policy: PolicyKind::LeastLatency,
         is_streaming: false,
         has_spending_budget: false,
@@ -546,10 +556,12 @@ fn policy_least_latency_selects_lowest_p95() {
         snapshot: &snapshot,
         score_components: &components,
         weights: &HashMap::new(),
-        rr_index: &mut rr_index,
+        rr_index: 0,
+        input_token_bound: Some(0),
+        output_token_bound: 0,
         rng: None,
     };
-    let decision = select_policy(&mut ctx).unwrap();
+    let decision = select_policy(&ctx).unwrap();
     assert_eq!(decision.selected_target, t2);
     assert_eq!(decision.effective_policy, PolicyKind::LeastLatency);
 }
@@ -565,8 +577,7 @@ fn policy_least_latency_fallback_to_priority() {
         (t1.clone(), make_components(None)),
         (t2.clone(), make_components(None)),
     ]);
-    let mut rr_index = 0;
-    let mut ctx = PolicySelectionContext {
+    let ctx = PolicySelectionContext {
         policy: PolicyKind::LeastLatency,
         is_streaming: false,
         has_spending_budget: false,
@@ -574,10 +585,12 @@ fn policy_least_latency_fallback_to_priority() {
         snapshot: &snapshot,
         score_components: &components,
         weights: &HashMap::new(),
-        rr_index: &mut rr_index,
+        rr_index: 0,
+        input_token_bound: Some(0),
+        output_token_bound: 0,
         rng: None,
     };
-    let decision = select_policy(&mut ctx).unwrap();
+    let decision = select_policy(&ctx).unwrap();
     // Falls back to priority — selects first in registry order
     assert_eq!(decision.selected_target, t1);
     assert_eq!(decision.effective_policy, PolicyKind::Priority);
@@ -598,8 +611,7 @@ fn policy_auto_no_signals_falls_back_to_priority() {
         (t1.clone(), make_components(None)),
         (t2.clone(), make_components(None)),
     ]);
-    let mut rr_index = 0;
-    let mut ctx = PolicySelectionContext {
+    let ctx = PolicySelectionContext {
         policy: PolicyKind::Auto,
         is_streaming: false,
         has_spending_budget: false,
@@ -607,10 +619,12 @@ fn policy_auto_no_signals_falls_back_to_priority() {
         snapshot: &snapshot,
         score_components: &components,
         weights: &HashMap::new(),
-        rr_index: &mut rr_index,
+        rr_index: 0,
+        input_token_bound: Some(0),
+        output_token_bound: 0,
         rng: None,
     };
-    let decision = select_policy(&mut ctx).unwrap();
+    let decision = select_policy(&ctx).unwrap();
     assert_eq!(decision.requested_policy, PolicyKind::Auto);
     assert_eq!(decision.effective_policy, PolicyKind::Priority);
     assert_eq!(
@@ -633,8 +647,7 @@ fn policy_auto_with_p95_selects_least_latency() {
         (t1.clone(), make_components(Some(100.0))),
         (t2.clone(), make_components(Some(50.0))),
     ]);
-    let mut rr_index = 0;
-    let mut ctx = PolicySelectionContext {
+    let ctx = PolicySelectionContext {
         policy: PolicyKind::Auto,
         is_streaming: false,
         has_spending_budget: false,
@@ -642,10 +655,12 @@ fn policy_auto_with_p95_selects_least_latency() {
         snapshot: &snapshot,
         score_components: &components,
         weights: &HashMap::new(),
-        rr_index: &mut rr_index,
+        rr_index: 0,
+        input_token_bound: Some(0),
+        output_token_bound: 0,
         rng: None,
     };
-    let decision = select_policy(&mut ctx).unwrap();
+    let decision = select_policy(&ctx).unwrap();
     assert_eq!(decision.requested_policy, PolicyKind::Auto);
     assert_eq!(decision.effective_policy, PolicyKind::LeastLatency);
     assert_eq!(
@@ -654,6 +669,41 @@ fn policy_auto_with_p95_selects_least_latency() {
     );
     // Should select the lowest-latency target
     assert_eq!(decision.selected_target, t2);
+}
+
+#[test]
+fn policy_auto_mixed_priced_and_unpriced_candidates_reports_priority_fallback() {
+    let t1 = make_target("a");
+    let t2 = make_target("b");
+    let targets = vec![t1.clone(), t2.clone()];
+    let snapshot = make_snapshot(vec![("a", make_signals(None)), ("b", make_signals(None))]);
+    let mut priced = make_components(None);
+    priced.cost_input.raw = RawEvidence::Known(5.0);
+    priced.cost_output.raw = RawEvidence::Known(15.0);
+    let components = HashMap::from([(t1.clone(), priced), (t2.clone(), make_components(None))]);
+    let ctx = PolicySelectionContext {
+        policy: PolicyKind::Auto,
+        is_streaming: false,
+        has_spending_budget: false,
+        eligible_targets: &targets,
+        snapshot: &snapshot,
+        score_components: &components,
+        weights: &HashMap::new(),
+        rr_index: 0,
+        input_token_bound: Some(0),
+        output_token_bound: 100,
+        rng: None,
+    };
+
+    let decision = select_policy(&ctx).unwrap();
+
+    assert_eq!(decision.selected_target, t1);
+    assert_eq!(decision.requested_policy, PolicyKind::Auto);
+    assert_eq!(decision.effective_policy, PolicyKind::Priority);
+    assert_eq!(
+        decision.fallback_reason,
+        Some(rook_core::PolicyFallbackReason::NoComparableSignals)
+    );
 }
 
 /// Auto resolver with budget selects least-cost.
@@ -726,8 +776,7 @@ fn policy_auto_with_budget_selects_least_cost() {
             ])
         };
     let components = components_with_cost(5.0, 15.0);
-    let mut rr_index = 0;
-    let mut ctx = PolicySelectionContext {
+    let ctx = PolicySelectionContext {
         policy: PolicyKind::Auto,
         is_streaming: false,
         has_spending_budget: true,
@@ -735,10 +784,12 @@ fn policy_auto_with_budget_selects_least_cost() {
         snapshot: &snapshot,
         score_components: &components,
         weights: &HashMap::new(),
-        rr_index: &mut rr_index,
+        rr_index: 0,
+        input_token_bound: Some(0),
+        output_token_bound: 100,
         rng: None,
     };
-    let decision = select_policy(&mut ctx).unwrap();
+    let decision = select_policy(&ctx).unwrap();
     assert_eq!(decision.requested_policy, PolicyKind::Auto);
     assert_eq!(decision.effective_policy, PolicyKind::LeastCost);
     assert_eq!(

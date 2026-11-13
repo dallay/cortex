@@ -42,8 +42,13 @@ pub struct PolicySelectionContext<'a> {
     pub score_components: &'a HashMap<TargetRef, CandidateScoreComponents>,
     /// Identity-keyed weights for the weighted policy.
     pub weights: &'a HashMap<ProviderId, f64>,
-    /// Round-robin index state (mutable for counter update).
-    pub rr_index: &'a mut usize,
+    /// Round-robin index atomically reserved by the router for this selection.
+    pub rr_index: usize,
+    /// Upper bound for prompt tokens, when request content is measurable.
+    /// Structured tool content is unknown rather than represented by a sentinel value.
+    pub input_token_bound: Option<u64>,
+    /// Declared completion-token bound (`max_tokens`). Zero means unknown.
+    pub output_token_bound: u64,
     /// Optional seeded RNG for deterministic weighted selection in tests.
     /// If None, uses unseeded system RNG.
     pub rng: Option<f64>,
@@ -58,9 +63,7 @@ pub struct PolicySelectionContext<'a> {
 /// This is the single dispatch surface for all six policies. It consumes
 /// the typed context and produces a typed decision with the selected target,
 /// requested policy, effective policy, and optional fallback reason.
-pub fn select_policy(
-    ctx: &mut PolicySelectionContext<'_>,
-) -> CortexResult<PolicySelectionDecision> {
+pub fn select_policy(ctx: &PolicySelectionContext<'_>) -> CortexResult<PolicySelectionDecision> {
     match ctx.policy {
         PolicyKind::Priority => select_priority(ctx),
         PolicyKind::Weighted => select_weighted(ctx),
@@ -79,7 +82,7 @@ pub fn select_policy(
 ///
 /// This preserves the actual ordering of the existing priority policy.
 /// No score-based reorder; no stable-ID sorting.
-fn select_priority(ctx: &mut PolicySelectionContext<'_>) -> CortexResult<PolicySelectionDecision> {
+fn select_priority(ctx: &PolicySelectionContext<'_>) -> CortexResult<PolicySelectionDecision> {
     let target = ctx
         .eligible_targets
         .first()
@@ -103,7 +106,7 @@ fn select_priority(ctx: &mut PolicySelectionContext<'_>) -> CortexResult<PolicyS
 /// Weights are keyed by stable target identity. Unconfigured targets have
 /// zero weight. Zero-weight targets never win. If no positive eligible weight,
 /// returns a typed non-retryable selection/configuration error.
-fn select_weighted(ctx: &mut PolicySelectionContext<'_>) -> CortexResult<PolicySelectionDecision> {
+fn select_weighted(ctx: &PolicySelectionContext<'_>) -> CortexResult<PolicySelectionDecision> {
     // Filter to eligible candidates with positive weight
     let weighted_candidates: Vec<_> = ctx
         .eligible_targets
@@ -166,17 +169,13 @@ fn select_weighted(ctx: &mut PolicySelectionContext<'_>) -> CortexResult<PolicyS
 /// Select the next provider in round-robin rotation over eligible candidates.
 ///
 /// Preserves the original candidate order and counter/rotation semantics.
-fn select_round_robin(
-    ctx: &mut PolicySelectionContext<'_>,
-) -> CortexResult<PolicySelectionDecision> {
+fn select_round_robin(ctx: &PolicySelectionContext<'_>) -> CortexResult<PolicySelectionDecision> {
     let targets = ctx.eligible_targets;
     if targets.is_empty() {
         return Err(CortexError::all_providers_exhausted());
     }
 
-    let index = *ctx.rr_index;
-    let idx = index % targets.len();
-    *ctx.rr_index = (idx + 1) % targets.len();
+    let idx = ctx.rr_index % targets.len();
 
     let selected_target = targets[idx].clone();
 
@@ -197,9 +196,7 @@ fn select_round_robin(
 /// Uses raw p95 values (not normalized). Known-first ordering, exact-tie
 /// stable-ID ordering. If all values are unknown, falls back to priority
 /// with MetricUnavailable reason.
-fn select_least_latency(
-    ctx: &mut PolicySelectionContext<'_>,
-) -> CortexResult<PolicySelectionDecision> {
+fn select_least_latency(ctx: &PolicySelectionContext<'_>) -> CortexResult<PolicySelectionDecision> {
     // Find candidates with known p95
     let known_candidates: Vec<_> = ctx
         .eligible_targets
@@ -254,16 +251,15 @@ fn select_least_latency(
 // Least Cost
 // ============================================================================
 
-/// Select the provider with the minimum projected request-cost upper bound in USD.
+/// Select the provider with the minimum projected request cost in USD.
 ///
-/// Computes projected cost from both input and output rates using the same
-/// request bound. Known comparable costs precede unknown. Exact ties use
-/// stable target ID. If all unknown, falls back to priority.
-fn select_least_cost(
-    ctx: &mut PolicySelectionContext<'_>,
-) -> CortexResult<PolicySelectionDecision> {
-    // Find candidates with known comparable cost
-    // Cost is computed from both input and output rates
+/// Computes input and output cost using their respective request token bounds.
+/// Both pricing rates and a declared completion bound must be known. Exact ties
+/// use stable target ID. If no comparable projection exists, falls back to priority.
+fn select_least_cost(ctx: &PolicySelectionContext<'_>) -> CortexResult<PolicySelectionDecision> {
+    // Cost comparisons are valid only when every eligible candidate has a
+    // comparable projection. Comparing a priced subset could prefer a costly
+    // option over an unpriced candidate with a lower true cost.
     let known_candidates: Vec<_> = ctx
         .eligible_targets
         .iter()
@@ -280,16 +276,21 @@ fn select_least_cost(
                 return None;
             }
 
-            // Combined rate represents the cost basis (both input and output)
-            // A candidate with both rates known is comparable.
-            // We use the combined rate as the comparable metric.
-            let combined_rate = input_rate + output_rate;
-            Some((target, combined_rate))
+            // Missing token bounds are not comparable: projected cost cannot
+            // be calculated without both request bounds.
+            let input_token_bound = ctx.input_token_bound?;
+            if ctx.output_token_bound == 0 {
+                return None;
+            }
+            let projected_cost = (input_rate * input_token_bound as f64
+                + output_rate * ctx.output_token_bound as f64)
+                / 1_000_000.0;
+            (projected_cost.is_finite()).then_some((target, projected_cost))
         })
         .collect();
 
-    if known_candidates.is_empty() {
-        // All unknown — fall back to priority
+    if known_candidates.len() != ctx.eligible_targets.len() {
+        // Any unknown candidate makes the set incomparable — fall back to priority
         let target = ctx
             .eligible_targets
             .first()
@@ -331,7 +332,7 @@ fn select_least_cost(
 /// Resolve deterministically to a concrete policy per request.
 ///
 /// Ordered rules:
-/// 1. If the request has an enforced spending_budget and comparable projected
+/// 1. If this request has an enforced spending_budget and comparable projected
 ///    USD cost exists for at least one eligible candidate, choose least-cost
 ///    (BudgetAware).
 /// 2. Otherwise, if the request is streaming and at least one comparable p95
@@ -341,7 +342,7 @@ fn select_least_cost(
 /// 4. Otherwise, if at least one comparable projected request cost exists,
 ///    choose least-cost (CostEvidenceAvailable).
 /// 5. Otherwise choose legacy priority (NoComparableSignals).
-fn resolve_auto(ctx: &mut PolicySelectionContext<'_>) -> CortexResult<PolicySelectionDecision> {
+fn resolve_auto(ctx: &PolicySelectionContext<'_>) -> CortexResult<PolicySelectionDecision> {
     // Check if any candidate has known p95
     let has_known_p95 = ctx.eligible_targets.iter().any(|target| {
         ctx.snapshot
@@ -352,24 +353,18 @@ fn resolve_auto(ctx: &mut PolicySelectionContext<'_>) -> CortexResult<PolicySele
             .unwrap_or(false)
     });
 
-    // Check if any candidate has known comparable cost (both input and output)
-    let has_known_cost = ctx.eligible_targets.iter().any(|target| {
-        ctx.score_components
-            .get(target)
-            .and_then(|c| {
-                let input = c.cost_input.raw.as_known().copied()?;
-                let output = c.cost_output.raw.as_known().copied()?;
-                if input.is_finite() && input >= 0.0 && output.is_finite() && output >= 0.0 {
-                    Some(())
-                } else {
-                    None
-                }
-            })
-            .is_some()
-    });
+    // LeastCost compares every eligible candidate and falls back to Priority
+    // when any candidate lacks a comparable projection. Auto must use that same
+    // all-candidates comparability test before reporting a cost policy.
+    let has_comparable_cost = has_all_comparable_projected_cost(
+        ctx.eligible_targets,
+        ctx.score_components,
+        ctx.input_token_bound,
+        ctx.output_token_bound,
+    );
 
     // Rule 1: BudgetAware
-    if ctx.has_spending_budget && has_known_cost {
+    if ctx.has_spending_budget && has_comparable_cost {
         let decision = select_least_cost(ctx)?;
         return Ok(PolicySelectionDecision {
             selected_target: decision.selected_target,
@@ -403,7 +398,7 @@ fn resolve_auto(ctx: &mut PolicySelectionContext<'_>) -> CortexResult<PolicySele
     }
 
     // Rule 4: CostEvidenceAvailable
-    if has_known_cost {
+    if has_comparable_cost {
         let decision = select_least_cost(ctx)?;
         return Ok(PolicySelectionDecision {
             selected_target: decision.selected_target,
@@ -427,6 +422,53 @@ fn resolve_auto(ctx: &mut PolicySelectionContext<'_>) -> CortexResult<PolicySele
 // ============================================================================
 
 /// Check whether at least one candidate has a known, comparable p95 latency.
+fn has_all_comparable_projected_cost(
+    targets: &[TargetRef],
+    components: &HashMap<TargetRef, CandidateScoreComponents>,
+    input_token_bound: Option<u64>,
+    output_token_bound: u64,
+) -> bool {
+    input_token_bound.is_some()
+        && output_token_bound > 0
+        && !targets.is_empty()
+        && targets.iter().all(|target| {
+            has_comparable_projected_cost(
+                std::slice::from_ref(target),
+                components,
+                input_token_bound.expect("checked input bound"),
+                output_token_bound,
+            )
+        })
+}
+
+fn has_comparable_projected_cost(
+    targets: &[TargetRef],
+    components: &HashMap<TargetRef, CandidateScoreComponents>,
+    input_token_bound: u64,
+    output_token_bound: u64,
+) -> bool {
+    if output_token_bound == 0 {
+        return false;
+    }
+
+    targets.iter().any(|target| {
+        let Some(components) = components.get(target) else {
+            return false;
+        };
+        let (Some(input), Some(output)) = (
+            components.cost_input.raw.as_known().copied(),
+            components.cost_output.raw.as_known().copied(),
+        ) else {
+            return false;
+        };
+        if !input.is_finite() || input < 0.0 || !output.is_finite() || output < 0.0 {
+            return false;
+        }
+        ((input * input_token_bound as f64 + output * output_token_bound as f64) / 1_000_000.0)
+            .is_finite()
+    })
+}
+
 pub fn has_comparable_p95(targets: &[TargetRef], signals: &SignalsSnapshot) -> bool {
     targets.iter().any(|target| {
         signals
@@ -438,25 +480,17 @@ pub fn has_comparable_p95(targets: &[TargetRef], signals: &SignalsSnapshot) -> b
     })
 }
 
-/// Check whether at least one candidate has known, comparable cost (both input and output).
+/// Check whether at least one candidate has known rates and a finite projected request cost.
 pub fn has_comparable_cost(
     targets: &[TargetRef],
     components: &HashMap<TargetRef, CandidateScoreComponents>,
+    input_token_bound: Option<u64>,
+    output_token_bound: u64,
 ) -> bool {
-    targets.iter().any(|target| {
-        components
-            .get(target)
-            .and_then(|c| {
-                let input = c.cost_input.raw.as_known().copied()?;
-                let output = c.cost_output.raw.as_known().copied()?;
-                if input.is_finite() && input >= 0.0 && output.is_finite() && output >= 0.0 {
-                    Some(())
-                } else {
-                    None
-                }
-            })
-            .is_some()
-    })
+    let Some(input_token_bound) = input_token_bound else {
+        return false;
+    };
+    has_comparable_projected_cost(targets, components, input_token_bound, output_token_bound)
 }
 
 #[cfg(test)]
@@ -560,8 +594,8 @@ mod tests {
             (t1.clone(), make_components(None, None, None)),
             (t2.clone(), make_components(None, None, None)),
         ]);
-        let mut rr_index = 0;
-        let mut ctx = PolicySelectionContext {
+        let rr_index = 0;
+        let ctx = PolicySelectionContext {
             policy: PolicyKind::Priority,
             is_streaming: false,
             has_spending_budget: false,
@@ -569,10 +603,12 @@ mod tests {
             snapshot: &snapshot,
             score_components: &components,
             weights: &HashMap::new(),
-            rr_index: &mut rr_index,
+            rr_index,
+            input_token_bound: Some(0),
+            output_token_bound: 0,
             rng: None,
         };
-        let decision = select_policy(&mut ctx).unwrap();
+        let decision = select_policy(&ctx).unwrap();
         assert_eq!(decision.selected_target, t1);
         assert_eq!(decision.effective_policy, PolicyKind::Priority);
     }
@@ -590,8 +626,8 @@ mod tests {
             (t1.clone(), make_components(Some(100.0), None, None)),
             (t2.clone(), make_components(Some(50.0), None, None)),
         ]);
-        let mut rr_index = 0;
-        let mut ctx = PolicySelectionContext {
+        let rr_index = 0;
+        let ctx = PolicySelectionContext {
             policy: PolicyKind::LeastLatency,
             is_streaming: false,
             has_spending_budget: false,
@@ -599,10 +635,12 @@ mod tests {
             snapshot: &snapshot,
             score_components: &components,
             weights: &HashMap::new(),
-            rr_index: &mut rr_index,
+            rr_index,
+            input_token_bound: Some(0),
+            output_token_bound: 0,
             rng: None,
         };
-        let decision = select_policy(&mut ctx).unwrap();
+        let decision = select_policy(&ctx).unwrap();
         assert_eq!(decision.selected_target, t2);
         assert_eq!(decision.effective_policy, PolicyKind::LeastLatency);
     }
@@ -620,8 +658,8 @@ mod tests {
             (t1.clone(), make_components(None, None, None)),
             (t2.clone(), make_components(None, None, None)),
         ]);
-        let mut rr_index = 0;
-        let mut ctx = PolicySelectionContext {
+        let rr_index = 0;
+        let ctx = PolicySelectionContext {
             policy: PolicyKind::LeastLatency,
             is_streaming: false,
             has_spending_budget: false,
@@ -629,10 +667,12 @@ mod tests {
             snapshot: &snapshot,
             score_components: &components,
             weights: &HashMap::new(),
-            rr_index: &mut rr_index,
+            rr_index,
+            input_token_bound: Some(0),
+            output_token_bound: 0,
             rng: None,
         };
-        let decision = select_policy(&mut ctx).unwrap();
+        let decision = select_policy(&ctx).unwrap();
         assert_eq!(decision.selected_target, t1);
         assert_eq!(decision.effective_policy, PolicyKind::Priority);
         assert_eq!(
@@ -642,20 +682,19 @@ mod tests {
     }
 
     #[test]
-    fn least_cost_selects_lowest_combined_rate() {
+    fn least_cost_mixed_pricing_falls_back_to_priority() {
         let t1 = make_target("a");
         let t2 = make_target("b");
         let targets = vec![t1.clone(), t2.clone()];
         let snapshot = make_snapshot(vec![
-            ("a", make_signals(None, Some(10.0), Some(20.0))),
-            ("b", make_signals(None, Some(5.0), Some(5.0))),
+            ("a", make_signals(None, Some(1.0), Some(1.0))),
+            ("b", make_signals(None, None, None)),
         ]);
         let components = HashMap::from([
-            (t1.clone(), make_components(None, Some(10.0), Some(20.0))),
-            (t2.clone(), make_components(None, Some(5.0), Some(5.0))),
+            (t1.clone(), make_components(None, Some(1.0), Some(1.0))),
+            (t2.clone(), make_components(None, None, None)),
         ]);
-        let mut rr_index = 0;
-        let mut ctx = PolicySelectionContext {
+        let ctx = PolicySelectionContext {
             policy: PolicyKind::LeastCost,
             is_streaming: false,
             has_spending_budget: false,
@@ -663,11 +702,53 @@ mod tests {
             snapshot: &snapshot,
             score_components: &components,
             weights: &HashMap::new(),
-            rr_index: &mut rr_index,
+            rr_index: 0,
+            input_token_bound: Some(10_000),
+            output_token_bound: 100,
             rng: None,
         };
-        let decision = select_policy(&mut ctx).unwrap();
-        assert_eq!(decision.selected_target, t2);
+
+        let decision = select_policy(&ctx).unwrap();
+
+        assert_eq!(decision.selected_target, t1);
+        assert_eq!(decision.effective_policy, PolicyKind::Priority);
+        assert_eq!(
+            decision.fallback_reason,
+            Some(PolicyFallbackReason::MetricUnavailable)
+        );
+    }
+
+    #[test]
+    fn least_cost_selects_using_request_weighted_cost() {
+        let t1 = make_target("a");
+        let t2 = make_target("b");
+        let targets = vec![t1.clone(), t2.clone()];
+        let snapshot = make_snapshot(vec![
+            ("a", make_signals(None, Some(1.0), Some(100.0))),
+            ("b", make_signals(None, Some(10.0), Some(1.0))),
+        ]);
+        let components = HashMap::from([
+            (t1.clone(), make_components(None, Some(1.0), Some(100.0))),
+            (t2.clone(), make_components(None, Some(10.0), Some(1.0))),
+        ]);
+        let rr_index = 0;
+        let ctx = PolicySelectionContext {
+            policy: PolicyKind::LeastCost,
+            is_streaming: false,
+            has_spending_budget: false,
+            eligible_targets: &targets,
+            snapshot: &snapshot,
+            score_components: &components,
+            weights: &HashMap::new(),
+            rr_index,
+            input_token_bound: Some(10_000),
+            output_token_bound: 1,
+            rng: None,
+        };
+        let decision = select_policy(&ctx).unwrap();
+        // For a large prompt and a one-token completion, provider a is cheaper;
+        // summing per-token rates incorrectly selects provider b.
+        assert_eq!(decision.selected_target, t1);
         assert_eq!(decision.effective_policy, PolicyKind::LeastCost);
     }
 
@@ -684,8 +765,8 @@ mod tests {
             (t1.clone(), make_components(None, Some(10.0), Some(20.0))),
             (t2.clone(), make_components(None, Some(5.0), Some(5.0))),
         ]);
-        let mut rr_index = 0;
-        let mut ctx = PolicySelectionContext {
+        let rr_index = 0;
+        let ctx = PolicySelectionContext {
             policy: PolicyKind::Auto,
             is_streaming: false,
             has_spending_budget: true,
@@ -693,15 +774,53 @@ mod tests {
             snapshot: &snapshot,
             score_components: &components,
             weights: &HashMap::new(),
-            rr_index: &mut rr_index,
+            rr_index,
+            input_token_bound: Some(0),
+            output_token_bound: 10,
             rng: None,
         };
-        let decision = select_policy(&mut ctx).unwrap();
+        let decision = select_policy(&ctx).unwrap();
         assert_eq!(decision.requested_policy, PolicyKind::Auto);
         assert_eq!(decision.effective_policy, PolicyKind::LeastCost);
         assert_eq!(
             decision.fallback_reason,
             Some(PolicyFallbackReason::BudgetAware)
+        );
+    }
+
+    #[test]
+    fn auto_does_not_select_least_cost_without_output_bound() {
+        let t1 = make_target("a");
+        let t2 = make_target("b");
+        let targets = vec![t1.clone(), t2.clone()];
+        let snapshot = make_snapshot(vec![
+            ("a", make_signals(None, Some(1.0), Some(100.0))),
+            ("b", make_signals(None, Some(100.0), Some(1.0))),
+        ]);
+        let components = HashMap::from([
+            (t1.clone(), make_components(None, Some(1.0), Some(100.0))),
+            (t2, make_components(None, Some(100.0), Some(1.0))),
+        ]);
+        let ctx = PolicySelectionContext {
+            policy: PolicyKind::Auto,
+            is_streaming: false,
+            has_spending_budget: false,
+            eligible_targets: &targets,
+            snapshot: &snapshot,
+            score_components: &components,
+            weights: &HashMap::new(),
+            rr_index: 0,
+            input_token_bound: Some(100),
+            output_token_bound: 0,
+            rng: None,
+        };
+
+        let decision = select_policy(&ctx).unwrap();
+        assert_eq!(decision.selected_target, t1);
+        assert_eq!(decision.effective_policy, PolicyKind::Priority);
+        assert_eq!(
+            decision.fallback_reason,
+            Some(PolicyFallbackReason::NoComparableSignals)
         );
     }
 
@@ -718,8 +837,8 @@ mod tests {
             (t1.clone(), make_components(None, None, None)),
             (t2.clone(), make_components(None, None, None)),
         ]);
-        let mut rr_index = 0;
-        let mut ctx = PolicySelectionContext {
+        let rr_index = 0;
+        let ctx = PolicySelectionContext {
             policy: PolicyKind::Auto,
             is_streaming: false,
             has_spending_budget: false,
@@ -727,10 +846,12 @@ mod tests {
             snapshot: &snapshot,
             score_components: &components,
             weights: &HashMap::new(),
-            rr_index: &mut rr_index,
+            rr_index,
+            input_token_bound: Some(0),
+            output_token_bound: 0,
             rng: None,
         };
-        let decision = select_policy(&mut ctx).unwrap();
+        let decision = select_policy(&ctx).unwrap();
         assert_eq!(decision.requested_policy, PolicyKind::Auto);
         assert_eq!(decision.effective_policy, PolicyKind::Priority);
         assert_eq!(
@@ -753,36 +874,26 @@ mod tests {
             (t2.clone(), make_components(None, None, None)),
         ]);
 
-        let mut rr_index = 0;
-        let mut ctx = PolicySelectionContext {
-            policy: PolicyKind::RoundRobin,
-            is_streaming: false,
-            has_spending_budget: false,
-            eligible_targets: &targets,
-            snapshot: &snapshot,
-            score_components: &components,
-            weights: &HashMap::new(),
-            rr_index: &mut rr_index,
-            rng: None,
+        let select_at = |rr_index| {
+            select_policy(&PolicySelectionContext {
+                policy: PolicyKind::RoundRobin,
+                is_streaming: false,
+                has_spending_budget: false,
+                eligible_targets: &targets,
+                snapshot: &snapshot,
+                score_components: &components,
+                weights: &HashMap::new(),
+                rr_index,
+                input_token_bound: Some(0),
+                output_token_bound: 0,
+                rng: None,
+            })
+            .unwrap()
         };
-        let decision1 = select_policy(&mut ctx).unwrap();
+        let decision1 = select_at(0);
+        let decision2 = select_at(1);
         assert_eq!(decision1.selected_target, t1);
-        assert_eq!(rr_index, 1);
-
-        let mut ctx = PolicySelectionContext {
-            policy: PolicyKind::RoundRobin,
-            is_streaming: false,
-            has_spending_budget: false,
-            eligible_targets: &targets,
-            snapshot: &snapshot,
-            score_components: &components,
-            weights: &HashMap::new(),
-            rr_index: &mut rr_index,
-            rng: None,
-        };
-        let decision2 = select_policy(&mut ctx).unwrap();
         assert_eq!(decision2.selected_target, t2);
-        assert_eq!(rr_index, 0); // wrapped around
     }
 
     #[test]
@@ -804,8 +915,8 @@ mod tests {
         weights.insert(t2.0.clone(), 0.1);
 
         // Use seeded RNG for deterministic test
-        let mut rr_index = 0;
-        let mut ctx = PolicySelectionContext {
+        let rr_index = 0;
+        let ctx = PolicySelectionContext {
             policy: PolicyKind::Weighted,
             is_streaming: false,
             has_spending_budget: false,
@@ -813,15 +924,14 @@ mod tests {
             snapshot: &snapshot,
             score_components: &components,
             weights: &weights,
-            rr_index: &mut rr_index,
+            rr_index,
+            input_token_bound: Some(0),
+            output_token_bound: 0,
             rng: Some(0.5),
         };
-        let decision = select_policy(&mut ctx).unwrap();
-        // Should select one of the targets
-        assert!(
-            decision.selected_target == t1 || decision.selected_target == t2,
-            "should select a valid target"
-        );
+        let decision = select_policy(&ctx).unwrap();
+        // rng = 0.5 over total weight 1.0 selects the 0.9-weight target.
+        assert_eq!(decision.selected_target, t1);
     }
 
     // ============================================================================
@@ -838,8 +948,8 @@ mod tests {
         let mut weights = HashMap::new();
         weights.insert(t1.0.clone(), 0.0); // zero weight
 
-        let mut rr_index = 0;
-        let mut ctx = PolicySelectionContext {
+        let rr_index = 0;
+        let ctx = PolicySelectionContext {
             policy: PolicyKind::Weighted,
             is_streaming: false,
             has_spending_budget: false,
@@ -847,10 +957,12 @@ mod tests {
             snapshot: &snapshot,
             score_components: &components,
             weights: &weights,
-            rr_index: &mut rr_index,
+            rr_index,
+            input_token_bound: Some(0),
+            output_token_bound: 0,
             rng: None,
         };
-        let result = select_policy(&mut ctx);
+        let result = select_policy(&ctx);
         assert!(result.is_err());
     }
 
@@ -873,8 +985,8 @@ mod tests {
         weights.insert(t1.0.clone(), f64::NAN);
         weights.insert(t2.0.clone(), 1.0);
 
-        let mut rr_index = 0;
-        let mut ctx = PolicySelectionContext {
+        let rr_index = 0;
+        let ctx = PolicySelectionContext {
             policy: PolicyKind::Weighted,
             is_streaming: false,
             has_spending_budget: false,
@@ -882,11 +994,13 @@ mod tests {
             snapshot: &snapshot,
             score_components: &components,
             weights: &weights,
-            rr_index: &mut rr_index,
+            rr_index,
+            input_token_bound: Some(0),
+            output_token_bound: 0,
             rng: Some(0.5),
         };
         // Should select t2 (only positive finite weight)
-        let decision = select_policy(&mut ctx).unwrap();
+        let decision = select_policy(&ctx).unwrap();
         assert_eq!(decision.selected_target, t2);
     }
 
@@ -909,8 +1023,8 @@ mod tests {
         weights.insert(t1.0.clone(), f64::INFINITY);
         weights.insert(t2.0.clone(), 1.0);
 
-        let mut rr_index = 0;
-        let mut ctx = PolicySelectionContext {
+        let rr_index = 0;
+        let ctx = PolicySelectionContext {
             policy: PolicyKind::Weighted,
             is_streaming: false,
             has_spending_budget: false,
@@ -918,11 +1032,13 @@ mod tests {
             snapshot: &snapshot,
             score_components: &components,
             weights: &weights,
-            rr_index: &mut rr_index,
+            rr_index,
+            input_token_bound: Some(0),
+            output_token_bound: 0,
             rng: Some(0.5),
         };
         // Should select t2 (only positive finite weight)
-        let decision = select_policy(&mut ctx).unwrap();
+        let decision = select_policy(&ctx).unwrap();
         assert_eq!(decision.selected_target, t2);
     }
 
@@ -945,8 +1061,8 @@ mod tests {
         weights.insert(t1.0.clone(), -5.0);
         weights.insert(t2.0.clone(), 1.0);
 
-        let mut rr_index = 0;
-        let mut ctx = PolicySelectionContext {
+        let rr_index = 0;
+        let ctx = PolicySelectionContext {
             policy: PolicyKind::Weighted,
             is_streaming: false,
             has_spending_budget: false,
@@ -954,11 +1070,13 @@ mod tests {
             snapshot: &snapshot,
             score_components: &components,
             weights: &weights,
-            rr_index: &mut rr_index,
+            rr_index,
+            input_token_bound: Some(0),
+            output_token_bound: 0,
             rng: Some(0.5),
         };
         // Should select t2 (only positive finite weight)
-        let decision = select_policy(&mut ctx).unwrap();
+        let decision = select_policy(&ctx).unwrap();
         assert_eq!(decision.selected_target, t2);
     }
 
@@ -981,8 +1099,8 @@ mod tests {
         weights.insert(t1.0.clone(), f64::NAN);
         weights.insert(t2.0.clone(), f64::INFINITY);
 
-        let mut rr_index = 0;
-        let mut ctx = PolicySelectionContext {
+        let rr_index = 0;
+        let ctx = PolicySelectionContext {
             policy: PolicyKind::Weighted,
             is_streaming: false,
             has_spending_budget: false,
@@ -990,10 +1108,12 @@ mod tests {
             snapshot: &snapshot,
             score_components: &components,
             weights: &weights,
-            rr_index: &mut rr_index,
+            rr_index,
+            input_token_bound: Some(0),
+            output_token_bound: 0,
             rng: None,
         };
-        let result = select_policy(&mut ctx);
+        let result = select_policy(&ctx);
         assert!(result.is_err());
     }
 
@@ -1016,8 +1136,8 @@ mod tests {
         let mut weights = HashMap::new();
         weights.insert(t1.0.clone(), 1.0);
 
-        let mut rr_index = 0;
-        let mut ctx = PolicySelectionContext {
+        let rr_index = 0;
+        let ctx = PolicySelectionContext {
             policy: PolicyKind::Weighted,
             is_streaming: false,
             has_spending_budget: false,
@@ -1025,11 +1145,13 @@ mod tests {
             snapshot: &snapshot,
             score_components: &components,
             weights: &weights,
-            rr_index: &mut rr_index,
+            rr_index,
+            input_token_bound: Some(0),
+            output_token_bound: 0,
             rng: Some(0.5),
         };
         // Should always select t1 because t2 has zero weight
-        let decision = select_policy(&mut ctx).unwrap();
+        let decision = select_policy(&ctx).unwrap();
         assert_eq!(decision.selected_target, t1);
     }
 
@@ -1059,8 +1181,8 @@ mod tests {
 
         // Order 1: [a, b, c] — t2 is in the middle
         let targets_1 = vec![t1.clone(), t2.clone(), t3.clone()];
-        let mut rr_index = 0;
-        let mut ctx = PolicySelectionContext {
+        let rr_index = 0;
+        let ctx = PolicySelectionContext {
             policy: PolicyKind::Weighted,
             is_streaming: false,
             has_spending_budget: false,
@@ -1069,14 +1191,16 @@ mod tests {
             score_components: &components,
             weights: &weights,
             rng: Some(0.5),
-            rr_index: &mut rr_index,
+            rr_index,
+            input_token_bound: Some(0),
+            output_token_bound: 0,
         };
-        let decision_1 = select_policy(&mut ctx).unwrap();
+        let decision_1 = select_policy(&ctx).unwrap();
 
         // Order 2: [c, a, b] — t2 is last
         let targets_2 = vec![t3.clone(), t1.clone(), t2.clone()];
-        let mut rr_index = 0;
-        let mut ctx = PolicySelectionContext {
+        let rr_index = 0;
+        let ctx = PolicySelectionContext {
             policy: PolicyKind::Weighted,
             is_streaming: false,
             has_spending_budget: false,
@@ -1085,14 +1209,16 @@ mod tests {
             score_components: &components,
             weights: &weights,
             rng: Some(0.5),
-            rr_index: &mut rr_index,
+            rr_index,
+            input_token_bound: Some(0),
+            output_token_bound: 0,
         };
-        let decision_2 = select_policy(&mut ctx).unwrap();
+        let decision_2 = select_policy(&ctx).unwrap();
 
         // Order 3: [b, a, c] — t2 is first
         let targets_3 = vec![t2.clone(), t1.clone(), t3.clone()];
-        let mut rr_index = 0;
-        let mut ctx = PolicySelectionContext {
+        let rr_index = 0;
+        let ctx = PolicySelectionContext {
             policy: PolicyKind::Weighted,
             is_streaming: false,
             has_spending_budget: false,
@@ -1101,9 +1227,11 @@ mod tests {
             score_components: &components,
             weights: &weights,
             rng: Some(0.5),
-            rr_index: &mut rr_index,
+            rr_index,
+            input_token_bound: Some(0),
+            output_token_bound: 0,
         };
-        let decision_3 = select_policy(&mut ctx).unwrap();
+        let decision_3 = select_policy(&ctx).unwrap();
 
         // t2 is the only positive-weight target — it must win in every order
         assert_eq!(
@@ -1144,8 +1272,8 @@ mod tests {
 
         // Original: [a, b]
         let targets_original = vec![t1.clone(), t2.clone()];
-        let mut rr_index = 0;
-        let mut ctx = PolicySelectionContext {
+        let rr_index = 0;
+        let ctx = PolicySelectionContext {
             policy: PolicyKind::Weighted,
             is_streaming: false,
             has_spending_budget: false,
@@ -1154,14 +1282,16 @@ mod tests {
             score_components: &components,
             weights: &weights,
             rng: Some(0.25),
-            rr_index: &mut rr_index,
+            rr_index,
+            input_token_bound: Some(0),
+            output_token_bound: 0,
         };
-        let decision_original = select_policy(&mut ctx).unwrap();
+        let decision_original = select_policy(&ctx).unwrap();
 
         // After adding t3 (unconfigured, zero weight): [a, b, c]
         let targets_with_new = vec![t1.clone(), t2.clone(), t3.clone()];
-        let mut rr_index = 0;
-        let mut ctx = PolicySelectionContext {
+        let rr_index = 0;
+        let ctx = PolicySelectionContext {
             policy: PolicyKind::Weighted,
             is_streaming: false,
             has_spending_budget: false,
@@ -1170,9 +1300,11 @@ mod tests {
             score_components: &components,
             weights: &weights,
             rng: Some(0.25),
-            rr_index: &mut rr_index,
+            rr_index,
+            input_token_bound: Some(0),
+            output_token_bound: 0,
         };
-        let decision_with_new = select_policy(&mut ctx).unwrap();
+        let decision_with_new = select_policy(&ctx).unwrap();
 
         assert_eq!(
             decision_original.selected_target, decision_with_new.selected_target,
@@ -1204,8 +1336,8 @@ mod tests {
 
         // Original: [a, b, c]
         let targets_original = vec![t1.clone(), t2.clone(), t3.clone()];
-        let mut rr_index = 0;
-        let mut ctx = PolicySelectionContext {
+        let rr_index = 0;
+        let ctx = PolicySelectionContext {
             policy: PolicyKind::Weighted,
             is_streaming: false,
             has_spending_budget: false,
@@ -1214,14 +1346,16 @@ mod tests {
             score_components: &components,
             weights: &weights,
             rng: Some(0.5),
-            rr_index: &mut rr_index,
+            rr_index,
+            input_token_bound: Some(0),
+            output_token_bound: 0,
         };
-        let decision_original = select_policy(&mut ctx).unwrap();
+        let decision_original = select_policy(&ctx).unwrap();
 
         // After removing t3: [a, b]
         let targets_without_c = vec![t1.clone(), t2.clone()];
-        let mut rr_index = 0;
-        let mut ctx = PolicySelectionContext {
+        let rr_index = 0;
+        let ctx = PolicySelectionContext {
             policy: PolicyKind::Weighted,
             is_streaming: false,
             has_spending_budget: false,
@@ -1230,9 +1364,11 @@ mod tests {
             score_components: &components,
             weights: &weights,
             rng: Some(0.5),
-            rr_index: &mut rr_index,
+            rr_index,
+            input_token_bound: Some(0),
+            output_token_bound: 0,
         };
-        let decision_without_c = select_policy(&mut ctx).unwrap();
+        let decision_without_c = select_policy(&ctx).unwrap();
 
         // With rng=0.5 and equal weights, original total=3.0, target=1.5 → picks index 1 (b)
         // After removing c, total=2.0, target=1.0 → picks index 1 (b)
@@ -1268,8 +1404,8 @@ mod tests {
 
         for i in 0..total_runs {
             let rng_val = i as f64 / total_runs as f64;
-            let mut rr_index = 0;
-            let mut ctx = PolicySelectionContext {
+            let rr_index = 0;
+            let ctx = PolicySelectionContext {
                 policy: PolicyKind::Weighted,
                 is_streaming: false,
                 has_spending_budget: false,
@@ -1277,10 +1413,12 @@ mod tests {
                 snapshot: &snapshot,
                 score_components: &components,
                 weights: &weights,
-                rr_index: &mut rr_index,
+                rr_index,
+                input_token_bound: Some(0),
+                output_token_bound: 0,
                 rng: Some(rng_val),
             };
-            let decision = select_policy(&mut ctx).unwrap();
+            let decision = select_policy(&ctx).unwrap();
             if decision.selected_target == t1 {
                 t1_count += 1;
             } else {
@@ -1290,12 +1428,20 @@ mod tests {
 
         // With 90/10 weights, t1 should be selected ~90% of the time
         let t1_ratio = t1_count as f64 / total_runs as f64;
+        let t2_ratio = t2_count as f64 / total_runs as f64;
         // Allow 5% tolerance
         assert!(
             (t1_ratio - 0.9).abs() < 0.05,
             "t1 ratio {:.2} should be close to 0.9 (got {} out of {})",
             t1_ratio,
             t1_count,
+            total_runs
+        );
+        assert!(
+            (t2_ratio - 0.1).abs() < 0.05,
+            "t2 ratio {:.2} should be close to 0.1 (got {} out of {})",
+            t2_ratio,
+            t2_count,
             total_runs
         );
     }
@@ -1309,8 +1455,8 @@ mod tests {
         let components = HashMap::from([(t1.clone(), make_components(None, None, None))]);
 
         // Empty weights → error
-        let mut rr_index = 0;
-        let mut ctx = PolicySelectionContext {
+        let rr_index = 0;
+        let ctx = PolicySelectionContext {
             policy: PolicyKind::Weighted,
             is_streaming: false,
             has_spending_budget: false,
@@ -1318,16 +1464,18 @@ mod tests {
             snapshot: &snapshot,
             score_components: &components,
             weights: &HashMap::new(),
-            rr_index: &mut rr_index,
+            rr_index,
+            input_token_bound: Some(0),
+            output_token_bound: 0,
             rng: None,
         };
-        assert!(select_policy(&mut ctx).is_err());
+        assert!(select_policy(&ctx).is_err());
 
         // After adding weight → success
         let mut weights = HashMap::new();
         weights.insert(t1.0.clone(), 1.0);
-        let mut rr_index = 0;
-        let mut ctx = PolicySelectionContext {
+        let rr_index = 0;
+        let ctx = PolicySelectionContext {
             policy: PolicyKind::Weighted,
             is_streaming: false,
             has_spending_budget: false,
@@ -1335,10 +1483,12 @@ mod tests {
             snapshot: &snapshot,
             score_components: &components,
             weights: &weights,
-            rr_index: &mut rr_index,
+            rr_index,
+            input_token_bound: Some(0),
+            output_token_bound: 0,
             rng: Some(0.5),
         };
-        let decision = select_policy(&mut ctx).unwrap();
+        let decision = select_policy(&ctx).unwrap();
         assert_eq!(decision.selected_target, t1);
     }
 
@@ -1361,8 +1511,8 @@ mod tests {
         weights.insert(t1.0.clone(), 1e300);
         weights.insert(t2.0.clone(), 1e300);
 
-        let mut rr_index = 0;
-        let mut ctx = PolicySelectionContext {
+        let rr_index = 0;
+        let ctx = PolicySelectionContext {
             policy: PolicyKind::Weighted,
             is_streaming: false,
             has_spending_budget: false,
@@ -1370,14 +1520,14 @@ mod tests {
             snapshot: &snapshot,
             score_components: &components,
             weights: &weights,
-            rr_index: &mut rr_index,
+            rr_index,
+            input_token_bound: Some(0),
+            output_token_bound: 0,
             rng: Some(0.5),
         };
         // Should not panic or return infinity error
-        let decision = select_policy(&mut ctx).unwrap();
-        assert!(
-            decision.selected_target == t1 || decision.selected_target == t2,
-            "should select a valid target even with large weights"
-        );
+        let decision = select_policy(&ctx).unwrap();
+        // rng = 0.5 over total weight 2e300 lands on the second candidate.
+        assert_eq!(decision.selected_target, t2);
     }
 }

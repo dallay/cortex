@@ -278,6 +278,42 @@ pub struct RoutingConfig {
     pub weights: std::collections::HashMap<String, f64>,
 }
 
+impl RoutingConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        for (target, weight) in &self.weights {
+            if target.trim().is_empty() {
+                return Err("routing weight target key must not be empty".to_string());
+            }
+            if !weight.is_finite() || *weight < 0.0 {
+                return Err(format!(
+                    "routing weight for target '{target}' must be finite and non-negative"
+                ));
+            }
+        }
+        if matches!(self.strategy, StrategyConfig::Weighted)
+            && self.weights.values().sum::<f64>().is_infinite()
+        {
+            return Err("routing.weights total must be finite".to_string());
+        }
+        if matches!(self.strategy, StrategyConfig::Weighted)
+            && !self.weights.values().any(|weight| *weight > 0.0)
+        {
+            return Err(
+                "routing.weights must contain at least one positive weight when strategy is weighted"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    pub fn weights_by_provider(&self) -> HashMap<shared_kernel::ProviderId, f64> {
+        self.weights
+            .iter()
+            .map(|(target, weight)| (shared_kernel::ProviderId::new(target), *weight))
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum StrategyConfig {
@@ -509,6 +545,11 @@ impl RookConfig {
                 .replace('~', home.to_str().unwrap_or(""));
         }
 
+        config
+            .routing
+            .validate()
+            .map_err(|error| anyhow::anyhow!("invalid routing config: {error}"))?;
+
         // Validate combo configurations
         models_catalog::StaticModelCatalog::with_declarations(config.model_catalog.clone())
             .map_err(|error| anyhow::anyhow!("invalid model catalog: {error}"))?;
@@ -613,17 +654,24 @@ impl RookConfig {
 mod tests {
     use super::*;
 
-    /// The routing strategy surface is exactly {priority, round-robin};
+    /// The routing strategy surface is exactly the six explicit policies;
     /// every other value must be rejected at parse time.
     #[test]
-    fn routing_strategy_accepts_exactly_priority_and_round_robin() {
-        let accepted = ["priority", "round-robin"];
+    fn routing_strategy_accepts_exactly_the_six_supported_policies() {
+        let accepted = [
+            "priority",
+            "weighted",
+            "round-robin",
+            "least-latency",
+            "least-cost",
+            "auto",
+        ];
         for value in accepted {
             let parsed: Result<StrategyConfig, _> =
                 serde::Deserialize::deserialize(serde_json::Value::String(value.into()));
             assert!(parsed.is_ok(), "{value} must be a configurable strategy");
         }
-        let rejected = ["model-based", "weighted-random", "auto", "least-latency"];
+        let rejected = ["model-based", "weighted-random", "least_cost", "roundrobin"];
         for value in rejected {
             let parsed: Result<StrategyConfig, _> =
                 serde::Deserialize::deserialize(serde_json::Value::String(value.into()));
@@ -632,6 +680,128 @@ mod tests {
                 "{value} must not be a configurable strategy"
             );
         }
+    }
+
+    /// Writes a configuration file and loads it through the public boundary.
+    fn load_config(toml: &str) -> anyhow::Result<RookConfig> {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, toml).expect("write config");
+        RookConfig::load(&path)
+    }
+
+    const ROUTING_WEIGHT_CONFIG: &str = r#"
+        [server]
+        host = "127.0.0.1"
+        port = 3000
+
+        [routing]
+        strategy = "weighted"
+
+        [routing.weights]
+        "openai-primary" = 7.0
+
+        [cache]
+        enabled = false
+        ttl_secs = 300
+    "#;
+
+    #[test]
+    fn routing_weights_load_for_the_weighted_policy() {
+        let config = load_config(ROUTING_WEIGHT_CONFIG).expect("valid weights must load");
+        assert_eq!(config.routing.weights.get("openai-primary"), Some(&7.0));
+    }
+
+    #[test]
+    fn routing_weights_reject_negative_values_at_load() {
+        let toml =
+            ROUTING_WEIGHT_CONFIG.replace("\"openai-primary\" = 7.0", "\"openai-primary\" = -1.0");
+        let error = load_config(&toml).expect_err("negative weights must be rejected");
+        assert!(
+            error.to_string().contains("weight"),
+            "error must name the invalid weight: {error}"
+        );
+    }
+
+    #[test]
+    fn routing_weights_reject_non_finite_values_at_load() {
+        let toml =
+            ROUTING_WEIGHT_CONFIG.replace("\"openai-primary\" = 7.0", "\"openai-primary\" = inf");
+        let error = load_config(&toml).expect_err("non-finite weights must be rejected");
+        assert!(
+            error.to_string().contains("weight"),
+            "error must name the invalid weight: {error}"
+        );
+    }
+
+    #[test]
+    fn routing_weights_reject_empty_target_keys_at_load() {
+        let toml = ROUTING_WEIGHT_CONFIG.replace("\"openai-primary\"", "\"\"");
+        let error = load_config(&toml).expect_err("empty weight keys must be rejected");
+        assert!(
+            error.to_string().contains("weight"),
+            "error must name the invalid weight: {error}"
+        );
+    }
+
+    #[test]
+    fn weighted_policy_rejects_overflowing_total_weight_at_load() {
+        let toml = ROUTING_WEIGHT_CONFIG.replace(
+            "\"openai-primary\" = 7.0",
+            "\"openai-primary\" = 1.0e308\n\"anthropic-backup\" = 1.0e308",
+        );
+        let error = load_config(&toml).expect_err("overflowing total weight must be rejected");
+        assert!(error.to_string().contains("total"), "{error}");
+    }
+
+    #[test]
+    fn weighted_policy_requires_at_least_one_positive_weight_at_load() {
+        let toml =
+            ROUTING_WEIGHT_CONFIG.replace("\"openai-primary\" = 7.0", "\"openai-primary\" = 0.0");
+        let error = load_config(&toml).expect_err("all-zero weights must be rejected");
+        assert!(
+            error.to_string().contains("weight"),
+            "error must name the invalid weight: {error}"
+        );
+    }
+
+    #[test]
+    fn weighted_policy_requires_configured_weights_at_load() {
+        let toml = r#"
+            [server]
+            host = "127.0.0.1"
+            port = 3000
+
+            [routing]
+            strategy = "weighted"
+
+            [cache]
+            enabled = false
+            ttl_secs = 300
+        "#;
+        let error = load_config(toml).expect_err("missing weights must be rejected");
+        assert!(
+            error.to_string().contains("weight"),
+            "error must name the missing weight: {error}"
+        );
+    }
+
+    #[test]
+    fn routing_weights_are_exposed_keyed_by_provider_identity() {
+        let toml = ROUTING_WEIGHT_CONFIG.replace(
+            "\"openai-primary\" = 7.0",
+            "\"openai-primary\" = 7.0\n\"anthropic-backup\" = 3.0",
+        );
+        let config = load_config(&toml).expect("valid weights must load");
+        let weights = config.routing.weights_by_provider();
+        assert_eq!(
+            weights.get(&shared_kernel::ProviderId::new("openai-primary")),
+            Some(&7.0)
+        );
+        assert_eq!(
+            weights.get(&shared_kernel::ProviderId::new("anthropic-backup")),
+            Some(&3.0)
+        );
     }
 
     #[test]

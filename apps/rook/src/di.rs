@@ -192,6 +192,7 @@ impl RookContainer {
         // 3. Router and provider registry — starts empty, populated via refresh_registry
         let policy: rook_core::PolicyKind = config.routing.strategy.into();
         let fallback_router: Arc<FallbackRouter> = Arc::new(FallbackRouter::new_empty(policy));
+        fallback_router.update_weights(config.routing.weights_by_provider());
         let router: Arc<dyn RouterPort> = fallback_router.clone();
         let registry: Arc<dyn ProviderRegistryPort> = fallback_router.clone();
 

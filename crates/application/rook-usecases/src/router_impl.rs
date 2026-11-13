@@ -18,7 +18,6 @@ use parking_lot::RwLock;
 use rand::RngExt;
 use rook_core::{
     CompletionRequest, PolicyKind, ProviderId, ProviderPort, ProviderRegistryPort, RouterPort,
-    SelectionStrategy,
 };
 use shared_kernel::{CortexError, CortexResult, Utc};
 
@@ -268,7 +267,7 @@ impl FallbackRouter {
         let weights: Vec<f64> = weighted_candidates.iter().filter_map(|(_, w)| *w).collect();
 
         let total: f64 = weights.iter().sum();
-        if total <= 0.0 {
+        if total <= 0.0 || !total.is_finite() {
             return Err(CortexError::weighted_config_error(
                 "all eligible candidates have zero weight".to_string(),
             ));
@@ -333,18 +332,6 @@ impl FallbackRouter {
         }
     }
 
-    /// Return the current selection strategy for explanation purposes.
-    pub fn selection_strategy(&self) -> SelectionStrategy {
-        match self.policy {
-            PolicyKind::Priority => SelectionStrategy::Priority,
-            PolicyKind::RoundRobin => SelectionStrategy::RoundRobin,
-            PolicyKind::Weighted => SelectionStrategy::WeightedRandom,
-            PolicyKind::LeastLatency => SelectionStrategy::Priority,
-            PolicyKind::LeastCost => SelectionStrategy::Priority,
-            PolicyKind::Auto => SelectionStrategy::Priority,
-        }
-    }
-
     /// Return the configured policy kind.
     pub fn policy_kind(&self) -> PolicyKind {
         self.policy
@@ -355,14 +342,15 @@ impl FallbackRouter {
         self.weights.read().clone()
     }
 
-    /// Return the current round-robin index.
-    pub fn rr_index(&self) -> usize {
-        *self.round_robin_index.read()
-    }
-
-    /// Set the round-robin index (called after policy selection updates it).
-    pub fn set_rr_index(&self, index: usize) {
-        *self.round_robin_index.write() = index;
+    /// Atomically reserve and advance the round-robin cursor.
+    pub fn advance_rr_index(&self, len: usize) -> usize {
+        if len == 0 {
+            return 0;
+        }
+        let mut index = self.round_robin_index.write();
+        let current = *index % len;
+        *index = (current + 1) % len;
+        current
     }
 }
 
@@ -433,11 +421,13 @@ impl RouterPort for FallbackRouter {
                 Some(provider) => return Ok(provider),
                 None => return Err(CortexError::all_providers_exhausted()),
             },
-            // Metric-based policies (LeastLatency, LeastCost, Auto) are handled
-            // by the policy engine in route_request.rs, not here.
-            // For backward compatibility, fall back to priority.
+            // Metric-based policies require scoring evidence from RouteRequest.
+            // Do not silently degrade when a caller bypasses the policy engine.
             PolicyKind::LeastLatency | PolicyKind::LeastCost | PolicyKind::Auto => {
-                candidates.first().map(|(provider, _)| provider.clone())
+                return Err(CortexError::weighted_config_error(format!(
+                    "policy {:?} requires a scoring snapshot",
+                    self.policy
+                )));
             }
         };
 
@@ -479,11 +469,13 @@ impl RouterPort for FallbackRouter {
                 Some(provider) => return Ok(provider),
                 None => return Err(CortexError::all_providers_exhausted()),
             },
-            // Metric-based policies (LeastLatency, LeastCost, Auto) are handled
-            // by the policy engine in route_request.rs, not here.
-            // For backward compatibility, fall back to priority.
+            // Metric-based policies require scoring evidence from RouteRequest.
+            // Do not silently degrade when a caller bypasses the policy engine.
             PolicyKind::LeastLatency | PolicyKind::LeastCost | PolicyKind::Auto => {
-                available.first().map(|(provider, _)| provider.clone())
+                return Err(CortexError::weighted_config_error(format!(
+                    "policy {:?} requires a scoring snapshot",
+                    self.policy
+                )));
             }
         };
         selected.ok_or_else(CortexError::all_providers_exhausted)
@@ -585,10 +577,6 @@ impl RouterPort for FallbackRouter {
         )
     }
 
-    fn selection_strategy(&self) -> SelectionStrategy {
-        FallbackRouter::selection_strategy(self)
-    }
-
     fn circuit_states(&self) -> Vec<(ProviderId, rook_core::CircuitStateSnapshot)> {
         FallbackRouter::circuit_states(self)
     }
@@ -601,12 +589,8 @@ impl RouterPort for FallbackRouter {
         FallbackRouter::weights_snapshot(self)
     }
 
-    fn rr_index(&self) -> usize {
-        FallbackRouter::rr_index(self)
-    }
-
-    fn set_rr_index(&self, index: usize) {
-        FallbackRouter::set_rr_index(self, index)
+    fn advance_rr_index(&self, len: usize) -> usize {
+        FallbackRouter::advance_rr_index(self, len)
     }
 
     fn resolve_connection(
@@ -1615,15 +1599,46 @@ mod tests {
     }
 
     #[test]
-    fn routing_strategy_clone_works() {
-        // Verify RoutingStrategy derives Clone
-        let s1 = PolicyKind::Priority;
-        let s2 = s1.clone();
-        assert!(matches!(s2, PolicyKind::Priority));
+    fn round_robin_cursor_advances_atomically_and_wraps_by_candidate_count() {
+        let router = Arc::new(FallbackRouter::new_empty(PolicyKind::RoundRobin));
+        let selections = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..8)
+                .map(|_| {
+                    let router = Arc::clone(&router);
+                    scope.spawn(move || {
+                        (0..100)
+                            .map(|_| router.advance_rr_index(4))
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            workers
+                .into_iter()
+                .flat_map(|worker| worker.join().expect("worker must complete"))
+                .collect::<Vec<_>>()
+        });
+        let counts = selections.iter().fold([0usize; 4], |mut counts, index| {
+            counts[*index] += 1;
+            counts
+        });
+        assert_eq!(counts, [200; 4]);
+    }
 
-        let s3 = PolicyKind::Weighted;
-        let s4 = s3.clone();
-        assert!(matches!(s4, PolicyKind::Weighted));
+    #[test]
+    fn router_reports_its_configured_policy() {
+        // The router must expose the policy it was configured with so the
+        // policy engine and the observability layer agree on the contract.
+        for policy in [
+            PolicyKind::Priority,
+            PolicyKind::Weighted,
+            PolicyKind::RoundRobin,
+            PolicyKind::LeastLatency,
+            PolicyKind::LeastCost,
+            PolicyKind::Auto,
+        ] {
+            let router = FallbackRouter::new_empty(policy);
+            assert_eq!(router.policy_kind(), policy);
+        }
     }
 
     #[test]
@@ -1770,6 +1785,29 @@ mod tests {
 
     // 5.6 — select_excluding returns available provider excluding specified ones
     #[tokio::test]
+    async fn select_excluding_rejects_metric_policy_without_scoring_snapshot() {
+        for policy in [
+            PolicyKind::LeastLatency,
+            PolicyKind::LeastCost,
+            PolicyKind::Auto,
+        ] {
+            let router = FallbackRouter::new(
+                vec![
+                    StubProvider::new("first", &["model-x"]),
+                    StubProvider::new("second", &["model-x"]),
+                ],
+                policy,
+            );
+            let error = match router.select_excluding(&request("model-x"), &[]).await {
+                Err(error) => error,
+                Ok(_) => panic!("metric policy requires the policy engine's scoring snapshot"),
+            };
+            assert!(error.is_weighted_config_error(), "{error}");
+            assert!(error.to_string().contains("scoring snapshot"), "{error}");
+        }
+    }
+
+    #[tokio::test]
     async fn select_excluding_returns_non_excluded_provider() {
         let router = FallbackRouter::new_empty(PolicyKind::Priority);
         let p1 = StubProvider::new("p1", &["model-a"]);
@@ -1786,6 +1824,29 @@ mod tests {
     }
 
     // 5.7 — select_excluding returns error when all providers excluded
+    #[tokio::test]
+    async fn select_rejects_metric_policy_without_scoring_snapshot() {
+        for policy in [
+            PolicyKind::LeastLatency,
+            PolicyKind::LeastCost,
+            PolicyKind::Auto,
+        ] {
+            let router = FallbackRouter::new(
+                vec![
+                    StubProvider::new("first", &["model-x"]),
+                    StubProvider::new("second", &["model-x"]),
+                ],
+                policy,
+            );
+            let error = match router.select(&request("model-x")).await {
+                Err(error) => error,
+                Ok(_) => panic!("metric policy requires the policy engine's scoring snapshot"),
+            };
+            assert!(error.is_weighted_config_error(), "{error}");
+            assert!(error.to_string().contains("scoring snapshot"), "{error}");
+        }
+    }
+
     #[tokio::test]
     async fn select_excluding_returns_error_when_all_excluded() {
         let router = FallbackRouter::new_empty(PolicyKind::Priority);

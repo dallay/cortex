@@ -71,6 +71,17 @@ impl CortexError {
         }
     }
 
+    /// Routing candidates changed repeatedly during policy selection.
+    pub fn routing_snapshot_churn() -> Self {
+        Self {
+            source: Box::new(RoutingSnapshotChurnError),
+        }
+    }
+
+    pub fn is_routing_snapshot_churn(&self) -> bool {
+        self.source.is::<RoutingSnapshotChurnError>()
+    }
+
     /// Weighted routing configuration is invalid (length mismatch, negative weights, etc.).
     pub fn weighted_config_error(msg: impl Into<String>) -> Self {
         Self {
@@ -331,6 +342,17 @@ impl fmt::Display for AllProvidersExhaustedError {
 }
 
 impl std::error::Error for AllProvidersExhaustedError {}
+
+#[derive(Debug)]
+pub struct RoutingSnapshotChurnError;
+
+impl fmt::Display for RoutingSnapshotChurnError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "routing candidates changed repeatedly during selection")
+    }
+}
+
+impl std::error::Error for RoutingSnapshotChurnError {}
 
 #[derive(Debug)]
 pub struct WeightedConfigError(pub String);
