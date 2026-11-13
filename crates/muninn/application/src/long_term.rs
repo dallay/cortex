@@ -187,6 +187,23 @@ fn with_similarity<T>(hit: Scored<T>, metadata: impl FnOnce(&mut T) -> &mut Meta
     item
 }
 
+/// Trims, collapses internal whitespace runs to a single space and lowercases.
+fn normalize_preference_text(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// True when two preference texts state the same value.
+///
+/// The comparison is deliberately textual: it ignores case and whitespace
+/// differences, but any change of the value itself (a different number, for
+/// example) makes the texts different.
+fn preferences_equivalent(left: &str, right: &str) -> bool {
+    normalize_preference_text(left) == normalize_preference_text(right)
+}
+
 impl LongTermMemory {
     pub fn new(
         store: Arc<dyn LongTermStore>,
@@ -641,6 +658,12 @@ impl LongTermMemory {
 
     /// Store a preference, returning an existing near-identical one in the
     /// same category instead of a duplicate.
+    ///
+    /// A near-identical record that states the same value is a duplicate and
+    /// is returned unchanged. A near-identical record that states a different
+    /// value is an update: the new value is stored and the old record is
+    /// superseded by it. Only a scoped write can supersede, because an
+    /// unscoped duplicate lookup can match a record of another scope.
     pub async fn add_preference(
         &self,
         category: &str,
@@ -661,6 +684,10 @@ impl LongTermMemory {
             text.push_str(&format!(" ({context})"));
         }
         let embedding = self.embed(options.generate_embedding, &text).await?;
+        // A near-identical record in the same category is a duplicate only when
+        // it states the same value. A different value is an update of that
+        // preference and must be stored, with the old record superseded.
+        let mut superseded: Option<Uuid> = None;
         if let Some(embedding) = &embedding {
             // Upstream ignores lookup failures (e.g. a missing vector index).
             let duplicate = self
@@ -677,25 +704,34 @@ impl LongTermMemory {
                     None
                 });
             if let Some(mut existing) = duplicate {
-                existing
-                    .metadata
-                    .insert("deduplicated".to_owned(), Value::Bool(true));
-                if let Some(user) = &options.user_identifier {
-                    self.store
-                        .link_user_to_preference(user, existing.id)
-                        .await?;
+                let same_value = preferences_equivalent(&existing.preference, preference);
+                if same_value {
+                    existing
+                        .metadata
+                        .insert("deduplicated".to_owned(), Value::Bool(true));
+                    if let Some(user) = &options.user_identifier {
+                        self.store
+                            .link_user_to_preference(user, existing.id)
+                            .await?;
+                    }
+                    for entity in &options.applies_to {
+                        self.store
+                            .link_preference_to_entity(existing.id, *entity)
+                            .await?;
+                    }
+                    for entity in &options.about_entities {
+                        self.store
+                            .link_preference_about_entity(existing.id, *entity)
+                            .await?;
+                    }
+                    return Ok(existing);
                 }
-                for entity in &options.applies_to {
-                    self.store
-                        .link_preference_to_entity(existing.id, *entity)
-                        .await?;
+                // Without a user scope the duplicate lookup can match a record
+                // of another scope. Store the changed value, but do not
+                // supersede a record when ownership cannot be established.
+                if options.user_identifier.is_some() {
+                    superseded = Some(existing.id);
                 }
-                for entity in &options.about_entities {
-                    self.store
-                        .link_preference_about_entity(existing.id, *entity)
-                        .await?;
-                }
-                return Ok(existing);
             }
         }
         let record = Preference {
@@ -723,6 +759,9 @@ impl LongTermMemory {
             self.store
                 .link_preference_about_entity(stored.id, *entity)
                 .await?;
+        }
+        if let Some(old_id) = superseded {
+            self.store.supersede_preference(old_id, stored.id).await?;
         }
         Ok(stored)
     }
@@ -993,6 +1032,7 @@ mod tests {
         created: Mutex<Vec<Preference>>,
         target_links: Mutex<Vec<(Uuid, Uuid)>>,
         about_links: Mutex<Vec<(Uuid, Uuid)>>,
+        superseded: Mutex<Vec<(Uuid, Uuid)>>,
     }
 
     struct FixedEmbedder;
@@ -1151,10 +1191,12 @@ mod tests {
                 .map(|(_, p)| p.clone()))
         }
         async fn link_user_to_preference(&self, user: &str, id: Uuid) -> MemoryResult<()> {
-            assert!(self
+            let owned = self
                 .owners
                 .iter()
-                .any(|(owner, p)| owner == user && p.id == id));
+                .any(|(owner, p)| owner == user && p.id == id);
+            let created = self.created.lock().unwrap().iter().any(|p| p.id == id);
+            assert!(owned || created, "preference {id} is not linked to {user}");
             Ok(())
         }
         async fn link_preference_to_entity(
@@ -1186,8 +1228,9 @@ mod tests {
             drop(links);
             Ok(())
         }
-        async fn supersede_preference(&self, _: Uuid, _: Uuid) -> MemoryResult<()> {
-            unreachable!()
+        async fn supersede_preference(&self, old_id: Uuid, new_id: Uuid) -> MemoryResult<()> {
+            self.superseded.lock().unwrap().push((old_id, new_id));
+            Ok(())
         }
         async fn preferences_for(&self, user: &str, _: bool) -> MemoryResult<Vec<Preference>> {
             Ok(self
@@ -1426,7 +1469,7 @@ mod tests {
         for duplicate in [false, true] {
             for with_target in [false, true] {
                 let target = entity("target");
-                let existing = preference("food").item;
+                let existing = stored_preference("food", "tea");
                 let (store, memory) = memory(FakeStore {
                     entities: vec![target.clone()],
                     owners: if duplicate {
@@ -1462,6 +1505,118 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn stored_preference(category: &str, text: &str) -> Preference {
+        Preference {
+            id: Uuid::new_v4(),
+            category: category.to_owned(),
+            preference: text.to_owned(),
+            context: None,
+            confidence: 1.0,
+            embedding: None,
+            valid_from: None,
+            valid_until: None,
+            created_at: Utc::now(),
+            metadata: Metadata::new(),
+        }
+    }
+
+    const EDITOR_CONFIG: &str = "editor_config";
+    const TWO_SPACES: &str = "The default indentation of the project is 2 spaces.";
+    const FOUR_SPACES: &str = "The default indentation of the project is 4 spaces.";
+
+    #[tokio::test]
+    async fn scoped_preference_with_a_new_value_supersedes_the_stored_duplicate() {
+        let existing = stored_preference(EDITOR_CONFIG, TWO_SPACES);
+        let (store, memory) = memory(FakeStore {
+            owners: vec![("owner".into(), existing.clone())],
+            ..FakeStore::default()
+        });
+        let result = memory
+            .add_preference(
+                EDITOR_CONFIG,
+                FOUR_SPACES,
+                AddPreferenceOptions {
+                    user_identifier: Some("owner".into()),
+                    ..AddPreferenceOptions::default()
+                },
+            )
+            .await
+            .unwrap();
+        // The updated value is stored, not deduplicated away.
+        assert_ne!(result.id, existing.id);
+        assert_eq!(result.preference, FOUR_SPACES);
+        assert!(result.metadata.get("deduplicated").is_none());
+        let created = store.created.lock().unwrap();
+        assert_eq!(created.len(), 1);
+        assert_eq!(created[0].id, result.id);
+        assert_eq!(created[0].preference, FOUR_SPACES);
+        drop(created);
+        // The stored duplicate is superseded by the new record.
+        assert_eq!(
+            *store.superseded.lock().unwrap(),
+            vec![(existing.id, result.id)]
+        );
+    }
+
+    #[tokio::test]
+    async fn scoped_preference_with_an_equivalent_value_stays_deduplicated() {
+        let existing = stored_preference(EDITOR_CONFIG, TWO_SPACES);
+        let (store, memory) = memory(FakeStore {
+            owners: vec![("owner".into(), existing.clone())],
+            ..FakeStore::default()
+        });
+        let result = memory
+            .add_preference(
+                EDITOR_CONFIG,
+                TWO_SPACES,
+                AddPreferenceOptions {
+                    user_identifier: Some("owner".into()),
+                    ..AddPreferenceOptions::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.id, existing.id);
+        assert_eq!(result.metadata["deduplicated"], true);
+        assert!(store.created.lock().unwrap().is_empty());
+        assert!(store.superseded.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn unscoped_changed_preference_is_stored_without_superseding_duplicate() {
+        let existing = stored_preference(EDITOR_CONFIG, TWO_SPACES);
+        let (store, memory) = memory(FakeStore {
+            owners: vec![("owner".into(), existing.clone())],
+            ..FakeStore::default()
+        });
+        let result = memory
+            .add_preference(EDITOR_CONFIG, FOUR_SPACES, AddPreferenceOptions::default())
+            .await
+            .unwrap();
+        // The lookup may match another scope. Preserve the changed value, but
+        // do not supersede a record when ownership cannot be established.
+        assert_ne!(result.id, existing.id);
+        assert_eq!(result.preference, FOUR_SPACES);
+        assert!(result.metadata.get("deduplicated").is_none());
+        assert_eq!(store.created.lock().unwrap().len(), 1);
+        assert!(store.superseded.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn preference_text_equivalence_ignores_case_and_whitespace_only() {
+        assert!(preferences_equivalent(
+            "The default indentation of the project is 2 spaces.",
+            "the default   indentation of the project is 2 spaces."
+        ));
+        assert!(preferences_equivalent(
+            "  The default indentation of the project is 2 spaces.  ",
+            "THE DEFAULT INDENTATION OF THE PROJECT IS 2 SPACES."
+        ));
+        // A different value is not a rewrite of the same preference.
+        assert!(!preferences_equivalent(TWO_SPACES, FOUR_SPACES));
+        assert!(!preferences_equivalent("", TWO_SPACES));
     }
 
     #[tokio::test]
@@ -1538,7 +1693,7 @@ mod tests {
     #[tokio::test]
     async fn repeated_about_link_request_keeps_one_edge() {
         let target = entity("target");
-        let existing = preference("food").item;
+        let existing = stored_preference("food", "tea");
         let (store, memory) = memory(FakeStore {
             entities: vec![target.clone()],
             owners: vec![("owner".into(), existing.clone())],
@@ -1568,7 +1723,7 @@ mod tests {
     #[tokio::test]
     async fn preference_about_link_stays_inside_the_requesting_owner_scope() {
         let target = entity("target");
-        let owner_a = preference("food").item;
+        let owner_a = stored_preference("food", "tea");
         let (store, memory) = memory(FakeStore {
             entities: vec![target.clone()],
             owners: vec![("owner-a".into(), owner_a.clone())],
@@ -1897,8 +2052,8 @@ mod tests {
 
     #[tokio::test]
     async fn preference_scope_separates_same_category_and_vectors_and_preserves_global_reads() {
-        let a = preference("food").item;
-        let b = preference("food").item;
+        let a = stored_preference("food", "tea");
+        let b = stored_preference("food", "tea");
         let store = Arc::new(FakeStore {
             owners: vec![("A".into(), a.clone()), ("B".into(), b.clone())],
             ..FakeStore::default()
