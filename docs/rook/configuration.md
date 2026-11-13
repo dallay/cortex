@@ -22,7 +22,11 @@ host = "127.0.0.1"   # default: "127.0.0.1"
 port = 3773          # default: 3773
 
 [routing]
-strategy = "priority"  # "priority" | "round-robin"
+strategy = "priority"  # "priority" | "weighted" | "round-robin" | "least-latency" | "least-cost" | "auto"
+# Weights for the "weighted" policy (keyed by target/connection ID)
+[routing.weights]
+"openai-primary" = 7.0
+"anthropic-backup" = 3.0
 
 [cache]
 enabled = true
@@ -82,12 +86,45 @@ requests_per_minute = 30
 
 | Field           | Type   | Default      | Description                                                                 |
 |-----------------|--------|--------------|-----------------------------------------------------------------------------|
-| `strategy`      | enum   | `"priority"` | Routing strategy. See Routing Strategies                                    |
+| `strategy`      | enum   | `"priority"` | Routing policy. See Routing Policies below                                  |
 | `default_combo` | string | `null`       | Default combo UUID; only applied without `X-Rook-Combo` or a `rook/*` alias |
 
-Supported values for `strategy`: `priority`, `round-robin`.
+#### `[routing.weights]`
 
-Weighted random selection exists internally for combo use but is not configurable here; unknown values are rejected at startup.
+Optional key-value mapping for the `weighted` policy. Each key is a target/connection
+ID (the provider ID for managed connections), and each value is a non-negative finite
+number. Unconfigured targets have zero weight and are never selected.
+
+| Field    | Type   | Description                                                    |
+|----------|--------|----------------------------------------------------------------|
+| *(key)*  | string | Target/connection ID                                           |
+| *(value)| f64    | Non-negative finite weight (0 means never selected)            |
+
+#### Routing Policies
+
+Rook supports six explicit routing policies, configurable via `routing.strategy`:
+
+| Policy | Selection | Required evidence | Missing/ties |
+|--------|-----------|-------------------|--------------|
+| `priority` | First eligible candidate in registry order | None | N/A |
+| `weighted` | Weighted random over eligible candidates | `routing.weights` mapping | Zero-weight targets never win; all-zero → error |
+| `round-robin` | Rotates through eligible candidates | RR counter | Preserves legacy rotation |
+| `least-latency` | Minimum raw p95 latency (ms) | Known p95 telemetry | All unknown → priority fallback |
+| `least-cost` | Minimum projected USD cost | Input + output pricing | All unknown → priority fallback |
+| `auto` | Resolves to concrete policy per request | Request context + signals | Ordered rules (see below) |
+
+**Auto resolver rules** (evaluated in order):
+1. If request has `spending_budget` and comparable cost exists → `least-cost`
+2. If streaming and comparable p95 exists → `least-latency`
+3. If comparable p95 exists → `least-latency`
+4. If comparable cost exists → `least-cost`
+5. Otherwise → `priority`
+
+**Tie-breaking**: When two candidates have equal known values, the policy breaks ties
+by stable target ID (lexicographic comparison of provider IDs).
+
+**Metric evidence**: Only raw, comparable values enter comparisons. Unknown values
+never become zero. Invalid (NaN, Infinity, negative) values are excluded.
 
 ### `[[combos]]` — Multi-step Fallback Chains
 

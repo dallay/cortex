@@ -282,7 +282,7 @@ async fn budget_reservation_is_released_if_managed_connection_is_disabled_before
     );
     let router = Arc::new(crate::FallbackRouter::new(
         vec![provider],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let repository: Arc<dyn ProviderRepositoryPort> =
         Arc::new(super::InactiveAfterFirstRoutingReadRepository {
@@ -325,7 +325,7 @@ async fn cancellation_during_managed_connection_recheck_releases_budget_reservat
     );
     let router = Arc::new(crate::FallbackRouter::new(
         vec![provider],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let recheck_started = Arc::new(tokio::sync::Notify::new());
     let repository: Arc<dyn ProviderRepositoryPort> =

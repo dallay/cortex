@@ -611,6 +611,8 @@ Scoring quality tuning and machine-learned ranking.
 |----------|----------------------------------------------|------|------------|
 | High     | `product/rook` `type/feature` `area/runtime` | M    | ROOK-P2-2  |
 
+**Status:** ✅ Done (DALLAY-774)
+
 #### Context
 
 `RoutingStrategy` (`router_impl.rs:28-34`) is an enum matched at `:359-373` and `:400-413`, with weight extraction at `:218-222`. It is not configurable beyond `priority` and carries no notion of a policy object.
@@ -624,10 +626,19 @@ Scoring quality tuning and machine-learned ranking.
 
 #### Acceptance criteria
 
-- [ ] All six policies are selectable from configuration and covered by tests.
-- [ ] `auto` resolves to a concrete policy per request, and the resolved policy appears in `SelectionReason`.
-- [ ] Documentation describes each policy, its required signals and its tie-breaker.
-- [ ] Existing `priority` behavior is preserved exactly.
+- [x] All six policies are selectable from configuration and covered by tests.
+- [x] `auto` resolves to a concrete policy per request, and the resolved policy appears in `SelectionReason`.
+- [x] Documentation describes each policy, its required signals and its tie-breaker.
+- [x] Existing `priority` behavior is preserved exactly.
+
+#### Implementation summary
+
+- `PolicyKind` enum in `rook-core` replaces `RoutingStrategy`
+- Pure policy engine in `rook-usecases/src/policy.rs` with `select_policy()` dispatcher
+- Identity-keyed weights via `routing.weights` TOML section
+- `SelectionReason` extended with `requested_policy`, `effective_policy`, `fallback_reason`
+- Policy engine wired into both completion and streaming paths in `route_request.rs`
+- 21 policy unit tests + 14 regression tests
 
 #### Out of scope
 

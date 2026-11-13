@@ -26,9 +26,11 @@ use shared_kernel::{ComboId, ConnectionId, ModelId, ProviderId, RestrictionViola
 use crate::eligibility::{
     evaluate_candidates, AuthState, CandidateFacts, EligibilityResult, RejectionReason, TargetRef,
 };
+use crate::policy::{select_policy, PolicySelectionContext};
 use crate::route_selection::is_virtual_model;
 use crate::scoring::{
-    build_selection_reason, build_signals_snapshot, SelectionMethod, SelectionReason,
+    build_score_components, build_selection_reason_from_policy, build_signals_snapshot,
+    SelectionReason,
 };
 use crate::PricingConfig;
 
@@ -852,34 +854,115 @@ impl RouteRequest {
                 .map(|snapshot| &snapshot.connections_by_target),
         );
 
-        let provider = match self
-            .router
-            .select_excluding(context.req, &selection_excluded)
-            .await
-        {
-            Ok(provider) => provider,
-            Err(error) => {
-                if !cursor.provider_attempt_failed {
-                    if let Some(backpressure) = cursor.local_backpressure.take() {
-                        return AttemptPreparation::Stop(backpressure);
-                    }
-                }
-                return AttemptPreparation::Stop(error);
+        // Use policy engine for selection when scoring snapshot is available.
+        // This ensures the actual selected target matches the policy decision.
+        let (provider, selection_reason) = if let Some(ref snapshot) = scoring_snapshot {
+            let score_components = build_score_components(snapshot);
+
+            // Build eligible target refs in registry order (not HashMap iteration order).
+            // Filter to only those present in the scoring snapshot (eligible candidates).
+            let registry_ids = self.router.providers();
+            let eligible_targets: Vec<TargetRef> = registry_ids
+                .into_iter()
+                .map(TargetRef)
+                .filter(|t| snapshot.candidates.contains_key(t))
+                .collect();
+
+            if eligible_targets.is_empty() {
+                return AttemptPreparation::Stop(CortexError::all_providers_exhausted());
             }
+
+            // Build policy selection context
+            let policy = self.router.policy_kind();
+            let weights = self.router.weights_snapshot();
+            let mut rr_index = self.router.rr_index();
+            let has_spending_budget = self.spending_guard.is_some();
+            let is_streaming = context.req.stream;
+
+            let mut ctx = PolicySelectionContext {
+                policy,
+                is_streaming,
+                has_spending_budget,
+                eligible_targets: &eligible_targets,
+                snapshot,
+                score_components: &score_components,
+                weights: &weights,
+                rr_index: &mut rr_index,
+                rng: None,
+            };
+
+            match select_policy(&mut ctx) {
+                Ok(decision) => {
+                    // Update RR index if changed
+                    self.router.set_rr_index(rr_index);
+
+                    // Resolve the selected target to a provider
+                    let selected_target = decision.selected_target.clone();
+                    let provider = match self.router.resolve_provider(&selected_target.0) {
+                        Some(p) => p,
+                        None => {
+                            // Fallback: use select_excluding if resolve fails
+                            match self
+                                .router
+                                .select_excluding(context.req, &selection_excluded)
+                                .await
+                            {
+                                Ok(p) => p,
+                                Err(error) => {
+                                    if !cursor.provider_attempt_failed {
+                                        if let Some(bp) = cursor.local_backpressure.take() {
+                                            return AttemptPreparation::Stop(bp);
+                                        }
+                                    }
+                                    return AttemptPreparation::Stop(error);
+                                }
+                            }
+                        }
+                    };
+                    let provider_id = provider.id().clone();
+
+                    // Build extended selection reason from policy decision
+                    let reason = build_selection_reason_from_policy(
+                        snapshot,
+                        &selected_target,
+                        &decision,
+                        &score_components,
+                    );
+                    let _ = provider_id; // suppress unused warning
+
+                    (provider, reason)
+                }
+                Err(error) => {
+                    if !cursor.provider_attempt_failed {
+                        if let Some(backpressure) = cursor.local_backpressure.take() {
+                            return AttemptPreparation::Stop(backpressure);
+                        }
+                    }
+                    return AttemptPreparation::Stop(error);
+                }
+            }
+        } else {
+            // No scoring snapshot — fall back to router.select_excluding
+            let provider = match self
+                .router
+                .select_excluding(context.req, &selection_excluded)
+                .await
+            {
+                Ok(provider) => provider,
+                Err(error) => {
+                    if !cursor.provider_attempt_failed {
+                        if let Some(backpressure) = cursor.local_backpressure.take() {
+                            return AttemptPreparation::Stop(backpressure);
+                        }
+                    }
+                    return AttemptPreparation::Stop(error);
+                }
+            };
+            let _provider_id = provider.id().clone();
+            (provider, None)
         };
         let provider_id = provider.id().clone();
 
-        // Build selection reason from the actual selected provider and scoring evidence.
-        let selection_reason = scoring_snapshot.as_ref().and_then(|snapshot| {
-            let selected_target = TargetRef(provider_id.clone());
-            let method = self.router.selection_strategy();
-            let method = match method {
-                rook_core::SelectionStrategy::Priority => SelectionMethod::Priority,
-                rook_core::SelectionStrategy::RoundRobin => SelectionMethod::RoundRobin,
-                rook_core::SelectionStrategy::WeightedRandom => SelectionMethod::WeightedRandom,
-            };
-            build_selection_reason(snapshot, &selected_target, method)
-        });
         // Log selection reason for debugging and future telemetry (DALLAY-779).
         if selection_reason.is_some() {
             tracing::debug!(
@@ -1857,25 +1940,93 @@ impl RouteRequest {
                     .map(|snapshot| &snapshot.connections_by_target),
             );
 
-            let provider = match self.router.select_excluding(req, &selection_excluded).await {
-                Ok(provider) => provider,
-                Err(error) => {
-                    return Err(local_backpressure.unwrap_or(error));
+            // Use policy engine for selection when scoring snapshot is available.
+            // This ensures the actual selected target matches the policy decision.
+            let (provider, selection_reason) = if let Some(ref snapshot) = scoring_snapshot {
+                let score_components = build_score_components(snapshot);
+
+                // Build eligible target refs in registry order (not HashMap iteration order).
+                // Filter to only those present in the scoring snapshot (eligible candidates).
+                let registry_ids = self.router.providers();
+                let eligible_targets: Vec<TargetRef> = registry_ids
+                    .into_iter()
+                    .map(TargetRef)
+                    .filter(|t| snapshot.candidates.contains_key(t))
+                    .collect();
+
+                if eligible_targets.is_empty() {
+                    return Err(
+                        local_backpressure.unwrap_or_else(CortexError::all_providers_exhausted)
+                    );
                 }
+
+                // Build policy selection context
+                let policy = self.router.policy_kind();
+                let weights = self.router.weights_snapshot();
+                let mut rr_index = self.router.rr_index();
+                let has_spending_budget = self.spending_guard.is_some();
+                let is_streaming = req.stream;
+
+                let mut ctx = PolicySelectionContext {
+                    policy,
+                    is_streaming,
+                    has_spending_budget,
+                    eligible_targets: &eligible_targets,
+                    snapshot,
+                    score_components: &score_components,
+                    weights: &weights,
+                    rr_index: &mut rr_index,
+                    rng: None,
+                };
+
+                match select_policy(&mut ctx) {
+                    Ok(decision) => {
+                        // Update RR index if changed
+                        self.router.set_rr_index(rr_index);
+
+                        // Resolve the selected target to a provider
+                        let selected_target = decision.selected_target.clone();
+                        let provider = match self.router.resolve_provider(&selected_target.0) {
+                            Some(p) => p,
+                            None => {
+                                // Fallback: use select_excluding if resolve fails
+                                match self.router.select_excluding(req, &selection_excluded).await {
+                                    Ok(p) => p,
+                                    Err(error) => {
+                                        return Err(local_backpressure.unwrap_or(error));
+                                    }
+                                }
+                            }
+                        };
+                        let provider_id = provider.id().clone();
+
+                        // Build extended selection reason from policy decision
+                        let reason = build_selection_reason_from_policy(
+                            snapshot,
+                            &selected_target,
+                            &decision,
+                            &score_components,
+                        );
+                        let _ = provider_id;
+
+                        (provider, reason)
+                    }
+                    Err(error) => {
+                        return Err(error);
+                    }
+                }
+            } else {
+                // No scoring snapshot — fall back to router.select_excluding
+                let provider = match self.router.select_excluding(req, &selection_excluded).await {
+                    Ok(provider) => provider,
+                    Err(error) => {
+                        return Err(local_backpressure.unwrap_or(error));
+                    }
+                };
+                let _provider_id = provider.id().clone();
+                (provider, None)
             };
             let provider_id = provider.id().clone();
-
-            // Build selection reason from the actual selected provider.
-            let selection_reason = scoring_snapshot.as_ref().and_then(|snapshot| {
-                let selected_target = TargetRef(provider_id.clone());
-                let method = self.router.selection_strategy();
-                let method = match method {
-                    rook_core::SelectionStrategy::Priority => SelectionMethod::Priority,
-                    rook_core::SelectionStrategy::RoundRobin => SelectionMethod::RoundRobin,
-                    rook_core::SelectionStrategy::WeightedRandom => SelectionMethod::WeightedRandom,
-                };
-                build_selection_reason(snapshot, &selected_target, method)
-            });
             // Log selection reason for debugging and future telemetry (DALLAY-779).
             if selection_reason.is_some() {
                 tracing::debug!(

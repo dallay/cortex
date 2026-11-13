@@ -1,7 +1,7 @@
 // config — load and validate RookConfig from TOML
 
 use rook_core::ApiKeyTier;
-use rook_usecases::{PricingConfig, RoutingStrategy};
+use rook_usecases::PricingConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -272,6 +272,10 @@ pub struct RoutingConfig {
     /// Default combo UUID used only without an X-Rook-Combo header or rook/* alias.
     #[serde(default)]
     pub default_combo: Option<String>,
+    /// Identity-keyed weights for the `weighted` policy.
+    /// Maps target IDs (provider connection IDs) to nonnegative finite weights.
+    #[serde(default)]
+    pub weights: std::collections::HashMap<String, f64>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -279,13 +283,21 @@ pub struct RoutingConfig {
 pub enum StrategyConfig {
     Priority,
     RoundRobin,
+    Weighted,
+    LeastLatency,
+    LeastCost,
+    Auto,
 }
 
-impl From<StrategyConfig> for RoutingStrategy {
+impl From<StrategyConfig> for rook_core::PolicyKind {
     fn from(s: StrategyConfig) -> Self {
         match s {
-            StrategyConfig::Priority => RoutingStrategy::Priority,
-            StrategyConfig::RoundRobin => RoutingStrategy::RoundRobin,
+            StrategyConfig::Priority => rook_core::PolicyKind::Priority,
+            StrategyConfig::RoundRobin => rook_core::PolicyKind::RoundRobin,
+            StrategyConfig::Weighted => rook_core::PolicyKind::Weighted,
+            StrategyConfig::LeastLatency => rook_core::PolicyKind::LeastLatency,
+            StrategyConfig::LeastCost => rook_core::PolicyKind::LeastCost,
+            StrategyConfig::Auto => rook_core::PolicyKind::Auto,
         }
     }
 }

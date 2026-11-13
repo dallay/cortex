@@ -210,7 +210,7 @@ async fn legacy_combo_preserves_capability_skip_reason_without_upstream_attempts
     ));
     let router = Arc::new(crate::FallbackRouter::new(
         vec![provider],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let combo = Combo::new(
         "legacy-capability".into(),

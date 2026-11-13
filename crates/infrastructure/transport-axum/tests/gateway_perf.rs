@@ -29,7 +29,7 @@ use rook_core::{
 };
 use rook_usecases::{
     AuthenticateClientApi, BootstrapStatus, EnsureAdminUser, FallbackRouter, HealthCheck, Login,
-    Logout, ManageProviders, RouteRequest, RoutingStrategy, SetAdminPassword,
+    Logout, ManageProviders, RouteRequest, SetAdminPassword,
 };
 use shared_kernel::CacheKey;
 use tokio::sync::RwLock;
@@ -383,7 +383,7 @@ fn build_app(in_flight: Arc<AtomicUsize>) -> axum::Router {
     let provider: Arc<dyn ProviderPort> = Arc::new(InstantProvider::new(in_flight));
     let router = Arc::new(FallbackRouter::new(
         vec![provider],
-        RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let route_request = RouteRequest::new(
         router.clone() as Arc<dyn rook_core::RouterPort>,

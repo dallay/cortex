@@ -16,8 +16,8 @@ use shared_kernel::{
 
 use super::{
     ApiFormat, AuditEntry, CacheStats, CompletionRequest, CompletionResponse, CostBreakdown,
-    HealthStatus, Pagination, QuotaObservation, SelectionStrategy, SignatureEntry, StreamChunk,
-    UsageEntry, UsageFilters, UsageSummary,
+    HealthStatus, Pagination, PolicyKind, QuotaObservation, SelectionStrategy, SignatureEntry,
+    StreamChunk, UsageEntry, UsageFilters, UsageSummary,
 };
 use super::{
     ApiKeyId, ApiKeyRecord, ApiKeyRepositoryError, ApiKeySubject, CircuitStateSnapshot, Combo,
@@ -193,6 +193,24 @@ pub trait RouterPort: Send + Sync {
     fn selection_strategy(&self) -> SelectionStrategy {
         SelectionStrategy::Priority
     }
+
+    /// Return the configured policy kind.
+    fn policy_kind(&self) -> PolicyKind {
+        PolicyKind::Priority
+    }
+
+    /// Return a snapshot of identity-keyed weights (for the weighted policy).
+    fn weights_snapshot(&self) -> std::collections::HashMap<ProviderId, f64> {
+        std::collections::HashMap::new()
+    }
+
+    /// Return the current round-robin index.
+    fn rr_index(&self) -> usize {
+        0
+    }
+
+    /// Set the round-robin index after policy selection.
+    fn set_rr_index(&self, _index: usize) {}
 
     /// Return circuit breaker state for all registered providers.
     /// Returns an empty list by default for routers that don't expose this.

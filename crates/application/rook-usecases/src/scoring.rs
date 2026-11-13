@@ -15,11 +15,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use rook_core::{CircuitStateSnapshot, QuotaObservation};
+use rook_core::{CircuitStateSnapshot, PolicySelectionDecision, QuotaObservation, TargetRef};
 use serde::{Deserialize, Serialize};
 use shared_kernel::ProviderId;
-
-use crate::eligibility::TargetRef;
 
 // ============================================================================
 // Unknown reasons
@@ -153,13 +151,21 @@ pub struct SignalsSnapshot {
 // Selection reason
 // ============================================================================
 
-/// Method used to select the winner (existing strategies only).
+/// Method used to select the winner.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SelectionMethod {
     Priority,
     RoundRobin,
     WeightedRandom,
+    /// Weighted random over eligible candidates by stable identity.
+    Weighted,
+    /// Minimum raw p95 latency among comparable candidates.
+    LeastLatency,
+    /// Minimum projected request-cost upper bound in USD.
+    LeastCost,
+    /// Resolve deterministically to a concrete policy per request.
+    Auto,
 }
 
 /// Fallback reason if the selection was not a normal choice.
@@ -170,6 +176,20 @@ pub enum SelectionFallback {
     SingleCandidate,
     /// Weighted selection fell back due to configuration error.
     WeightedConfigError,
+    /// All latency values were unknown; fell back to priority.
+    MetricUnavailable,
+    /// No comparable signals available for auto resolution.
+    NoComparableSignals,
+    /// Request has spending budget and comparable USD cost exists.
+    BudgetAware,
+    /// Streaming request with comparable p95 latency available.
+    StreamingLatencyProxy,
+    /// Comparable p95 latency evidence available.
+    LatencyEvidenceAvailable,
+    /// Comparable projected cost evidence available.
+    CostEvidenceAvailable,
+    /// Values exist but cannot be compared (different currencies, different bases).
+    IncompatibleBasis,
 }
 
 /// Explanation of one selection decision.
@@ -186,6 +206,10 @@ pub struct SelectionReason {
     pub components: CandidateScoreComponents,
     /// Fallback reason if applicable.
     pub fallback: Option<SelectionFallback>,
+    /// The policy requested by the operator (for auto or fallback).
+    pub requested_policy: Option<rook_core::PolicyKind>,
+    /// The effective concrete policy that selected the target.
+    pub effective_policy: Option<rook_core::PolicyKind>,
 }
 
 /// Result of one selection decision, combining the chosen provider with its explanation.
@@ -411,6 +435,64 @@ pub fn build_selection_reason(
         method,
         components,
         fallback: (snapshot.candidates.len() == 1).then_some(SelectionFallback::SingleCandidate),
+        requested_policy: None,
+        effective_policy: None,
+    })
+}
+
+/// Build an extended selection reason from a policy engine decision.
+///
+/// Includes requested policy, effective policy, and typed fallback reason.
+pub fn build_selection_reason_from_policy(
+    _snapshot: &SignalsSnapshot,
+    selected_target: &TargetRef,
+    decision: &PolicySelectionDecision,
+    score_components: &HashMap<TargetRef, CandidateScoreComponents>,
+) -> Option<SelectionReason> {
+    let components = score_components.get(selected_target)?.clone();
+
+    // Convert policy kind to selection method
+    let method = match decision.effective_policy {
+        rook_core::PolicyKind::Priority => SelectionMethod::Priority,
+        rook_core::PolicyKind::Weighted => SelectionMethod::Weighted,
+        rook_core::PolicyKind::RoundRobin => SelectionMethod::RoundRobin,
+        rook_core::PolicyKind::LeastLatency => SelectionMethod::LeastLatency,
+        rook_core::PolicyKind::LeastCost => SelectionMethod::LeastCost,
+        rook_core::PolicyKind::Auto => SelectionMethod::Auto,
+    };
+
+    // Convert fallback reason
+    let fallback = decision.fallback_reason.as_ref().and_then(|reason| {
+        match reason {
+            rook_core::PolicyFallbackReason::MetricUnavailable => {
+                Some(SelectionFallback::MetricUnavailable)
+            }
+            rook_core::PolicyFallbackReason::NoComparableSignals => {
+                Some(SelectionFallback::NoComparableSignals)
+            }
+            rook_core::PolicyFallbackReason::BudgetAware
+            | rook_core::PolicyFallbackReason::StreamingLatencyProxy
+            | rook_core::PolicyFallbackReason::LatencyEvidenceAvailable
+            | rook_core::PolicyFallbackReason::CostEvidenceAvailable => {
+                // Auto resolver rules — not fallbacks, just explanations
+                None
+            }
+            rook_core::PolicyFallbackReason::WeightedConfigError => {
+                Some(SelectionFallback::WeightedConfigError)
+            }
+            rook_core::PolicyFallbackReason::IncompatibleBasis => {
+                Some(SelectionFallback::IncompatibleBasis)
+            }
+        }
+    });
+
+    Some(SelectionReason {
+        selected_target: selected_target.clone(),
+        method,
+        components,
+        fallback,
+        requested_policy: Some(decision.requested_policy),
+        effective_policy: Some(decision.effective_policy),
     })
 }
 

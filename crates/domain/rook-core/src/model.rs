@@ -625,6 +625,74 @@ pub enum SelectionStrategy {
 }
 
 // ============================================================================
+// Policy — provider routing policies (DALLAY-774)
+// ============================================================================
+
+/// Stable identity of a provider target considered by routing.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct TargetRef(pub ProviderId);
+
+/// The six explicit, configurable provider-routing policies.
+///
+/// Replaces the legacy `RoutingStrategy` enum. Each policy has deterministic
+/// selection semantics, required evidence, and explicit fallback behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PolicyKind {
+    /// First eligible candidate in legacy provider-registration order.
+    Priority,
+    /// Weighted random over eligible candidates by stable identity.
+    Weighted,
+    /// Round-robin rotation over eligible candidates.
+    RoundRobin,
+    /// Minimum raw p95 latency among comparable candidates.
+    LeastLatency,
+    /// Minimum projected request-cost upper bound in USD.
+    LeastCost,
+    /// Resolve deterministically to a concrete policy per request.
+    Auto,
+}
+
+/// Why a policy fell back to a different concrete policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyFallbackReason {
+    /// All latency values were unknown; fell back to priority.
+    MetricUnavailable,
+    /// No comparable signals available for auto resolution.
+    NoComparableSignals,
+    /// Request has spending budget and comparable USD cost exists.
+    BudgetAware,
+    /// Streaming request with comparable p95 latency available.
+    StreamingLatencyProxy,
+    /// Comparable p95 latency evidence available.
+    LatencyEvidenceAvailable,
+    /// Comparable projected cost evidence available.
+    CostEvidenceAvailable,
+    /// Weighted selection failed due to configuration error.
+    WeightedConfigError,
+    /// Values exist but cannot be compared (different currencies, different bases).
+    IncompatibleBasis,
+}
+
+/// Result of one policy selection decision.
+///
+/// Contains the selected target, the requested policy, the effective concrete
+/// policy (may differ for auto or fallback), and optional fallback reason.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolicySelectionDecision {
+    /// The selected target.
+    pub selected_target: TargetRef,
+    /// The policy requested by the operator.
+    pub requested_policy: PolicyKind,
+    /// The concrete policy that actually selected the target.
+    pub effective_policy: PolicyKind,
+    /// Why the effective policy differs from the requested policy.
+    pub fallback_reason: Option<PolicyFallbackReason>,
+}
+
+// ============================================================================
 // Combo — multi-step fallback chains
 // ============================================================================
 

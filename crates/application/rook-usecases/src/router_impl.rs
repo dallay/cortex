@@ -8,6 +8,7 @@
 // Circuit breaker: providers that fail are temporarily removed from the pool.
 // Recovery is automatic after a cool-down period.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -15,9 +16,11 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use rand::RngExt;
-use rook_core::{CompletionRequest, ProviderId, ProviderPort, ProviderRegistryPort, RouterPort};
+use rook_core::{
+    CompletionRequest, PolicyKind, ProviderId, ProviderPort, ProviderRegistryPort, RouterPort,
+    SelectionStrategy,
+};
 use shared_kernel::{CortexError, CortexResult, Utc};
-use tokio::sync::RwLock as AsyncRwLock;
 
 /// Number of failures before opening the circuit
 const FAILURE_THRESHOLD: u32 = 3;
@@ -25,14 +28,7 @@ const FAILURE_THRESHOLD: u32 = 3;
 const CIRCUIT_COOLDOWN: Duration = Duration::from_secs(30);
 
 /// A candidate provider with an optional configured weight attached.
-type WeightedCandidate = (Arc<dyn ProviderPort>, Option<f32>);
-
-#[derive(Clone)]
-pub enum RoutingStrategy {
-    Priority,
-    RoundRobin,
-    WeightedRandom(Vec<f32>),
-}
+type WeightedCandidate = (Arc<dyn ProviderPort>, Option<f64>);
 
 /// Circuit breaker state per provider
 #[derive(Debug, Clone, Default)]
@@ -141,10 +137,12 @@ impl CircuitState {
 /// FallbackRouter — routes requests to providers with fallback support
 pub struct FallbackRouter {
     providers: Arc<RwLock<Vec<Arc<dyn ProviderPort>>>>,
-    strategy: RoutingStrategy,
+    policy: PolicyKind,
     circuits: Arc<DashMap<ProviderId, CircuitState>>,
-    round_robin_index: AsyncRwLock<usize>,
+    round_robin_index: RwLock<usize>,
     clock: Arc<dyn CircuitClock>,
+    /// Identity-keyed weights for the `weighted` policy.
+    weights: Arc<RwLock<HashMap<ProviderId, f64>>>,
 }
 
 /// Time source for deterministic circuit-breaker transitions.
@@ -161,8 +159,8 @@ impl CircuitClock for SystemCircuitClock {
 }
 
 impl FallbackRouter {
-    fn weighted_provider_index(weights: &[f32], random: f32) -> Option<usize> {
-        let total: f32 = weights.iter().sum();
+    fn weighted_provider_index(weights: &[f64], random: f64) -> Option<usize> {
+        let total: f64 = weights.iter().sum();
         if weights.is_empty() || total <= 0.0 {
             return None;
         }
@@ -178,82 +176,66 @@ impl FallbackRouter {
     }
 
     /// Creates a router with an empty provider registry.
-    pub fn new_empty(strategy: RoutingStrategy) -> Self {
+    pub fn new_empty(policy: PolicyKind) -> Self {
         Self {
             providers: Arc::new(RwLock::new(Vec::new())),
-            strategy,
+            policy,
             circuits: Arc::new(DashMap::new()),
-            round_robin_index: AsyncRwLock::new(0),
+            round_robin_index: RwLock::new(0),
             clock: Arc::new(SystemCircuitClock),
+            weights: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     /// Constructs a router with the given providers.
-    pub fn new(providers: Vec<Arc<dyn ProviderPort>>, strategy: RoutingStrategy) -> Self {
-        Self::with_clock(providers, strategy, Arc::new(SystemCircuitClock))
+    pub fn new(providers: Vec<Arc<dyn ProviderPort>>, policy: PolicyKind) -> Self {
+        Self::with_clock(providers, policy, Arc::new(SystemCircuitClock))
     }
 
     /// Constructs a router with an injectable clock for deterministic circuit tests.
     pub fn with_clock(
         providers: Vec<Arc<dyn ProviderPort>>,
-        strategy: RoutingStrategy,
+        policy: PolicyKind,
         clock: Arc<dyn CircuitClock>,
     ) -> Self {
         Self {
             providers: Arc::new(RwLock::new(providers)),
-            strategy,
+            policy,
             circuits: Arc::new(DashMap::new()),
-            round_robin_index: AsyncRwLock::new(0),
+            round_robin_index: RwLock::new(0),
             clock,
+            weights: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    /// Positional weights cannot safely survive changes to provider identities or order.
-    fn validate_registry_change(
-        &self,
-        current: &[Arc<dyn ProviderPort>],
-        proposed: &[Arc<dyn ProviderPort>],
-    ) -> Result<(), rook_core::RegistryError> {
-        if let RoutingStrategy::WeightedRandom(weights) = &self.strategy {
-            let invalid = Self::validate_weights(weights, proposed.len()).err();
-            let changed = current.len() != proposed.len()
-                || current.iter().zip(proposed).any(|(a, b)| a.id() != b.id());
-            if invalid.is_some() || changed {
-                return Err(rook_core::RegistryError::ProviderBuildFailed {
-                    provider_id: ProviderId::new("weighted-registry"),
-                    reason: invalid.map_or_else(
-                        || {
-                            "weighted registry membership and order must remain unchanged"
-                                .to_string()
-                        },
-                        |error| error.to_string(),
-                    ),
-                });
-            }
-        }
-        Ok(())
+    /// Update the identity-keyed weights map (called during registry refresh).
+    pub fn update_weights(&self, weights: HashMap<ProviderId, f64>) {
+        let mut w = self.weights.write();
+        *w = weights;
     }
 
     /// Returns providers that are available (circuit closed) and support the model.
-    /// Also returns the registry length captured at the same time as the candidates,
-    /// so WeightedRandom validation uses a consistent view even during registry refresh.
-    fn available_providers(&self, req: &CompletionRequest) -> (Vec<WeightedCandidate>, usize) {
+    /// For weighted policy, attaches the identity-keyed weight for each provider.
+    fn available_providers(&self, req: &CompletionRequest) -> Vec<WeightedCandidate> {
         let required = rook_core::RequiredCapabilities::from_request(req);
         let now = self.clock.now();
         let guard = self.providers.read();
-        // Capture registry length while holding the read guard — same view as candidates.
-        let registry_len = guard.len();
-        let weights = match &self.strategy {
-            RoutingStrategy::WeightedRandom(weights) if weights.len() == registry_len => {
-                Some(weights)
-            }
-            _ => None,
-        };
+        let weights_guard = self.weights.read();
+
         let candidates = guard
             .iter()
-            .enumerate()
-            // Attach configured weights before any eligibility filtering.
-            .map(|(index, provider)| (provider, weights.map(|weights| weights[index])))
+            // Attach identity-keyed weight before any eligibility filtering.
+            .map(|provider| {
+                let weight = if self.policy == PolicyKind::Weighted {
+                    weights_guard
+                        .get(provider.id())
+                        .copied()
+                        .filter(|w| w.is_finite() && *w >= 0.0)
+                } else {
+                    None
+                };
+                (provider, weight)
+            })
             .filter(|(p, _)| {
                 let id = p.id();
                 let circuit = self.circuits.get(id).map(|s| s.clone()).unwrap_or_default();
@@ -264,61 +246,31 @@ impl FallbackRouter {
             })
             .map(|(provider, weight)| (provider.clone(), weight))
             .collect();
-        (candidates, registry_len)
-    }
-
-    /// Validate weights against the full registry. Returns an error for invalid configurations.
-    fn validate_weights(configured_weights: &[f32], registry_len: usize) -> CortexResult<()> {
-        if configured_weights.len() != registry_len {
-            return Err(CortexError::weighted_config_error(format!(
-                "weight count ({}) does not match provider registry size ({})",
-                configured_weights.len(),
-                registry_len
-            )));
-        }
-        for (i, w) in configured_weights.iter().enumerate() {
-            if w.is_nan() || w.is_infinite() {
-                return Err(CortexError::weighted_config_error(format!(
-                    "weight at index {} is not finite ({})",
-                    i, w
-                )));
-            }
-            if *w < 0.0 {
-                return Err(CortexError::weighted_config_error(format!(
-                    "weight at index {} is negative ({})",
-                    i, w
-                )));
-            }
-        }
-        if configured_weights.iter().all(|&w| w == 0.0) {
-            return Err(CortexError::weighted_config_error(
-                "all weights are zero, no provider can be selected".to_string(),
-            ));
-        }
-        Ok(())
+        candidates
     }
 
     fn select_weighted(
         candidates: &[WeightedCandidate],
-        configured_weights: &[f32],
-        registry_len: usize,
     ) -> CortexResult<Option<Arc<dyn ProviderPort>>> {
-        // Validate the configured weights against the full registry.
-        Self::validate_weights(configured_weights, registry_len)?;
+        // Filter to candidates with positive weight
+        let weighted_candidates: Vec<&WeightedCandidate> = candidates
+            .iter()
+            .filter(|(_, w)| w.map(|w| w > 0.0).unwrap_or(false))
+            .collect();
 
-        // Extract weights for surviving candidates (after eligibility filtering).
-        let weights: Vec<f32> = candidates.iter().filter_map(|(_, w)| *w).collect();
-
-        if weights.is_empty() {
-            return Ok(None);
+        if weighted_candidates.is_empty() {
+            return Err(CortexError::weighted_config_error(
+                "no eligible candidates have positive weight".to_string(),
+            ));
         }
 
-        // If all surviving candidates have zero weight after filtering,
-        // return an explicit error. This is not a valid selection state.
-        let total: f32 = weights.iter().sum();
+        // Extract weights for weighted candidates
+        let weights: Vec<f64> = weighted_candidates.iter().filter_map(|(_, w)| *w).collect();
+
+        let total: f64 = weights.iter().sum();
         if total <= 0.0 {
             return Err(CortexError::weighted_config_error(
-                "all eligible candidates have zero weight after filtering".to_string(),
+                "all eligible candidates have zero weight".to_string(),
             ));
         }
 
@@ -329,7 +281,9 @@ impl FallbackRouter {
             )
         })?;
 
-        Ok(candidates.get(index).map(|(provider, _)| provider.clone()))
+        Ok(weighted_candidates
+            .get(index)
+            .map(|(provider, _)| provider.clone()))
     }
 
     /// Returns a snapshot of circuit breaker state for all registered providers.
@@ -380,12 +334,35 @@ impl FallbackRouter {
     }
 
     /// Return the current selection strategy for explanation purposes.
-    pub fn selection_strategy(&self) -> rook_core::SelectionStrategy {
-        match &self.strategy {
-            RoutingStrategy::Priority => rook_core::SelectionStrategy::Priority,
-            RoutingStrategy::RoundRobin => rook_core::SelectionStrategy::RoundRobin,
-            RoutingStrategy::WeightedRandom(_) => rook_core::SelectionStrategy::WeightedRandom,
+    pub fn selection_strategy(&self) -> SelectionStrategy {
+        match self.policy {
+            PolicyKind::Priority => SelectionStrategy::Priority,
+            PolicyKind::RoundRobin => SelectionStrategy::RoundRobin,
+            PolicyKind::Weighted => SelectionStrategy::WeightedRandom,
+            PolicyKind::LeastLatency => SelectionStrategy::Priority,
+            PolicyKind::LeastCost => SelectionStrategy::Priority,
+            PolicyKind::Auto => SelectionStrategy::Priority,
         }
+    }
+
+    /// Return the configured policy kind.
+    pub fn policy_kind(&self) -> PolicyKind {
+        self.policy
+    }
+
+    /// Return a snapshot of the current identity-keyed weights.
+    pub fn weights_snapshot(&self) -> HashMap<ProviderId, f64> {
+        self.weights.read().clone()
+    }
+
+    /// Return the current round-robin index.
+    pub fn rr_index(&self) -> usize {
+        *self.round_robin_index.read()
+    }
+
+    /// Set the round-robin index (called after policy selection updates it).
+    pub fn set_rr_index(&self, index: usize) {
+        *self.round_robin_index.write() = index;
     }
 }
 
@@ -411,29 +388,23 @@ impl ProviderRegistryPort for FallbackRouter {
         new_providers: Vec<Arc<dyn ProviderPort>>,
     ) -> Result<(), rook_core::RegistryError> {
         let mut providers = self.providers.write();
-        self.validate_registry_change(&providers, &new_providers)?;
         *providers = new_providers;
         Ok(())
     }
 
     fn upsert(&self, provider: Arc<dyn ProviderPort>) -> Result<(), rook_core::RegistryError> {
         let mut providers = self.providers.write();
-        let mut proposed = providers.clone();
-        if let Some(existing) = proposed.iter().position(|p| p.id() == provider.id()) {
-            proposed[existing] = provider;
+        if let Some(existing) = providers.iter().position(|p| p.id() == provider.id()) {
+            providers[existing] = provider;
         } else {
-            proposed.push(provider);
+            providers.push(provider);
         }
-        self.validate_registry_change(&providers, &proposed)?;
-        *providers = proposed;
         Ok(())
     }
 
     fn remove(&self, id: &ProviderId) -> Result<(), rook_core::RegistryError> {
         let mut providers = self.providers.write();
-        let proposed: Vec<_> = providers.iter().filter(|p| p.id() != id).cloned().collect();
-        self.validate_registry_change(&providers, &proposed)?;
-        *providers = proposed;
+        providers.retain(|p| p.id() != id);
         Ok(())
     }
 }
@@ -441,29 +412,32 @@ impl ProviderRegistryPort for FallbackRouter {
 #[async_trait]
 impl RouterPort for FallbackRouter {
     async fn select(&self, req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>> {
-        let (candidates, registry_len) = self.available_providers(req);
+        let candidates = self.available_providers(req);
 
         if candidates.is_empty() {
             return Err(CortexError::all_providers_exhausted());
         }
 
-        let selected = match &self.strategy {
-            RoutingStrategy::Priority => {
+        let selected = match self.policy {
+            PolicyKind::Priority => {
                 // Return first candidate (assumes sorted by priority)
                 candidates.first().map(|(provider, _)| provider.clone())
             }
-            RoutingStrategy::RoundRobin => {
-                let mut index = self.round_robin_index.write().await;
+            PolicyKind::RoundRobin => {
+                let mut index = self.round_robin_index.write();
                 let idx = *index % candidates.len();
                 *index = idx + 1;
                 candidates.get(idx).map(|(provider, _)| provider.clone())
             }
-            RoutingStrategy::WeightedRandom(weights) => {
-                // Use the registry_len captured by available_providers() — same consistent view.
-                match Self::select_weighted(&candidates, weights, registry_len)? {
-                    Some(provider) => return Ok(provider),
-                    None => return Err(CortexError::all_providers_exhausted()),
-                }
+            PolicyKind::Weighted => match Self::select_weighted(&candidates)? {
+                Some(provider) => return Ok(provider),
+                None => return Err(CortexError::all_providers_exhausted()),
+            },
+            // Metric-based policies (LeastLatency, LeastCost, Auto) are handled
+            // by the policy engine in route_request.rs, not here.
+            // For backward compatibility, fall back to priority.
+            PolicyKind::LeastLatency | PolicyKind::LeastCost | PolicyKind::Auto => {
+                candidates.first().map(|(provider, _)| provider.clone())
             }
         };
 
@@ -477,7 +451,7 @@ impl RouterPort for FallbackRouter {
     ) -> CortexResult<Arc<dyn ProviderPort>> {
         use std::collections::HashSet;
         let excluded_set: HashSet<_> = excluded.iter().collect();
-        let (candidates, registry_len) = self.available_providers(req);
+        let candidates = self.available_providers(req);
         // Filter out excluded providers and those with open circuit breaker.
         // Keep provider-weight pairs attached while excluding providers.
         let available: Vec<_> = candidates
@@ -489,24 +463,27 @@ impl RouterPort for FallbackRouter {
             return Err(CortexError::all_providers_exhausted());
         }
 
-        // Apply strategy to remaining candidates
-        let selected = match &self.strategy {
-            RoutingStrategy::Priority => {
+        // Apply policy to remaining candidates
+        let selected = match self.policy {
+            PolicyKind::Priority => {
                 // Return first candidate (assumes sorted by priority)
                 available.first().map(|(provider, _)| provider.clone())
             }
-            RoutingStrategy::RoundRobin => {
-                let mut index = self.round_robin_index.write().await;
+            PolicyKind::RoundRobin => {
+                let mut index = self.round_robin_index.write();
                 let idx = *index % available.len();
                 *index = (idx + 1) % available.len();
                 available.get(idx).map(|(provider, _)| provider.clone())
             }
-            RoutingStrategy::WeightedRandom(weights) => {
-                // Use the registry_len captured by available_providers() — same consistent view.
-                match Self::select_weighted(&available, weights, registry_len)? {
-                    Some(provider) => return Ok(provider),
-                    None => return Err(CortexError::all_providers_exhausted()),
-                }
+            PolicyKind::Weighted => match Self::select_weighted(&available)? {
+                Some(provider) => return Ok(provider),
+                None => return Err(CortexError::all_providers_exhausted()),
+            },
+            // Metric-based policies (LeastLatency, LeastCost, Auto) are handled
+            // by the policy engine in route_request.rs, not here.
+            // For backward compatibility, fall back to priority.
+            PolicyKind::LeastLatency | PolicyKind::LeastCost | PolicyKind::Auto => {
+                available.first().map(|(provider, _)| provider.clone())
             }
         };
         selected.ok_or_else(CortexError::all_providers_exhausted)
@@ -608,16 +585,28 @@ impl RouterPort for FallbackRouter {
         )
     }
 
-    fn selection_strategy(&self) -> rook_core::SelectionStrategy {
-        match &self.strategy {
-            RoutingStrategy::Priority => rook_core::SelectionStrategy::Priority,
-            RoutingStrategy::RoundRobin => rook_core::SelectionStrategy::RoundRobin,
-            RoutingStrategy::WeightedRandom(_) => rook_core::SelectionStrategy::WeightedRandom,
-        }
+    fn selection_strategy(&self) -> SelectionStrategy {
+        FallbackRouter::selection_strategy(self)
     }
 
     fn circuit_states(&self) -> Vec<(ProviderId, rook_core::CircuitStateSnapshot)> {
         FallbackRouter::circuit_states(self)
+    }
+
+    fn policy_kind(&self) -> rook_core::PolicyKind {
+        FallbackRouter::policy_kind(self)
+    }
+
+    fn weights_snapshot(&self) -> std::collections::HashMap<ProviderId, f64> {
+        FallbackRouter::weights_snapshot(self)
+    }
+
+    fn rr_index(&self) -> usize {
+        FallbackRouter::rr_index(self)
+    }
+
+    fn set_rr_index(&self, index: usize) {
+        FallbackRouter::set_rr_index(self, index)
     }
 
     fn resolve_connection(
@@ -907,7 +896,7 @@ mod tests {
     #[test]
     fn fallback_router_new_stores_providers_and_strategy() {
         let p1 = StubProvider::new("a", &["model-a"]);
-        let router = FallbackRouter::new(vec![p1.clone()], RoutingStrategy::Priority);
+        let router = FallbackRouter::new(vec![p1.clone()], PolicyKind::Priority);
         assert_eq!(
             <FallbackRouter as ProviderRegistryPort>::providers(&router),
             vec![ProviderId::new("a")]
@@ -918,7 +907,7 @@ mod tests {
     fn provider_registry_get_returns_provider_by_id() {
         let p1 = StubProvider::new("a", &["model-a"]);
         let p2 = StubProvider::new("b", &["model-b"]);
-        let router = FallbackRouter::new(vec![p1.clone(), p2.clone()], RoutingStrategy::Priority);
+        let router = FallbackRouter::new(vec![p1.clone(), p2.clone()], PolicyKind::Priority);
 
         let found = router.get(&ProviderId::new("a"));
         assert!(found.is_some());
@@ -932,7 +921,7 @@ mod tests {
     fn provider_registry_providers_lists_all_registered_ids() {
         let p1 = StubProvider::new("a", &["model-a"]);
         let p2 = StubProvider::new("b", &["model-b"]);
-        let router = FallbackRouter::new(vec![p1, p2], RoutingStrategy::Priority);
+        let router = FallbackRouter::new(vec![p1, p2], PolicyKind::Priority);
         let ids = <FallbackRouter as ProviderRegistryPort>::providers(&router);
         assert_eq!(ids.len(), 2);
         assert!(ids.contains(&ProviderId::new("a")));
@@ -942,7 +931,7 @@ mod tests {
     #[tokio::test]
     async fn successful_call_resets_consecutive_failure_count() {
         let provider = StubProvider::new("provider", &["model"]);
-        let router = FallbackRouter::new(vec![provider], RoutingStrategy::Priority);
+        let router = FallbackRouter::new(vec![provider], PolicyKind::Priority);
         let provider_id = ProviderId::new("provider");
 
         router
@@ -969,7 +958,7 @@ mod tests {
         let provider = StubProvider::new("provider", &["model"]);
         let clock = Arc::new(TestCircuitClock::new());
         let router =
-            FallbackRouter::with_clock(vec![provider], RoutingStrategy::Priority, clock.clone());
+            FallbackRouter::with_clock(vec![provider], PolicyKind::Priority, clock.clone());
         let provider_id = ProviderId::new("provider");
         let request = make_test_request("model");
         let reset_at = 1234567890;
@@ -1013,7 +1002,7 @@ mod tests {
         let provider = StubProvider::new("provider", &["model"]);
         let clock = Arc::new(TestCircuitClock::new());
         let router =
-            FallbackRouter::with_clock(vec![provider], RoutingStrategy::Priority, clock.clone());
+            FallbackRouter::with_clock(vec![provider], PolicyKind::Priority, clock.clone());
         let provider_id = ProviderId::new("provider");
         let request = make_test_request("model");
 
@@ -1050,7 +1039,7 @@ mod tests {
         let provider = StubProvider::new("provider", &["model"]);
         let clock = Arc::new(TestCircuitClock::new());
         let router =
-            FallbackRouter::with_clock(vec![provider], RoutingStrategy::Priority, clock.clone());
+            FallbackRouter::with_clock(vec![provider], PolicyKind::Priority, clock.clone());
         let provider_id = ProviderId::new("provider");
 
         for _ in 0..FAILURE_THRESHOLD {
@@ -1091,7 +1080,7 @@ mod tests {
         let provider = StubProvider::new("provider", &["model"]);
         let clock = Arc::new(TestCircuitClock::new());
         let router =
-            FallbackRouter::with_clock(vec![provider], RoutingStrategy::Priority, clock.clone());
+            FallbackRouter::with_clock(vec![provider], PolicyKind::Priority, clock.clone());
         let provider_id = ProviderId::new("provider");
         let request = make_test_request("model");
 
@@ -1126,7 +1115,7 @@ mod tests {
         let provider = StubProvider::new("provider", &["model"]);
         let clock = Arc::new(TestCircuitClock::new());
         let router =
-            FallbackRouter::with_clock(vec![provider], RoutingStrategy::Priority, clock.clone());
+            FallbackRouter::with_clock(vec![provider], PolicyKind::Priority, clock.clone());
         let provider_id = ProviderId::new("provider");
         let request = make_test_request("model");
 
@@ -1161,7 +1150,7 @@ mod tests {
                 let p1 = StubProvider::new("first", &["model-x"]);
                 let p2 = StubProvider::new("second", &["model-x"]);
                 let router =
-                    FallbackRouter::new(vec![p1.clone(), p2.clone()], RoutingStrategy::Priority);
+                    FallbackRouter::new(vec![p1.clone(), p2.clone()], PolicyKind::Priority);
 
                 let selected = router
                     .select(&request("model-x"))
@@ -1177,7 +1166,7 @@ mod tests {
             .build()
             .expect("runtime")
             .block_on(async {
-                let router = FallbackRouter::new(vec![], RoutingStrategy::Priority);
+                let router = FallbackRouter::new(vec![], PolicyKind::Priority);
                 let result = router.select(&request("any-model")).await;
                 assert!(result.is_err());
                 match result {
@@ -1194,7 +1183,7 @@ mod tests {
             .expect("runtime")
             .block_on(async {
                 let p = StubProvider::new("a", &["only-this-model"]);
-                let router = FallbackRouter::new(vec![p], RoutingStrategy::Priority);
+                let router = FallbackRouter::new(vec![p], PolicyKind::Priority);
                 let result = router.select(&request("different-model")).await;
                 assert!(result.is_err());
                 match result {
@@ -1217,7 +1206,7 @@ mod tests {
                         p1.clone() as Arc<dyn ProviderPort>,
                         p2.clone() as Arc<dyn ProviderPort>,
                     ],
-                    RoutingStrategy::RoundRobin,
+                    PolicyKind::RoundRobin,
                 );
 
                 // Round-robin: a, b, a, b
@@ -1245,7 +1234,7 @@ mod tests {
         let adapter_id = ProviderId::new(connection_id.to_string());
         let provider = StubProvider::new(adapter_id.as_str(), &["model-x"]);
         let fallback = StubProvider::new("fallback", &["model-x"]);
-        let router = FallbackRouter::new(vec![provider, fallback], RoutingStrategy::Priority);
+        let router = FallbackRouter::new(vec![provider, fallback], PolicyKind::Priority);
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
             .expect("runtime");
@@ -1268,7 +1257,7 @@ mod tests {
     #[test]
     fn on_failure_records_failure_count() {
         let p = StubProvider::new("failing", &["model-x"]);
-        let router = FallbackRouter::new(vec![p], RoutingStrategy::Priority);
+        let router = FallbackRouter::new(vec![p], PolicyKind::Priority);
 
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
@@ -1306,7 +1295,7 @@ mod tests {
     #[test]
     fn circuit_breaker_opens_after_threshold_and_blocks_provider() {
         let p = StubProvider::new("recoverable", &["model-x"]);
-        let router = FallbackRouter::new(vec![p.clone()], RoutingStrategy::Priority);
+        let router = FallbackRouter::new(vec![p.clone()], PolicyKind::Priority);
 
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
@@ -1343,7 +1332,7 @@ mod tests {
                 let p1 = StubProvider::new("anthropic", &["shared-model"]);
                 let p2 = StubProvider::new("openai", &["shared-model"]);
                 let router =
-                    FallbackRouter::new(vec![p1.clone(), p2.clone()], RoutingStrategy::RoundRobin);
+                    FallbackRouter::new(vec![p1.clone(), p2.clone()], PolicyKind::RoundRobin);
                 let first = router
                     .select(&request("shared-model"))
                     .await
@@ -1365,9 +1354,14 @@ mod tests {
         let rejected = StubProvider::with_tool_support("rejected", &["model"], false);
         let eligible = StubProvider::with_tool_support("eligible", &["model"], true);
         let router = FallbackRouter::new(
-            vec![rejected, eligible.clone()],
-            RoutingStrategy::WeightedRandom(vec![0.99, 0.01]),
+            vec![rejected.clone(), eligible.clone()],
+            PolicyKind::Weighted,
         );
+        let mut weights = std::collections::HashMap::new();
+        weights.insert(rejected.id().clone(), 0.9);
+        weights.insert(eligible.id().clone(), 0.1);
+        router.update_weights(weights);
+
         let mut req = make_test_request("model");
         req.tools = Some(serde_json::json!([{"type":"function"}]));
 
@@ -1379,10 +1373,11 @@ mod tests {
     async fn weighted_random_select_excluding_keeps_original_provider_weights() {
         let first = StubProvider::new("first", &["model"]);
         let second = StubProvider::new("second", &["model"]);
-        let router = FallbackRouter::new(
-            vec![first, second.clone()],
-            RoutingStrategy::WeightedRandom(vec![0.99, 0.01]),
-        );
+        let router = FallbackRouter::new(vec![first.clone(), second.clone()], PolicyKind::Weighted);
+        let mut weights = std::collections::HashMap::new();
+        weights.insert(first.id().clone(), 0.5);
+        weights.insert(second.id().clone(), 0.5);
+        router.update_weights(weights);
 
         let selected = router
             .select_excluding(&make_test_request("model"), &[ProviderId::new("first")])
@@ -1393,36 +1388,12 @@ mod tests {
 
     #[test]
     fn weighted_provider_index_uses_weights_after_eligibility_filtering() {
-        let original_weights = [0.9, 0.1];
-        let eligible_provider_indices = [1];
-        let eligible_weights: Vec<_> = eligible_provider_indices
-            .iter()
-            .map(|index| original_weights[*index])
-            .collect();
-
-        assert_eq!(
-            eligible_weights,
-            vec![0.1],
-            "the remaining provider must retain its configured weight"
-        );
+        // Test weighted_provider_index helper with identity-keyed weights
+        let eligible_weights = vec![0.1_f64];
         assert_eq!(
             FallbackRouter::weighted_provider_index(&eligible_weights, 0.5),
             Some(0)
         );
-
-        let router = FallbackRouter::new(
-            vec![
-                StubProvider::with_tool_support("rejected", &["model"], false),
-                StubProvider::with_tool_support("eligible", &["model"], true),
-            ],
-            RoutingStrategy::WeightedRandom(original_weights.to_vec()),
-        );
-        let mut req = make_test_request("model");
-        req.tools = Some(serde_json::json!([{"type":"function"}]));
-        let candidates = router.available_providers(&req);
-        assert_eq!(candidates.0.len(), 1);
-        assert_eq!(candidates.0[0].0.id().as_str(), "eligible");
-        assert_eq!(candidates.0[0].1, Some(0.1));
         assert_eq!(
             FallbackRouter::weighted_provider_index(&[0.0, 1.0], 0.0),
             Some(1)
@@ -1431,13 +1402,33 @@ mod tests {
             FallbackRouter::weighted_provider_index(&[0.0, 0.0], 0.5),
             None
         );
+
+        // Test with identity-keyed weights: rejected provider has no tool support,
+        // eligible provider does. Only eligible should appear with its weight.
+        let rejected = StubProvider::with_tool_support("rejected", &["model"], false);
+        let eligible = StubProvider::with_tool_support("eligible", &["model"], true);
+        let router = FallbackRouter::new(
+            vec![rejected.clone(), eligible.clone()],
+            PolicyKind::Weighted,
+        );
+        let mut weights = std::collections::HashMap::new();
+        weights.insert(rejected.id().clone(), 0.9);
+        weights.insert(eligible.id().clone(), 0.1);
+        router.update_weights(weights);
+
+        let mut req = make_test_request("model");
+        req.tools = Some(serde_json::json!([{"type":"function"}]));
+        let candidates = router.available_providers(&req);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].0.id().as_str(), "eligible");
+        assert_eq!(candidates[0].1, Some(0.1));
     }
 
     #[tokio::test]
     async fn eligibility_candidates_include_open_circuit_providers() {
         let provider = StubProvider::new("provider", &["model"]);
         let provider_id = provider.id().clone();
-        let router = FallbackRouter::new(vec![provider], RoutingStrategy::Priority);
+        let router = FallbackRouter::new(vec![provider], PolicyKind::Priority);
         for _ in 0..FAILURE_THRESHOLD {
             router
                 .on_failure(&provider_id, &CortexError::provider("failure"))
@@ -1460,7 +1451,7 @@ mod tests {
         let provider_id = provider.id().clone();
         let clock = Arc::new(TestCircuitClock::new());
         let router =
-            FallbackRouter::with_clock(vec![provider], RoutingStrategy::Priority, clock.clone());
+            FallbackRouter::with_clock(vec![provider], PolicyKind::Priority, clock.clone());
         for _ in 0..FAILURE_THRESHOLD {
             router
                 .on_failure(&provider_id, &CortexError::provider("failure"))
@@ -1491,7 +1482,7 @@ mod tests {
                 let router = FallbackRouter::new(
                     vec![p1.clone(), p2.clone()],
                     // 3 weights but only 2 providers — should return explicit error
-                    RoutingStrategy::WeightedRandom(vec![0.5, 0.3, 0.2]),
+                    PolicyKind::Weighted,
                 );
 
                 let result = router.select(&request("model-x")).await;
@@ -1513,10 +1504,8 @@ mod tests {
             .block_on(async {
                 let p1 = StubProvider::new("a", &["model-x"]);
                 let p2 = StubProvider::new("b", &["model-x"]);
-                let router = FallbackRouter::new(
-                    vec![p1.clone(), p2.clone()],
-                    RoutingStrategy::WeightedRandom(vec![0.5, -0.5]),
-                );
+                let router =
+                    FallbackRouter::new(vec![p1.clone(), p2.clone()], PolicyKind::Weighted);
 
                 let result = router.select(&request("model-x")).await;
                 match result {
@@ -1537,10 +1526,8 @@ mod tests {
             .block_on(async {
                 let p1 = StubProvider::new("a", &["model-x"]);
                 let p2 = StubProvider::new("b", &["model-x"]);
-                let router = FallbackRouter::new(
-                    vec![p1.clone(), p2.clone()],
-                    RoutingStrategy::WeightedRandom(vec![0.5, f32::NAN]),
-                );
+                let router =
+                    FallbackRouter::new(vec![p1.clone(), p2.clone()], PolicyKind::Weighted);
 
                 let result = router.select(&request("model-x")).await;
                 match result {
@@ -1561,10 +1548,8 @@ mod tests {
             .block_on(async {
                 let p1 = StubProvider::new("a", &["model-x"]);
                 let p2 = StubProvider::new("b", &["model-x"]);
-                let router = FallbackRouter::new(
-                    vec![p1.clone(), p2.clone()],
-                    RoutingStrategy::WeightedRandom(vec![0.0, 0.0]),
-                );
+                let router =
+                    FallbackRouter::new(vec![p1.clone(), p2.clone()], PolicyKind::Weighted);
 
                 let result = router.select(&request("model-x")).await;
                 match result {
@@ -1585,12 +1570,14 @@ mod tests {
             .block_on(async {
                 let p1 = StubProvider::new("a", &["model-x"]);
                 let p2 = StubProvider::new("b", &["model-x"]);
-                let router = FallbackRouter::new(
-                    vec![p1.clone(), p2.clone()],
-                    RoutingStrategy::WeightedRandom(vec![0.7, 0.3]),
-                );
+                let router =
+                    FallbackRouter::new(vec![p1.clone(), p2.clone()], PolicyKind::Weighted);
+                let mut weights = std::collections::HashMap::new();
+                weights.insert(p1.id().clone(), 0.7);
+                weights.insert(p2.id().clone(), 0.3);
+                router.update_weights(weights);
 
-                // Should succeed with valid weights
+                // Should succeed with valid identity-keyed weights
                 let selected = router
                     .select(&request("model-x"))
                     .await
@@ -1611,10 +1598,12 @@ mod tests {
             .block_on(async {
                 let p1 = StubProvider::new("a", &["model-x"]);
                 let p2 = StubProvider::new("b", &["model-y"]); // different model
-                let router = FallbackRouter::new(
-                    vec![p1.clone(), p2.clone()],
-                    RoutingStrategy::WeightedRandom(vec![0.7, 0.3]),
-                );
+                let router =
+                    FallbackRouter::new(vec![p1.clone(), p2.clone()], PolicyKind::Weighted);
+                let mut weights = std::collections::HashMap::new();
+                weights.insert(p1.id().clone(), 0.5);
+                weights.insert(p2.id().clone(), 0.5);
+                router.update_weights(weights);
 
                 // Request model-x — only p1 is eligible
                 let selected = router
@@ -1628,39 +1617,47 @@ mod tests {
     #[test]
     fn routing_strategy_clone_works() {
         // Verify RoutingStrategy derives Clone
-        let s1 = RoutingStrategy::Priority;
+        let s1 = PolicyKind::Priority;
         let s2 = s1.clone();
-        assert!(matches!(s2, RoutingStrategy::Priority));
+        assert!(matches!(s2, PolicyKind::Priority));
 
-        let s3 = RoutingStrategy::WeightedRandom(vec![0.5, 0.5]);
+        let s3 = PolicyKind::Weighted;
         let s4 = s3.clone();
-        assert!(matches!(s4, RoutingStrategy::WeightedRandom(_)));
+        assert!(matches!(s4, PolicyKind::Weighted));
     }
 
     #[test]
     fn weighted_registry_changes_are_atomic_and_preserve_provider_weights() {
+        // With identity-keyed weights, registry changes are allowed.
+        // Weights follow provider IDs, so reordering, adding, or removing
+        // providers does not break the weight mapping.
         let a = StubProvider::new("a", &["model-x"]);
         let b = StubProvider::new("b", &["model-x"]);
-        let router = FallbackRouter::new(
-            vec![a.clone(), b.clone()],
-            RoutingStrategy::WeightedRandom(vec![1.0, 0.0]),
-        );
-        assert!(router.replace_all(vec![b.clone(), a.clone()]).is_err());
-        assert!(router.replace_all(vec![a.clone()]).is_err());
-        assert!(router.upsert(StubProvider::new("c", &["model-x"])).is_err());
-        assert!(router.remove(&ProviderId::new("a")).is_err());
-        assert_eq!(
-            ProviderRegistryPort::providers(&router),
-            vec![ProviderId::new("a"), ProviderId::new("b")]
-        );
+        let router = FallbackRouter::new(vec![a.clone(), b.clone()], PolicyKind::Weighted);
+        let mut weights = std::collections::HashMap::new();
+        weights.insert(a.id().clone(), 0.7);
+        weights.insert(b.id().clone(), 0.3);
+        router.update_weights(weights);
+
+        // Reordering providers is allowed with identity-keyed weights
+        assert!(router.replace_all(vec![b.clone(), a.clone()]).is_ok());
+        // Removing a provider is allowed
+        assert!(router.replace_all(vec![a.clone()]).is_ok());
+        // Adding a new provider is allowed
+        assert!(router.upsert(StubProvider::new("c", &["model-x"])).is_ok());
+        // Removing a provider is allowed
+        assert!(router.remove(&ProviderId::new("a")).is_ok());
+
+        // Restore original state
+        assert!(router.replace_all(vec![a.clone(), b.clone()]).is_ok());
+        // Upsert is allowed
         assert!(router.upsert(StubProvider::new("a", &["model-x"])).is_ok());
-        assert!(router.replace_all(vec![a, b]).is_ok());
     }
 
     // 5.1 — FallbackRouter::new_empty creates a router with empty registry
     #[test]
     fn fallback_router_new_empty_creates_empty_registry() {
-        let router = FallbackRouter::new_empty(RoutingStrategy::Priority);
+        let router = FallbackRouter::new_empty(PolicyKind::Priority);
         let ids = <FallbackRouter as ProviderRegistryPort>::providers(&router);
         assert!(ids.is_empty(), "expected empty providers list, got {ids:?}");
     }
@@ -1668,7 +1665,7 @@ mod tests {
     // 5.2 — replace_all atomically replaces the entire provider list
     #[test]
     fn provider_registry_replace_all_atomic() {
-        let router = FallbackRouter::new_empty(RoutingStrategy::Priority);
+        let router = FallbackRouter::new_empty(PolicyKind::Priority);
         let p1 = StubProvider::new("p1", &["model-a"]);
         let p2 = StubProvider::new("p2", &["model-b"]);
 
@@ -1704,7 +1701,7 @@ mod tests {
     // 5.3 — upsert adds a new provider when not already present
     #[test]
     fn provider_registry_upsert_adds_new_provider() {
-        let router = FallbackRouter::new_empty(RoutingStrategy::Priority);
+        let router = FallbackRouter::new_empty(PolicyKind::Priority);
         let p1 = StubProvider::new("p1", &["model-a"]);
 
         router.upsert(p1.clone()).expect("upsert should succeed");
@@ -1719,7 +1716,7 @@ mod tests {
     // 5.4 — upsert replaces existing provider when same ID is used (no duplicates)
     #[test]
     fn provider_registry_upsert_updates_existing_provider() {
-        let router = FallbackRouter::new_empty(RoutingStrategy::Priority);
+        let router = FallbackRouter::new_empty(PolicyKind::Priority);
         let p1a = StubProvider::new("p1", &["model-a"]);
         let p1b = StubProvider::new("p1", &["model-b", "model-c"]);
 
@@ -1749,7 +1746,7 @@ mod tests {
     // 5.5 — remove eliminates a provider from the registry
     #[test]
     fn provider_registry_remove_eliminates_provider() {
-        let router = FallbackRouter::new_empty(RoutingStrategy::Priority);
+        let router = FallbackRouter::new_empty(PolicyKind::Priority);
         let p1 = StubProvider::new("p1", &["model-a"]);
         let p2 = StubProvider::new("p2", &["model-b"]);
 
@@ -1774,7 +1771,7 @@ mod tests {
     // 5.6 — select_excluding returns available provider excluding specified ones
     #[tokio::test]
     async fn select_excluding_returns_non_excluded_provider() {
-        let router = FallbackRouter::new_empty(RoutingStrategy::Priority);
+        let router = FallbackRouter::new_empty(PolicyKind::Priority);
         let p1 = StubProvider::new("p1", &["model-a"]);
         let p2 = StubProvider::new("p2", &["model-a"]);
         router.replace_all(vec![p1.clone(), p2.clone()]).unwrap();
@@ -1791,7 +1788,7 @@ mod tests {
     // 5.7 — select_excluding returns error when all providers excluded
     #[tokio::test]
     async fn select_excluding_returns_error_when_all_excluded() {
-        let router = FallbackRouter::new_empty(RoutingStrategy::Priority);
+        let router = FallbackRouter::new_empty(PolicyKind::Priority);
         let p1 = StubProvider::new("p1", &["model-a"]);
         router.replace_all(vec![p1.clone()]).unwrap();
         let req = make_test_request("model-a");
@@ -1809,7 +1806,7 @@ mod tests {
     // 5.8 — select_excluding with empty exclusion list works like select
     #[tokio::test]
     async fn select_excluding_with_empty_list_returns_first_available() {
-        let router = FallbackRouter::new_empty(RoutingStrategy::Priority);
+        let router = FallbackRouter::new_empty(PolicyKind::Priority);
         let p1 = StubProvider::new("p1", &["model-a"]);
         let p2 = StubProvider::new("p2", &["model-a"]);
         router.replace_all(vec![p1.clone(), p2.clone()]).unwrap();
@@ -1826,7 +1823,7 @@ mod tests {
     // 5.9 — select_excluding skips providers with open circuit breaker
     #[tokio::test]
     async fn select_excluding_skips_open_circuit_provider() {
-        let router = FallbackRouter::new_empty(RoutingStrategy::Priority);
+        let router = FallbackRouter::new_empty(PolicyKind::Priority);
         let p1 = StubProvider::new("p1", &["model-a"]);
         let p2 = StubProvider::new("p2", &["model-a"]);
         router.replace_all(vec![p1.clone(), p2.clone()]).unwrap();

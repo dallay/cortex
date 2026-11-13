@@ -239,7 +239,7 @@ async fn local_backpressure_skips_circuit_but_upstream_rate_limit_opens_cooldown
         stream_error: None,
     });
     let provider_id = provider.id().clone();
-    let router = crate::FallbackRouter::new(vec![provider], crate::RoutingStrategy::Priority);
+    let router = crate::FallbackRouter::new(vec![provider], rook_core::PolicyKind::Priority);
 
     notify_provider_failure(&router, &provider_id, &CortexError::local_backpressure()).await;
     let local_state = router.circuit_states();
@@ -1142,7 +1142,7 @@ fn request() -> CompletionRequest {
 
 #[tokio::test]
 async fn completion_failures_update_real_router_circuit() {
-    use crate::RoutingStrategy;
+    use rook_core::PolicyKind;
 
     let provider_id = ProviderId::new("completion-failing-provider");
     let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
@@ -1152,7 +1152,7 @@ async fn completion_failures_update_real_router_circuit() {
     });
     let router = Arc::new(crate::FallbackRouter::new(
         vec![provider],
-        RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let usecase = usecase_with_router(router.clone());
     let mut req = request();
@@ -1168,7 +1168,7 @@ async fn completion_failures_update_real_router_circuit() {
 
 #[tokio::test]
 async fn stream_failures_are_counted_when_consumed_and_open_real_router_circuit() {
-    use crate::RoutingStrategy;
+    use rook_core::PolicyKind;
 
     let provider_id = ProviderId::new("stream-failing-provider");
     let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
@@ -1178,7 +1178,7 @@ async fn stream_failures_are_counted_when_consumed_and_open_real_router_circuit(
     });
     let router = Arc::new(crate::FallbackRouter::new(
         vec![provider],
-        RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let usecase = usecase_with_router(router.clone());
 
@@ -1196,7 +1196,7 @@ async fn stream_failures_are_counted_when_consumed_and_open_real_router_circuit(
 #[tokio::test]
 async fn real_router_holds_stream_trial_until_eof_and_releases_on_cancellation() {
     use crate::router_impl::CircuitClock;
-    use crate::RoutingStrategy;
+    use rook_core::PolicyKind;
     use std::time::Instant;
 
     struct TestClock(Mutex<Instant>);
@@ -1215,7 +1215,7 @@ async fn real_router_holds_stream_trial_until_eof_and_releases_on_cancellation()
     let clock = Arc::new(TestClock(Mutex::new(Instant::now())));
     let router = Arc::new(crate::FallbackRouter::with_clock(
         vec![provider],
-        RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
         clock.clone(),
     ));
     for _ in 0..3 {
@@ -1500,7 +1500,7 @@ async fn routing_fails_closed_when_connection_state_is_unavailable() {
     });
     let router = Arc::new(crate::FallbackRouter::new(
         vec![provider],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(FailingProviderRepository {
         fail_routing_state: true,
@@ -1530,7 +1530,7 @@ async fn key_provider_denial_stays_forbidden_when_connection_state_is_unavailabl
     });
     let router = Arc::new(crate::FallbackRouter::new(
         vec![provider],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(FailingProviderRepository {
         fail_routing_state: true,
@@ -1588,7 +1588,7 @@ async fn routing_state_read_timeout_fails_closed_before_upstream() {
     });
     let router = Arc::new(crate::FallbackRouter::new(
         vec![provider],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(FailingProviderRepository {
         fail_routing_state: false,
@@ -1890,7 +1890,7 @@ async fn execute_succeeds_when_allowed_models_is_empty() {
 async fn execute_is_forbidden_when_provider_not_in_allowed_list() {
     let usecase = usecase_with_router(Arc::new(crate::FallbackRouter::new(
         vec![ordinary_provider("test-provider")],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     )));
     let mut req = request();
     // test-provider is the provider selected; restrict to a different one
@@ -1906,7 +1906,7 @@ async fn execute_is_forbidden_when_provider_not_in_allowed_list() {
 async fn execute_filters_key_disallowed_provider_before_selection() {
     let router = Arc::new(crate::FallbackRouter::new(
         vec![ordinary_provider("blocked"), ordinary_provider("allowed")],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let usecase = usecase_with_router(router);
     let mut req = request();
@@ -1924,7 +1924,7 @@ async fn execute_filters_key_disallowed_provider_before_selection() {
 async fn weighted_selection_cannot_reintroduce_key_disallowed_provider() {
     let router = Arc::new(crate::FallbackRouter::new(
         vec![ordinary_provider("blocked"), ordinary_provider("allowed")],
-        crate::RoutingStrategy::WeightedRandom(vec![1.0, 0.0]),
+        rook_core::PolicyKind::Weighted,
     ));
     let usecase = usecase_with_router(router);
     let mut req = request();
@@ -1946,7 +1946,7 @@ async fn weighted_selection_cannot_reintroduce_key_disallowed_provider() {
 async fn selection_excludes_providers_added_after_eligibility_snapshot() {
     let router = Arc::new(crate::FallbackRouter::new(
         vec![ordinary_provider("observed")],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let usecase = usecase_with_router(router.clone());
     let req = request();
@@ -1974,7 +1974,7 @@ async fn eligibility_fails_closed_before_state_query_above_4000_targets() {
         .collect();
     let router = Arc::new(crate::FallbackRouter::new(
         providers,
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let connection_id = ConnectionId::new();
     let repository = Arc::new(InactiveAfterFirstRoutingReadRepository {
@@ -2111,7 +2111,7 @@ async fn refreshed_same_id_provider_is_reassessed_before_all_rejected_error() {
     let router = Arc::new(RegistryRefreshAfterEligibilitySnapshotRouter {
         inner: Arc::new(crate::FallbackRouter::new(
             vec![rejected],
-            crate::RoutingStrategy::Priority,
+            rook_core::PolicyKind::Priority,
         )),
         replacement: vec![replacement],
         refreshed: std::sync::atomic::AtomicBool::new(false),
@@ -2159,7 +2159,7 @@ async fn eligibility_registry_churn_is_rechecked_at_most_once() {
     let router = Arc::new(RegistryChurnDuringEligibilityRouter {
         inner: Arc::new(crate::FallbackRouter::new(
             vec![first.clone()],
-            crate::RoutingStrategy::Priority,
+            rook_core::PolicyKind::Priority,
         )),
         providers: [first, second],
         candidate_reads: std::sync::atomic::AtomicUsize::new(0),
@@ -2195,7 +2195,7 @@ async fn eligibility_registry_churn_is_rechecked_at_most_once() {
     let stream_router = Arc::new(RegistryChurnDuringEligibilityRouter {
         inner: Arc::new(crate::FallbackRouter::new(
             vec![router.providers[0].clone()],
-            crate::RoutingStrategy::Priority,
+            rook_core::PolicyKind::Priority,
         )),
         providers: router.providers.clone(),
         candidate_reads: std::sync::atomic::AtomicUsize::new(0),
@@ -2299,7 +2299,7 @@ async fn provider_added_during_selection_is_checked_before_upstream_io() {
     let router = Arc::new(RegistryRefreshDuringSelectionRouter {
         inner: Arc::new(crate::FallbackRouter::new(
             vec![original.clone(), placeholder],
-            crate::RoutingStrategy::Priority,
+            rook_core::PolicyKind::Priority,
         )),
         replacement: vec![late_provider, original.clone()],
         refreshed: std::sync::atomic::AtomicBool::new(false),
@@ -2366,7 +2366,7 @@ async fn provider_replaced_with_managed_adapter_after_snapshot_is_not_called() {
     let router = Arc::new(RegistryRefreshDuringSelectionRouter {
         inner: Arc::new(crate::FallbackRouter::new(
             vec![original, placeholder.clone()],
-            crate::RoutingStrategy::Priority,
+            rook_core::PolicyKind::Priority,
         )),
         replacement: vec![replacement, placeholder],
         refreshed: std::sync::atomic::AtomicBool::new(false),
@@ -2425,7 +2425,7 @@ async fn eligible_replacement_adapter_is_reassessed_without_permanent_exclusion(
     let router = Arc::new(RegistryRefreshDuringSelectionRouter {
         inner: Arc::new(crate::FallbackRouter::new(
             vec![original, placeholder.clone()],
-            crate::RoutingStrategy::Priority,
+            rook_core::PolicyKind::Priority,
         )),
         replacement: vec![replacement, placeholder],
         refreshed: std::sync::atomic::AtomicBool::new(false),
@@ -2457,7 +2457,7 @@ async fn eligible_replacement_adapter_is_reassessed_without_permanent_exclusion(
 async fn eligibility_stage_reports_key_allowlist_reasons() {
     let router = Arc::new(crate::FallbackRouter::new(
         vec![ordinary_provider("one"), ordinary_provider("two")],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let usecase = usecase_with_router(router);
     let mut req = request();
@@ -2503,7 +2503,7 @@ async fn eligibility_does_not_read_quota_for_key_disallowed_connections() {
                 allowed_connection,
             ),
         ],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(QuotaAwareProviderRepository {
         connections: HashMap::from([
@@ -2563,7 +2563,7 @@ async fn execute_stream_is_forbidden_when_model_not_allowed() {
 async fn execute_stream_is_forbidden_when_provider_not_allowed() {
     let usecase = usecase_with_router(Arc::new(crate::FallbackRouter::new(
         vec![ordinary_provider("test-provider")],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     )));
     let mut req = request();
     req.restrictions.allowed_providers = vec![ProviderId::new("openai")];
@@ -2577,7 +2577,7 @@ async fn execute_stream_is_forbidden_when_provider_not_allowed() {
 async fn execute_stream_filters_key_disallowed_provider_before_selection() {
     let router = Arc::new(crate::FallbackRouter::new(
         vec![ordinary_provider("blocked"), ordinary_provider("allowed")],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let usecase = usecase_with_router(router);
     let mut req = request();
@@ -2601,7 +2601,7 @@ async fn eligibility_stage_reports_open_circuit_and_eligible_targets() {
     let eligible_provider_id = eligible_provider.id().clone();
     let router = Arc::new(crate::FallbackRouter::new(
         vec![open_provider, eligible_provider],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     for _ in 0..3 {
         router
@@ -2634,7 +2634,7 @@ async fn eligibility_rechecks_circuit_after_connection_state_read() {
     let provider = connection_bound_provider(ordinary_provider(target.as_str()), connection_id);
     let router = Arc::new(crate::FallbackRouter::with_clock(
         vec![provider],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
         clock.clone(),
     ));
     for _ in 0..3 {
@@ -2694,7 +2694,7 @@ async fn eligibility_stage_reports_disabled_missing_and_expired_auth() {
             disabled_provider,
             eligible_provider.clone(),
         ],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
 
     let mut refreshable_expired_connection = test_connection(
@@ -2763,7 +2763,7 @@ async fn eligibility_rejects_managed_adapter_with_stale_configuration_revision()
     });
     let router = Arc::new(crate::FallbackRouter::new(
         vec![provider],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let usecase = usecase_with_router_and_provider_repository(router, repository);
 
@@ -2795,7 +2795,7 @@ async fn eligibility_rejects_missing_state_only_for_connection_bound_targets() {
     let static_provider = ordinary_provider(static_target.as_str());
     let router = Arc::new(crate::FallbackRouter::new(
         vec![managed_provider, static_provider],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(MapProviderRepository {
         connections: HashMap::new(),
@@ -2821,7 +2821,7 @@ async fn unmanaged_uuid_provider_is_not_attributed_to_a_connection_with_the_same
     let provider = ordinary_provider(target.as_str());
     let router = Arc::new(crate::FallbackRouter::new(
         vec![provider],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(MapProviderRepository {
         connections: HashMap::from([(
@@ -2868,7 +2868,7 @@ async fn unmanaged_uuid_provider_is_not_bound_by_runtime_id_collision() {
     let provider = ordinary_provider(target.as_str());
     let router = Arc::new(crate::FallbackRouter::new(
         vec![provider],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(MapProviderRepository {
         connections: HashMap::from([(
@@ -2941,7 +2941,7 @@ async fn managed_provider_disabled_after_eligibility_read_is_not_called() {
     );
     let router = Arc::new(crate::FallbackRouter::new(
         vec![provider],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let usecase = usecase_with_router_and_provider_repository(router, repository);
     let mut req = request();
@@ -2978,7 +2978,7 @@ async fn managed_provider_revision_change_after_eligibility_is_not_called() {
     );
     let router = Arc::new(crate::FallbackRouter::new(
         vec![provider],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let usecase = usecase_with_router_and_provider_repository(router, repository);
     let mut req = request();
@@ -3012,7 +3012,7 @@ async fn runtime_matched_provider_disabled_after_eligibility_read_is_not_called(
     });
     let router = Arc::new(crate::FallbackRouter::new(
         vec![provider],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let usecase = usecase_with_router_and_provider_repository(router, repository);
     let mut req = request();
@@ -3046,7 +3046,7 @@ async fn runtime_matched_provider_revision_change_triggers_one_fresh_eligibility
     });
     let router = Arc::new(crate::FallbackRouter::new(
         vec![provider],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let usecase = usecase_with_router_and_provider_repository(router, repository);
     let mut req = request();
@@ -4194,7 +4194,7 @@ impl RouterPort for AuditOrderRouter {
 #[tokio::test]
 async fn combo_success_closes_real_router_circuit() {
     use crate::router_impl::CircuitClock;
-    use crate::RoutingStrategy;
+    use rook_core::PolicyKind;
     use std::time::Instant;
 
     struct TestClock(Mutex<Instant>);
@@ -4209,7 +4209,7 @@ async fn combo_success_closes_real_router_circuit() {
     let clock = Arc::new(TestClock(Mutex::new(Instant::now())));
     let router = Arc::new(crate::FallbackRouter::with_clock(
         vec![provider],
-        RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
         clock.clone(),
     ));
     for _ in 0..3 {
@@ -4250,7 +4250,7 @@ async fn combo_success_closes_real_router_circuit() {
 
 #[tokio::test]
 async fn combo_upstream_failure_updates_real_router_circuit() {
-    use crate::RoutingStrategy;
+    use rook_core::PolicyKind;
 
     let provider_id = ProviderId::new("openai");
     let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
@@ -4260,7 +4260,7 @@ async fn combo_upstream_failure_updates_real_router_circuit() {
     });
     let router = Arc::new(crate::FallbackRouter::new(
         vec![provider],
-        RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let combo = Combo::new(
         "real-router-combo".to_string(),
@@ -4297,7 +4297,7 @@ async fn combo_timeout_updates_real_router_circuit_and_records_failed_audit_step
     });
     let router = Arc::new(crate::FallbackRouter::new(
         vec![provider],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let combo = Combo::new(
         "real-router-combo-timeout".to_string(),
@@ -4635,7 +4635,7 @@ async fn eligibility_quota_reads_are_concurrent_bounded_and_deduplicated() {
     });
     let usecase = usecase_with_router(Arc::new(crate::FallbackRouter::new(
         vec![ordinary_provider("quota-target")],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     )))
     .with_quota_observation_reader(reader.clone());
     let connections: Vec<_> = states.iter().chain(states.iter()).collect();
@@ -4837,7 +4837,7 @@ async fn uuid_provider_id_resolves_exact_connection_for_standard_and_streaming_r
                 healthy_connection,
             ),
         ],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
 
     let provider_repository: Arc<dyn ProviderRepositoryPort> =
@@ -4932,7 +4932,7 @@ async fn streaming_request_resolves_uuid_provider_id_before_quota_check() {
                 healthy_connection,
             ),
         ],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let provider_repository: Arc<dyn ProviderRepositoryPort> =
         Arc::new(QuotaAwareProviderRepository {
@@ -5038,7 +5038,7 @@ async fn eligibility_stage_reports_exhausted_quota_before_selection() {
                 healthy_connection,
             ),
         ],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(QuotaAwareProviderRepository {
         connections: HashMap::from([
@@ -5093,7 +5093,7 @@ async fn eligibility_quota_series_limit_is_scoped_per_connection() {
                 exhausted_connection,
             ),
         ],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(QuotaAwareProviderRepository {
         connections: HashMap::from([
@@ -5166,7 +5166,7 @@ async fn capped_legacy_quota_read_is_unknown_not_exhausted() {
     let reader = Arc::new(FakeQuotaStore::new(observations));
     let usecase = usecase_with_router(Arc::new(crate::FallbackRouter::new(
         vec![ordinary_provider("quota-target")],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     )))
     .with_quota_observation_reader(reader);
 
@@ -5187,7 +5187,7 @@ async fn capped_quota_series_remains_unknown_and_eligible_even_with_exhaustion_s
             ordinary_provider(target.as_str()),
             connection_id,
         )],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(QuotaAwareProviderRepository {
         connections: HashMap::from([(
@@ -5231,7 +5231,7 @@ async fn eligibility_stage_quota_timeout_keeps_candidate_eligible() {
             ordinary_provider(target.as_str()),
             connection_id,
         )],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(QuotaAwareProviderRepository {
         connections: HashMap::from([(
@@ -5652,7 +5652,7 @@ async fn combo_skips_managed_adapter_with_stale_configuration_revision() {
     );
     let router: Arc<dyn RouterPort> = Arc::new(crate::FallbackRouter::new(
         vec![provider],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let mut connection = test_connection(connection_id, runtime_id.clone(), true);
     connection.adapter_revision = 2;
@@ -5706,7 +5706,7 @@ async fn combo_rechecks_adapter_revision_after_connection_lookup() {
     );
     let router: Arc<dyn RouterPort> = Arc::new(crate::FallbackRouter::new(
         vec![provider],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let repository: Arc<dyn ProviderRepositoryPort> =
         Arc::new(RevisionChangingProviderRepository {
