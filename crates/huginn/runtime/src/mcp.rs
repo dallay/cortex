@@ -459,7 +459,9 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use huginn_application::authorization::HostPolicy;
-    use huginn_core::{ApprovalPrompt, ApprovalRequest, ToolCall, ToolContext, ToolRegistry};
+    use huginn_core::{
+        ApprovalDecision, ApprovalPrompt, ApprovalRequest, ToolCall, ToolContext, ToolRegistry,
+    };
     use rmcp::ServiceExt;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
@@ -489,17 +491,29 @@ mod tests {
         async fn request_decision(
             &self,
             request: &ApprovalRequest,
+            allowed: &[ApprovalDecision],
             _: CancellationToken,
-        ) -> Result<bool> {
+        ) -> Result<ApprovalDecision> {
             let mut decisions = self.0.lock().unwrap();
-            let allowed = decisions
+            let approved = decisions
                 .iter()
                 .find(|(action, _)| action == &request.action)
-                .map(|(_, allowed)| *allowed)
+                .map(|(_, approved)| *approved)
                 .unwrap_or(false);
-            decisions.push((request.action.clone(), allowed));
+            decisions.push((request.action.clone(), approved));
             drop(decisions);
-            Ok(allowed)
+            // The answer must be one of the options the policy offers; any
+            // other answer is rejected by the policy.
+            let decision = if approved {
+                ApprovalDecision::ApproveOnce
+            } else {
+                ApprovalDecision::Reject
+            };
+            Ok(if allowed.contains(&decision) {
+                decision
+            } else {
+                ApprovalDecision::Reject
+            })
         }
     }
 
@@ -575,13 +589,16 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(policy
-            .approve(
-                prepared.approval.as_ref().unwrap(),
-                context.cancellation.clone()
-            )
-            .await
-            .unwrap());
+        assert_eq!(
+            policy
+                .approve(
+                    prepared.approval.as_ref().unwrap(),
+                    context.cancellation.clone()
+                )
+                .await
+                .unwrap(),
+            ApprovalDecision::ApproveOnce
+        );
         let output = messages.execute(prepared, &context).await.unwrap();
         assert!(output.contains("fixed-owner"));
 
@@ -612,13 +629,16 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(!policy
-            .approve(
-                denied.approval.as_ref().unwrap(),
-                context.cancellation.clone()
-            )
-            .await
-            .unwrap());
+        assert_eq!(
+            policy
+                .approve(
+                    denied.approval.as_ref().unwrap(),
+                    context.cancellation.clone()
+                )
+                .await
+                .unwrap(),
+            ApprovalDecision::Reject
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         clients.shutdown().await.unwrap();
         server_task.abort();
