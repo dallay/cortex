@@ -362,6 +362,28 @@ it('fails only on active Semgrep findings, not on SARIF exceptions in source',
           /select\(\(\.suppressions \/\/ \[\]\) \| length == 0\)/);
     });
 
+it('pins the Semgrep toolchain instead of inheriting the runner Python', () => {
+  const scan = jobBlock('semgrep-pr');
+  assert.match(scan,
+      /uses: actions\/setup-python@[0-9a-f]{40} # v5\.\d+\.\d+/);
+  assert.match(scan, /python-version: '3\.11'/);
+  assert.match(scan,
+      /run: python -m pip install semgrep==1\.126\.0 'setuptools<81'/);
+  assert.doesNotMatch(scan, /^        run: pip install semgrep/m);
+
+  const deep = fs.readFileSync(
+      path.join(__dirname, '../workflows/security-deep.yml'), 'utf8');
+  const full = deep.match(
+      /^  semgrep-full:\n([\s\S]*?)(?=^  [\w-]+:|$(?![\s\S]))/m)?.[1];
+  assert.ok(full, 'job semgrep-full');
+  assert.match(full,
+      /uses: actions\/setup-python@[0-9a-f]{40} # v5\.\d+\.\d+/);
+  assert.match(full, /python-version: '3\.11'/);
+  assert.match(full,
+      /run: python -m pip install semgrep==1\.126\.0 'setuptools<81'/);
+  assert.doesNotMatch(full, /^        run: pip install semgrep/m);
+});
+
 it('authenticates the checks and the Semgrep scan with the CI secret', () => {
   const scan = jobBlock('semgrep-pr');
   for (const name of ['Check exact path exceptions and scanner controls',

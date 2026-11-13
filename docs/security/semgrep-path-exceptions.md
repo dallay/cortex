@@ -109,12 +109,18 @@ python3 .github/scripts/check-semgrep-path-exceptions.py
 ```
 
 To reproduce the CI engine without changing the global installation, install Semgrep
-1.126.0 with Python 3.12 and setuptools 80.9.0 in an isolated environment. Then run:
+1.126.0 with Python 3.11 and setuptools 80.9.0 in an isolated environment. Then run:
 
 ```sh
 python3 .github/scripts/check-semgrep-path-exceptions.py \
   --output-dir "$EVIDENCE_DIR"
 ```
+
+CI installs the same toolchain with `actions/setup-python` pinned to CPython 3.11
+and `python -m pip install semgrep==1.126.0 'setuptools<81'`. The interpreter is
+pinned on purpose: runner images ship their own Python, and the images with Python
+3.14 abort the pinned Semgrep CLI while it imports protobuf through opentelemetry.
+The gate must not depend on which Python the runner image provides.
 
 The script invokes the fixed `semgrep` executable from `PATH`; it does not accept an
 alternative command or arguments. The evidence directory must be outside of source.
