@@ -98,7 +98,7 @@ Consult `.github/workflows/ci.yml` and `justfile` for the source-of-truth sequen
 
 ## Dependency cooldown
 
-Cargo resolves crates with a publish-age cooldown. `.cargo/config.toml` sets `registry.global-min-publish-age = "3 days"`, so Cargo skips every crate version published less than three days ago and reports the versions it held back.
+Cargo resolves crates with a publish-age cooldown. `.cargo/config.toml` sets `registry.global-min-publish-age = "3 days"`, so Cargo skips crate versions with a `pubtime` less than three days ago and reports the versions it held back. Versions without a `pubtime` in the registry index and versions already recorded in `Cargo.lock` are not held back by this cooldown.
 
 ```bash
 # Show the versions Cargo skipped and why
@@ -108,7 +108,7 @@ cargo update --dry-run --verbose
 CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow cargo update <crate> --precise <version>
 ```
 
-Use the override only when a newer release is required, and review that release before applying it. The selected version stays in `Cargo.lock` until a later update re-resolves it.
+Use the override only when a newer release is required. The override disables the publish-age check for the whole resolution, so Cargo can also select recent versions of new or updated transitive dependencies. Review the complete `Cargo.lock` diff before committing it. The selected versions stay in `Cargo.lock` until a later update re-resolves them.
 
 The cooldown requires Cargo 1.100 or newer, and `rust-toolchain.toml` pins that version. Older Cargo versions ignore the setting and print `warning: ignoring registry.global-min-publish-age without -Zmin-publish-age`.
 

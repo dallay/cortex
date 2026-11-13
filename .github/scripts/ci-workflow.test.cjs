@@ -205,6 +205,7 @@ const routeCases = [
   ['.github/ci-path-filters.json', ['github']],
   ['.github/ci-quality-policy.json', ['github']],
   ['.config/nextest.toml', ['backend']],
+  ['.cargo/config.toml', ['backend']],
   // The whole package includes the dashboard: extra backend checks are accepted.
   ['apps/rook/dashboard/src/main.tsx', ['frontend', 'backend']],
   ['apps/huginn/src/main.rs', ['backend']],
