@@ -1456,32 +1456,7 @@ mod tests {
     }
 
     #[test]
-    fn weighted_random_strategy_errors_on_weights_mismatch() {
-        tokio::runtime::Builder::new_current_thread()
-            .build()
-            .expect("runtime")
-            .block_on(async {
-                let p1 = StubProvider::new("a", &["model-x"]);
-                let p2 = StubProvider::new("b", &["model-x"]);
-                let router = FallbackRouter::new(
-                    vec![p1.clone(), p2.clone()],
-                    // 3 weights but only 2 providers — should return explicit error
-                    PolicyKind::Weighted,
-                );
-
-                let result = router.select(&request("model-x")).await;
-                match result {
-                    Err(e) => assert!(
-                        e.is_weighted_config_error(),
-                        "should be a weighted config error"
-                    ),
-                    Ok(_) => panic!("should error on weight mismatch"),
-                }
-            });
-    }
-
-    #[test]
-    fn weighted_random_strategy_errors_on_negative_weight() {
+    fn weighted_random_strategy_errors_on_empty_weights() {
         tokio::runtime::Builder::new_current_thread()
             .build()
             .expect("runtime")
@@ -1490,9 +1465,31 @@ mod tests {
                 let p2 = StubProvider::new("b", &["model-x"]);
                 let router =
                     FallbackRouter::new(vec![p1.clone(), p2.clone()], PolicyKind::Weighted);
-                let mut weights = std::collections::HashMap::new();
-                weights.insert(p1.id().clone(), -1.0);
-                weights.insert(p2.id().clone(), 0.0);
+
+                let result = router.select(&request("model-x")).await;
+                match result {
+                    Err(e) => assert!(
+                        e.is_weighted_config_error(),
+                        "should be a weighted config error"
+                    ),
+                    Ok(_) => panic!("should error when no weights configured"),
+                }
+            });
+    }
+
+    #[test]
+    fn weighted_random_strategy_errors_on_all_negative_weights() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let p1 = StubProvider::new("a", &["model-x"]);
+                let p2 = StubProvider::new("b", &["model-x"]);
+                let router =
+                    FallbackRouter::new(vec![p1.clone(), p2.clone()], PolicyKind::Weighted);
+                let mut weights = HashMap::new();
+                weights.insert(p1.id().clone(), -0.5);
+                weights.insert(p2.id().clone(), -1.0);
                 router.update_weights(weights);
 
                 let result = router.select(&request("model-x")).await;
@@ -1501,13 +1498,13 @@ mod tests {
                         e.is_weighted_config_error(),
                         "should be a weighted config error"
                     ),
-                    Ok(_) => panic!("should error on negative weight"),
+                    Ok(_) => panic!("should error on all negative weights"),
                 }
             });
     }
 
     #[test]
-    fn weighted_random_strategy_errors_on_nan_weight() {
+    fn weighted_random_strategy_errors_on_all_nan_weights() {
         tokio::runtime::Builder::new_current_thread()
             .build()
             .expect("runtime")
@@ -1516,9 +1513,9 @@ mod tests {
                 let p2 = StubProvider::new("b", &["model-x"]);
                 let router =
                     FallbackRouter::new(vec![p1.clone(), p2.clone()], PolicyKind::Weighted);
-                let mut weights = std::collections::HashMap::new();
+                let mut weights = HashMap::new();
                 weights.insert(p1.id().clone(), f64::NAN);
-                weights.insert(p2.id().clone(), 0.0);
+                weights.insert(p2.id().clone(), f64::NAN);
                 router.update_weights(weights);
 
                 let result = router.select(&request("model-x")).await;
@@ -1527,8 +1524,29 @@ mod tests {
                         e.is_weighted_config_error(),
                         "should be a weighted config error"
                     ),
-                    Ok(_) => panic!("should error on NaN weight"),
+                    Ok(_) => panic!("should error on all NaN weights"),
                 }
+            });
+    }
+
+    #[test]
+    fn weighted_random_filters_invalid_weights_and_selects_positive() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let p1 = StubProvider::new("a", &["model-x"]);
+                let p2 = StubProvider::new("b", &["model-x"]);
+                let router =
+                    FallbackRouter::new(vec![p1.clone(), p2.clone()], PolicyKind::Weighted);
+                let mut weights = HashMap::new();
+                weights.insert(p1.id().clone(), 1.0);
+                weights.insert(p2.id().clone(), -5.0);
+                router.update_weights(weights);
+
+                let result = router.select(&request("model-x")).await;
+                let selected = result.expect("should select positive candidate");
+                assert_eq!(selected.id(), p1.id());
             });
     }
 
@@ -1542,7 +1560,7 @@ mod tests {
                 let p2 = StubProvider::new("b", &["model-x"]);
                 let router =
                     FallbackRouter::new(vec![p1.clone(), p2.clone()], PolicyKind::Weighted);
-                let mut weights = std::collections::HashMap::new();
+                let mut weights = HashMap::new();
                 weights.insert(p1.id().clone(), 0.0);
                 weights.insert(p2.id().clone(), 0.0);
                 router.update_weights(weights);

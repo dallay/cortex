@@ -197,10 +197,6 @@ fn select_round_robin(ctx: &PolicySelectionContext<'_>) -> CortexResult<PolicySe
 /// stable-ID ordering. If all values are unknown, falls back to priority
 /// with MetricUnavailable reason.
 fn select_least_latency(ctx: &PolicySelectionContext<'_>) -> CortexResult<PolicySelectionDecision> {
-    if ctx.eligible_targets.is_empty() {
-        return Err(CortexError::all_providers_exhausted());
-    }
-
     // Find candidates with known p95
     let known_candidates: Vec<_> = ctx
         .eligible_targets
@@ -314,7 +310,9 @@ fn select_least_cost(ctx: &PolicySelectionContext<'_>) -> CortexResult<PolicySel
     }
 
     // Find minimum combined rate; tiebreak by stable target ID
-    let mut best = &known_candidates[0];
+    let mut best = known_candidates
+        .first()
+        .ok_or_else(CortexError::all_providers_exhausted)?;
     for candidate in &known_candidates[1..] {
         match candidate.1.partial_cmp(&best.1) {
             Some(std::cmp::Ordering::Less) => best = candidate,

@@ -522,13 +522,17 @@ async fn completion_and_streaming_use_same_policy() {
     // Streaming request must return a stream selected by the same policy.
     let mut stream_request = request(true);
     stream_request.restrictions.allowed_providers = vec![p1.id().clone()];
-    let chunks: Vec<_> = route(router.clone())
+    let mut stream_output = route(router.clone())
         .execute_stream(stream_request)
         .await
-        .expect("stream selection succeeds")
-        .collect()
-        .await;
-    assert!(!chunks.is_empty());
+        .expect("stream selection succeeds");
+
+    let chunk = stream_output
+        .next()
+        .await
+        .expect("stream yields at least one chunk")
+        .expect("chunk is Ok");
+    assert_eq!(chunk.delta, "chunk");
 
     // Both paths select p1 under Priority policy. The allowlist makes a
     // discarded stream result observable: selecting any other provider fails.

@@ -1262,7 +1262,10 @@ impl RouteRequest {
             .filter(|target| snapshot.candidates.contains_key(target))
             .collect();
         if eligible_targets.is_empty() {
-            if !snapshot.candidates.is_empty() {
+            // If the router still has registered providers, snapshot invalidation (due to
+            // concurrent registry updates) caused the intersection to become empty.
+            // Return Ok(None) to signal a snapshot reevaluation cycle.
+            if !self.router.providers().is_empty() {
                 return Ok(None);
             }
             return Err(CortexError::all_providers_exhausted());

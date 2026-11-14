@@ -184,17 +184,11 @@ pub trait RouterPort: Send + Sync {
 
     /// Return all registered candidates with their circuit state for eligibility evaluation.
     ///
-    /// Returns `None` when this router does not expose a complete candidate snapshot
-    /// (e.g. test doubles or minimal routers), in which case the orchestrator falls
-    /// back to legacy `select_excluding`.
-    ///
-    /// When `Some` is returned, the snapshot represents candidate availability and circuit
-    /// state captured at this point in time. Callers evaluate capability eligibility,
-    /// quota observations, and policy-based scoring against this snapshot.
-    ///
-    /// Because the provider registry may mutate asynchronously (e.g. during registry refresh),
-    /// callers MUST treat this snapshot as point-in-time state and use [`resolve_provider`]
-    /// to verify that a selected candidate remains registered before dispatching a request.
+    /// Returns `None` when this router implementation does not expose a complete candidate
+    /// snapshot, signaling callers to fall back to direct selection without pre-computed
+    /// eligibility scoring. When returned, the snapshot represents an atomic view of circuit
+    /// states captured at that instant; callers must verify candidate presence via
+    /// [`RouterPort::resolve_provider`] before execution to guard against concurrent registry churn.
     fn eligibility_candidates(&self) -> Option<Vec<RouterCandidateSnapshot>> {
         None
     }
@@ -223,10 +217,10 @@ pub trait RouterPort: Send + Sync {
 
     /// Resolve an exact adapter without applying request-capability pruning.
     ///
-    /// Used by ordered combo steps so skips retain their own reason, and by
-    /// policy-based selection to verify candidate freshness against registry churn
-    /// before dispatch. Returns `None` if the provider is unknown, deregistered, or
-    /// currently unavailable.
+    /// Used by ordered combo steps and by policy-driven selection loops to confirm that a
+    /// candidate selected from a prior snapshot is still active in the underlying registry.
+    /// Returns `None` if the provider has been unregistered or replaced, signaling callers to
+    /// trigger reevaluation rather than proceeding with a stale adapter reference.
     fn resolve_provider(&self, _provider: &ProviderId) -> Option<Arc<dyn ProviderPort>> {
         None
     }
