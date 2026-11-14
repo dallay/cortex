@@ -507,34 +507,123 @@ async fn a_budgeted_request_advances_after_local_backpressure() {
 }
 
 #[tokio::test]
-async fn a_budgeted_request_is_not_retried_on_another_provider() {
+async fn budgeted_request_falls_back_when_provider_bound_fits_initial_reservation() {
+    // Reserve exactly once before the first upstream attempt.
+    // Retain the original admission across retryable provider failovers.
+    // Do NOT re-admit against each provider.
+    // Settle once at the end with the successful attempt's realized cost.
     let events: EventLog = Arc::new(Mutex::new(Vec::new()));
     let first = Arc::new(
         BoundedProvider::new("first-provider", events.clone())
             .with_bound(500_000)
             .failing("upstream exploded"),
     );
-    let second =
-        Arc::new(BoundedProvider::new("second-provider", events.clone()).with_bound(500_000));
+    let second = Arc::new(
+        BoundedProvider::new("second-provider", events.clone())
+            .with_bound(500_000)
+            .with_realized_cost(120_000),
+    );
     let ledger = Arc::new(RecordingLedger::new(events.clone()));
     let usecase = usecase_with_router(Arc::new(PriorityFallbackRouter {
-        providers: vec![first.clone(), second.clone()],
+        providers: vec![first, second],
+    }))
+    .with_spending_budget_ledger(ledger);
+
+    let response = usecase
+        .execute(budgeted_request())
+        .await
+        .expect("a retryable upstream failure may fall back under the original reservation");
+
+    assert_eq!(response.provider, ProviderId::new("second-provider"));
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec![
+            BudgetEvent::Reserve,
+            BudgetEvent::UpstreamCall,
+            BudgetEvent::UpstreamCall,
+            BudgetEvent::Settle(Some(120_000)),
+        ],
+        "reserve once, failover without re-admit, settle once with realized cost"
+    );
+}
+
+#[tokio::test]
+async fn budgeted_failover_stops_before_provider_bound_exceeds_initial_reservation() {
+    // First provider has a lower bound (500k), second has a higher bound (900k).
+    // Only one reserve should happen (against the first provider's bound).
+    // The second provider must NOT trigger a new admission.
+    let events: EventLog = Arc::new(Mutex::new(Vec::new()));
+    let first = Arc::new(
+        BoundedProvider::new("first-provider", events.clone())
+            .with_bound(500_000)
+            .failing("upstream exploded"),
+    );
+    let second = Arc::new(
+        BoundedProvider::new("second-provider", events.clone())
+            .with_bound(900_000)
+            .with_realized_cost(120_000),
+    );
+    let ledger = Arc::new(RecordingLedger::new(events.clone()));
+    let usecase = usecase_with_router(Arc::new(PriorityFallbackRouter {
+        providers: vec![first, second],
+    }))
+    .with_spending_budget_ledger(ledger);
+
+    let error = usecase
+        .execute(budgeted_request())
+        .await
+        .expect_err("fallback must stop when its strict bound exceeds the initial reservation");
+
+    assert!(
+        error.is_cost_unavailable(),
+        "the request must fail with a cost-bound error: {error}"
+    );
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec![
+            BudgetEvent::Reserve,
+            BudgetEvent::UpstreamCall,
+            BudgetEvent::Settle(None),
+        ],
+        "reserve once, do not call the over-bound fallback, and settle unknown spend once"
+    );
+}
+
+#[tokio::test]
+async fn budgeted_failover_chain_terminating_in_failure_settles_none_once() {
+    // When all providers fail, the reservation is settled once with None.
+    // No intermediate settles between attempts.
+    let events: EventLog = Arc::new(Mutex::new(Vec::new()));
+    let first = Arc::new(
+        BoundedProvider::new("first-provider", events.clone())
+            .with_bound(500_000)
+            .failing("first failed"),
+    );
+    let second = Arc::new(
+        BoundedProvider::new("second-provider", events.clone())
+            .with_bound(500_000)
+            .failing("second also failed"),
+    );
+    let ledger = Arc::new(RecordingLedger::new(events.clone()));
+    let usecase = usecase_with_router(Arc::new(PriorityFallbackRouter {
+        providers: vec![first, second],
     }))
     .with_spending_budget_ledger(ledger);
 
     usecase
         .execute(budgeted_request())
         .await
-        .expect_err("the upstream failure is reported to the caller");
+        .expect_err("all providers failed");
 
-    let recorded = events.lock().unwrap().clone();
     assert_eq!(
-        recorded
-            .iter()
-            .filter(|event| **event == BudgetEvent::UpstreamCall)
-            .count(),
-        1,
-        "a budgeted request must not retry on another provider: {recorded:?}"
+        *events.lock().unwrap(),
+        vec![
+            BudgetEvent::Reserve,
+            BudgetEvent::UpstreamCall,
+            BudgetEvent::UpstreamCall,
+            BudgetEvent::Settle(None),
+        ],
+        "reserve once, all attempts fail, settle None once at the end"
     );
 }
 
@@ -794,6 +883,355 @@ async fn a_cancelled_budgeted_stream_never_releases_the_reservation() {
     assert!(
         !recorded.contains(&BudgetEvent::Release),
         "an abandoned stream must not release the reservation: the cost is unknown"
+    );
+}
+
+/// Provider that blocks on a signal before returning from `complete`.
+struct BlockingBoundedProvider {
+    id: ProviderId,
+    events: EventLog,
+    bound: u64,
+    realized_cost: Option<u64>,
+    /// When `Some`, the provider waits on this notify before returning.
+    block_until: Option<Arc<tokio::sync::Notify>>,
+}
+
+impl BlockingBoundedProvider {
+    fn new(id: &str, events: EventLog, bound: u64) -> Self {
+        Self {
+            id: ProviderId::new(id),
+            events,
+            bound,
+            realized_cost: None,
+            block_until: None,
+        }
+    }
+
+    fn with_block(mut self, notify: Arc<tokio::sync::Notify>) -> Self {
+        self.block_until = Some(notify);
+        self
+    }
+}
+
+#[async_trait]
+impl ProviderPort for BlockingBoundedProvider {
+    fn id(&self) -> &ProviderId {
+        &self.id
+    }
+
+    fn supported_models(&self) -> &[ModelId] {
+        std::slice::from_ref(&TEST_MODEL)
+    }
+
+    fn model_capabilities(&self, _: &ModelId) -> rook_core::ModelCapabilities {
+        fixture_capabilities()
+    }
+
+    fn api_format(&self) -> rook_core::ApiFormat {
+        rook_core::ApiFormat::OpenAI
+    }
+
+    fn is_available(&self) -> bool {
+        true
+    }
+
+    async fn health_check(&self) -> rook_core::HealthStatus {
+        rook_core::HealthStatus::Healthy {
+            provider: self.id.clone(),
+            latency_ms: 1,
+        }
+    }
+
+    fn strict_max_cost_micros_usd(&self, _req: &CompletionRequest) -> Option<u64> {
+        Some(self.bound)
+    }
+
+    fn strict_realized_cost_micros_usd(
+        &self,
+        _req: &CompletionRequest,
+        _resp: &CompletionResponse,
+    ) -> Option<u64> {
+        self.realized_cost
+    }
+
+    async fn complete(&self, req: &CompletionRequest) -> CortexResult<CompletionResponse> {
+        self.events.lock().unwrap().push(BudgetEvent::UpstreamCall);
+        if let Some(notify) = &self.block_until {
+            notify.notified().await;
+        }
+        Ok(CompletionResponse {
+            id: req.id.clone(),
+            provider: self.id.clone(),
+            model: req.model.clone(),
+            content: "ok".to_string(),
+            content_blocks: vec![],
+            thinking: None,
+            tool_calls: vec![],
+            finish_reason: None,
+            usage: TokenUsage {
+                prompt_tokens: 1,
+                completion_tokens: 1,
+                total_tokens: 2,
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
+                estimated_cost_usd: None,
+            },
+            latency_ms: 1,
+            cache_hit: None,
+        })
+    }
+
+    async fn stream(
+        &self,
+        _req: &CompletionRequest,
+    ) -> CortexResult<
+        futures::stream::BoxStream<'static, Result<rook_core::StreamChunk, CortexError>>,
+    > {
+        Ok(Box::pin(stream::empty()))
+    }
+}
+
+/// Cancellation during the provider call must NOT release the reservation.
+///
+/// Once upstream I/O has begun, the reservation may already represent incurred
+/// upstream spend. Releasing it would incorrectly refund the budget.
+#[tokio::test]
+async fn cancellation_during_provider_call_does_not_release_reservation() {
+    let events: EventLog = Arc::new(Mutex::new(Vec::new()));
+    let block = Arc::new(tokio::sync::Notify::new());
+    let provider = Arc::new(
+        BlockingBoundedProvider::new("blocking-provider", events.clone(), 500_000)
+            .with_block(block.clone()),
+    );
+    let ledger = Arc::new(RecordingLedger::new(events.clone()));
+    let usecase = usecase_with_budget(provider, ledger);
+    let task = tokio::spawn(async move { usecase.execute(budgeted_request()).await });
+
+    // Wait until upstream I/O has actually started.
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if events.lock().unwrap().contains(&BudgetEvent::UpstreamCall) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("upstream I/O must start");
+
+    // Abort the task mid-I/O.
+    task.abort();
+    let _ = task.await;
+
+    // Give the spawned Drop task time to execute (if it exists).
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let recorded = events.lock().unwrap().clone();
+    assert!(
+        !recorded.contains(&BudgetEvent::Release),
+        "cancellation after upstream I/O must NOT release the reservation; events: {recorded:?}"
+    );
+}
+
+/// `settle_outstanding_admission` must not race with `Drop`'s release.
+///
+/// When the retry chain terminates without success, `settle_outstanding_admission`
+/// calls `take()` then `settle(None)`. The taken carrier's `Drop` must NOT
+/// additionally spawn a `release()` — that would be a double terminal action.
+#[tokio::test]
+async fn settle_outstanding_admission_does_not_double_act_with_drop() {
+    let events: EventLog = Arc::new(Mutex::new(Vec::new()));
+    let first = Arc::new(
+        BoundedProvider::new("first-provider", events.clone())
+            .with_bound(500_000)
+            .failing("first failed"),
+    );
+    let second = Arc::new(
+        BoundedProvider::new("second-provider", events.clone())
+            .with_bound(500_000)
+            .failing("second also failed"),
+    );
+    let ledger = Arc::new(RecordingLedger::new(events.clone()));
+    let usecase = usecase_with_router(Arc::new(PriorityFallbackRouter {
+        providers: vec![first, second],
+    }))
+    .with_spending_budget_ledger(ledger);
+
+    usecase
+        .execute(budgeted_request())
+        .await
+        .expect_err("all providers failed");
+
+    // Give the spawned Drop task time to execute (if it exists).
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        // Wait a bit for any async Drop release to fire
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    })
+    .await
+    .ok();
+
+    let recorded = events.lock().unwrap().clone();
+    let release_count = recorded
+        .iter()
+        .filter(|e| matches!(e, BudgetEvent::Release))
+        .count();
+    assert_eq!(
+        release_count, 0,
+        "settle_outstanding_admission must settle (not release), and Drop must not release; events: {recorded:?}"
+    );
+    let settle_count = recorded
+        .iter()
+        .filter(|e| matches!(e, BudgetEvent::Settle(_)))
+        .count();
+    assert_eq!(
+        settle_count, 1,
+        "exactly one settle must occur; events: {recorded:?}"
+    );
+}
+
+/// Ledger that blocks on `release_spending_before_upstream` until unblocked.
+struct BlockingRecordingLedger {
+    events: EventLog,
+    /// When `Some`, blocks release until this notify is signalled.
+    block_release: Mutex<Option<Arc<tokio::sync::Notify>>>,
+    /// Signalled when the release method enters its blocked await (before the block).
+    release_started: Arc<tokio::sync::Notify>,
+    /// Signalled only after the blocked await returns (release truly completed).
+    release_completed: Arc<tokio::sync::Notify>,
+}
+
+impl BlockingRecordingLedger {
+    fn new(
+        events: EventLog,
+        block: Arc<tokio::sync::Notify>,
+        release_started: Arc<tokio::sync::Notify>,
+        release_completed: Arc<tokio::sync::Notify>,
+    ) -> Self {
+        Self {
+            events,
+            block_release: Mutex::new(Some(block)),
+            release_started,
+            release_completed,
+        }
+    }
+}
+
+#[async_trait]
+impl SpendingBudgetLedgerPort for BlockingRecordingLedger {
+    async fn reserve_spending(
+        &self,
+        _reservation: &SpendingBudgetReservation,
+    ) -> Result<SpendingReservationOutcome, SpendingBudgetReservationError> {
+        self.events.lock().unwrap().push(BudgetEvent::Reserve);
+        Ok(SpendingReservationOutcome::Reserved)
+    }
+
+    async fn settle_spending(
+        &self,
+        _api_key_id: &ApiKeyId,
+        _request_id: &RequestId,
+        cost_micros_usd: Option<u64>,
+    ) -> Result<(), SpendingBudgetReservationError> {
+        self.events
+            .lock()
+            .unwrap()
+            .push(BudgetEvent::Settle(cost_micros_usd));
+        Ok(())
+    }
+
+    async fn release_spending_before_upstream(
+        &self,
+        _api_key_id: &ApiKeyId,
+        _request_id: &RequestId,
+    ) -> Result<(), SpendingBudgetReservationError> {
+        self.events.lock().unwrap().push(BudgetEvent::Release);
+        self.release_started.notify_one();
+        let notify = self.block_release.lock().unwrap().take();
+        if let Some(n) = notify {
+            n.notified().await;
+        }
+        self.release_completed.notify_one();
+        Ok(())
+    }
+}
+
+/// Cancellation of the task that requests an explicit pre-upstream release
+/// must not cancel the ledger release itself.
+///
+/// The ledger blocks on release. The caller task is aborted while the release
+/// is in-flight. After unblocking the ledger, the release must still complete
+/// because it runs in a spawned bounded task independent of the caller.
+#[tokio::test]
+async fn release_cancellation_does_not_prevent_ledger_release() {
+    let events: EventLog = Arc::new(Mutex::new(Vec::new()));
+    let connection_id = ConnectionId::new();
+    let runtime_id = ProviderId::new("release-block-runtime");
+    let provider = super::connection_bound_provider(
+        Arc::new(
+            BoundedProvider::new(&connection_id.to_string(), events.clone()).with_bound(500_000),
+        ),
+        connection_id,
+    );
+    let router = Arc::new(crate::FallbackRouter::new(
+        vec![provider],
+        rook_core::PolicyKind::Priority,
+    ));
+    let recheck_started = Arc::new(tokio::sync::Notify::new());
+    let repository: Arc<dyn ProviderRepositoryPort> =
+        Arc::new(super::InactiveAfterFirstRoutingReadRepository {
+            connection: super::test_connection(connection_id, runtime_id, true),
+            reads: std::sync::atomic::AtomicUsize::new(0),
+            pending_after_first: Some(recheck_started.clone()),
+            adapter_revision_after_first: None,
+        });
+    // Block the ledger release so we can abort the caller mid-release.
+    let block_release = Arc::new(tokio::sync::Notify::new());
+    let release_started = Arc::new(tokio::sync::Notify::new());
+    let release_completed = Arc::new(tokio::sync::Notify::new());
+    let ledger = Arc::new(BlockingRecordingLedger::new(
+        events.clone(),
+        block_release.clone(),
+        release_started.clone(),
+        release_completed.clone(),
+    ));
+    let usecase = super::usecase_with_router_and_provider_repository(router, repository)
+        .with_spending_budget_ledger(ledger);
+
+    let task = tokio::spawn(async move { usecase.execute(budgeted_request()).await });
+
+    // Wait until the recheck is in progress (reservation created).
+    recheck_started.notified().await;
+    assert_eq!(*events.lock().unwrap(), vec![BudgetEvent::Reserve]);
+
+    // Wait until the spawned release task has entered the blocked await (deterministic, no sleep).
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        release_started.notified(),
+    )
+    .await
+    .expect("release must start before we abort");
+
+    // Abort the task while the explicit release is blocked in the ledger.
+    task.abort();
+    let _ = task.await;
+
+    // Unblock the ledger release.
+    block_release.notify_one();
+
+    // The release must still complete despite the caller being cancelled.
+    // Waiting for release_completed proves the method returned after the blocked await.
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        release_completed.notified(),
+    )
+    .await
+    .expect("release must complete even after caller cancellation");
+
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec![BudgetEvent::Reserve, BudgetEvent::Release],
+        "reservation must be released despite caller cancellation"
     );
 }
 
