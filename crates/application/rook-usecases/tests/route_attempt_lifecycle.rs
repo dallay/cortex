@@ -20,7 +20,7 @@ use rook_core::{
 };
 use rook_usecases::{
     route_request::ModelAliasesConfig, router_impl::CircuitClock, FallbackRouter, PricingConfig,
-    RouteRequest, RoutingStrategy,
+    RouteRequest,
 };
 use shared_kernel::RequestId;
 
@@ -198,7 +198,7 @@ fn router(providers: Vec<Arc<dyn ProviderPort>>) -> (Arc<FallbackRouter>, Arc<Ma
     (
         Arc::new(FallbackRouter::with_clock(
             providers,
-            RoutingStrategy::Priority,
+            rook_core::PolicyKind::Priority,
             clock.clone(),
         )),
         clock,

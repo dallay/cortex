@@ -30,8 +30,7 @@ use rook_core::{
 use rook_usecases::{
     AuthenticateClientApi, BootstrapStatus, EnsureAdminUser, FallbackRouter, HealthCheck,
     ManageConnections, ManageConnectionsError, ManageProviders, ProviderBuildInput,
-    ProviderBuilderPort, RookUsecases, RouteRequest, RoutingStrategy, SetAdminPassword,
-    ValidateSession,
+    ProviderBuilderPort, RookUsecases, RouteRequest, SetAdminPassword, ValidateSession,
 };
 use shared_kernel::{ComboId, ModelId};
 
@@ -191,8 +190,9 @@ impl RookContainer {
         let audit: Arc<dyn AuditPort> = Arc::new(SqliteAudit::new(&config.database.db_path)?);
 
         // 3. Router and provider registry — starts empty, populated via refresh_registry
-        let strategy: RoutingStrategy = config.routing.strategy.into();
-        let fallback_router: Arc<FallbackRouter> = Arc::new(FallbackRouter::new_empty(strategy));
+        let policy: rook_core::PolicyKind = config.routing.strategy.into();
+        let fallback_router: Arc<FallbackRouter> = Arc::new(FallbackRouter::new_empty(policy));
+        fallback_router.update_weights(config.routing.weights_by_provider());
         let router: Arc<dyn RouterPort> = fallback_router.clone();
         let registry: Arc<dyn ProviderRegistryPort> = fallback_router.clone();
 

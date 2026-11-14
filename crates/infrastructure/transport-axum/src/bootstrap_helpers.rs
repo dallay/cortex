@@ -16,7 +16,7 @@ use rook_core::{
 };
 use rook_usecases::{
     BootstrapStatus, FallbackRouter, HealthCheck, ManageApiKeys, ManageProviders, RouteRequest,
-    RoutingStrategy, SetAdminPassword,
+    SetAdminPassword,
 };
 use shared_kernel::{CacheKey, ModelId, ProviderId};
 use std::time::Duration;
@@ -62,7 +62,10 @@ pub fn make_test_bootstrap_usecases_with_providers(
     let session_repo: Arc<dyn SessionRepositoryPort> = Arc::new(StubSessionRepo);
     // FallbackRouter implements both RouterPort and ProviderRegistryPort.
     // We use concrete type here and pass as dyn where needed.
-    let fallback_router = Arc::new(FallbackRouter::new(providers, RoutingStrategy::Priority));
+    let fallback_router = Arc::new(FallbackRouter::new(
+        providers,
+        rook_core::PolicyKind::Priority,
+    ));
     let cache: Arc<dyn CachePort> = Arc::new(StubCache);
     let audit: Arc<dyn AuditPort> = Arc::new(StubAudit);
     let alias_repo: Arc<dyn ModelAliasRepositoryPort> = Arc::new(StubAliasRepo);

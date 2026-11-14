@@ -5,7 +5,7 @@ use std::sync::{
 
 use async_trait::async_trait;
 use rook_core::*;
-use rook_usecases::{FallbackRouter, PricingConfig, RouteRequest, RoutingStrategy};
+use rook_usecases::{FallbackRouter, PricingConfig, RouteRequest};
 
 mod common;
 
@@ -116,7 +116,7 @@ async fn tools_unknown_and_unsupported_never_execute_upstream() {
         let provider = Provider::new("blocked", state);
         let router = Arc::new(FallbackRouter::new(
             vec![provider.clone()],
-            RoutingStrategy::Priority,
+            rook_core::PolicyKind::Priority,
         ));
         assert!(route(router).execute(request()).await.is_err());
         assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
@@ -127,7 +127,10 @@ async fn tools_unknown_and_unsupported_never_execute_upstream() {
 async fn selection_skips_incompatible_candidates_and_does_not_open_circuit() {
     let blocked = Provider::new("blocked", CapabilityState::Unsupported);
     let allowed = Provider::new("allowed", CapabilityState::Supported);
-    let router = FallbackRouter::new(vec![blocked.clone(), allowed], RoutingStrategy::Priority);
+    let router = FallbackRouter::new(
+        vec![blocked.clone(), allowed],
+        rook_core::PolicyKind::Priority,
+    );
     assert_eq!(
         router.select(&request()).await.unwrap().id().as_str(),
         "allowed"
@@ -185,7 +188,7 @@ async fn unknown_native_streaming_never_executes_upstream() {
     let provider = Provider::new("unknown-stream", CapabilityState::Supported);
     let router = Arc::new(FallbackRouter::new(
         vec![provider.clone()],
-        RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let mut req = request();
     req.stream = true;
@@ -200,20 +203,32 @@ async fn weighted_selection_preserves_weights_after_capability_filtering_and_exc
     let excluded = Provider::new("excluded", CapabilityState::Supported);
     let weighted = Provider::new("weighted", CapabilityState::Supported);
     let router = FallbackRouter::new(
-        vec![blocked, first, excluded, weighted],
-        RoutingStrategy::WeightedRandom(vec![1.0, 0.0, 0.0, 1.0]),
+        vec![
+            blocked.clone(),
+            first.clone(),
+            excluded.clone(),
+            weighted.clone(),
+        ],
+        rook_core::PolicyKind::Weighted,
     );
-    let excluded = [ProviderId::new("excluded")];
+    let mut weights = std::collections::HashMap::new();
+    weights.insert(blocked.id().clone(), 0.1);
+    weights.insert(first.id().clone(), 0.3);
+    weights.insert(excluded.id().clone(), 0.3);
+    weights.insert(weighted.id().clone(), 0.3);
+    router.update_weights(weights);
+
+    let excluded_ids = [ProviderId::new("excluded")];
     let mut selected_weighted = false;
     let mut selected_weighted_excluding = false;
     // Multiple draws avoid relying on the random sample being strictly above zero.
     for _ in 0..32 {
         selected_weighted |= router.select(&request()).await.unwrap().id().as_str() == "weighted";
         let selected = router
-            .select_excluding(&request(), &excluded)
+            .select_excluding(&request(), &excluded_ids)
             .await
             .unwrap();
-        assert_ne!(selected.id(), &excluded[0]);
+        assert_ne!(selected.id(), &excluded_ids[0]);
         selected_weighted_excluding |= selected.id().as_str() == "weighted";
     }
     assert!(selected_weighted);

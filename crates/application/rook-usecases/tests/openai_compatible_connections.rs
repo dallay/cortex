@@ -21,7 +21,7 @@ use rook_usecases::manage_connections::{
     CreateConnectionRequest, CredentialsInput, ManageConnections, ManageConnectionsError,
     ProviderBuildInput, ProviderBuilderPort, UpdateConnectionRequest,
 };
-use rook_usecases::{FallbackRouter, PricingConfig, RouteRequest, RoutingStrategy};
+use rook_usecases::{FallbackRouter, PricingConfig, RouteRequest};
 use shared_kernel::{ConnectionId, ProviderId};
 
 mod common;
@@ -669,7 +669,7 @@ async fn disabling_and_updating_a_compatible_connection_changes_routing_without_
 async fn updating_active_connection_refreshes_provider_seen_by_persistent_router() {
     let repo = Arc::new(InMemoryRepo::default());
     let builder = Arc::new(RecordingBuilder::default());
-    let router = Arc::new(FallbackRouter::new_empty(RoutingStrategy::Priority));
+    let router = Arc::new(FallbackRouter::new_empty(rook_core::PolicyKind::Priority));
     let initial = ManageConnections::new(
         repo.clone(),
         router.clone(),

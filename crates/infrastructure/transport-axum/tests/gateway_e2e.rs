@@ -30,7 +30,7 @@ use rook_core::{
 };
 use rook_usecases::{
     AuthenticateClientApi, BootstrapStatus, EnsureAdminUser, FallbackRouter, HealthCheck, Login,
-    Logout, ManageProviders, RouteRequest, RoutingStrategy, SetAdminPassword,
+    Logout, ManageProviders, RouteRequest, SetAdminPassword,
 };
 use shared_kernel::{CacheKey, ComboId, ModelId, ProviderId};
 use tokio::sync::RwLock;
@@ -653,7 +653,10 @@ async fn build_gateway_with_router_and_nan(
     } else {
         Arc::new(FakeCatalog)
     };
-    let fallback_router = Arc::new(FallbackRouter::new(providers, RoutingStrategy::Priority));
+    let fallback_router = Arc::new(FallbackRouter::new(
+        providers,
+        rook_core::PolicyKind::Priority,
+    ));
 
     let mut combos = HashMap::new();
     let combo = Combo::new(

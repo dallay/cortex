@@ -56,11 +56,11 @@ bound. The bound is derived from the model-catalog pricing for priced models (co
 proves its own bound. Rook rejects requests before provider I/O with HTTP
 `400` and error code `COST_UNAVAILABLE` when the requested model has no
 declared pricing, so budgeted requests on unpriced models remain
-fail-closed. A budgeted request does not retry on another provider. Streaming reservations are
+fail-closed. A budgeted request does not retry after an upstream attempt. It may move to another eligible provider only after local admission backpressure, before any upstream I/O, and only after its reservation is released. For streaming requests, the pre-SSE attempt limit is bounded by the registered provider count (including for budgeted requests); local backpressure does not count as an upstream attempt. Streaming reservations are
 marked unresolved before the stream is exposed and remain charged after EOF,
 upstream failure, or client cancellation. Combos with a budget are rejected
 because Rook cannot prove a strict bound for the complete combo request.
-Budget exhaustion returns HTTP `429` with code `spending_budget_exceeded`.
+Budget exhaustion returns HTTP `429` with code `spending_budget_exceeded`. When candidates change repeatedly during routing policy selection, Rook returns HTTP `503` with error code `routing_snapshot_churn` (or `all_providers_exhausted`).
 
 ## `POST /v1/responses`
 
