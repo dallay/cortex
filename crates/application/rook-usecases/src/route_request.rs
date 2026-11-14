@@ -716,7 +716,7 @@ impl RouteRequest {
             }
         }
 
-        self.finish_provider_attempts(cursor.provider_attempt_failed, cursor.local_backpressure)
+        self.finish_provider_attempts(&req, &mut cursor).await
     }
 
     /// Runs one select → preflight → upstream → outcome cycle of the failover loop.
@@ -738,7 +738,11 @@ impl RouteRequest {
                 cursor.policy_reselections += 1;
                 return AttemptStep::Retry;
             }
-            AttemptPreparation::Stop(error) => return AttemptStep::Done(Box::new(Err(error))),
+            AttemptPreparation::Stop(error) => {
+                self.record_saved_provider_failure(context.req, cursor)
+                    .await;
+                return AttemptStep::Done(Box::new(Err(error)));
+            }
         };
 
         cursor.provider_attempts += 1;
@@ -1697,6 +1701,8 @@ impl RouteRequest {
         // Non-retryable errors end the request; so does a budgeted request, because a second
         // attempt could spend more than the configured per-request limit.
         if !error.is_retryable() || req.restrictions.spending_budget.is_some() {
+            // First flush any earlier saved provider failure so it is not dropped
+            self.record_saved_provider_failure(req, cursor).await;
             self.record_failure_audit_usage(req, &provider_id, connection_id, latency_ms, &error)
                 .await;
             self.record_failure_observation(provider_id, latency_ms, ObservationStatus::Failure);
@@ -1748,6 +1754,15 @@ impl RouteRequest {
             excluded = ?cursor.excluded,
             "all providers exhausted"
         );
+        self.record_saved_provider_failure(req, cursor).await;
+        AttemptStep::Done(Box::new(Err(CortexError::all_providers_exhausted())))
+    }
+
+    async fn record_saved_provider_failure(
+        &self,
+        req: &CompletionRequest,
+        cursor: &mut AttemptCursor,
+    ) {
         if let Some((provider_id, connection_id, latency_ms, error)) =
             cursor.last_provider_failure.take()
         {
@@ -1760,17 +1775,16 @@ impl RouteRequest {
                 .await;
             self.record_failure_observation(provider_id, latency_ms, status);
         }
-        AttemptStep::Done(Box::new(Err(CortexError::all_providers_exhausted())))
     }
 
-    fn finish_provider_attempts(
+    async fn finish_provider_attempts(
         &self,
-        provider_attempt_failed: bool,
-        local_backpressure: Option<CortexError>,
+        req: &CompletionRequest,
+        cursor: &mut AttemptCursor,
     ) -> Result<CompletionResponse, CortexError> {
-        // This should not be reached, but safety fallback
-        if !provider_attempt_failed {
-            if let Some(error) = local_backpressure {
+        self.record_saved_provider_failure(req, cursor).await;
+        if !cursor.provider_attempt_failed {
+            if let Some(error) = cursor.local_backpressure.take() {
                 return Err(error);
             }
         }
