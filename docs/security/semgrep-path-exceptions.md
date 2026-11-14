@@ -121,6 +121,10 @@ and `python -m pip install semgrep==1.126.0 'setuptools<81'`. The interpreter is
 pinned on purpose: runner images ship their own Python, and the images with Python
 3.14 abort the pinned Semgrep CLI while it imports protobuf through opentelemetry.
 The gate must not depend on which Python the runner image provides.
+Renovate therefore ignores the `python-version` datasource, and the CI contract
+test requires the workflow, the `just ci-semgrep` recipe, and the Renovate
+configuration to agree on that interpreter. Changing the interpreter means
+updating the Semgrep pin in the same review.
 
 The script invokes the fixed `semgrep` executable from `PATH`; it does not accept an
 alternative command or arguments. The evidence directory must be outside of source.

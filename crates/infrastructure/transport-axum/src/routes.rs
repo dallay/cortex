@@ -626,6 +626,17 @@ async fn chat_completions(
             };
             Ok((StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response())
         }
+        Err(e) if e.is_routing_snapshot_churn() => {
+            let body = OpenAIErrorResponse {
+                error: OpenAIErrorBody {
+                    error_type: "internal_error".to_string(),
+                    code: Some("routing_snapshot_churn".to_string()),
+                    message: "Routing snapshot changed repeatedly during selection".to_string(),
+                    param: None,
+                },
+            };
+            Ok((StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response())
+        }
         Err(e) if e.is_spending_budget_exceeded() => {
             let body = OpenAIErrorResponse {
                 error: OpenAIErrorBody {
@@ -725,6 +736,28 @@ async fn chat_completions_stream(
                 message: error.to_string(),
             });
         }
+        Err(error) if error.is_all_providers_exhausted() => {
+            let body = OpenAIErrorResponse {
+                error: OpenAIErrorBody {
+                    error_type: "internal_error".to_string(),
+                    code: Some("all_providers_exhausted".to_string()),
+                    message: "All providers failed or are unavailable".to_string(),
+                    param: None,
+                },
+            };
+            return Ok((StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response());
+        }
+        Err(error) if error.is_routing_snapshot_churn() => {
+            let body = OpenAIErrorResponse {
+                error: OpenAIErrorBody {
+                    error_type: "internal_error".to_string(),
+                    code: Some("routing_snapshot_churn".to_string()),
+                    message: "Routing snapshot changed repeatedly during selection".to_string(),
+                    param: None,
+                },
+            };
+            return Ok((StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response());
+        }
         Err(error) => {
             let error_event = openai_error_event(error);
             let body = futures::stream::once(async move { Ok::<Event, Infallible>(error_event) });
@@ -796,6 +829,10 @@ fn openai_error_event(error: shared_kernel::CortexError) -> Event {
             },
             code: if error.is_rate_limited() {
                 Some("rate_limited".to_string())
+            } else if error.is_all_providers_exhausted() {
+                Some("all_providers_exhausted".to_string())
+            } else if error.is_routing_snapshot_churn() {
+                Some("routing_snapshot_churn".to_string())
             } else {
                 None
             },
@@ -971,6 +1008,9 @@ async fn anthropic_messages(
         Err(e) if e.is_all_providers_exhausted() => {
             Ok((StatusCode::SERVICE_UNAVAILABLE, "All providers unavailable").into_response())
         }
+        Err(e) if e.is_routing_snapshot_churn() => {
+            Ok((StatusCode::SERVICE_UNAVAILABLE, "Routing snapshot changed repeatedly during selection").into_response())
+        }
         Err(e) if e.is_spending_budget_exceeded() => Ok((
             StatusCode::TOO_MANY_REQUESTS,
             axum::Json(serde_json::json!({"error":{"type":"rate_limit_error","code":"spending_budget_exceeded","message":e.to_string()}})),
@@ -1030,6 +1070,20 @@ async fn anthropic_messages_stream(
                 status: StatusCode::BAD_REQUEST,
                 code: "invalid_request_error",
                 message: error.to_string(),
+            });
+        }
+        Err(error) if error.is_all_providers_exhausted() => {
+            return Err(HttpError {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                code: "all_providers_exhausted",
+                message: "All providers unavailable".to_string(),
+            });
+        }
+        Err(error) if error.is_routing_snapshot_churn() => {
+            return Err(HttpError {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                code: "routing_snapshot_churn",
+                message: "Routing snapshot changed repeatedly during selection".to_string(),
             });
         }
         Err(error) => {

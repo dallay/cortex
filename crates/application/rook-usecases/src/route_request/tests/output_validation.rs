@@ -128,7 +128,7 @@ async fn local_nonstream_rejection_is_accounted_once_and_never_cached() {
 async fn eof_rejection_preserves_observed_usage_without_poisoning_provider_health() {
     let router = Arc::new(crate::FallbackRouter::new(
         vec![ok_provider("test-provider")],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let audit = Arc::new(TestAudit {
         entries: Mutex::new(vec![]),
