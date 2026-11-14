@@ -12,6 +12,7 @@ pub mod auth;
 pub mod catalogued_provider;
 pub mod cost_estimation;
 pub mod eligibility;
+pub mod policy;
 pub mod route_request;
 pub mod route_selection;
 pub mod router_impl;
@@ -35,18 +36,20 @@ pub use manage_connections::{
     ManageConnections, ManageConnectionsError, ProviderBuildInput, ProviderBuilderPort,
 };
 pub use manage_providers::ManageProviders;
+pub use policy::{has_comparable_cost, has_comparable_p95, select_policy, PolicySelectionContext};
 pub use rook_core::{
     ModelCatalogPort, QuotaObservationRecorderPort, RegistryError, SessionRepositoryPort,
     UsageRecorderPort,
 };
 pub use route_request::RouteRequest;
 pub use route_selection::{classify_route, is_virtual_model, RouteError, RouteSelection};
-pub use router_impl::{FallbackRouter, RoutingStrategy};
+pub use router_impl::FallbackRouter;
 pub use scoring::{
-    all_components_unknown, build_score_components, build_selection_reason, build_signals_snapshot,
-    compare_candidates, CandidatePricing, CandidateScoreComponents, CandidateSignals, RawEvidence,
-    ScoreComponent, SelectionFallback, SelectionMethod, SelectionReason, SelectionResult,
-    SignalsSnapshot, UnknownReason,
+    all_components_unknown, build_score_components, build_selection_reason,
+    build_selection_reason_from_policy, build_signals_snapshot, compare_candidates,
+    CandidatePricing, CandidateScoreComponents, CandidateSignals, RawEvidence, ScoreComponent,
+    SelectionFallback, SelectionMethod, SelectionReason, SelectionResult, SignalsSnapshot,
+    UnknownReason,
 };
 
 pub mod authenticate_client_api;

@@ -22,7 +22,12 @@ host = "127.0.0.1"   # default: "127.0.0.1"
 port = 3773          # default: 3773
 
 [routing]
-strategy = "priority"  # "priority" | "round-robin"
+strategy = "priority"  # "priority" | "weighted" | "round-robin" | "least-latency" | "least-cost" | "auto"
+# Weights for the "weighted" policy (keyed by runtime target identity).
+# Managed connections use their connection ID; unmanaged providers use provider ID.
+[routing.weights]
+"c56a4180-65aa-42ec-a945-5fd21dec0538" = 7.0
+"anthropic-provider-id" = 3.0
 
 [cache]
 enabled = true
@@ -82,12 +87,53 @@ requests_per_minute = 30
 
 | Field           | Type   | Default      | Description                                                                 |
 |-----------------|--------|--------------|-----------------------------------------------------------------------------|
-| `strategy`      | enum   | `"priority"` | Routing strategy. See Routing Strategies                                    |
+| `strategy`      | enum   | `"priority"` | Routing policy. See Routing Policies below                                  |
 | `default_combo` | string | `null`       | Default combo UUID; only applied without `X-Rook-Combo` or a `rook/*` alias |
 
-Supported values for `strategy`: `priority`, `round-robin`.
+#### `[routing.weights]`
 
-Weighted random selection exists internally for combo use but is not configurable here; unknown values are rejected at startup.
+Optional key-value mapping for the `weighted` policy. Keys must match the identity used
+by the runtime router: a managed provider connection uses its connection ID, while an
+unmanaged provider uses its provider ID. The configuration does not translate provider IDs
+to connection IDs. Each value is a non-negative finite number. Unconfigured targets have
+zero weight and are never selected.
+
+| Field    | Type   | Description                                                    |
+|----------|--------|----------------------------------------------------------------|
+| *(key)*  | string | Target/connection ID                                           |
+| *(value)| f64    | Non-negative finite weight (0 means never selected)            |
+
+#### Routing Policies
+
+Rook supports six explicit routing policies, configurable via `routing.strategy`:
+
+| Policy | Selection | Required evidence | Missing/ties |
+|--------|-----------|-------------------|--------------|
+| `priority` | First eligible candidate in registry order | None | N/A |
+| `weighted` | Weighted random over eligible candidates | `routing.weights` mapping | Zero-weight targets never win; all-zero → error |
+| `round-robin` | Rotates through eligible candidates | RR counter | Preserves legacy rotation |
+| `least-latency` | Minimum raw p95 latency (ms) | Known p95 telemetry | All unknown → priority fallback |
+| `least-cost` | Minimum projected request cost in USD | Comparable input + output per-million-token pricing and `max_tokens` for every eligible candidate | Any missing completion bound or candidate pricing → priority fallback |
+| `auto` | Resolves to concrete policy per request | Request context + signals | Ordered rules (see below) |
+
+**Auto resolver rules** (evaluated in order):
+1. If request has `spending_budget` and every eligible candidate has a comparable projected cost → `least-cost`
+2. If streaming and at least one eligible candidate has a comparable p95 → `least-latency`
+3. If at least one eligible candidate has a comparable p95 → `least-latency`
+4. If every eligible candidate has a comparable projected cost → `least-cost`
+5. Otherwise → `priority`
+
+**Tie-breaking**: When two candidates have equal known values, the policy breaks ties
+by stable target ID (lexicographic comparison of provider IDs).
+
+**Metric evidence**: Only raw, comparable values enter comparisons. Unknown values
+never become zero. Invalid (NaN, Infinity, negative) values are excluded. Least-cost
+projects input and completion cost separately from declared per-million-token rates.
+For text-only requests, the input bound is the UTF-8 byte length of message content.
+Requests with structured tool content have an unknown input bound. The completion
+bound is `max_tokens`. If either bound is unknown or zero, cost is unknown and
+least-cost falls back to priority. This estimate is a routing comparison, not a billing
+estimate.
 
 ### `[[combos]]` — Multi-step Fallback Chains
 

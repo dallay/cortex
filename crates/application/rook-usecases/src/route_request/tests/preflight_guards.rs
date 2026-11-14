@@ -97,7 +97,7 @@ async fn quota_reads_are_concurrent_bounded_and_issued_once_per_connection() {
     }
     let router: Arc<dyn RouterPort> = Arc::new(crate::FallbackRouter::new(
         providers,
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(QuotaAwareProviderRepository {
         connections,
@@ -148,7 +148,7 @@ async fn quota_read_failure_keeps_connection_eligible() {
             }),
             connection_id,
         )],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(QuotaAwareProviderRepository {
         connections: HashMap::from([(
@@ -335,7 +335,7 @@ async fn scoring_preserves_preflight_quota_without_another_read() {
             ordinary_provider(target.as_str()),
             connection_id,
         )],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let repository: Arc<dyn ProviderRepositoryPort> = Arc::new(QuotaAwareProviderRepository {
         connections: HashMap::from([(

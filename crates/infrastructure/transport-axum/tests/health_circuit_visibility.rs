@@ -4,13 +4,13 @@
 // through HTTP endpoints as specified in the health-circuit-visibility change.
 
 use rook_core::HealthPort;
-use rook_usecases::{FallbackRouter, HealthCheck, RoutingStrategy};
+use rook_usecases::{FallbackRouter, HealthCheck};
 use std::sync::Arc;
 
 #[tokio::test]
 async fn test_health_includes_circuit_fields() {
     // Create a minimal health check with empty router
-    let router = Arc::new(FallbackRouter::new_empty(RoutingStrategy::Priority));
+    let router = Arc::new(FallbackRouter::new_empty(rook_core::PolicyKind::Priority));
     let health_check = HealthCheck::new(router.clone());
 
     // Refresh health status
@@ -27,7 +27,7 @@ async fn test_health_includes_circuit_fields() {
 #[tokio::test]
 async fn test_circuit_states_has_required_fields() {
     // Create router with empty provider list
-    let router = Arc::new(FallbackRouter::new_empty(RoutingStrategy::Priority));
+    let router = Arc::new(FallbackRouter::new_empty(rook_core::PolicyKind::Priority));
 
     // Get circuit states
     let states = router.circuit_states();

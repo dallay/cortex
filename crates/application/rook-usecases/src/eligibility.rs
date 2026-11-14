@@ -1,10 +1,7 @@
 use serde::{Deserialize, Serialize};
-use shared_kernel::ProviderId;
 
-/// Stable identity of a provider target considered by routing.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct TargetRef(pub ProviderId);
+// TargetRef is now defined in rook-core to avoid cyclic dependencies.
+pub use rook_core::TargetRef;
 
 /// Closed set of reasons that can make a provider target ineligible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

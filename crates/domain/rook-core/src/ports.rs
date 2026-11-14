@@ -16,7 +16,7 @@ use shared_kernel::{
 
 use super::{
     ApiFormat, AuditEntry, CacheStats, CompletionRequest, CompletionResponse, CostBreakdown,
-    HealthStatus, Pagination, QuotaObservation, SelectionStrategy, SignatureEntry, StreamChunk,
+    HealthStatus, Pagination, PolicyKind, QuotaObservation, SignatureEntry, StreamChunk,
     UsageEntry, UsageFilters, UsageSummary,
 };
 use super::{
@@ -183,15 +183,30 @@ pub trait RouterPort: Send + Sync {
     fn providers(&self) -> Vec<ProviderId>;
 
     /// Return all registered candidates with their circuit state for eligibility evaluation.
-    /// `None` means this router does not expose a complete candidate snapshot.
+    ///
+    /// Returns `None` when this router implementation does not expose a complete candidate
+    /// snapshot, signaling callers to fall back to direct selection without pre-computed
+    /// eligibility scoring. When returned, the snapshot represents an atomic view of circuit
+    /// states captured at that instant; callers must verify candidate presence via
+    /// [`RouterPort::resolve_provider`] before execution to guard against concurrent registry churn.
     fn eligibility_candidates(&self) -> Option<Vec<RouterCandidateSnapshot>> {
         None
     }
 
-    /// Return the current selection strategy for explanation purposes.
-    /// Defaults to Priority for routers that don't expose this information.
-    fn selection_strategy(&self) -> SelectionStrategy {
-        SelectionStrategy::Priority
+    /// Return the configured policy kind.
+    fn policy_kind(&self) -> PolicyKind {
+        PolicyKind::Priority
+    }
+
+    /// Return a snapshot of identity-keyed weights (for the weighted policy).
+    fn weights_snapshot(&self) -> std::collections::HashMap<ProviderId, f64> {
+        std::collections::HashMap::new()
+    }
+
+    /// Atomically advance the round-robin cursor and return the index to use.
+    /// Implementations MUST perform the read and increment as one operation.
+    fn advance_rr_index(&self, _len: usize) -> usize {
+        0
     }
 
     /// Return circuit breaker state for all registered providers.
@@ -201,7 +216,11 @@ pub trait RouterPort: Send + Sync {
     }
 
     /// Resolve an exact adapter without applying request-capability pruning.
-    /// Used by ordered combo steps so skips retain their own reason.
+    ///
+    /// Used by ordered combo steps and by policy-driven selection loops to confirm that a
+    /// candidate selected from a prior snapshot is still active in the underlying registry.
+    /// Returns `None` if the provider has been unregistered or replaced, signaling callers to
+    /// trigger reevaluation rather than proceeding with a stale adapter reference.
     fn resolve_provider(&self, _provider: &ProviderId) -> Option<Arc<dyn ProviderPort>> {
         None
     }
