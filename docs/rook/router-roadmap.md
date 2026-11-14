@@ -636,7 +636,7 @@ Scoring quality tuning and machine-learned ranking.
 - `PolicyKind` enum in `rook-core` replaces `RoutingStrategy`
 - Pure policy engine in `rook-usecases/src/policy.rs` with `select_policy()` dispatcher
 - Identity-keyed weights via `routing.weights` TOML section
-- `SelectionReason` extended with `requested_policy`, `effective_policy`, `fallback_reason`
+- `SelectionReason` extended with `requested_policy`, `effective_policy`, `fallback`, and `resolution`
 - Policy engine wired into both completion and streaming paths in `route_request.rs`
 - 21 policy unit tests + 14 regression tests
 

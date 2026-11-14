@@ -183,7 +183,18 @@ pub trait RouterPort: Send + Sync {
     fn providers(&self) -> Vec<ProviderId>;
 
     /// Return all registered candidates with their circuit state for eligibility evaluation.
-    /// `None` means this router does not expose a complete candidate snapshot.
+    ///
+    /// Returns `None` when this router does not expose a complete candidate snapshot
+    /// (e.g. test doubles or minimal routers), in which case the orchestrator falls
+    /// back to legacy `select_excluding`.
+    ///
+    /// When `Some` is returned, the snapshot represents candidate availability and circuit
+    /// state captured at this point in time. Callers evaluate capability eligibility,
+    /// quota observations, and policy-based scoring against this snapshot.
+    ///
+    /// Because the provider registry may mutate asynchronously (e.g. during registry refresh),
+    /// callers MUST treat this snapshot as point-in-time state and use [`resolve_provider`]
+    /// to verify that a selected candidate remains registered before dispatching a request.
     fn eligibility_candidates(&self) -> Option<Vec<RouterCandidateSnapshot>> {
         None
     }
@@ -211,7 +222,11 @@ pub trait RouterPort: Send + Sync {
     }
 
     /// Resolve an exact adapter without applying request-capability pruning.
-    /// Used by ordered combo steps so skips retain their own reason.
+    ///
+    /// Used by ordered combo steps so skips retain their own reason, and by
+    /// policy-based selection to verify candidate freshness against registry churn
+    /// before dispatch. Returns `None` if the provider is unknown, deregistered, or
+    /// currently unavailable.
     fn resolve_provider(&self, _provider: &ProviderId) -> Option<Arc<dyn ProviderPort>> {
         None
     }

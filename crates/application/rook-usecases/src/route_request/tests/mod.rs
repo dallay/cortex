@@ -2098,6 +2098,10 @@ async fn weighted_selection_cannot_reintroduce_key_disallowed_provider() {
         vec![ordinary_provider("blocked"), ordinary_provider("allowed")],
         rook_core::PolicyKind::Weighted,
     ));
+    let mut weights = std::collections::HashMap::new();
+    weights.insert(ProviderId::new("blocked"), 10.0);
+    weights.insert(ProviderId::new("allowed"), 0.0);
+    router.update_weights(weights);
     let usecase = usecase_with_router(router);
     let mut req = request();
     req.restrictions.allowed_providers = vec![ProviderId::new("allowed")];

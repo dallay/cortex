@@ -1490,6 +1490,10 @@ mod tests {
                 let p2 = StubProvider::new("b", &["model-x"]);
                 let router =
                     FallbackRouter::new(vec![p1.clone(), p2.clone()], PolicyKind::Weighted);
+                let mut weights = std::collections::HashMap::new();
+                weights.insert(p1.id().clone(), -1.0);
+                weights.insert(p2.id().clone(), 0.0);
+                router.update_weights(weights);
 
                 let result = router.select(&request("model-x")).await;
                 match result {
@@ -1512,6 +1516,10 @@ mod tests {
                 let p2 = StubProvider::new("b", &["model-x"]);
                 let router =
                     FallbackRouter::new(vec![p1.clone(), p2.clone()], PolicyKind::Weighted);
+                let mut weights = std::collections::HashMap::new();
+                weights.insert(p1.id().clone(), f64::NAN);
+                weights.insert(p2.id().clone(), 0.0);
+                router.update_weights(weights);
 
                 let result = router.select(&request("model-x")).await;
                 match result {
@@ -1534,6 +1542,10 @@ mod tests {
                 let p2 = StubProvider::new("b", &["model-x"]);
                 let router =
                     FallbackRouter::new(vec![p1.clone(), p2.clone()], PolicyKind::Weighted);
+                let mut weights = std::collections::HashMap::new();
+                weights.insert(p1.id().clone(), 0.0);
+                weights.insert(p2.id().clone(), 0.0);
+                router.update_weights(weights);
 
                 let result = router.select(&request("model-x")).await;
                 match result {

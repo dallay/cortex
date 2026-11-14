@@ -1262,6 +1262,9 @@ impl RouteRequest {
             .filter(|target| snapshot.candidates.contains_key(target))
             .collect();
         if eligible_targets.is_empty() {
+            if !snapshot.candidates.is_empty() {
+                return Ok(None);
+            }
             return Err(CortexError::all_providers_exhausted());
         }
 
