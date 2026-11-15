@@ -364,4 +364,11 @@ class BridgeAdapter:
                     'get_related_entities': 'entity'}[operation]
         if operation.startswith('get_'):
             return [_observe(item, category, self.gaps, operation) for item in response]
+        if operation == 'add_entity' and isinstance(response, dict):
+            # The bridge returns the operation's deduplication result alongside
+            # the entity. ReferenceAdapter unpacks (entity, result) and observes
+            # only the entity, so keep the projection symmetric. GM-05 does not
+            # assert entity deduplication; it measures preference/fact flags.
+            response = {key: value for key, value in response.items()
+                        if key != 'deduplication'}
         return _observe(response, category, self.gaps, operation)

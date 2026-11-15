@@ -85,11 +85,44 @@ class BuildTests(unittest.TestCase):
         self.assertFalse(path.exists())
         self.assertTrue(all(call[1]['cwd'] != self.root for call in self.commands))
 
+    def test_managed_agent_instruction_symlinks_are_not_build_inputs(self):
+        target = self.put('.agents/contexts/demo.md', 'agent instructions')
+        for relative in ('apps/muninn/AGENTS.md', 'crates/demo/CLAUDE.md'):
+            link = self.root / relative
+            link.parent.mkdir(parents=True, exist_ok=True)
+            link.symlink_to(Path('../../.agents/contexts/demo.md'))
+        destination = Path(self.temporary.name) / 'snapshot'
+        manifest = self.build.snapshot_sources(self.root, destination)
+        for relative in ('apps/muninn/AGENTS.md', 'crates/demo/CLAUDE.md'):
+            self.assertNotIn(relative, manifest)
+            self.assertFalse((destination / relative).exists())
+        self.assertEqual(target.read_text(), 'agent instructions')
+
+    def test_agent_link_is_not_excluded_when_context_directory_resolves_outside_root(self):
+        external = Path(self.temporary.name) / 'external-contexts'
+        external.mkdir()
+        (external / 'demo.md').write_text('external instructions')
+        contexts = self.root / '.agents/contexts'
+        contexts.parent.mkdir(parents=True)
+        contexts.symlink_to(external, target_is_directory=True)
+        link = self.root / 'apps/muninn/AGENTS.md'
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(Path('../../.agents/contexts/demo.md'))
+
+        with mock.patch.object(self.build.subprocess, 'run') as run:
+            with self.assertRaises(RuntimeError):
+                with self.build.build_candidate(self.root):
+                    self.fail('external context symlink accepted')
+            run.assert_not_called()
+
     def test_unsafe_symlinks_and_external_manifest_paths_fail_before_build(self):
-        for mode in ('file', 'directory', 'manifest'):
+        for mode in ('file', 'directory', 'named-agent-file', 'manifest'):
             with self.subTest(mode=mode):
                 if mode == 'file':
                     path = self.root / 'apps/muninn/src/escape.rs'
+                    path.symlink_to('/not-readable-external')
+                elif mode == 'named-agent-file':
+                    path = self.root / 'third_party/demo/AGENTS.md'
                     path.symlink_to('/not-readable-external')
                 elif mode == 'directory':
                     path = self.root / 'third_party/escape'

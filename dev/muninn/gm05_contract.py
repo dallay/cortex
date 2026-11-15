@@ -402,6 +402,12 @@ def _item(category, raw, path, scope, identities, labels, window):
             raise ContractError(f'{path}.description: texto requerido')
     if category in ('fact', 'relationship'):
         _interval(item, path)
+    if category == 'fact':
+        api_validity = {}
+        for field in ('valid_from', 'valid_until'):
+            if raw.get(field) is not None:
+                api_validity[field] = _validity(raw[field], f'{path}.{field}')
+        _interval(api_validity, path)
     for field in sorted(GENERATED_MARKS[category] - COMPARABLE_FIELDS[category]):
         if raw.get(field) is not None:
             _generated_time(raw[field], f'{path}.{field}', window)
@@ -487,6 +493,12 @@ def _node_properties(category, properties, path, window):
     for field in sorted(GRAPH_GENERATED):
         if properties.get(field) is not None:
             _generated_time(properties[field], f'{path}.{field}', window)
+    if category == 'fact':
+        validity = {}
+        for field in ('valid_from', 'valid_until'):
+            if properties.get(field) is not None:
+                validity[field] = _validity(properties[field], f'{path}.{field}')
+        _interval(validity, path)
     if category == 'preference':
         for field in sorted(GRAPH_PREFERENCE_VALIDITY):
             if properties.get(field) is None:

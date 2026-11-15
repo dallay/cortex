@@ -187,6 +187,18 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("add_preference.confidence:field_absent", adapter.gaps)
         self.assertIn("add_preference.metadata:field_absent", adapter.gaps)
 
+    async def test_entity_operation_deduplication_is_not_an_entity_field(self):
+        async def post(operation, payload):
+            return {"id": "e-1", "name": "ana", "type": "PERSON",
+                    "deduplication": {"action": "none", "is_duplicate": False},
+                    "surprise": "uncontracted entity field"}
+
+        adapter = adapters.BridgeAdapter(post, FakeGraph())
+        record = await adapter.call("add_entity", name="ana", type="PERSON")
+        self.assertEqual(record, {"id": "e-1", "name": "ana", "type": "PERSON"})
+        self.assertNotIn("add_entity.deduplication:unknown_field", adapter.gaps)
+        self.assertIn("add_entity.surprise:unknown_field", adapter.gaps)
+
     async def test_entity_uses_the_bridge_argument_name(self):
         sent = {}
 

@@ -156,24 +156,54 @@ class ComparisonTests(unittest.TestCase):
             "id": "e-1", "created_at": "2026-01-01T00:00:00.123456+00:00"}}], "edges": []})
         self.assertEqual(self.verdict(fast, slow)["comparison"], "pass")
 
-    def test_generated_timestamps_require_a_timezone(self):
+    def test_fact_api_validity_requires_timezone_even_when_graph_is_normative(self):
         broken = document(facts=[fact("f-1", valid_from="2026-02-01T00:00:00")])
         result = self.verdict(document(), broken)
         self.assertEqual(result["comparison"], "fail")
         self.assertTrue(any("valid_from" in error for error in result["errors"]))
 
-    def test_validity_interval_must_be_ordered(self):
+    def test_fact_api_validity_interval_must_be_ordered(self):
         broken = document(facts=[fact("f-1", valid_from="2026-02-02T00:00:00+00:00",
                                       valid_until="2026-02-01T00:00:00+00:00")])
         result = self.verdict(document(), broken)
         self.assertEqual(result["comparison"], "fail")
         self.assertTrue(any("interval" in error for error in result["errors"]))
 
-    def test_supplied_validity_bounds_compare_exactly(self):
-        drifted = document(facts=[fact("f-1", valid_from="2026-02-01T00:00:01+00:00")])
-        result = self.verdict(document(), drifted)
+    def test_fact_api_validity_drift_is_ignored_when_graph_matches(self):
+        nodes = graph_nodes()
+        fact_node = {"key": "f-1", "labels": ["Fact"], "properties": {
+            "id": "f-1", "subject": "ana", "predicate": "vive_en", "object": "Madrid",
+            "confidence": 0.9, "valid_from": "2026-02-01T00:00:00+00:00"}}
+        graph = {"nodes": nodes + [fact_node], "edges": []}
+        reference = document(graph=graph)
+        drifted = document(facts=[fact("f-1", valid_from="2026-02-01T00:00:01+00:00")],
+                           facts_about=[fact("f-1", valid_from="2026-02-01T00:00:01+00:00")],
+                           graph=graph)
+        result = self.verdict(reference, drifted)
+        self.assertEqual(result["comparison"], "pass", result["errors"])
+
+    def test_fact_graph_validity_drift_fails(self):
+        nodes = graph_nodes()
+        fact_node = {"key": "f-1", "labels": ["Fact"], "properties": {
+            "id": "f-1", "subject": "ana", "predicate": "vive_en", "object": "Madrid",
+            "confidence": 0.9, "valid_from": "2026-02-01T00:00:00+00:00"}}
+        reference = document(graph={"nodes": nodes + [fact_node], "edges": []})
+        drifted_node = {**fact_node, "properties": {**fact_node["properties"],
+                                                     "valid_from": "2026-02-01T00:00:01+00:00"}}
+        muninn = document(graph={"nodes": nodes + [drifted_node], "edges": []})
+        result = self.verdict(reference, muninn)
         self.assertEqual(result["comparison"], "fail")
-        self.assertTrue(any("facts[0].valid_from" in error for error in result["errors"]))
+        self.assertTrue(any("valid_from" in error for error in result["errors"]))
+
+    def test_fact_graph_validity_interval_must_be_ordered(self):
+        nodes = graph_nodes()
+        fact_node = {"key": "f-1", "labels": ["Fact"], "properties": {
+            "id": "f-1", "subject": "ana", "predicate": "vive_en", "object": "Madrid",
+            "confidence": 0.9, "valid_from": "2026-02-02T00:00:00+00:00",
+            "valid_until": "2026-02-01T00:00:00+00:00"}}
+        result = self.verdict(document(), document(graph={"nodes": nodes + [fact_node], "edges": []}))
+        self.assertEqual(result["comparison"], "fail")
+        self.assertTrue(any("interval" in error for error in result["errors"]))
 
     def test_missing_field_reports_the_dotted_path(self):
         absent = preference("p-1")

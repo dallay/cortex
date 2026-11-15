@@ -40,7 +40,8 @@ class FakeSearchAdapter:
         self.related = related if related is not None else [SOUTH]
         self.edges = edges if edges is not None else [
             {'source': ENTITIES[NORTH], 'target': ENTITIES[SOUTH],
-             'properties': {'type': 'CONNECTS_TO', 'confidence': 1.0}}]
+             'properties': {**{field: None for field in SPEC['relation_extra_columns']},
+                            'type': 'CONNECTS_TO', 'confidence': 1.0}}]
 
     def query(self, statement, parameters):
         if '-[r:RELATED_TO]->' in statement:
@@ -105,7 +106,8 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(document['entities'], sorted(ENTITIES))
         self.assertEqual(document['edges'], [{'source': NORTH, 'target': SOUTH,
                                               'type': 'CONNECTS_TO', 'confidence': 1.0,
-                                              'extra_columns': []}])
+                                              'extra_columns': sorted(
+                                                  SPEC['relation_extra_columns'])}])
         self.assertEqual([hit['id'] for hit in document['vector']['results']],
                          [SOUTH, NORTH])
         self.assertEqual([hit['id'] for hit in document['text']['results']],
