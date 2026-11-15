@@ -1,10 +1,11 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createI18n } from "vue-i18n";
+import type { ProviderConnectionResponse } from "@/lib/api";
 import en from "@/locales/en.json";
 import CompatibleConnectionsSection from "./CompatibleConnectionsSection.vue";
 
-const mockProviders = vi.hoisted(() => []);
+const mockProviders = vi.hoisted(() => [] as ProviderConnectionResponse[]);
 const mockUpdate = vi.hoisted(() => vi.fn());
 const mockTest = vi.hoisted(() => vi.fn());
 const mockFetch = vi.hoisted(() => vi.fn());
@@ -26,7 +27,7 @@ function mountSection() {
 	});
 }
 
-function makeConnection(overrides = {}) {
+function makeConnection(overrides = {}): ProviderConnectionResponse {
 	return {
 		id: "conn-1",
 		providerKind: "openai-compatible",
@@ -34,7 +35,7 @@ function makeConnection(overrides = {}) {
 		isActive: true,
 		updatedAt: "2026-01-01T00:00:00Z",
 		...overrides,
-	};
+	} as unknown as ProviderConnectionResponse;
 }
 
 describe("CompatibleConnectionsSection", () => {
