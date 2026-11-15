@@ -21,18 +21,18 @@ overrides:
   postcss: 8.5.32
   source-map-js: 1.2.2
   vue: 3.6.0-rc.14
-  '@vue/compiler-core': 3.6.0-rc.14
-  '@vue/compiler-dom': 3.6.0-rc.14
-  '@vue/compiler-sfc': 3.6.0-rc.14
-  '@vue/compiler-ssr': 3.6.0-rc.14
-  '@vue/compiler-vapor': 3.6.0-rc.14
-  '@vue/compat': 3.6.0-rc.14
-  '@vue/reactivity': 3.6.0-rc.14
-  '@vue/runtime-core': 3.6.0-rc.14
-  '@vue/runtime-dom': 3.6.0-rc.14
-  '@vue/runtime-vapor': 3.6.0-rc.14
-  '@vue/server-renderer': 3.6.0-rc.14
-  '@vue/shared': 3.6.0-rc.14
+  '@vue/compiler-core': 3.6.0-rc.15
+  '@vue/compiler-dom': 3.6.0-rc.15
+  '@vue/compiler-sfc': 3.6.0-rc.15
+  '@vue/compiler-ssr': 3.6.0-rc.15
+  '@vue/compiler-vapor': 3.6.0-rc.15
+  '@vue/compat': 3.6.0-rc.15
+  '@vue/reactivity': 3.6.0-rc.15
+  '@vue/runtime-core': 3.6.0-rc.15
+  '@vue/runtime-dom': 3.6.0-rc.15
+  '@vue/runtime-vapor': 3.6.0-rc.15
+  '@vue/server-renderer': 3.6.0-rc.15
+  '@vue/shared': 3.6.0-rc.15
 
 packages:
   - 'apps/rook/dashboard'
