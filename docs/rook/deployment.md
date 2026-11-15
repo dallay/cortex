@@ -78,6 +78,8 @@ docker build --platform linux/amd64 -f docker-context/Dockerfile -t rook:local d
 
 <!-- coderabbit-ai-generated:v1 -->
 
+<!-- coderabbit-ai-generated-section:v1:06b1c6a4f99211399373f29858aceaafec735f1821cbe4ad60bd7e9f9c48452f -->
+
 <!-- coderabbit-ai-generated-section:v1:e06e394b98903f777753204bf4683a45d469e4a866e3891bc5056c4df9a918c1 -->
 
 ### Run with Ollama Cloud
@@ -110,7 +112,9 @@ allow_env_fallback = false
 enabled = true
 EOF
 
-# Run the container
+# Validate and export the stable hash secret, then run the container
+: "${API_KEY_HASH_SECRET:?set a stable API key hash secret}" &&
+export API_KEY_HASH_SECRET &&
 docker run -d \
   --name rook \
   -p 3773:3773 \
@@ -118,7 +122,7 @@ docker run -d \
   -v rook-data:/app/data \
   -e ENCRYPTION_PASSPHRASE="your-secure-passphrase-min-12-chars" \
   -e ENCRYPTION_SALT="your-generated-salt" \
-  -e API_KEY_HASH_SECRET="${API_KEY_HASH_SECRET:?set a stable API key hash secret}" \
+  -e API_KEY_HASH_SECRET \
   -e RUST_LOG=info \
   rook:latest
 

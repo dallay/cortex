@@ -65,16 +65,6 @@ regexes = [
   '''(?i)^secret\s*=\s*"(other-workspace-secret-value|credential-fixture-secret-not-real|external-fixture-secret|unassigned-temp-fixture-secret|cwd-does-not-expand-permissions|symlink-target-fixture-secret)$''',
 ]
 
-[[rules.allowlists]]
-description = "Test token fixtures in the Rook bootstrap banner unit tests"
-condition = "AND"
-regexTarget = "match"
-paths = ['''^apps/rook/src/main\.rs$''']
-regexes = [
-  '''(?i)^token\s*=\s*"test_token_''',
-  '''(?i)^token\s*=\s*"[a-z0-9]{20,}''',
-]
-
 [[rules]]
 id = "openai_gcp_hf_api_key"
 description = "OpenAI/GCP/Hugging Face API Key pattern"
