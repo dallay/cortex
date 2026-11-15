@@ -106,10 +106,23 @@ fn load_dotenv(config_path: Option<&Path>) {
                 Ok(()) => {
                     tracing::debug!(env_file = %candidate.display(), "loaded environment variables");
                 }
-                Err(e) => {
+                Err(dotenvy::Error::LineParse(_, position)) => {
                     tracing::warn!(
                         env_file = %candidate.display(),
-                        error = %e,
+                        position,
+                        "failed to parse .env file, continuing without it"
+                    );
+                }
+                Err(dotenvy::Error::Io(error)) => {
+                    tracing::warn!(
+                        env_file = %candidate.display(),
+                        error_kind = ?error.kind(),
+                        "failed to read .env file, continuing without it"
+                    );
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        env_file = %candidate.display(),
                         "failed to load .env file, continuing without it"
                     );
                 }
@@ -321,21 +334,6 @@ async fn run_db_command(cmd: DbCommands) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Return a truncated preview of a token: first 8 chars + asterisks + last 4 chars.
-/// For short tokens (≤ 12 chars), show the first 4 chars masked with asterisks.
-#[allow(dead_code)]
-fn truncate_token(token: &str) -> String {
-    let len = token.chars().count();
-    if len <= 12 {
-        let visible: String = token.chars().take(4).collect();
-        format!("{}****", visible)
-    } else {
-        let start: String = token.chars().take(8).collect();
-        let end: String = token.chars().skip(len.saturating_sub(4)).collect();
-        format!("{}****{}", start, end)
-    }
-}
-
 /// Build a dynamically-sized ASCII box for the bootstrap banner.
 ///
 /// Computes the box width from the longest content line so the border aligns
@@ -408,51 +406,4 @@ fn load_config_with_path(config_path: Option<PathBuf>) -> anyhow::Result<config:
     // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
     config::RookConfig::load(&config_path)
         .with_context(|| format!("failed to load config from {}", config_path.display()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn truncate_token_shows_full_preview_for_long_tokens() {
-        // nosemgrep: rust.generic-secret.generic-secret
-        let token = "test_token_abcdefghijklmnopqrstuvwxyz0123456789";
-        let result = truncate_token(token);
-        assert!(result.starts_with("test_tok"));
-        assert!(result.ends_with("6789"));
-        assert!(result.contains("****"));
-        assert!(!result.contains("ijklmnop")); // middle is hidden
-    }
-
-    #[test]
-    fn truncate_token_masks_short_tokens() {
-        // nosemgrep: rust.generic-secret.generic-secret
-        let token = "short";
-        let result = truncate_token(token);
-        assert_eq!(result, "shor****");
-    }
-
-    #[test]
-    fn truncate_token_exactly_12_chars_is_short() {
-        // nosemgrep: rust.generic-secret.generic-secret
-        let token = "abcdefghij01";
-        let result = truncate_token(token);
-        assert_eq!(result, "abcd****");
-    }
-
-    #[test]
-    fn truncate_token_13_chars_is_long() {
-        // nosemgrep: rust.generic-secret.generic-secret
-        let token = "abcdefghijklm";
-        let result = truncate_token(token);
-        assert!(result.starts_with("abcdefgh"));
-        assert!(result.ends_with("klm"));
-    }
-
-    #[test]
-    fn truncate_token_empty_string() {
-        let result = truncate_token("");
-        assert_eq!(result, "****");
-    }
 }
