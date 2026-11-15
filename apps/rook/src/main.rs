@@ -380,3 +380,46 @@ fn load_config_with_path(config_path: Option<PathBuf>) -> anyhow::Result<config:
     config::RookConfig::load(&config_path)
         .with_context(|| format!("failed to load config from {}", config_path.display()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_token_shows_full_preview_for_long_tokens() {
+        let token = "abcdefghijklmnopqrstuvwxyz0123456789";
+        let result = truncate_token(token);
+        assert!(result.starts_with("abcdefgh"));
+        assert!(result.ends_with("6789"));
+        assert!(result.contains("****"));
+        assert!(!result.contains("ijklmnop")); // middle is hidden
+    }
+
+    #[test]
+    fn truncate_token_masks_short_tokens() {
+        let token = "short";
+        let result = truncate_token(token);
+        assert_eq!(result, "shor****");
+    }
+
+    #[test]
+    fn truncate_token_exactly_12_chars_is_short() {
+        let token = "123456789012";
+        let result = truncate_token(token);
+        assert_eq!(result, "1234****");
+    }
+
+    #[test]
+    fn truncate_token_13_chars_is_long() {
+        let token = "1234567890123";
+        let result = truncate_token(token);
+        assert!(result.starts_with("12345678"));
+        assert!(result.ends_with("0123"));
+    }
+
+    #[test]
+    fn truncate_token_empty_string() {
+        let result = truncate_token("");
+        assert_eq!(result, "****");
+    }
+}

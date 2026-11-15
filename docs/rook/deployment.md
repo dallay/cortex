@@ -100,7 +100,7 @@ db_path = "/app/data/rook.db"
 
 [auth.api_keys]
 enabled = false
-allow_env_fallback = true
+allow_env_fallback = false
 
 [provider_crud]
 enabled = true

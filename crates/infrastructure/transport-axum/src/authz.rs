@@ -1885,4 +1885,25 @@ mod tests {
         assert_eq!(outcome.status, Some(StatusCode::FORBIDDEN));
         assert_eq!(outcome.code, Some("INSUFFICIENT_SCOPE"));
     }
+
+    // Constant-time comparison tests
+    #[test]
+    fn constant_time_eq_returns_true_for_identical_strings() {
+        assert!(constant_time_eq("secret-key-123", "secret-key-123"));
+        assert!(constant_time_eq("", ""));
+        assert!(constant_time_eq("a", "a"));
+    }
+
+    #[test]
+    fn constant_time_eq_returns_false_for_different_strings() {
+        assert!(!constant_time_eq("secret-key-123", "secret-key-124"));
+        assert!(!constant_time_eq("abc", "abd"));
+        assert!(!constant_time_eq("short", "longer"));
+    }
+
+    #[test]
+    fn constant_time_eq_returns_false_for_different_lengths() {
+        assert!(!constant_time_eq("abc", "abcd"));
+        assert!(!constant_time_eq("", "a"));
+    }
 }
