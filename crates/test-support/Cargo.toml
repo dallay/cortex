@@ -10,3 +10,6 @@ rook-core = { path = "../domain/rook-core" }
 
 [dev-dependencies]
 tokio = { workspace = true }
+
+[lints]
+workspace = true

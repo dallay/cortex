@@ -56,3 +56,6 @@ providers-ollama = { path = "../providers-ollama" }
 providers-anthropic = { path = "../providers-anthropic" }
 wiremock = "=0.6.5"
 cortex-test-support = { path = "../../test-support" }
+
+[lints]
+workspace = true
