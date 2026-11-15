@@ -8,7 +8,7 @@
  * - List of connections with display name, protocol badge, status, toggle, and test button
  * - Empty state when no connections exist
  */
-import {Loader2, Play, Plus } from "@lucide/vue";
+import {Code, Loader2, Play, Plus } from "@lucide/vue";
 import {computed, ref} from "vue";
 import {useI18n} from "vue-i18n";
 import {Button} from "@/components/ui/button";
@@ -124,24 +124,7 @@ async function handleToggle({id, enabled}: {id: string; enabled: boolean}) {
         <div class="flex items-start justify-between">
           <div class="flex items-start gap-3 min-w-0">
             <div class="rounded-lg bg-primary/10 p-2 shrink-0">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="20"
-                height="20"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="text-primary"
-                role="img"
-                aria-label="Compatible provider"
-              >
-                <title>Compatible provider</title>
-                <polyline points="4 17 10 11 4 5" />
-                <line x1="12" y1="19" x2="20" y2="19" />
-              </svg>
+              <Code class="h-5 w-5 text-primary" />
             </div>
             <div class="min-w-0">
               <h3 class="text-sm font-semibold truncate">{{ conn.name || t('providers.compatible.untitled') }}</h3>

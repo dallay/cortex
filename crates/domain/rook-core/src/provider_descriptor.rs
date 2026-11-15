@@ -302,6 +302,43 @@ const fn ollama_paths() -> WirePaths {
     }
 }
 
+/// Shorthand for OpenAI-compatible API Key providers that share the same
+/// protocol, adapter, auth, quota, paths and capability ceiling.
+/// Only id, label, display_name, base URL, canonical URLs, category and
+/// models differ per provider.
+const fn openai_api_key(
+    id: &'static str,
+    label: &'static str,
+    display_name: &'static str,
+    default_base_url: &'static str,
+    canonical_base_urls: &'static [&'static str],
+    category: ProviderCategory,
+    models: ModelSource,
+) -> ProviderDescriptor {
+    ProviderDescriptor {
+        accepts_oauth_credentials: false,
+        id,
+        label,
+        aliases: &[],
+        category,
+        protocol: Protocol::OpenAiChat,
+        adapter: ProviderAdapter::OpenAi,
+        auth: AuthKind::ApiKey,
+        accepted_auth_kinds: &[AuthKind::ApiKey],
+        display_name,
+        quota_header_policy: QuotaHeaderPolicy::OpenAi,
+        default_base_url,
+        requires_base_url: false,
+        endpoint_validation: EndpointValidation::None,
+        model_listing: ModelListing::Catalog,
+        oauth: None,
+        paths: openai_paths(),
+        canonical_base_urls,
+        capability_ceiling: openai_ceiling(),
+        models,
+    }
+}
+
 const fn openai() -> ProviderDescriptor {
     ProviderDescriptor {
         accepts_oauth_credentials: true,
@@ -587,206 +624,102 @@ const fn groq() -> ProviderDescriptor {
 }
 
 const fn xai() -> ProviderDescriptor {
-    ProviderDescriptor {
-        accepts_oauth_credentials: false,
-        id: "xai",
-        label: "xAI",
-        aliases: &[],
-        category: ProviderCategory::ApiKey,
-        protocol: Protocol::OpenAiChat,
-        adapter: ProviderAdapter::OpenAi,
-        display_name: "xAI",
-        quota_header_policy: QuotaHeaderPolicy::OpenAi,
-        auth: AuthKind::ApiKey,
-        accepted_auth_kinds: &[AuthKind::ApiKey],
-        default_base_url: "https://api.x.ai/v1",
-        requires_base_url: false,
-        endpoint_validation: EndpointValidation::None,
-        model_listing: ModelListing::Catalog,
-        oauth: None,
-        paths: openai_paths(),
-        canonical_base_urls: &["https://api.x.ai/v1"],
-        capability_ceiling: openai_ceiling(),
-        models: ModelSource::Static(&["grok-2", "grok-2-mini"]),
-    }
+    openai_api_key(
+        "xai",
+        "xAI",
+        "xAI",
+        "https://api.x.ai/v1",
+        &["https://api.x.ai/v1"],
+        ProviderCategory::ApiKey,
+        ModelSource::Static(&["grok-2", "grok-2-mini"]),
+    )
 }
 
 const fn mistral() -> ProviderDescriptor {
-    ProviderDescriptor {
-        accepts_oauth_credentials: false,
-        id: "mistral",
-        label: "Mistral",
-        aliases: &[],
-        category: ProviderCategory::ApiKey,
-        protocol: Protocol::OpenAiChat,
-        adapter: ProviderAdapter::OpenAi,
-        display_name: "Mistral",
-        quota_header_policy: QuotaHeaderPolicy::OpenAi,
-        auth: AuthKind::ApiKey,
-        accepted_auth_kinds: &[AuthKind::ApiKey],
-        default_base_url: "https://api.mistral.ai/v1",
-        requires_base_url: false,
-        endpoint_validation: EndpointValidation::None,
-        model_listing: ModelListing::Catalog,
-        oauth: None,
-        paths: openai_paths(),
-        canonical_base_urls: &["https://api.mistral.ai/v1"],
-        capability_ceiling: openai_ceiling(),
-        models: ModelSource::Static(&[
+    openai_api_key(
+        "mistral",
+        "Mistral",
+        "Mistral",
+        "https://api.mistral.ai/v1",
+        &["https://api.mistral.ai/v1"],
+        ProviderCategory::ApiKey,
+        ModelSource::Static(&[
             "mistral-large-latest",
             "mistral-small-latest",
             "codestral-latest",
         ]),
-    }
+    )
 }
 
 const fn deepseek() -> ProviderDescriptor {
-    ProviderDescriptor {
-        accepts_oauth_credentials: false,
-        id: "deepseek",
-        label: "DeepSeek",
-        aliases: &[],
-        category: ProviderCategory::ApiKey,
-        protocol: Protocol::OpenAiChat,
-        adapter: ProviderAdapter::OpenAi,
-        display_name: "DeepSeek",
-        quota_header_policy: QuotaHeaderPolicy::OpenAi,
-        auth: AuthKind::ApiKey,
-        accepted_auth_kinds: &[AuthKind::ApiKey],
-        default_base_url: "https://api.deepseek.com/v1",
-        requires_base_url: false,
-        endpoint_validation: EndpointValidation::None,
-        model_listing: ModelListing::Catalog,
-        oauth: None,
-        paths: openai_paths(),
-        canonical_base_urls: &["https://api.deepseek.com/v1"],
-        capability_ceiling: openai_ceiling(),
-        models: ModelSource::Static(&["deepseek-chat", "deepseek-reasoner"]),
-    }
+    openai_api_key(
+        "deepseek",
+        "DeepSeek",
+        "DeepSeek",
+        "https://api.deepseek.com/v1",
+        &["https://api.deepseek.com/v1"],
+        ProviderCategory::ApiKey,
+        ModelSource::Static(&["deepseek-chat", "deepseek-reasoner"]),
+    )
 }
 
 const fn together() -> ProviderDescriptor {
-    ProviderDescriptor {
-        accepts_oauth_credentials: false,
-        id: "together",
-        label: "Together AI",
-        aliases: &[],
-        category: ProviderCategory::Other,
-        protocol: Protocol::OpenAiChat,
-        adapter: ProviderAdapter::OpenAi,
-        display_name: "Together AI",
-        quota_header_policy: QuotaHeaderPolicy::OpenAi,
-        auth: AuthKind::ApiKey,
-        accepted_auth_kinds: &[AuthKind::ApiKey],
-        default_base_url: "https://api.together.xyz/v1",
-        requires_base_url: false,
-        endpoint_validation: EndpointValidation::None,
-        model_listing: ModelListing::Catalog,
-        oauth: None,
-        paths: openai_paths(),
-        canonical_base_urls: &["https://api.together.xyz/v1"],
-        capability_ceiling: openai_ceiling(),
-        models: ModelSource::Static(&["meta-llama/Llama-3.3-70B-Instruct-Turbo"]),
-    }
+    openai_api_key(
+        "together",
+        "Together AI",
+        "Together AI",
+        "https://api.together.xyz/v1",
+        &["https://api.together.xyz/v1"],
+        ProviderCategory::Other,
+        ModelSource::Static(&["meta-llama/Llama-3.3-70B-Instruct-Turbo"]),
+    )
 }
 
 const fn fireworks() -> ProviderDescriptor {
-    ProviderDescriptor {
-        accepts_oauth_credentials: false,
-        id: "fireworks",
-        label: "Fireworks AI",
-        aliases: &[],
-        category: ProviderCategory::Other,
-        protocol: Protocol::OpenAiChat,
-        adapter: ProviderAdapter::OpenAi,
-        display_name: "Fireworks",
-        quota_header_policy: QuotaHeaderPolicy::OpenAi,
-        auth: AuthKind::ApiKey,
-        accepted_auth_kinds: &[AuthKind::ApiKey],
-        default_base_url: "https://api.fireworks.ai/inference/v1",
-        requires_base_url: false,
-        endpoint_validation: EndpointValidation::None,
-        model_listing: ModelListing::Catalog,
-        oauth: None,
-        paths: openai_paths(),
-        canonical_base_urls: &["https://api.fireworks.ai/inference/v1"],
-        capability_ceiling: openai_ceiling(),
-        models: ModelSource::Static(&["accounts/fireworks/models/llama-v3p3-70b-instruct"]),
-    }
+    openai_api_key(
+        "fireworks",
+        "Fireworks AI",
+        "Fireworks",
+        "https://api.fireworks.ai/inference/v1",
+        &["https://api.fireworks.ai/inference/v1"],
+        ProviderCategory::Other,
+        ModelSource::Static(&["accounts/fireworks/models/llama-v3p3-70b-instruct"]),
+    )
 }
 
 const fn cerebras() -> ProviderDescriptor {
-    ProviderDescriptor {
-        accepts_oauth_credentials: false,
-        id: "cerebras",
-        label: "Cerebras",
-        aliases: &[],
-        category: ProviderCategory::Other,
-        protocol: Protocol::OpenAiChat,
-        adapter: ProviderAdapter::OpenAi,
-        display_name: "Cerebras",
-        quota_header_policy: QuotaHeaderPolicy::OpenAi,
-        auth: AuthKind::ApiKey,
-        accepted_auth_kinds: &[AuthKind::ApiKey],
-        default_base_url: "https://api.cerebras.ai/v1",
-        requires_base_url: false,
-        endpoint_validation: EndpointValidation::None,
-        model_listing: ModelListing::Catalog,
-        oauth: None,
-        paths: openai_paths(),
-        canonical_base_urls: &["https://api.cerebras.ai/v1"],
-        capability_ceiling: openai_ceiling(),
-        models: ModelSource::Static(&["llama3.1-8b", "llama-3.3-70b"]),
-    }
+    openai_api_key(
+        "cerebras",
+        "Cerebras",
+        "Cerebras",
+        "https://api.cerebras.ai/v1",
+        &["https://api.cerebras.ai/v1"],
+        ProviderCategory::Other,
+        ModelSource::Static(&["llama3.1-8b", "llama-3.3-70b"]),
+    )
 }
 
 const fn openrouter() -> ProviderDescriptor {
-    ProviderDescriptor {
-        accepts_oauth_credentials: false,
-        id: "openrouter",
-        label: "OpenRouter",
-        aliases: &[],
-        category: ProviderCategory::Other,
-        protocol: Protocol::OpenAiChat,
-        adapter: ProviderAdapter::OpenAi,
-        display_name: "OpenRouter",
-        quota_header_policy: QuotaHeaderPolicy::OpenAi,
-        auth: AuthKind::ApiKey,
-        accepted_auth_kinds: &[AuthKind::ApiKey],
-        default_base_url: "https://openrouter.ai/api/v1",
-        requires_base_url: false,
-        endpoint_validation: EndpointValidation::None,
-        model_listing: ModelListing::Catalog,
-        oauth: None,
-        paths: openai_paths(),
-        canonical_base_urls: &["https://openrouter.ai/api/v1"],
-        capability_ceiling: openai_ceiling(),
-        models: ModelSource::Static(&["openai/gpt-4o", "anthropic/claude-sonnet-4"]),
-    }
+    openai_api_key(
+        "openrouter",
+        "OpenRouter",
+        "OpenRouter",
+        "https://openrouter.ai/api/v1",
+        &["https://openrouter.ai/api/v1"],
+        ProviderCategory::Other,
+        ModelSource::Static(&["openai/gpt-4o", "anthropic/claude-sonnet-4"]),
+    )
 }
 
 const fn nan() -> ProviderDescriptor {
-    ProviderDescriptor {
-        accepts_oauth_credentials: false,
-        id: "nan",
-        label: "NAN",
-        aliases: &[],
-        category: ProviderCategory::Other,
-        protocol: Protocol::OpenAiChat,
-        adapter: ProviderAdapter::OpenAi,
-        display_name: "Nan",
-        quota_header_policy: QuotaHeaderPolicy::OpenAi,
-        auth: AuthKind::ApiKey,
-        accepted_auth_kinds: &[AuthKind::ApiKey],
-        default_base_url: "https://api.nan.builders/v1",
-        requires_base_url: false,
-        endpoint_validation: EndpointValidation::None,
-        model_listing: ModelListing::Catalog,
-        oauth: None,
-        paths: openai_paths(),
-        canonical_base_urls: &["https://api.nan.builders/v1"],
-        capability_ceiling: openai_ceiling(),
-        models: ModelSource::Static(&[
+    openai_api_key(
+        "nan",
+        "NAN",
+        "Nan",
+        "https://api.nan.builders/v1",
+        &["https://api.nan.builders/v1"],
+        ProviderCategory::Other,
+        ModelSource::Static(&[
             "deepseek-v4-flash",
             "glm5.3",
             "glm5.3-flash",
@@ -795,7 +728,7 @@ const fn nan() -> ProviderDescriptor {
             "mimo-v2.6-flash",
             "gemma4",
         ]),
-    }
+    )
 }
 
 /// Resolve a canonical or legacy provider id to its descriptor.
