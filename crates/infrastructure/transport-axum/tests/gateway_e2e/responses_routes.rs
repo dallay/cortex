@@ -112,7 +112,7 @@ async fn routing_snapshot_churn_maps_to_service_unavailable_for_both_protocols()
             vec![],
             UpstreamMock::Json(openai_ok_body()),
             UpstreamMock::Json(fallback_reply_body()),
-            Some(Arc::new(FailingRouter(error.clone()))),
+            Some(Arc::new(FailingRouter(error))),
         )
         .await;
         let response = gateway
@@ -171,7 +171,7 @@ async fn stream_preflight_failures_return_service_unavailable_before_sse() {
                 vec![],
                 UpstreamMock::Json(openai_ok_body()),
                 UpstreamMock::Json(fallback_reply_body()),
-                Some(Arc::new(FailingRouter(error.clone()))),
+                Some(Arc::new(FailingRouter(error))),
             )
             .await;
             let response = gateway
