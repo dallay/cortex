@@ -516,7 +516,7 @@ async fn a_budgeted_request_advances_after_local_backpressure() {
             BudgetEvent::UpstreamCall,
             BudgetEvent::Settle(None)
         ],
-        "pre-upstream backpressure releases its reservation before the second provider is admitted"
+        "local backpressure before upstream I/O releases the old identity before a fresh admission"
     );
 }
 
@@ -532,6 +532,11 @@ async fn budgeted_request_falls_back_when_provider_bound_fits_initial_reservatio
             .with_bound(500_000)
             .failing("upstream exploded"),
     );
+    let backpressured = Arc::new(
+        BoundedProvider::new("backpressured-provider", events.clone())
+            .with_bound(500_000)
+            .locally_backpressured(),
+    );
     let second = Arc::new(
         BoundedProvider::new("second-provider", events.clone())
             .with_bound(500_000)
@@ -539,14 +544,13 @@ async fn budgeted_request_falls_back_when_provider_bound_fits_initial_reservatio
     );
     let ledger = Arc::new(RecordingLedger::new(events.clone()));
     let usecase = usecase_with_router(Arc::new(PriorityFallbackRouter {
-        providers: vec![first, second],
+        providers: vec![first, backpressured, second],
     }))
     .with_spending_budget_ledger(ledger);
 
-    let response = usecase
-        .execute(budgeted_request())
-        .await
-        .expect("a retryable upstream failure may fall back under the original reservation");
+    let response = usecase.execute(budgeted_request()).await.expect(
+        "a retryable upstream failure and local pressure may fall back under original reservation",
+    );
 
     assert_eq!(response.provider, ProviderId::new("second-provider"));
     assert_eq!(
@@ -557,7 +561,7 @@ async fn budgeted_request_falls_back_when_provider_bound_fits_initial_reservatio
             BudgetEvent::UpstreamCall,
             BudgetEvent::Settle(None),
         ],
-        "reserve once, failover without re-admit, settle once with unresolved cost"
+        "reserve once, retain unknown spend across fallback, and settle exactly once as unresolved"
     );
 }
 

@@ -105,7 +105,7 @@ impl SpendingBudgetGuard {
                 // new admission would authorize replayed request IDs. Only Reserved
                 // grants a fresh admission. Failover within the same in-flight request
                 // retains the original SpendingAdmission without calling admit again.
-                Err(CortexError::spending_budget_exceeded(format!(
+                Err(CortexError::invalid_request(format!(
                     "request {} is already reserved in the current {} window",
                     request.id,
                     window_label(budget.window)
@@ -548,6 +548,8 @@ mod tests {
             .await
             .expect_err("an existing reservation must not be accepted as a new admission");
 
+        assert!(error.is_invalid_request());
+        assert!(!error.is_spending_budget_exceeded());
         assert!(
             error.to_string().contains("already reserved"),
             "error message must indicate the request is already reserved: {error}"
@@ -574,6 +576,8 @@ mod tests {
             .await
             .expect_err("existing reservation must be rejected regardless of bound");
 
+        assert!(error.is_invalid_request());
+        assert!(!error.is_spending_budget_exceeded());
         assert!(
             error.to_string().contains("already reserved"),
             "error message must indicate the request is already reserved: {error}"

@@ -207,6 +207,8 @@ struct AttemptCursor {
     local_backpressure: Option<CortexError>,
     last_provider_failure: Option<(ProviderId, Option<ConnectionId>, u64, CortexError)>,
     provider_attempt_failed: bool,
+    /// At least one upstream attempt failed, so its spend cannot be verified.
+    upstream_spend_unknown: bool,
     provider_attempts: usize,
     policy_reselections: usize,
     /// The spending budget admission retained across retryable provider failovers.
@@ -912,6 +914,7 @@ impl RouteRequest {
             local_backpressure,
             last_provider_failure: None,
             provider_attempt_failed,
+            upstream_spend_unknown: false,
             provider_attempts,
             policy_reselections: 0,
             spending_admission: None,
@@ -1035,6 +1038,7 @@ impl RouteRequest {
                 return AttemptStep::Retry;
             }
             AttemptOutcome::UpstreamFailure(error) => {
+                cursor.upstream_spend_unknown = true;
                 // Record failure for circuit breaker before checking retryability.
                 notify_provider_failure(self.router.as_ref(), &attempt.provider_id, &error).await;
                 attempt.trial_permit.complete();
@@ -1077,7 +1081,7 @@ impl RouteRequest {
         };
         // Provider errors expose no verified realized cost. A successful fallback
         // cannot resolve spend from an earlier upstream failure.
-        let cost = if cursor.provider_attempt_failed {
+        let cost = if cursor.upstream_spend_unknown {
             None
         } else {
             provider.strict_realized_cost_micros_usd(provider_req, provider_resp)
@@ -2040,6 +2044,7 @@ impl RouteRequest {
         self.settle_outstanding_admission(cursor).await;
         if !cursor.provider_attempt_failed {
             if let Some(backpressure) = cursor.local_backpressure.take() {
+                self.record_saved_provider_failure(req, cursor).await;
                 return AttemptStep::Done(Box::new(Err(backpressure)));
             }
         }

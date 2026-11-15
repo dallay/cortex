@@ -615,6 +615,17 @@ async fn chat_completions(
             };
             Ok((StatusCode::NOT_FOUND, Json(body)).into_response())
         }
+        Err(e) if e.is_routing_snapshot_churn() => {
+            let body = OpenAIErrorResponse {
+                error: OpenAIErrorBody {
+                    error_type: "internal_error".to_string(),
+                    code: Some("routing_snapshot_churn".to_string()),
+                    message: e.to_string(),
+                    param: None,
+                },
+            };
+            Ok((StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response())
+        }
         Err(e) if e.is_all_providers_exhausted() => {
             let body = OpenAIErrorResponse {
                 error: OpenAIErrorBody {
@@ -711,6 +722,20 @@ async fn chat_completions_stream(
             return Ok((StatusCode::TOO_MANY_REQUESTS, Json(body)).into_response());
         }
         Err(error) if error.is_rate_limited() => return Err(map_rate_limited(&error)),
+        Err(error) if error.is_all_providers_exhausted() => {
+            return Err(HttpError {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                code: "all_providers_exhausted",
+                message: error.to_string(),
+            });
+        }
+        Err(error) if error.is_routing_snapshot_churn() => {
+            return Err(HttpError {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                code: "routing_snapshot_churn",
+                message: error.to_string(),
+            });
+        }
         Err(error) if error.is_cost_unavailable() => {
             return Err(HttpError {
                 status: StatusCode::BAD_REQUEST,
@@ -796,6 +821,10 @@ fn openai_error_event(error: shared_kernel::CortexError) -> Event {
             },
             code: if error.is_rate_limited() {
                 Some("rate_limited".to_string())
+            } else if error.is_all_providers_exhausted() {
+                Some("all_providers_exhausted".to_string())
+            } else if error.is_routing_snapshot_churn() {
+                Some("routing_snapshot_churn".to_string())
             } else {
                 None
             },
@@ -968,6 +997,9 @@ async fn anthropic_messages(
         }
         Err(e) if e.is_forbidden() => Ok((StatusCode::FORBIDDEN, e.to_string()).into_response()),
         Err(e) if e.is_not_found() => Ok((StatusCode::NOT_FOUND, e.to_string()).into_response()),
+        Err(e) if e.is_routing_snapshot_churn() => {
+            Ok((StatusCode::SERVICE_UNAVAILABLE, "Routing snapshot changed").into_response())
+        }
         Err(e) if e.is_all_providers_exhausted() => {
             Ok((StatusCode::SERVICE_UNAVAILABLE, "All providers unavailable").into_response())
         }
@@ -1007,6 +1039,20 @@ async fn anthropic_messages_stream(
             return Err(HttpError {
                 status: StatusCode::NOT_FOUND,
                 code: "MODEL_NOT_FOUND",
+                message: error.to_string(),
+            });
+        }
+        Err(error) if error.is_all_providers_exhausted() => {
+            return Err(HttpError {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                code: "all_providers_exhausted",
+                message: error.to_string(),
+            });
+        }
+        Err(error) if error.is_routing_snapshot_churn() => {
+            return Err(HttpError {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                code: "routing_snapshot_churn",
                 message: error.to_string(),
             });
         }

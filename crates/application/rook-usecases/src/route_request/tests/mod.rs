@@ -471,6 +471,248 @@ async fn completion_retries_eligible_provider_after_upstream_failure_then_backpr
     );
 }
 
+struct StopAfterFailureRouter {
+    provider: Arc<dyn ProviderPort>,
+}
+
+#[async_trait]
+impl RouterPort for StopAfterFailureRouter {
+    async fn select(&self, req: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>> {
+        self.select_excluding(req, &[]).await
+    }
+
+    async fn select_excluding(
+        &self,
+        _: &CompletionRequest,
+        excluded: &[ProviderId],
+    ) -> CortexResult<Arc<dyn ProviderPort>> {
+        if excluded.is_empty() {
+            Ok(self.provider.clone())
+        } else {
+            Err(CortexError::invalid_request("terminal preflight stop"))
+        }
+    }
+
+    async fn on_failure(&self, _: &ProviderId, _: &CortexError) {}
+
+    fn providers(&self) -> Vec<ProviderId> {
+        vec![self.provider.id().clone()]
+    }
+}
+
+#[tokio::test]
+async fn terminal_preflight_stop_records_saved_provider_failure_once() {
+    let provider: Arc<dyn ProviderPort> = Arc::new(TestProvider {
+        id: ProviderId::new("preflight-stop-provider"),
+        complete_error: Some(CortexError::provider("temporary failure")),
+        stream_error: None,
+    });
+    let audit = Arc::new(TestAudit {
+        entries: Mutex::new(Vec::new()),
+    });
+    let usage = Arc::new(TestUsageRecorder {
+        entries: Mutex::new(Vec::new()),
+        fail_recording: false,
+    });
+    let telemetry = Arc::new(TelemetryTracker::new(
+        observability::TelemetryConfig::default(),
+    ));
+    let mut usecase =
+        usecase_with_router_and_audit(Arc::new(StopAfterFailureRouter { provider }), audit.clone());
+    usecase.usage_recorder = Some(usage.clone());
+    usecase.telemetry = Some(telemetry.clone());
+    let mut req = request();
+    req.metadata.cacheable = false;
+
+    let error = usecase
+        .execute(req)
+        .await
+        .expect_err("router selection stops before the next provider attempt");
+
+    assert!(
+        error.is_all_providers_exhausted(),
+        "unexpected terminal error: {error}"
+    );
+    let audit_entries = audit.entries.lock().unwrap();
+    assert_eq!(
+        audit_entries.len(),
+        1,
+        "saved upstream failure is recorded once"
+    );
+    assert_eq!(
+        audit_entries[0].provider,
+        ProviderId::new("preflight-stop-provider")
+    );
+    let usage_entries = usage.entries.lock().unwrap();
+    assert_eq!(usage_entries.len(), 1, "usage records the failure once");
+    assert_eq!(
+        usage_entries[0].provider,
+        ProviderId::new("preflight-stop-provider")
+    );
+    assert_eq!(
+        telemetry
+            .get_provider_summary(&ProviderId::new("preflight-stop-provider"))
+            .unwrap()
+            .failure_count,
+        1
+    );
+}
+
+struct NonRetryableProvider {
+    inner: TestProvider,
+}
+
+#[async_trait]
+impl ProviderPort for NonRetryableProvider {
+    fn id(&self) -> &ProviderId {
+        &self.inner.id
+    }
+    fn supported_models(&self) -> &[ModelId] {
+        self.inner.supported_models()
+    }
+    fn model_capabilities(&self, model: &ModelId) -> rook_core::ModelCapabilities {
+        self.inner.model_capabilities(model)
+    }
+    fn api_format(&self) -> ApiFormat {
+        self.inner.api_format()
+    }
+    fn is_available(&self) -> bool {
+        self.inner.is_available()
+    }
+    async fn health_check(&self) -> HealthStatus {
+        self.inner.health_check().await
+    }
+    async fn complete(&self, _: &CompletionRequest) -> CortexResult<CompletionResponse> {
+        Err(CortexError::invalid_request("terminal failure"))
+    }
+    async fn stream(
+        &self,
+        req: &CompletionRequest,
+    ) -> CortexResult<futures::stream::BoxStream<'static, CortexResult<StreamChunk>>> {
+        self.inner.stream(req).await
+    }
+}
+
+#[tokio::test]
+async fn later_non_retryable_provider_error_records_both_failures_once() {
+    let first = Arc::new(TestProvider {
+        id: ProviderId::new("retryable-first"),
+        complete_error: Some(CortexError::provider("temporary failure")),
+        stream_error: None,
+    });
+    let second: Arc<dyn ProviderPort> = Arc::new(NonRetryableProvider {
+        inner: TestProvider {
+            id: ProviderId::new("terminal-second"),
+            complete_error: None,
+            stream_error: None,
+        },
+    });
+    let audit = Arc::new(TestAudit {
+        entries: Mutex::new(Vec::new()),
+    });
+    let usage = Arc::new(TestUsageRecorder {
+        entries: Mutex::new(Vec::new()),
+        fail_recording: false,
+    });
+    let telemetry = Arc::new(TelemetryTracker::new(
+        observability::TelemetryConfig::default(),
+    ));
+    let mut usecase = usecase_with_router_and_audit(
+        Arc::new(PriorityFallbackRouter {
+            providers: vec![first, second],
+        }),
+        audit.clone(),
+    );
+    usecase.usage_recorder = Some(usage.clone());
+    usecase.telemetry = Some(telemetry.clone());
+    let mut req = request();
+    req.metadata.cacheable = false;
+
+    let error = usecase
+        .execute(req)
+        .await
+        .expect_err("second provider terminates routing");
+
+    assert!(error.is_invalid_request());
+    let audit_entries = audit.entries.lock().unwrap();
+    assert_eq!(
+        audit_entries.len(),
+        2,
+        "each upstream failure is recorded once"
+    );
+    assert_eq!(
+        audit_entries[0].provider,
+        ProviderId::new("retryable-first")
+    );
+    assert_eq!(
+        audit_entries[1].provider,
+        ProviderId::new("terminal-second")
+    );
+    let usage_entries = usage.entries.lock().unwrap();
+    assert_eq!(usage_entries.len(), 2, "usage records each failure once");
+    assert_eq!(
+        usage_entries[0].provider,
+        ProviderId::new("retryable-first")
+    );
+    assert_eq!(
+        usage_entries[1].provider,
+        ProviderId::new("terminal-second")
+    );
+    assert_eq!(
+        telemetry
+            .get_provider_summary(&ProviderId::new("retryable-first"))
+            .unwrap()
+            .failure_count,
+        1
+    );
+    assert_eq!(
+        telemetry
+            .get_provider_summary(&ProviderId::new("terminal-second"))
+            .unwrap()
+            .failure_count,
+        1
+    );
+}
+
+#[tokio::test]
+async fn retry_limit_records_saved_provider_failure_once() {
+    let providers = (0..5)
+        .map(|index| {
+            Arc::new(TestProvider {
+                id: ProviderId::new(format!("retry-limit-{index}")),
+                complete_error: Some(CortexError::provider("temporary failure")),
+                stream_error: None,
+            }) as Arc<dyn ProviderPort>
+        })
+        .collect::<Vec<_>>();
+    let audit = Arc::new(TestAudit {
+        entries: Mutex::new(Vec::new()),
+    });
+    let usage = Arc::new(TestUsageRecorder {
+        entries: Mutex::new(Vec::new()),
+        fail_recording: false,
+    });
+    let mut usecase = usecase_with_router_and_audit(
+        Arc::new(PriorityFallbackRouter { providers }),
+        audit.clone(),
+    );
+    usecase.usage_recorder = Some(usage.clone());
+    let mut req = request();
+    req.metadata.cacheable = false;
+
+    usecase
+        .execute(req)
+        .await
+        .expect_err("four failed attempts reach retry limit");
+
+    let audit_entries = audit.entries.lock().unwrap();
+    assert_eq!(audit_entries.len(), 1);
+    assert_eq!(audit_entries[0].provider, ProviderId::new("retry-limit-3"));
+    let usage_entries = usage.entries.lock().unwrap();
+    assert_eq!(usage_entries.len(), 1);
+    assert_eq!(usage_entries[0].provider, ProviderId::new("retry-limit-3"));
+}
+
 #[tokio::test]
 async fn policy_selected_completion_falls_back_after_local_backpressure() {
     let (primary, holder) = busy_limited_test_provider().await;
