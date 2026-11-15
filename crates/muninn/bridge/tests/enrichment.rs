@@ -18,8 +18,8 @@ use muninn_core::enrichment::{
 };
 use muninn_core::model::{
     Conversation, Entity, EntityGraph, EntityMention, EntityRef, Fact, Message, Metadata,
-    Preference, ReasoningStep, ReasoningStepWithContext, ReasoningTrace, Relationship, SessionInfo,
-    ToolCall, ToolStats,
+    Observation, Preference, ReasoningStep, ReasoningStepWithContext, ReasoningTrace, Relationship,
+    SessionInfo, ToolCall, ToolStats,
 };
 use muninn_core::ports::{
     ConversationStep, EntityUpdate, KeyedMessage, LongTermStore, MessageRecord, OwnerScope,
@@ -81,6 +81,18 @@ impl ShortTermStore for Unused {
         _: Uuid,
         _: &OwnerScope,
     ) -> MemoryResult<Option<Conversation>> {
+        unimplemented!()
+    }
+    async fn append_observation(&self, _: &Observation, _: &OwnerScope) -> MemoryResult<()> {
+        unimplemented!()
+    }
+    async fn list_observations(
+        &self,
+        _: Uuid,
+        _: &OwnerScope,
+        _: i64,
+        _: i64,
+    ) -> MemoryResult<Vec<Observation>> {
         unimplemented!()
     }
     async fn list_conversations(&self, _: &OwnerScope, _: i64) -> MemoryResult<Vec<Conversation>> {
@@ -504,7 +516,7 @@ fn entity(id: Uuid, name: &str, entity_type: &str) -> Entity {
 }
 
 fn client(store: Arc<CannedLongTerm>) -> MemoryClient {
-    MemoryClient::new(
+    MemoryClient::read_only(
         MemoryPorts {
             short_term: Arc::new(Unused),
             long_term: store,

@@ -163,14 +163,17 @@ impl ModelArtifactStage {
         W: FnOnce(&mut File, &[u8]) -> std::io::Result<()>,
         S: FnOnce(&File) -> Result<(), FsError>,
     {
-        let root = ArtifactDir::from_directory(
-            self.stage
-                .directory
-                .directory
-                .try_clone()
-                .map_err(|_| CacheError::Filesystem(FsError::Io))?,
-        )
-        .map_err(CacheError::Filesystem)?;
+        let root =
+            ArtifactDir::from_directory(self.stage.directory.directory.try_clone().map_err(
+                |error| {
+                    #[cfg(test)]
+                    super::super::diagnostics::report("stage.clone_directory", &error);
+                    #[cfg(not(test))]
+                    let _ = error;
+                    CacheError::Filesystem(FsError::Io)
+                },
+            )?)
+            .map_err(CacheError::Filesystem)?;
         let (directory, name) = match path.split_once('/') {
             Some((folder, name)) => {
                 validate_name(folder).map_err(CacheError::Filesystem)?;
@@ -184,14 +187,31 @@ impl ModelArtifactStage {
             None => (root, path),
         };
         let mut file = create_new(&directory, name).map_err(CacheError::Filesystem)?;
-        write(&mut file, bytes).map_err(|_| CacheError::Filesystem(FsError::Io))?;
-        file.rewind()
-            .map_err(|_| CacheError::Filesystem(FsError::Io))?;
+        write(&mut file, bytes).map_err(|error| {
+            #[cfg(test)]
+            super::super::diagnostics::report("stage.write", &error);
+            #[cfg(not(test))]
+            let _ = error;
+            CacheError::Filesystem(FsError::Io)
+        })?;
+        file.rewind().map_err(|error| {
+            #[cfg(test)]
+            super::super::diagnostics::report("stage.rewind", &error);
+            #[cfg(not(test))]
+            let _ = error;
+            CacheError::Filesystem(FsError::Io)
+        })?;
         self.manifest
             .verify_artifact(path, &mut file)
             .map_err(CacheError::Manifest)?;
         file.set_permissions(std::fs::Permissions::from_mode(0o400))
-            .map_err(|_| CacheError::Filesystem(FsError::Io))?;
+            .map_err(|error| {
+                #[cfg(test)]
+                super::super::diagnostics::report("stage.chmod_file", &error);
+                #[cfg(not(test))]
+                let _ = error;
+                CacheError::Filesystem(FsError::Io)
+            })?;
         sync(&file).map_err(CacheError::Filesystem)?;
         Ok(())
     }
@@ -204,10 +224,20 @@ impl ModelArtifactStage {
         {
             let mut file =
                 create_new(&self.stage.directory, RECEIPT_NAME).map_err(CacheError::Filesystem)?;
-            file.write_all(&receipt)
-                .map_err(|_| CacheError::Filesystem(FsError::Io))?;
-            file.rewind()
-                .map_err(|_| CacheError::Filesystem(FsError::Io))?;
+            file.write_all(&receipt).map_err(|error| {
+                #[cfg(test)]
+                super::super::diagnostics::report("publish.write_receipt", &error);
+                #[cfg(not(test))]
+                let _ = error;
+                CacheError::Filesystem(FsError::Io)
+            })?;
+            file.rewind().map_err(|error| {
+                #[cfg(test)]
+                super::super::diagnostics::report("publish.rewind_receipt", &error);
+                #[cfg(not(test))]
+                let _ = error;
+                CacheError::Filesystem(FsError::Io)
+            })?;
             crate::artifacts::load_verified(
                 &mut file,
                 u64::try_from(receipt.len()).map_err(|_| CacheError::TooLarge)?,
@@ -215,7 +245,13 @@ impl ModelArtifactStage {
             )
             .map_err(|_| CacheError::ReceiptMismatch)?;
             file.set_permissions(std::fs::Permissions::from_mode(0o400))
-                .map_err(|_| CacheError::Filesystem(FsError::Io))?;
+                .map_err(|error| {
+                    #[cfg(test)]
+                    super::super::diagnostics::report("publish.chmod_receipt", &error);
+                    #[cfg(not(test))]
+                    let _ = error;
+                    CacheError::Filesystem(FsError::Io)
+                })?;
             sync_file(&file).map_err(CacheError::Filesystem)?;
         }
         let child = self
@@ -319,9 +355,13 @@ fn verify_files(
 }
 
 fn check_readonly(file: &File, mode: u32) -> Result<(), CacheError> {
-    let metadata = file
-        .metadata()
-        .map_err(|_| CacheError::Filesystem(FsError::Io))?;
+    let metadata = file.metadata().map_err(|error| {
+        #[cfg(test)]
+        super::super::diagnostics::report("readonly.metadata", &error);
+        #[cfg(not(test))]
+        let _ = error;
+        CacheError::Filesystem(FsError::Io)
+    })?;
     if metadata.mode() & 0o7777 != mode {
         return Err(CacheError::Filesystem(FsError::UnsafeEntry));
     }
@@ -348,11 +388,20 @@ fn freeze_directory(directory: &ArtifactDir) -> Result<(), CacheError> {
     directory
         .directory
         .set_permissions(std::fs::Permissions::from_mode(0o500))
-        .map_err(|_| CacheError::Filesystem(FsError::Io))?;
-    directory
-        .directory
-        .sync_all()
-        .map_err(|_| CacheError::Filesystem(FsError::Io))
+        .map_err(|error| {
+            #[cfg(test)]
+            super::super::diagnostics::report("freeze.chmod_directory", &error);
+            #[cfg(not(test))]
+            let _ = error;
+            CacheError::Filesystem(FsError::Io)
+        })?;
+    directory.directory.sync_all().map_err(|error| {
+        #[cfg(test)]
+        super::super::diagnostics::report("freeze.sync_directory", &error);
+        #[cfg(not(test))]
+        let _ = error;
+        CacheError::Filesystem(FsError::Io)
+    })
 }
 
 fn create_new(directory: &ArtifactDir, name: &str) -> Result<File, FsError> {
@@ -380,9 +429,21 @@ fn create_new(directory: &ArtifactDir, name: &str) -> Result<File, FsError> {
 
 fn sync_file(file: &File) -> Result<(), FsError> {
     #[cfg(target_os = "macos")]
-    rustix::fs::fcntl_fullfsync(file).map_err(|_| FsError::Io)?;
+    rustix::fs::fcntl_fullfsync(file).map_err(|error| {
+        #[cfg(test)]
+        super::super::diagnostics::report("artifact.fcntl_fullfsync", &std::io::Error::from(error));
+        #[cfg(not(test))]
+        let _ = error;
+        FsError::Io
+    })?;
     #[cfg(target_os = "linux")]
-    file.sync_all().map_err(|_| FsError::Io)?;
+    file.sync_all().map_err(|error| {
+        #[cfg(test)]
+        super::super::diagnostics::report("artifact.fsync", &error);
+        #[cfg(not(test))]
+        let _ = error;
+        FsError::Io
+    })?;
     Ok(())
 }
 

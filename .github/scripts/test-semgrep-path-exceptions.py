@@ -25,7 +25,7 @@ class InventoryTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         subprocess.run(["git", "init", "-q", str(self.root)], check=True)
-        for filename in {row[0] for row in gate.NEW + gate.OLD} | {gate.DOC}:
+        for filename in {row[0] for row in gate.NEW + gate.OLD + gate.CANDLE} | {gate.DOC}:
             target = self.root / filename
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(gate.ROOT / filename, target)
@@ -89,6 +89,42 @@ class InventoryTests(unittest.TestCase):
 
     def test_exact_inventory_passes(self):
         gate.check_inventory(self.root)
+
+    def test_candle_inventory_is_exactly_the_seven_approved_apis(self):
+        self.assertEqual(len(gate.CANDLE), 7)
+        self.assertEqual([row[1] for row in gate.CANDLE], [
+            "read_npy", "read_npz", "read_npz_by_name", "write_npy", "write_npz",
+            "load_imatrix", "load",
+        ])
+
+    def test_each_candle_contract_rejects_mutations(self):
+        for filename, function, sink, reasons in gate.CANDLE:
+            target = self.root / filename
+            original = target.read_text()
+            annotation = f"// nosemgrep: {gate.RULE}"
+            for label, before, after in [
+                ("sink", sink, "unexpected_sink();"),
+                ("function", f"fn {function}<", f"fn renamed_{function}<"),
+                *[(f"reason {index}", reason, "Unapproved reason.")
+                  for index, reason in enumerate(reasons)],
+                ("missing annotation", annotation, "// removed"),
+                ("rule", annotation, "// nosemgrep: other.rule"),
+                ("extra rule", annotation, annotation + ", other.rule"),
+                ("detached", sink, "// intervening comment\n" + sink),
+                ("moved", sink, "let moved = 1;\n" + sink),
+                ("extra annotation", sink, sink + "\n" + annotation + "\nunapproved();"),
+            ]:
+                with self.subTest(function=function, mutation=label):
+                    # Scope replacements to this function, including duplicate archive sinks.
+                    start = original.index(f"fn {function}<")
+                    prefix, body = original[:start], original[start:]
+                    self.assertIn(before, body)
+                    target.write_text(prefix + body.replace(before, after, 1))
+                    try:
+                        with self.assertRaises(ValueError):
+                            gate.check_inventory(self.root)
+                    finally:
+                        target.write_text(original)
 
     def test_missing_new_annotation_fails(self):
         self.mutate(gate.NEW[0][0], f"// nosemgrep: {gate.RULE}", "// removed")

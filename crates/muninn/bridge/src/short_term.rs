@@ -15,6 +15,35 @@ pub async fn dispatch(state: &BridgeState, method: &str, args: &Args) -> Option<
     let memory = state.memory.short_term();
     let result = match method {
         "add_message" => add_message(state, args).await,
+        "create_observation" => {
+            async {
+                let observation = memory
+                    .create_observation(
+                        args.uuid("conversation_id")?,
+                        &args.string("content")?,
+                        args.opt_string("user_identifier")?.as_deref(),
+                    )
+                    .await?;
+                Ok(Reply::Json(wire::observation(&observation)))
+            }
+            .await
+        }
+        "get_observations" => {
+            async {
+                let observations = memory
+                    .get_observations(
+                        args.uuid("conversation_id")?,
+                        args.opt_string("user_identifier")?.as_deref(),
+                        args.opt_i64("limit")?,
+                        args.opt_i64("offset")?,
+                    )
+                    .await?;
+                Ok(Reply::Json(Value::Array(
+                    observations.iter().map(wire::observation).collect(),
+                )))
+            }
+            .await
+        }
         "get_conversation" => {
             async {
                 let session_id = args.string("session_id")?;

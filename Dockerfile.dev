@@ -27,6 +27,8 @@ COPY pnpm-workspace.yaml ./
 COPY rust-toolchain.toml ./
 COPY crates crates
 COPY apps apps
+# Cargo resolves the workspace's local candle-core patch even for a Rook-only build.
+COPY third_party/candle-core third_party/candle-core
 
 # Install workspace dashboard deps from root
 RUN pnpm install --frozen-lockfile --ignore-scripts

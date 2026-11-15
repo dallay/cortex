@@ -305,7 +305,7 @@ async fn enrichment_and_geocoding_write_documented_properties_and_fail_closed() 
         .iter()
         .any(|name| name == "entity_location_idx"));
 
-    let memory = LongTermMemory::new(store.clone(), None, false);
+    let memory = LongTermMemory::new(store.clone(), None, false).unwrap();
     let (target, _) = memory
         .add_entity(
             "zzzzzzzzzzzzzzzzzzzz",

@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0",
+  "corpus_id": "muninn-h5-literal-draft-v1",
+  "queries": [
+    {
+      "id": "q-lit-01",
+      "text": "Authored query (not copied from source): Where do the Muninn documents state boundaries for ownership, optional processing, schema setup, and retrieval behavior?",
+      "candidates": [
+        {
+          "id": "d-lit-01",
+          "text": "`add_preference` accepts optional `about_entities` (list of UUID strings).\nAbsent, `null` and `[]` are equivalent and produce no edge."
+        },
+        {
+          "id": "d-lit-02",
+          "text": "The `EntityEnrichmentStore` port keeps default implementations that return\n`not supported: entity enrichment properties` and\n`not supported: entity location coordinates`, so a client configured without a\nwriter still refuses loudly (`501`) instead of silently discarding data."
+        },
+        {
+          "id": "d-lit-03",
+          "text": "The pinned deployment measured by GM-04 runs without the optional rapidfuzz\nextra, so the reference's ImportError path disables fuzzy scoring entirely;\nthe frozen GM-04 fixture therefore declares `use_fuzzy_matching: false` for\nboth engines (the product honors it, the reference reaches the same state\nthrough its missing dependency). The authority for the algorithm itself is"
+        },
+        {
+          "id": "d-lit-04",
+          "text": "For `get_preferences_for` and its filtered variant:\n\n- A read for one owner returns only preferences reachable from that owner's\n  `User` node."
+        },
+        {
+          "id": "d-lit-05",
+          "text": "A conversation is identified by `(owner_scope, session_id)`. The same\n`session_id` can exist for two owners and for the ownerless namespace. Omitting\n`user_identifier` selects only the latter; it never selects every owner.\n\n`OwnerScope` keeps the exact identifier and rejects empty or whitespace-only"
+        },
+        {
+          "id": "d-lit-06",
+          "text": "`POST /add_preference` retains its optional UUID-list `applies_to` input.\nEvery explicit target is looked up before embeddings, duplicate lookup, or any\nwrites. One missing target rejects the entire request with HTTP 404 and\n`not found: entity <UUID>`, even in a mixed valid/missing list or when the\npreference would otherwise deduplicate. Successful new and deduplicated"
+        },
+        {
+          "id": "d-lit-07",
+          "text": "This document describes v1 migrations and schema initialization. It does not\ndeclare H1 or the remaining Muninn requirements accepted. Migrations run no\ninference and do not depend on embedding-provider identity."
+        },
+        {
+          "id": "d-lit-08",
+          "text": "Each message with a vector retains its identity and dimensions. Search requires\nthe same identity, together with the owner and requested filters, before sorting\nand limiting. Legacy vectors without identity are not mixed with new data.\nThey are neither automatically migrated nor deleted."
+        },
+        {
+          "id": "d-lit-09",
+          "text": "1. No Muninn service parity or Bronze→Platinum acceptance exists.\n2. The deletion discrepancy needs separate characterization; the oracle must\n   not be changed to force the expected result.\n3. Retrieval, real embeddings, LLMs, external integrations, and advanced paths\n   were not executed. The G0 API unit pins their references, but does not run them."
+        }
+      ]
+    }
+  ]
+}

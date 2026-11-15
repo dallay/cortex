@@ -2,6 +2,7 @@
 //!
 //! This application-facing contract does not depend on Candle or Neo4j.
 
+use serde::Serialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
@@ -28,8 +29,33 @@ pub trait EmbeddingPort {
     /// Identifier of the vector space used by this port.
     fn space_id(&self) -> &str;
 
+    /// Returns allowlisted metadata retained by this encoder instance, when available.
+    fn diagnostic_identity(&self) -> Option<EncoderIdentity> {
+        None
+    }
+
     /// Encodes text into one canonical vector.
     fn encode(&self, text: &str) -> Result<Vec<f32>, EmbeddingError>;
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct EncoderIdentity {
+    pub declared: DeclaredEncoderIdentity,
+    pub loaded: LoadedEncoderIdentity,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct DeclaredEncoderIdentity {
+    pub artifact_bundle_id: String,
+    pub model_id: String,
+    pub revision: String,
+    pub space_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct LoadedEncoderIdentity {
+    pub validated_profile: String,
+    pub config_sha256: String,
 }
 
 /// Validates the dimensions and finite values of a canonical vector.
@@ -93,6 +119,21 @@ impl CandidateMiniLmEmbeddingAdapter {
 impl EmbeddingPort for CandidateMiniLmEmbeddingAdapter {
     fn space_id(&self) -> &str {
         &self.space_id
+    }
+
+    fn diagnostic_identity(&self) -> Option<EncoderIdentity> {
+        Some(EncoderIdentity {
+            declared: DeclaredEncoderIdentity {
+                artifact_bundle_id: self.encoder.artifact_bundle_id().to_owned(),
+                model_id: self.encoder.model_id().to_owned(),
+                revision: self.encoder.revision().to_owned(),
+                space_id: self.space_id.clone(),
+            },
+            loaded: LoadedEncoderIdentity {
+                validated_profile: self.encoder.validated_profile().to_owned(),
+                config_sha256: self.encoder.config_sha256().to_owned(),
+            },
+        })
     }
 
     fn encode(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {

@@ -406,6 +406,9 @@ fn convert_back(tensor: &Tensor) -> Result<Vec<u8>> {
 }
 
 pub fn load<P: AsRef<Path>>(filename: P, device: &Device) -> Result<HashMap<String, Tensor>> {
+    // Explicit caller-selected input file, not a root-confined API. Callers must authorize untrusted paths.
+    // Cortex MiniLM uses verified byte buffers instead of this path-based loader.
+    // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
     let data = std::fs::read(filename.as_ref())?;
     load_buffer(&data[..], device)
 }

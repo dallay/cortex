@@ -33,9 +33,24 @@ pub struct MemoryClient {
 }
 
 impl MemoryClient {
-    pub fn new(ports: MemoryPorts, options: &MemoryOptions) -> Self {
+    pub fn new(ports: MemoryPorts, options: &MemoryOptions) -> muninn_core::MemoryResult<Self> {
+        // Validación antes de construir cualquier tier o etapa de ingestión.
+        LongTermMemory::new(
+            ports.long_term.clone(),
+            ports.embedder.clone(),
+            options.multi_tenant,
+        )?;
+        Ok(Self::build(ports, options, true))
+    }
+
+    /// Conserva consultas con adaptadores que no implementan ingestión atómica.
+    pub fn read_only(ports: MemoryPorts, options: &MemoryOptions) -> Self {
+        Self::build(ports, options, false)
+    }
+
+    fn build(ports: MemoryPorts, options: &MemoryOptions, writes: bool) -> Self {
         let ingestion = crate::extraction::IngestionExtraction {
-            long_term: LongTermMemory::new(
+            long_term: LongTermMemory::read_only(
                 ports.long_term.clone(),
                 ports.embedder.clone(),
                 options.multi_tenant,
@@ -48,7 +63,7 @@ impl MemoryClient {
                 ports.embedder.clone(),
                 options.multi_tenant,
             ),
-            long_term: LongTermMemory::new(
+            long_term: LongTermMemory::read_only(
                 ports.long_term,
                 ports.embedder.clone(),
                 options.multi_tenant,
@@ -56,6 +71,11 @@ impl MemoryClient {
             reasoning: ReasoningMemory::new(ports.reasoning, ports.embedder, options.multi_tenant),
             cypher_query: ports.cypher_query,
         };
+        let mut ingestion = ingestion;
+        if writes {
+            client.long_term.enable_preference_writes();
+            ingestion.long_term.enable_preference_writes();
+        }
         client.short_term.ingestion = Some(ingestion);
         client
     }

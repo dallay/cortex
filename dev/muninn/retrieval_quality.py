@@ -320,6 +320,86 @@ def evaluate_query(
     }
 
 
+def evaluate_ann_exact_query(
+    ann: list[dict[str, object]], exact: list[dict[str, object]], k: int
+) -> dict[str, float | int | None]:
+    """Compare one query's direct ANN and exact outputs using IDs only."""
+    if type(k) is not int or k <= 0:
+        raise ValueError("K must be a positive integer")
+
+    def result_ids(results: object, name: str) -> list[str]:
+        if type(results) is not list:
+            raise ValueError(f"{name} results must be a list")
+        ids: list[str] = []
+        seen: set[str] = set()
+        for result in results:
+            if type(result) is not dict or "id" not in result:
+                raise ValueError(f"each {name} result must contain an ID")
+            document_id = result["id"]
+            if type(document_id) is not str or not document_id:
+                raise ValueError(f"{name} result IDs must be non-empty strings")
+            if document_id in seen:
+                raise ValueError(f"duplicate {name} result ID: {document_id}")
+            seen.add(document_id)
+            ids.append(document_id)
+        return ids
+
+    ann_ids = result_ids(ann, "ANN")[:k]
+    exact_ids = result_ids(exact, "exact")[:k]
+    if not exact_ids:
+        return {"exact_top_k_recall": None, "ordered_top_k_match": None}
+    return {
+        "exact_top_k_recall": len(set(ann_ids) & set(exact_ids)) / len(exact_ids),
+        "ordered_top_k_match": int(ann_ids == exact_ids),
+    }
+
+
+def serialize_gate_metrics(
+    ann_queries: list[dict[str, object]],
+    quality_queries: list[dict[str, object]],
+    k: int,
+) -> dict[str, dict[str, object]]:
+    """Serialize per-query metrics under independent gates, without acceptance logic."""
+    if type(k) is not int or k <= 0:
+        raise ValueError("K must be a positive integer")
+
+    def unique_queries(queries: object, name: str) -> dict[str, dict[str, object]]:
+        if type(queries) is not list:
+            raise ValueError(f"{name} queries must be a list")
+        output: dict[str, dict[str, object]] = {}
+        for query in queries:
+            if type(query) is not dict or type(query.get("query_id")) is not str or not query["query_id"]:
+                raise ValueError(f"each {name} query must have a non-empty query_id")
+            if query["query_id"] in output:
+                raise ValueError(f"duplicate {name} query ID: {query['query_id']}")
+            output[query["query_id"]] = query
+        return output
+
+    ann_by_id = unique_queries(ann_queries, "ANN–exact")
+    quality_by_id = unique_queries(quality_queries, "quality")
+    ann_rows = []
+    for query_id, query in ann_by_id.items():
+        if set(query) != {"query_id", "ann", "exact"}:
+            raise ValueError("ANN–exact query must contain query_id, ann, and exact")
+        ann_rows.append({"query_id": query_id, "metrics": evaluate_ann_exact_query(query["ann"], query["exact"], k)})
+
+    quality_rows = []
+    for query_id, query in quality_by_id.items():
+        if set(query) != {"query_id", "candidates", "ranked"}:
+            raise ValueError("quality query must contain query_id, candidates, and ranked")
+        measured = evaluate_query(query["candidates"], query["ranked"], (k,))
+        quality_rows.append({"query_id": query_id, "metrics": {
+            "recall_at_k": measured["recall_at_k"],
+            "ndcg_at_k": measured["ndcg_at_k"],
+            "mrr": measured["mrr"],
+            "mrr_classification": "descriptive_only",
+        }})
+    return {
+        "ann_exact": {"k": k, "per_query": ann_rows},
+        "absolute_relevance": {"k": k, "per_query": quality_rows},
+    }
+
+
 _REQUIRED_PROVENANCE = (
     "corpus_id",
     "corpus_hash",
@@ -421,3 +501,36 @@ def compose_report(
             "ndcg_at_k": undefined_ndcg,
         },
     }
+
+
+def gate_result(*, protocol_complete: bool, approved: bool, provenance_status: str,
+                rule_satisfied: bool | None) -> str:
+    """Return one gate's status; no cross-gate or global acceptance is possible."""
+    if type(protocol_complete) is not bool or type(approved) is not bool:
+        raise ValueError("protocol_complete and approved must be booleans")
+    if provenance_status not in {"verified", "partial", "insufficient"}:
+        raise ValueError("invalid gate provenance status")
+    if rule_satisfied is not None and type(rule_satisfied) is not bool:
+        raise ValueError("rule_satisfied must be true, false, or None")
+    if not protocol_complete or not approved or provenance_status != "verified":
+        return "blocked"
+    if rule_satisfied is None:
+        # Undefined-result handling is a required per-run decision. Do not infer it here.
+        return "blocked"
+    return "PASS" if rule_satisfied else "FAIL"
+
+
+_H5_GATES = {"ann_exact", "absolute_relevance"}
+_GATE_INPUTS = {"protocol_complete", "approved", "provenance_status", "rule_satisfied"}
+
+
+def evaluate_gates(gates: dict[str, dict[str, object]]) -> dict[str, str]:
+    """Evaluate supplied gates independently; no cross-gate or global status is returned."""
+    if type(gates) is not dict or not set(gates).issubset(_H5_GATES):
+        raise ValueError("gates must contain only known H5 gates")
+    result: dict[str, str] = {}
+    for gate, inputs in gates.items():
+        if type(inputs) is not dict or set(inputs) != _GATE_INPUTS:
+            raise ValueError(f"{gate} eligibility inputs are incomplete or unknown")
+        result[gate] = gate_result(**inputs)
+    return result

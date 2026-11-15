@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use muninn_application::{SearchMessagesOptions, ShortTermMemory};
 use muninn_core::{
-    model::{Conversation, Message, MessageRole, Metadata, NewMessage, SessionInfo},
+    model::{Conversation, Message, MessageRole, Metadata, NewMessage, Observation, SessionInfo},
     ports::{
         Embedder, EmbeddingIdentity, KeyedMessage, MessageRecord, OwnerScope, ScoredMessage,
         SessionQuery, ShortTermStore,
@@ -21,6 +21,7 @@ struct Store {
     ensure_calls: AtomicUsize,
     append_calls: AtomicUsize,
     records: Mutex<Vec<MessageRecord>>,
+    observations: Mutex<Vec<Observation>>,
     conversation: Mutex<Option<Conversation>>,
     search_hits: Mutex<Vec<ScoredMessage>>,
     last_limit: Mutex<Option<i64>>,
@@ -35,6 +36,7 @@ impl Default for Store {
             ensure_calls: AtomicUsize::new(0),
             append_calls: AtomicUsize::new(0),
             records: Mutex::new(Vec::new()),
+            observations: Mutex::new(Vec::new()),
             conversation: Mutex::new(None),
             search_hits: Mutex::new(Vec::new()),
             last_limit: Mutex::new(None),
@@ -127,6 +129,53 @@ impl ShortTermStore for Store {
             .unwrap()
             .clone()
             .filter(|conversation| conversation.id == id))
+    }
+
+    async fn append_observation(
+        &self,
+        observation: &Observation,
+        scope: &OwnerScope,
+    ) -> MemoryResult<()> {
+        *self.last_scope.lock().unwrap() = Some(scope.clone());
+        if !self
+            .conversation
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|conversation| conversation.id == observation.conversation_id)
+        {
+            return Err(MemoryError::not_found("conversation"));
+        }
+        self.observations.lock().unwrap().push(observation.clone());
+        Ok(())
+    }
+
+    async fn list_observations(
+        &self,
+        conversation_id: Uuid,
+        scope: &OwnerScope,
+        limit: i64,
+        offset: i64,
+    ) -> MemoryResult<Vec<Observation>> {
+        *self.last_scope.lock().unwrap() = Some(scope.clone());
+        *self.last_limit.lock().unwrap() = Some(limit);
+        if !self
+            .conversation
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|conversation| conversation.id == conversation_id)
+        {
+            return Err(MemoryError::not_found("conversation"));
+        }
+        let observations = self.observations.lock().unwrap();
+        Ok(observations
+            .iter()
+            .filter(|observation| observation.conversation_id == conversation_id)
+            .skip(offset as usize)
+            .take(limit as usize)
+            .cloned()
+            .collect())
     }
 
     async fn list_conversations(
@@ -445,6 +494,124 @@ async fn context_combines_recent_conversation_and_scoped_search_results() {
 
     let empty = memory.get_context("query", None, 5).await.unwrap();
     assert!(empty.contains("Relevant Past Messages"));
+}
+
+#[tokio::test]
+async fn observations_are_appended_and_listed_with_owner_scope_and_pagination() {
+    let store = Arc::new(Store::default());
+    let memory = ShortTermMemory::new(store.clone(), None, false);
+    let conversation_id = store.conversation_id;
+    *store.conversation.lock().unwrap() = Some(Conversation {
+        id: conversation_id,
+        session_id: "observations".into(),
+        title: None,
+        messages: Vec::new(),
+        created_at: Utc::now(),
+        updated_at: None,
+        user_identifier: Some("owner-observation".into()),
+    });
+
+    let first = memory
+        .create_observation(conversation_id, "first", Some("owner-observation"))
+        .await
+        .unwrap();
+    let second = memory
+        .create_observation(conversation_id, "second", Some("owner-observation"))
+        .await
+        .unwrap();
+
+    assert_ne!(first.id, second.id);
+    assert_eq!(first.content, "first");
+    assert_eq!(second.content, "second");
+    assert_eq!(first.conversation_id, conversation_id);
+    assert_eq!(second.conversation_id, conversation_id);
+    assert_eq!(
+        memory
+            .get_observations(conversation_id, Some("owner-observation"), None, None)
+            .await
+            .unwrap(),
+        vec![first.clone(), second.clone()]
+    );
+    assert_eq!(
+        memory
+            .get_observations(conversation_id, Some("owner-observation"), Some(1), Some(1))
+            .await
+            .unwrap(),
+        vec![second]
+    );
+    assert_eq!(
+        store.last_scope.lock().unwrap().as_ref().unwrap().as_str(),
+        Some("owner-observation")
+    );
+}
+
+#[tokio::test]
+async fn observation_content_and_pagination_are_validated() {
+    let store = Arc::new(Store::default());
+    let memory = ShortTermMemory::new(store.clone(), None, false);
+    let conversation_id = store.conversation_id;
+    *store.conversation.lock().unwrap() = Some(Conversation {
+        id: conversation_id,
+        session_id: "observations".into(),
+        title: None,
+        messages: Vec::new(),
+        created_at: Utc::now(),
+        updated_at: None,
+        user_identifier: Some("owner".into()),
+    });
+
+    for invalid in ["", "   ", "\n\t"] {
+        assert!(memory
+            .create_observation(conversation_id, invalid, Some("owner"))
+            .await
+            .is_err());
+    }
+    assert!(memory
+        .create_observation(conversation_id, &"x".repeat(20_000), Some("owner"))
+        .await
+        .is_ok());
+
+    for (limit, offset) in [(Some(0), None), (Some(501), None), (None, Some(-1))] {
+        assert!(memory
+            .get_observations(conversation_id, Some("owner"), limit, offset)
+            .await
+            .is_err());
+    }
+}
+
+#[tokio::test]
+async fn observations_require_owner_in_multi_tenant_mode_and_existing_conversation() {
+    let store = Arc::new(Store::default());
+    let memory = ShortTermMemory::new(store.clone(), None, true);
+    let conversation_id = store.conversation_id;
+    *store.conversation.lock().unwrap() = Some(Conversation {
+        id: conversation_id,
+        session_id: "observations".into(),
+        title: None,
+        messages: Vec::new(),
+        created_at: Utc::now(),
+        updated_at: None,
+        user_identifier: Some("owner".into()),
+    });
+
+    assert!(memory
+        .create_observation(conversation_id, "note", None)
+        .await
+        .is_err());
+    assert!(memory
+        .get_observations(conversation_id, None, None, None)
+        .await
+        .is_err());
+
+    let absent = Uuid::new_v4();
+    assert!(memory
+        .create_observation(absent, "note", Some("owner"))
+        .await
+        .is_err());
+    assert!(memory
+        .get_observations(absent, Some("owner"), None, None)
+        .await
+        .is_err());
 }
 
 #[tokio::test]

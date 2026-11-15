@@ -54,6 +54,7 @@ async fn extraction_mentions_provenance_idempotency_and_failure_atomicity() {
         },
         &MemoryOptions::default(),
     )
+    .unwrap()
     .with_extractor(Arc::new(FailingStage));
     let before = snapshot(&client).await;
     let error = memory

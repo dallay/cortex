@@ -9,6 +9,7 @@ pub mod client;
 pub mod long_term;
 pub mod maintenance;
 mod migrations;
+mod preference_worker;
 pub mod queries;
 pub mod query;
 pub mod reasoning;

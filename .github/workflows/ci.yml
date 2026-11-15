@@ -624,11 +624,25 @@ jobs:
   coverage:
     name: Coverage (Rust)
     runs-on: ubuntu-latest
+    container:
+      image: node:24-bookworm
+    services:
+      neo4j:
+        image: neo4j:5.26-community@sha256:414adfe41c6ff32abb752be37f265c77607c166cab298f65a917fc4f05776218
+        env:
+          NEO4J_AUTH: neo4j/${{ github.run_id }}-${{ github.run_attempt }}-coverage
+        options: >-
+          --tmpfs /data:rw,noexec,nosuid,size=1g
+          --tmpfs /logs:rw,noexec,nosuid,size=256m
     needs: [ changes, build-dashboard, test ]
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
     permissions:
       contents: read
       statuses: write
+    env:
+      NEO4J_FIXTURE_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}-coverage
+      MUNINN_FIXTURE_URI: bolt://neo4j:7687
+      MUNINN_FIXTURE_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}-coverage
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -638,20 +652,51 @@ jobs:
         with:
           name: dashboard-dist
           path: apps/rook/dashboard/dist
-      - name: Install D-Bus development libraries
-        run: sudo apt-get update && sudo apt-get install --yes libdbus-1-dev pkg-config
+      - name: Install coverage runner tools and D-Bus libraries
+        run: apt-get update && apt-get install --yes ca-certificates curl git jq libdbus-1-dev pkg-config
       - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
       - name: Cache cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
       - name: Install cargo-llvm-cov
         # Pinned because `cargo install` ignores registry.global-min-publish-age.
         run: cargo install cargo-llvm-cov --locked --version 0.9.1
+      - name: Wait for Neo4j readiness and verify authentication
+        run: |
+          attempt=0
+          while [ "$attempt" -lt 60 ]; do
+            if curl --silent --show-error --fail-with-body \
+              --user "neo4j:$NEO4J_FIXTURE_PASSWORD" \
+              --header 'Content-Type: application/json' \
+              --data '{"statements":[{"statement":"RETURN 1"}]}' \
+              http://neo4j:7474/db/neo4j/tx/commit \
+              | jq -e '.errors | length == 0' >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+            attempt=$((attempt + 1))
+          done
+          echo 'Neo4j did not become ready with valid authentication' >&2
+          exit 1
       - name: Generate coverage report
         run: |
           cargo llvm-cov clean --workspace
           cargo llvm-cov --workspace --all-features --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn --no-report
           cargo llvm-cov -p muninn-providers -p muninn --no-report
+          cargo llvm-cov -p muninn-neo4j --test preference_atomic --no-report -- --include-ignored
+          # Report existing profiles only; do not rerun tests. Keep the gate last.
+          echo '### Rust global line coverage (minimum 87%)' >> "$GITHUB_STEP_SUMMARY"
+          echo '```text' >> "$GITHUB_STEP_SUMMARY"
+          cargo llvm-cov report | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
           cargo llvm-cov report --fail-under-lines 87 --lcov --output-path lcov.info
+      - name: Retain Rust coverage report artifact
+        if: ${{ always() && hashFiles('lcov.info') != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-rust
+          path: lcov.info
+          retention-days: 7
+          if-no-files-found: error
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
         with:

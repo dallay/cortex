@@ -10,8 +10,8 @@ use muninn_application::{MemoryClient, MemoryOptions, MemoryPorts};
 use muninn_bridge::{router, BridgeState};
 use muninn_core::model::{
     Conversation, Entity, EntityGraph, EntityMention, EntityRef, Fact, Message, Metadata,
-    Preference, ReasoningStep, ReasoningStepWithContext, ReasoningTrace, Relationship, SessionInfo,
-    ToolCall, ToolStats,
+    Observation, Preference, ReasoningStep, ReasoningStepWithContext, ReasoningTrace, Relationship,
+    SessionInfo, ToolCall, ToolStats,
 };
 use muninn_core::ports::{
     ConversationStep, EmbeddingIdentity, EntityUpdate, GraphMaintenance, KeyedMessage,
@@ -36,6 +36,11 @@ enum UnreachableStore {
     Search {
         owner: Option<String>,
         session: Option<String>,
+    },
+    Observations {
+        calls: Arc<Mutex<Vec<Observation>>>,
+        conversation_id: Uuid,
+        owner: OwnerScope,
     },
 }
 
@@ -287,6 +292,49 @@ impl ShortTermStore for UnreachableStore {
         _: &OwnerScope,
     ) -> MemoryResult<Option<Conversation>> {
         unreachable!()
+    }
+    async fn append_observation(
+        &self,
+        observation: &Observation,
+        scope: &OwnerScope,
+    ) -> MemoryResult<()> {
+        let Self::Observations {
+            calls,
+            conversation_id,
+            owner,
+        } = self
+        else {
+            unreachable!()
+        };
+        assert_eq!(observation.conversation_id, *conversation_id);
+        assert_eq!(scope, owner);
+        calls.lock().unwrap().push(observation.clone());
+        Ok(())
+    }
+    async fn list_observations(
+        &self,
+        id: Uuid,
+        scope: &OwnerScope,
+        limit: i64,
+        offset: i64,
+    ) -> MemoryResult<Vec<Observation>> {
+        let Self::Observations {
+            calls,
+            conversation_id,
+            owner,
+        } = self
+        else {
+            unreachable!()
+        };
+        assert_eq!(id, *conversation_id);
+        assert_eq!(scope, owner);
+        let calls = calls.lock().unwrap();
+        Ok(calls
+            .iter()
+            .skip(usize::try_from(offset).unwrap())
+            .take(usize::try_from(limit).unwrap())
+            .cloned()
+            .collect())
     }
     async fn list_conversations(
         &self,
@@ -616,11 +664,39 @@ impl ReasoningStore for UnreachableReasoning {
     }
 }
 
+fn observation_state(
+    conversation_id: Uuid,
+    owner: &str,
+) -> (Arc<BridgeState>, Arc<Mutex<Vec<Observation>>>) {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let memory = MemoryClient::read_only(
+        MemoryPorts {
+            short_term: Arc::new(UnreachableStore::Observations {
+                calls: calls.clone(),
+                conversation_id,
+                owner: OwnerScope::owned(owner).unwrap(),
+            }),
+            long_term: Arc::new(UnreachableLongTerm),
+            reasoning: Arc::new(UnreachableReasoning),
+            embedder: None,
+            cypher_query: None,
+        },
+        &MemoryOptions::default(),
+    );
+    (
+        Arc::new(BridgeState {
+            memory: Arc::new(memory),
+            maintenance: None,
+        }),
+        calls,
+    )
+}
+
 fn state(
     maintenance: Option<Arc<dyn GraphMaintenance>>,
     cypher_query: Option<Arc<dyn CypherQuery>>,
 ) -> Arc<BridgeState> {
-    let memory = MemoryClient::new(
+    let memory = MemoryClient::read_only(
         MemoryPorts {
             short_term: Arc::new(UnreachableStore::Never),
             long_term: Arc::new(UnreachableLongTerm),
@@ -650,6 +726,82 @@ async fn request(state: Arc<BridgeState>, method: &str, body: &str) -> axum::htt
         )
         .await
         .unwrap()
+}
+
+#[tokio::test]
+async fn observation_bridge_creates_and_lists_wire_records_with_pagination() {
+    let conversation_id = Uuid::new_v4();
+    let (state, calls) = observation_state(conversation_id, "bridge-owner");
+    let created = request(
+        state.clone(),
+        "create_observation",
+        &format!(r#"{{"conversation_id":"{conversation_id}","content":"note","user_identifier":"bridge-owner"}}"#),
+    ).await;
+    assert_eq!(created.status(), StatusCode::OK);
+    let created: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(created.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(created["conversation_id"], conversation_id.to_string());
+    assert_eq!(created["content"], "note");
+    assert!(created["id"].as_str().is_some());
+    assert!(created["created_at"].as_str().is_some());
+
+    let second = request(
+        state.clone(),
+        "create_observation",
+        &format!(r#"{{"conversation_id":"{conversation_id}","content":"second","user_identifier":"bridge-owner"}}"#),
+    ).await;
+    assert_eq!(second.status(), StatusCode::OK);
+    let listed = request(
+        state,
+        "get_observations",
+        &format!(r#"{{"conversation_id":"{conversation_id}","user_identifier":"bridge-owner","limit":1,"offset":1}}"#),
+    ).await;
+    assert_eq!(listed.status(), StatusCode::OK);
+    let listed: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(listed.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+    assert_eq!(listed[0]["content"], "second");
+    assert_eq!(calls.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn observation_bridge_validates_ids_content_and_pagination_before_storage() {
+    let state = state(None, None);
+    assert_eq!(
+        post(
+            state.clone(),
+            "create_observation",
+            r#"{"conversation_id":"not-a-uuid","content":"note"}"#,
+        )
+        .await,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        post(
+            state.clone(),
+            "create_observation",
+            r#"{"conversation_id":"a09c3932-1714-4569-9f86-8ff3f3ca8f0a","content":"  "}"#,
+        )
+        .await,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        post(
+            state,
+            "get_observations",
+            r#"{"conversation_id":"a09c3932-1714-4569-9f86-8ff3f3ca8f0a","limit":501}"#,
+        )
+        .await,
+        StatusCode::BAD_REQUEST
+    );
 }
 
 #[tokio::test]
@@ -747,7 +899,7 @@ async fn missing_arguments_are_bad_requests() {
 
 fn add_state(calls: Arc<Mutex<AddCalls>>, embedder: Arc<RecordingEmbedder>) -> Arc<BridgeState> {
     Arc::new(BridgeState {
-        memory: Arc::new(MemoryClient::new(
+        memory: Arc::new(MemoryClient::read_only(
             MemoryPorts {
                 short_term: Arc::new(UnreachableStore::Add {
                     calls,
@@ -847,7 +999,7 @@ async fn add_message_propagates_owner_and_preserves_absent_owner() {
     ] {
         let calls = Arc::new(Mutex::new(AddCalls::default()));
         let conversation_id = Uuid::new_v4();
-        let memory = Arc::new(MemoryClient::new(
+        let memory = Arc::new(MemoryClient::read_only(
             MemoryPorts {
                 short_term: Arc::new(UnreachableStore::Add {
                     calls: calls.clone(),
@@ -898,7 +1050,7 @@ async fn add_message_rejects_blank_owner_before_dependencies() {
     for multi_tenant in [false, true] {
         for owner in ["", " ", "\t\n"] {
             let calls = Arc::new(Mutex::new(AddCalls::default()));
-            let memory = Arc::new(MemoryClient::new(
+            let memory = Arc::new(MemoryClient::read_only(
                 MemoryPorts {
                     short_term: Arc::new(UnreachableStore::Add {
                         calls: calls.clone(),
@@ -939,7 +1091,7 @@ async fn add_message_rejects_blank_owner_before_dependencies() {
 async fn operation_key_replay_does_not_call_embedding_provider_again() {
     let calls = Arc::new(Mutex::new(AddCalls::default()));
     let embedding_calls = Arc::new(AtomicUsize::new(0));
-    let memory = Arc::new(MemoryClient::new(
+    let memory = Arc::new(MemoryClient::read_only(
         MemoryPorts {
             short_term: Arc::new(UnreachableStore::Add {
                 calls: calls.clone(),
@@ -1023,7 +1175,7 @@ async fn add_message_rejects_invalid_owner_types_before_store() {
 
 #[tokio::test]
 async fn multi_tenant_search_requires_owner_before_dependencies() {
-    let memory = MemoryClient::new(
+    let memory = MemoryClient::read_only(
         MemoryPorts {
             short_term: Arc::new(UnreachableStore::Never),
             long_term: Arc::new(UnreachableLongTerm),
@@ -1061,7 +1213,7 @@ async fn search_passes_optional_owner_and_session_to_store() {
             }
             for session in [None, Some("shared-session")] {
                 let state = Arc::new(BridgeState {
-                    memory: Arc::new(MemoryClient::new(
+                    memory: Arc::new(MemoryClient::read_only(
                         MemoryPorts {
                             short_term: Arc::new(UnreachableStore::Search {
                                 owner: owner.map(str::to_owned),
@@ -1088,7 +1240,7 @@ async fn search_passes_optional_owner_and_session_to_store() {
 
 #[tokio::test]
 async fn empty_batch_still_requires_valid_owner() {
-    let memory = MemoryClient::new(
+    let memory = MemoryClient::read_only(
         MemoryPorts {
             short_term: Arc::new(UnreachableStore::Never),
             long_term: Arc::new(UnreachableLongTerm),
@@ -1110,7 +1262,7 @@ async fn empty_batch_still_requires_valid_owner() {
 #[tokio::test]
 async fn list_conversations_preserves_owner_scope() {
     for multi_tenant in [false, true] {
-        let memory = Arc::new(MemoryClient::new(
+        let memory = Arc::new(MemoryClient::read_only(
             MemoryPorts {
                 short_term: Arc::new(UnreachableStore::List {
                     owner: OwnerScope::owned(" owner ").unwrap(),
@@ -1168,7 +1320,7 @@ async fn multi_tenant_short_term_routes_reject_invalid_scope_before_store() {
             Some(serde_json::json!(" \t")),
             Some(serde_json::json!(42)),
         ] {
-            let memory = Arc::new(MemoryClient::new(
+            let memory = Arc::new(MemoryClient::read_only(
                 MemoryPorts {
                     short_term: Arc::new(UnreachableStore::Never),
                     long_term: Arc::new(UnreachableLongTerm),
@@ -1263,7 +1415,7 @@ async fn invalid_bridge_arguments_fail_before_short_term_store_access() {
 
 #[tokio::test]
 async fn short_term_context_requires_scope_even_without_dependencies() {
-    let memory = MemoryClient::new(
+    let memory = MemoryClient::read_only(
         MemoryPorts {
             short_term: Arc::new(UnreachableStore::Never),
             long_term: Arc::new(UnreachableLongTerm),
@@ -1278,7 +1430,7 @@ async fn short_term_context_requires_scope_even_without_dependencies() {
 
 #[tokio::test]
 async fn short_term_context_preserves_exact_owner_in_search() {
-    let memory = MemoryClient::new(
+    let memory = MemoryClient::read_only(
         MemoryPorts {
             short_term: Arc::new(UnreachableStore::Search {
                 owner: Some(" owner ".into()),
@@ -1340,7 +1492,7 @@ fn ingest_state(
     extractor: Arc<dyn muninn_core::extraction::EntityExtractor>,
     embedder: Option<Arc<dyn muninn_core::ports::Embedder>>,
 ) -> Arc<BridgeState> {
-    let memory = MemoryClient::new(
+    let memory = MemoryClient::read_only(
         MemoryPorts {
             short_term: Arc::new(UnreachableStore::Add {
                 calls,
@@ -1719,7 +1871,7 @@ async fn extraction_unconfigured_preserves_operation_payload_metadata_owner_and_
             embedder: Some(Arc::new(FailOnSecondEmbedder(embedder_calls.clone()))),
             cypher_query: None,
         };
-        let mut memory = MemoryClient::new(ports, &MemoryOptions::default());
+        let mut memory = MemoryClient::read_only(ports, &MemoryOptions::default());
         if configured {
             memory = memory.with_extractor(stage.clone());
         }
@@ -2094,6 +2246,29 @@ fn timestamp(text: &str) -> chrono::DateTime<chrono::Utc> {
 
 #[async_trait]
 impl LongTermStore for RecordingLongTerm {
+    fn supports_atomic_preference_write(&self) -> bool {
+        true
+    }
+    async fn write_preference(
+        &self,
+        record: &Preference,
+        user: Option<&str>,
+        applies: &[Uuid],
+        about: &[Uuid],
+        _: f64,
+    ) -> MemoryResult<Preference> {
+        let stored = self.create_preference(record).await?;
+        if let Some(user) = user {
+            self.link_user_to_preference(user, stored.id).await?;
+        }
+        for id in applies {
+            self.link_preference_to_entity(stored.id, *id).await?;
+        }
+        for id in about {
+            self.link_preference_about_entity(stored.id, *id).await?;
+        }
+        Ok(stored)
+    }
     async fn resolution_candidates(
         &self,
         query: &muninn_core::resolution::ResolutionQuery<'_>,
@@ -2267,9 +2442,12 @@ impl LongTermStore for RecordingLongTerm {
         drop(edges);
         Ok(())
     }
-    async fn supersede_preference(&self, old_id: Uuid, new_id: Uuid) -> MemoryResult<()> {
+    async fn supersede_preference_atomic(&self, old_id: Uuid, new_id: Uuid) -> MemoryResult<()> {
         self.supersessions.lock().unwrap().push((old_id, new_id));
         Ok(())
+    }
+    async fn supersede_preference(&self, _: Uuid, _: Uuid) -> MemoryResult<()> {
+        panic!("el endpoint no debe usar la primitiva heredada")
     }
     async fn preferences_for(
         &self,
@@ -2331,6 +2509,24 @@ impl LongTermStore for RecordingLongTerm {
     }
 }
 
+#[test]
+fn client_rejects_missing_writer_capability_during_construction() {
+    let result = MemoryClient::new(
+        MemoryPorts {
+            short_term: Arc::new(UnreachableStore::Never),
+            long_term: Arc::new(UnreachableLongTerm),
+            reasoning: Arc::new(UnreachableReasoning),
+            embedder: None,
+            cypher_query: None,
+        },
+        &MemoryOptions::default(),
+    );
+    let error = result
+        .err()
+        .expect("el cliente escritor debe rechazar el puerto antiguo");
+    assert!(error.to_string().contains("atomic preference capability"));
+}
+
 fn state_with_long_term(long_term: Arc<dyn LongTermStore>) -> Arc<BridgeState> {
     let memory = MemoryClient::new(
         MemoryPorts {
@@ -2341,7 +2537,8 @@ fn state_with_long_term(long_term: Arc<dyn LongTermStore>) -> Arc<BridgeState> {
             cypher_query: None,
         },
         &MemoryOptions::default(),
-    );
+    )
+    .unwrap();
     Arc::new(BridgeState {
         memory: Arc::new(memory),
         maintenance: None,
@@ -3060,7 +3257,7 @@ impl muninn_core::ports::Embedder for CompletionEmbedder {
 
 fn completion_state(store: Arc<CompletionStore>) -> Arc<BridgeState> {
     Arc::new(BridgeState {
-        memory: Arc::new(MemoryClient::new(
+        memory: Arc::new(MemoryClient::read_only(
             MemoryPorts {
                 short_term: Arc::new(UnreachableStore::Never),
                 long_term: Arc::new(UnreachableLongTerm),

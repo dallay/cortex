@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.0",
+  "corpus_id": "muninn-h5-corpus-candidate-v1",
+  "queries": [
+    {
+      "id": "q-7f31",
+      "text": "Which documented Muninn design boundaries govern durable memory operations, owner scope, optional processing, and retrieval behavior?",
+      "candidates": [
+        {
+          "id": "d-01x",
+          "text": "Muninn can create an explicit, property-free link from a preference to an entity. The operation is idempotent and does not add a separate read path or bridge operation."
+        },
+        {
+          "id": "d-02x",
+          "text": "Entity enrichment and location geocoding are opt-in. Without explicit configuration the provider is not reachable, and existing calls and stored data remain unchanged."
+        },
+        {
+          "id": "d-03x",
+          "text": "Entity deduplication is disabled by default. Explicit request flags enable the documented single-entity resolution policy."
+        },
+        {
+          "id": "d-04x",
+          "text": "Message extraction is an opt-in local processing stage. Configuring an adapter alone does not change existing message ingestion."
+        },
+        {
+          "id": "d-05x",
+          "text": "The long-term surface distinguishes global graph entities and facts from owner-scoped preferences. Caller-supplied owner identifiers define data scope, not authentication."
+        },
+        {
+          "id": "d-06x",
+          "text": "Conversation identity uses owner scope and session identity. Reads, listings, searches, and deletions require scope, and UUIDs do not bypass that boundary."
+        },
+        {
+          "id": "d-07x",
+          "text": "Preference retrieval combines supplied filters with AND. The documented filters cover active state, entity linkage, and validity time."
+        },
+        {
+          "id": "d-08x",
+          "text": "Schema initialization uses versioned migrations and coordination. The documented setup path does not run inference or depend on embedding-provider identity."
+        },
+        {
+          "id": "d-09x",
+          "text": "Muninn documents a local CPU/F32 MiniLM provider as a candidate with explicit configuration. The document distinguishes implementation status from acceptance."
+        },
+        {
+          "id": "d-10x",
+          "text": "The pinned reference and compatibility boundaries are recorded separately from claims about implemented behavior; the reference lock identifies baseline inputs and known gaps."
+        }
+      ]
+    }
+  ]
+}

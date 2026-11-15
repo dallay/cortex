@@ -49,7 +49,7 @@ fn words(query: &str) -> Vec<String> {
 /// Whether `query` is acceptable as read-only Cypher.
 ///
 /// Rejects upstream's write keywords (as whole words), `CALL {` subqueries
-/// and any procedure outside [`READ_PROCEDURE_PREFIXES`].
+/// and any procedure outside the allowed read-only procedure prefixes.
 pub fn is_read_only_query(query: &str) -> bool {
     let tokens = words(query);
     let has_sequence = |sequence: &[&str]| {

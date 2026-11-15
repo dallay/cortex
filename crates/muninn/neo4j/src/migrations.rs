@@ -3,7 +3,7 @@
 use muninn_core::{MemoryError, MemoryResult};
 use serde_json::Value;
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 pub fn validate_marker(marker: &Value) -> MemoryResult<()> {
     let version = marker.get("version").and_then(Value::as_i64);
@@ -37,13 +37,13 @@ mod tests {
 
     #[test]
     fn accepts_initial_and_current_versions() {
-        for version in [0, 1] {
+        for version in [0, 1, 2] {
             assert!(validate_marker(&json!({"version": version, "state": "ready"})).is_ok());
         }
     }
 
     #[test]
     fn rejects_future_versions_before_migration() {
-        assert!(validate_marker(&json!({"version": 2, "state": "ready"})).is_err());
+        assert!(validate_marker(&json!({"version": 3, "state": "ready"})).is_err());
     }
 }

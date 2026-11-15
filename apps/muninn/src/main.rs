@@ -514,7 +514,7 @@ async fn main() -> Result<()> {
                     cypher_query: Some(Arc::new(Neo4jCypherQuery::new(client.clone()))),
                 },
                 &MemoryOptions::default(),
-            );
+            )?;
             if let Some(extraction) = extraction {
                 tracing::info!("entity extraction stage is configured");
                 memory = memory.with_extractor(extraction);

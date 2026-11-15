@@ -96,6 +96,61 @@ class RetrievalQualityTests(unittest.TestCase):
             }],
         }
 
+    def test_ann_exact_metrics_compare_ids_not_scores_and_keep_set_and_order_distinct(self):
+        from retrieval_quality import evaluate_ann_exact_query
+
+        result = evaluate_ann_exact_query(
+            [{"id": "a", "score": 0.1}, {"id": "b", "score": 0.2}],
+            [{"id": "b", "score": 900}, {"id": "a", "score": -900}],
+            k=2,
+        )
+
+        self.assertEqual(result, {"exact_top_k_recall": 1.0, "ordered_top_k_match": 0})
+
+    def test_ann_exact_metrics_handle_empty_exact_underfill_and_validate_inputs(self):
+        from retrieval_quality import evaluate_ann_exact_query
+
+        self.assertEqual(
+            evaluate_ann_exact_query([{"id": "a"}], [], k=3),
+            {"exact_top_k_recall": None, "ordered_top_k_match": None},
+        )
+        self.assertEqual(
+            evaluate_ann_exact_query([{"id": "a"}], [{"id": "a"}, {"id": "b"}], k=3),
+            {"exact_top_k_recall": 0.5, "ordered_top_k_match": 0},
+        )
+        invalid = [(None, [{"id": "a"}], 1), ([{"id": "a"}, {"id": "a"}], [{"id": "a"}], 1),
+                   ([{"id": "a"}], [{"id": "a"}, {"id": "a"}], 1),
+                   ([{"id": "a"}], [], 0), ([{"id": "a"}], [], True)]
+        for ann, exact, k in invalid:
+            with self.subTest(ann=ann, exact=exact, k=k), self.assertRaises(ValueError):
+                evaluate_ann_exact_query(ann, exact, k)
+
+    def test_gate_metric_report_serializes_each_gate_without_deciding_acceptance(self):
+        from retrieval_quality import serialize_gate_metrics
+
+        report = serialize_gate_metrics(
+            [{"query_id": "q1", "ann": [{"id": "a", "score": 2}],
+              "exact": [{"id": "a", "score": -1}]}],
+            [{"query_id": "q1", "candidates": {"a": 3, "b": 1},
+              "ranked": [{"id": "a", "score": 2}]}],
+            k=1,
+        )
+
+        self.assertEqual(set(report), {"ann_exact", "absolute_relevance"})
+        self.assertEqual(report["ann_exact"]["per_query"][0]["metrics"]["exact_top_k_recall"], 1.0)
+        self.assertEqual(report["absolute_relevance"]["per_query"][0]["metrics"]["recall_at_k"], {"1": 1.0})
+        self.assertEqual(report["absolute_relevance"]["per_query"][0]["metrics"]["ndcg_at_k"], {"1": 1.0})
+        self.assertEqual(report["absolute_relevance"]["per_query"][0]["metrics"]["mrr"], 1.0)
+        self.assertNotIn("status", report["ann_exact"])
+
+    def test_recall_and_ndcg_formulas_are_characterized_against_judged_candidates(self):
+        ranked = [{"id": "low", "score": 3}, {"id": "high", "score": 2}]
+        result = evaluate_query({"low": 1, "high": 3, "unreturned": 2}, ranked, (2,))
+        self.assertEqual(result["recall_at_k"]["2"], 0.5)
+        ideal = 7 + 3 / math.log2(3)
+        observed = 1 + 7 / math.log2(3)
+        self.assertAlmostEqual(result["ndcg_at_k"]["2"], observed / ideal)
+
     def test_validates_strict_unlabelled_corpus_and_annotations(self):
         corpus = self._corpus()
         self.assertEqual(validate_corpus(corpus), corpus)
@@ -413,3 +468,33 @@ class RetrievalQualityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class AcceptanceGateTests(unittest.TestCase):
+    def test_gate_pass_requires_approved_complete_and_verified_evidence_independently(self):
+        from retrieval_quality import gate_result
+        rule_satisfied = True
+        self.assertEqual("PASS", gate_result(protocol_complete=True, approved=True,
+                                             provenance_status="verified", rule_satisfied=rule_satisfied))
+        self.assertEqual("blocked", gate_result(protocol_complete=False, approved=True,
+                                                 provenance_status="verified", rule_satisfied=rule_satisfied))
+        self.assertEqual("blocked", gate_result(protocol_complete=True, approved=False,
+                                                 provenance_status="verified", rule_satisfied=rule_satisfied))
+        self.assertEqual("blocked", gate_result(protocol_complete=True, approved=True,
+                                                 provenance_status="partial", rule_satisfied=rule_satisfied))
+        self.assertEqual("FAIL", gate_result(protocol_complete=True, approved=True,
+                                              provenance_status="verified", rule_satisfied=False))
+
+    def test_undefined_result_without_approved_treatment_is_blocked(self):
+        from retrieval_quality import gate_result
+        self.assertEqual("blocked", gate_result(protocol_complete=True, approved=True,
+                                                  provenance_status="verified", rule_satisfied=None))
+
+    def test_gate_evaluation_is_independent_for_each_gate(self):
+        from retrieval_quality import evaluate_gates
+        result = evaluate_gates({
+            "ann_exact": {"protocol_complete": True, "approved": True,
+                          "provenance_status": "verified", "rule_satisfied": True},
+            "absolute_relevance": {"protocol_complete": True, "approved": True,
+                                    "provenance_status": "verified", "rule_satisfied": None},
+        })
+        self.assertEqual({"ann_exact": "PASS", "absolute_relevance": "blocked"}, result)

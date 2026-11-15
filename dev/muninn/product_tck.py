@@ -9,7 +9,7 @@ import sys
 import tempfile
 
 from product_chain_fixture import ProductFixture
-from product_tck_report import validate_profile_result
+from product_tck_report import build_profile_receipt, validate_profile_result
 from product_tck_selector import select_profiles
 from reference import verify_source_tree
 from rust_tck_spike import (SILVER_SPLIT_PROFILES, load_normative_lock,
@@ -110,9 +110,15 @@ def pytest_collection_modifyitems(items):
                 validate_profile_result(selected, code, data)
             except ValueError as error:
                 validation_error = str(error)
+            try:
+                receipt = build_profile_receipt(items, selected, tests)
+            except ValueError as error:
+                receipt = None
+                validation_error = validation_error or str(error)
             results[profile] = {'exit_code': code, 'selected': len(selected), 'observed': len(observed),
                                 'collection_matches': selected == set(observed), 'summary': data.get('summary', {}),
-                                'valid': validation_error is None, 'validation_error': validation_error}
+                                'valid': validation_error is None, 'validation_error': validation_error,
+                                'receipt': receipt}
         summary = {'commit': lock['commit'], 'historical_commit': lock['historical_commit'],
                    'binary_sha256': fixture.binary_sha256, 'neo4j_image_id': fixture.image,
                    'provider': 'hash', 'inference': False, 'official_test_hashes': hashes,

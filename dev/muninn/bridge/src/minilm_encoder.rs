@@ -10,6 +10,7 @@ use crate::{
     minilm_tokenizer::{MiniLmTokenizer, TokenBatch},
 };
 use candle_core::{Device, Tensor};
+use sha2::{Digest, Sha256};
 #[path = "minilm_encoder_math.rs"]
 mod math;
 
@@ -30,6 +31,10 @@ pub struct CandidateCpuSentenceEncoder {
     checkpoint: CpuCheckpoint,
     tokenizer: MiniLmTokenizer,
     artifact_bundle_id: String,
+    model_id: String,
+    revision: String,
+    validated_profile: &'static str,
+    config_sha256: String,
 }
 
 impl CandidateCpuSentenceEncoder {
@@ -40,19 +45,45 @@ impl CandidateCpuSentenceEncoder {
         let pooling = cache
             .read_artifact("1_Pooling/config.json")
             .map_err(EncoderError::Cache)?;
-        profile(modules.as_bytes(), pooling.as_bytes())?;
+        let validated_profile = validated_profile_id(modules.as_bytes(), pooling.as_bytes())?;
+        let config_sha256 = configuration_sha256(modules.as_bytes(), pooling.as_bytes());
         let tokenizer = MiniLmTokenizer::from_cache(cache).map_err(EncoderError::Tokenizer)?;
         let checkpoint = CpuCheckpoint::load(cache).map_err(EncoderError::Checkpoint)?;
         Ok(Self {
             checkpoint,
             tokenizer,
             artifact_bundle_id: cache.bundle_id().to_owned(),
+            model_id: cache.model_id().to_owned(),
+            revision: cache.revision().to_owned(),
+            validated_profile,
+            config_sha256,
         })
     }
 
     /// Artifact metadata only: this is not an EmbeddingSpace or C1 policy identity.
+    #[must_use]
     pub fn artifact_bundle_id(&self) -> &str {
         &self.artifact_bundle_id
+    }
+
+    #[must_use]
+    pub fn model_id(&self) -> &str {
+        &self.model_id
+    }
+
+    #[must_use]
+    pub fn revision(&self) -> &str {
+        &self.revision
+    }
+
+    #[must_use]
+    pub fn validated_profile(&self) -> &'static str {
+        self.validated_profile
+    }
+
+    #[must_use]
+    pub fn config_sha256(&self) -> &str {
+        &self.config_sha256
     }
 
     pub fn encode(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EncoderError> {
@@ -89,7 +120,14 @@ fn input_tensor(rows: &[Vec<u32>]) -> Result<Tensor, EncoderError> {
     ))
 }
 
+#[cfg(test)]
 fn profile(modules: &[u8], pooling: &[u8]) -> Result<(), EncoderError> {
+    validated_profile_id(modules, pooling).map(|_| ())
+}
+
+const VALIDATED_PROFILE_ID: &str = "muninn-minilm-profile-v1";
+
+fn validated_profile_id(modules: &[u8], pooling: &[u8]) -> Result<&'static str, EncoderError> {
     if modules.len() > 8192 || pooling.len() > 8192 {
         return Err(EncoderError::Configuration);
     }
@@ -109,7 +147,29 @@ fn profile(modules: &[u8], pooling: &[u8]) -> Result<(), EncoderError> {
     {
         return Err(EncoderError::Configuration);
     }
-    Ok(())
+    Ok(VALIDATED_PROFILE_ID)
+}
+
+fn configuration_sha256(modules: &[u8], pooling: &[u8]) -> String {
+    fn add_frame(hasher: &mut Sha256, label: &[u8], content: &[u8]) {
+        hasher.update(
+            u64::try_from(label.len())
+                .expect("label length fits the framed length field")
+                .to_be_bytes(),
+        );
+        hasher.update(label);
+        hasher.update(
+            u64::try_from(content.len())
+                .expect("configuration length fits the framed length field")
+                .to_be_bytes(),
+        );
+        hasher.update(content);
+    }
+
+    let mut hasher = Sha256::new();
+    add_frame(&mut hasher, b"modules.json", modules);
+    add_frame(&mut hasher, b"1_Pooling/config.json", pooling);
+    format!("{:x}", hasher.finalize())
 }
 
 #[cfg(test)]

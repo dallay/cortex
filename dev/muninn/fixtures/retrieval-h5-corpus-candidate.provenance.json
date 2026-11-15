@@ -1,0 +1,75 @@
+{
+  "schema_version": "1.0",
+  "corpus_id": "muninn-h5-corpus-candidate-v1",
+  "corpus_hash": "sha256:44ef7c4ad3fbe179d2651564eff980ad4d7c6b2c315d790928a08b1b76a859d7",
+  "status": "draft/not frozen",
+  "baseline_commit": "09bb21d5fd2c847ac7df5e48f7be06eb08cec445",
+  "sources": [
+    {
+      "item_type": "query",
+      "item_id": "q-7f31",
+      "source_path": "docs/muninn/context.md",
+      "source_sha256": "16ab977a9772dd4613139455fe9c5a45bc53e17f2111d979fa528e894cf410dd"
+    },
+    {
+      "item_type": "candidate",
+      "item_id": "d-01x",
+      "source_path": "docs/muninn/cross-memory.md",
+      "source_sha256": "ef7910629f278fe365ae40c6b70bc052a3ed1d012f440b8f1e0406225dea151f"
+    },
+    {
+      "item_type": "candidate",
+      "item_id": "d-02x",
+      "source_path": "docs/muninn/enrichment.md",
+      "source_sha256": "f78252c59556ad06a4b765b54f3beb09629e03057d66db9d0fdba3b89f53e192"
+    },
+    {
+      "item_type": "candidate",
+      "item_id": "d-03x",
+      "source_path": "docs/muninn/entity-resolution.md",
+      "source_sha256": "b62e9c2533120c4d2ce57a352467293c12846483c7031fec531d69b9bff1299c"
+    },
+    {
+      "item_type": "candidate",
+      "item_id": "d-04x",
+      "source_path": "docs/muninn/extraction.md",
+      "source_sha256": "5b71ecf4e487955db134e4d4eaf0e113f77d46aac0d94a4329fe052cd15ae2b0"
+    },
+    {
+      "item_type": "candidate",
+      "item_id": "d-05x",
+      "source_path": "docs/muninn/long-term-isolation-deletion.md",
+      "source_sha256": "87d86178d928313070480555e2cb09978ad34640282c5aeddb9bd54c9bef0a72"
+    },
+    {
+      "item_type": "candidate",
+      "item_id": "d-06x",
+      "source_path": "docs/muninn/owner-session-namespace.md",
+      "source_sha256": "aaf4ce1e4d6352db2b29244452bddfc9424e0b5348481bf51c3392294e726aa7"
+    },
+    {
+      "item_type": "candidate",
+      "item_id": "d-07x",
+      "source_path": "docs/muninn/preference-filters.md",
+      "source_sha256": "36aca9b9e32308047b4e3ad7b918ea1bee56f8b4b1d3ef7d86ab24a1f96d5cad"
+    },
+    {
+      "item_type": "candidate",
+      "item_id": "d-08x",
+      "source_path": "docs/muninn/schema-operations.md",
+      "source_sha256": "e762fe07c79dd078a4b813e2ac321e085788772b2b43c3e9b23642b4ca1794fb"
+    },
+    {
+      "item_type": "candidate",
+      "item_id": "d-09x",
+      "source_path": "docs/muninn/minilm-product.md",
+      "source_sha256": "8997781cc796487210517fd442a948fe2f31d2d97752cdfd6a20f13f0ab473b3"
+    },
+    {
+      "item_type": "candidate",
+      "item_id": "d-10x",
+      "source_path": "docs/muninn/reference-lock.md",
+      "source_sha256": "ae28bbe4f784c110edb8807900520fc670030b8f2727711de0e4e272efbfa316"
+    }
+  ]
+}

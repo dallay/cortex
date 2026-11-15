@@ -16,8 +16,10 @@ pub const DEFAULT_VECTOR_DIMENSIONS: usize = 1536;
 const CONSTRAINTS: &[(&str, &str, &str)] = &[
     ("conversation_id", "Conversation", "id"),
     ("message_id", "Message", "id"),
+    ("observation_id", "Observation", "id"),
     ("entity_id", "Entity", "id"),
     ("preference_id", "Preference", "id"),
+    ("preference_write_lock", "PreferenceWriteLock", "id"),
     ("fact_id", "Fact", "id"),
     ("reasoning_trace_id", "ReasoningTrace", "id"),
     ("reasoning_step_id", "ReasoningStep", "id"),
@@ -33,6 +35,11 @@ const CONSTRAINTS: &[(&str, &str, &str)] = &[
 
 const INDEXES: &[(&str, &str, &str)] = &[
     ("conversation_session_idx", "Conversation", "session_id"),
+    (
+        "observation_conversation_idx",
+        "Observation",
+        "conversation_id",
+    ),
     ("message_timestamp_idx", "Message", "timestamp"),
     ("message_role_idx", "Message", "role"),
     ("entity_type_idx", "Entity", "type"),

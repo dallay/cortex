@@ -1,0 +1,72 @@
+{
+  "schema_version": "h5-acceptance/v1",
+  "protocol_id": "PENDING",
+  "protocol_version": "PENDING",
+  "repository_review": {
+    "commit": "PENDING",
+    "review_reference": "PENDING",
+    "approved_at": "PENDING",
+    "approved_gates": []
+  },
+  "run_inputs": {
+    "metrics_and_k": {
+      "status": "approved",
+      "value": {
+        "k_by_metric": {
+          "ExactTopKRecall@K": 10,
+          "OrderedTopKMatch@K": 10
+        }
+      },
+      "rationale": "User-approved candidate decision: ANN–exact metrics use K=10. Quality metrics and their K values remain non-applicable while absolute relevance is disabled."
+    },
+    "acceptance_rules_and_tolerances": {
+      "status": "approved",
+      "value": {
+        "ann_exact": {
+          "criterion": "For every query, ExactTopKRecall@10 and OrderedTopKMatch@10 must each equal exactly 1.0.",
+          "threshold": 1.0
+        }
+      },
+      "rationale": "User-approved candidate decision: both ANN–exact metrics must equal 1.0 for each query; no retrospective tie-breaking is permitted."
+    },
+    "run_count_and_aggregation": {
+      "status": "approved",
+      "value": {
+        "run_count": 1,
+        "aggregation": "Retain and report each query result; macro-average may be shown for descriptive summary only and does not determine the gate.",
+        "tie_policy": "Use the ranking as observed; do not apply retrospective tie-breaking.",
+        "undefined_policy": "Any required undefined metric blocks PASS."
+      },
+      "rationale": "User-approved candidate decisions: one run, per-query reporting, descriptive-only macro-average, observed ties without retrospective resolution, and fail-closed handling of required undefined metrics."
+    },
+    "corpus_and_query_candidate_scope": {
+      "status": "pending",
+      "value": null,
+      "rationale": "Corpus candidate is an unreviewed draft; owner review, exact scope approval, and freeze remain unresolved."
+    },
+    "labels_rubric_and_adjudication": {
+      "status": "pending",
+      "value": null,
+      "rationale": "Absolute relevance is disabled; any future labels, rubric, and adjudication remain unresolved and are not applicable to this candidate gate."
+    },
+    "ann_exact_comparison_scope": {
+      "status": "pending",
+      "value": null,
+      "rationale": "Retrieval path and candidate scope require owner review and explicit protocol-run approval."
+    },
+    "encoder_identity": {
+      "status": "pending",
+      "value": null,
+      "rationale": "Encoder identity is unresolved; no identity or runtime evidence is asserted."
+    },
+    "provenance": {
+      "status": "pending",
+      "value": null,
+      "rationale": "Operational provenance is unresolved; no provenance evidence or run authorization is asserted."
+    }
+  },
+  "gates": {
+    "ann_exact": true,
+    "absolute_relevance": false
+  }
+}

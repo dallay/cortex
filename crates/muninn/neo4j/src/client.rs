@@ -66,6 +66,10 @@ impl Neo4jClient {
             .map_err(storage_error)
     }
 
+    pub(crate) async fn start_txn(&self) -> MemoryResult<neo4rs::Txn> {
+        self.graph.start_txn().await.map_err(storage_error)
+    }
+
     /// Run a statement and collect every row.
     pub async fn execute(&self, cypher: &str, params: Params) -> MemoryResult<Vec<Row>> {
         let mut query = Query::new(cypher.to_owned());

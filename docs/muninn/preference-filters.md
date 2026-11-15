@@ -47,9 +47,27 @@ SOURCE-CONFLICT: pinned upstream `9d45af5529ecb5f2fe352013468a11087f3163d4`
 silently skips nonexistent explicit target IDs. Whole-list rejection is the
 explicitly approved product deviation, not upstream parity.
 
-This is a preflight check, not a transaction redesign: concurrent deletion
-between lookup and persistence can still leave a preference or partial links.
-It does not promise atomicity across those calls.
+La comprobación previa sigue rechazando destinos ausentes antes de generar
+embeddings. Además, `add_preference` usa ahora el puerto compuesto
+`LongTermStore::write_preference`. Neo4j vuelve a comprobar los destinos dentro
+de la transacción y revierte la escritura si un destino desaparece antes de
+crear su relación. Las primitivas heredadas no ofrecen esa garantía compuesta.
+
+El propietario independiente finaliza la transacción aunque el consumidor
+cancele. El plazo de respuesta no interrumpe intercambios Bolt y puede devolver
+resultado desconocido si no recibe la finalización. El escritor exige límites
+positivos de servidor y admisión acotada. Véanse los límites, permisos y contrato
+de migración en [relaciones entre memorias](cross-memory.md).
+
+Los constructores escritores devuelven ahora `MemoryResult` y comprueban la
+capacidad atómica del adaptador. Los constructores `read_only` permiten consultas
+con adaptadores antiguos y rechazan ingestión de preferencias antes de acceder
+al puerto. El cambio de contrato está autorizado; no hay fallback parcial.
+Las pruebas históricas citadas abajo no verifican estos cambios nuevos. Las
+pruebas de contención y cancelación real pasaron en el snapshot QA documentado
+en `cross-memory.md`. La supersesión explícita usa ahora
+`supersede_preference_atomic`; sus pruebas DB adicionales siguen pendientes del
+runner DB.
 
 ## Verification scope
 

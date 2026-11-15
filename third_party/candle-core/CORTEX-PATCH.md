@@ -10,13 +10,26 @@ Archive SHA-256:
 
 ## Local delta
 
-- Normalized `Cargo.toml`: replace ZIP 8.6 with actual pinned ZIP `=9.0.0`.
+- Normalized `Cargo.toml`: replace ZIP 8.6 with actual pinned ZIP `=9.0.5`.
+  ZIP 9.0.5 fixes CVE-2026-115905 (GHSA-m665-v7pm-7grj), which affects
+  versions through 9.0.4. This patch-level update retains the ZIP 9 API and
+  requires Rust 1.88, below Cortex's pinned toolchain. It was published on
+  2026-10-17, outside the repository's three-day dependency cooldown.
 - Normalized `Cargo.toml`: disable GEMM default features, retaining `std`,
   `rayon` and `wasm-simd128-enable` for this CPU/F32-only prototype. This excludes
   the optional F16 backend that failed the default Linux ARM64 build.
 - `src/npy.rs`: propagate ZIP 9's fallible filename decoding and borrow the
   decoded `Cow<str>` when removing the `.npy` suffix.
 - `src/pickle.rs`: collect fallible decoded filenames, propagating ZIP errors.
+
+- `src/npy.rs`, `src/quantized/imatrix_file.rs`, `src/safetensors.rs`: seven
+  sink-local `nosemgrep` annotations for the exact SARIF rule ID
+  `rust.actix.path-traversal.tainted-path.tainted-path`. These public APIs
+  intentionally read or write an explicit caller-selected file; they do not
+  promise confinement beneath a filesystem root. Callers must authorize paths
+  from untrusted input. NPZ member names remain archive metadata or in-memory
+  keys, not extracted host paths. The annotations do not exempt the package,
+  other sinks, or other rules from scanning.
 
 No tensor kernels, BERT/model mathematics, safetensors logic, training operations
 or device implementation is changed. The entire source import is checked against
@@ -36,6 +49,19 @@ selected only as a third-party Cargo dependency patch; it is not another workspa
 Cortex's own unsafe-code and clippy policy is unchanged.
 
 ## Security and maintenance
+
+The seven path-rule annotations cover `Tensor::read_npy`, `Tensor::read_npz`,
+`Tensor::read_npz_by_name`, `Tensor::write_npy`, `Tensor::write_npz`,
+`quantized::imatrix_file::load_imatrix`, and `safetensors::load`. Static caller
+tracing found no production calls to these sinks in Cortex or in its pinned
+`candle-nn` and `candle-transformers` 0.11.0 dependencies. NPZ compatibility
+calls use local test fixtures. MiniLM passes verified artifact bytes to
+`VarBuilder::from_buffered_safetensors`, not the path-based loader. This is a
+contextual I/O-contract assessment, not an exemption because the code is
+vendored. Reassess the annotations when callers, dependencies, path policy, or
+scanner rules change, especially before exposing any path to a lower-trust
+principal. Keep the blocking scanner gate and its exception inventory controls;
+these comments alone do not authorize an inventory change.
 
 ZIP 8.6 triggers RUSTSEC-2026-0367, RUSTSEC-2026-0368 and RUSTSEC-2026-0369;
 the user authorized this narrow compatibility patch rather than an audit waiver.

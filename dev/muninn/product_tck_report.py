@@ -1,4 +1,47 @@
-"""Fail-closed validation of one pytest-json-report profile result."""
+"""Fail-closed validation and per-profile receipts for pytest-json-report."""
+
+
+def build_profile_receipt(collected_items, selected_nodeids, tests):
+    """Build a per-run profile receipt without assigning outcomes to exclusions."""
+    if type(collected_items) is not list or type(tests) is not list:
+        raise ValueError('profile_receipt_input_invalid')
+    if any(type(item) is not dict for item in collected_items):
+        raise ValueError('collection_item_invalid')
+    collected = [item.get('nodeid') for item in collected_items]
+    if any(type(nodeid) is not str for nodeid in collected):
+        raise ValueError('collection_item_invalid')
+    if len(set(collected)) != len(collected):
+        raise ValueError('duplicate_collected_nodeid')
+
+    selected = set(selected_nodeids)
+    collected_set = set(collected)
+    if not selected <= collected_set:
+        raise ValueError('selected_nodeid_not_collected')
+
+    observed = []
+    outcomes = []
+    for test in tests:
+        if type(test) is not dict or type(test.get('nodeid')) is not str:
+            raise ValueError('pytest_result_invalid')
+        nodeid = test['nodeid']
+        observed.append(nodeid)
+        outcomes.append({'nodeid': nodeid, 'outcome': test.get('outcome')})
+    if any(nodeid not in selected for nodeid in observed):
+        raise ValueError('pytest_nodeids_mismatch')
+    if len(set(observed)) != len(observed):
+        raise ValueError('duplicate_pytest_nodeid')
+    if set(observed) != selected:
+        raise ValueError('pytest_nodeids_mismatch')
+
+    return {
+        'collected_ids': sorted(collected_set),
+        'selected_ids': sorted(selected),
+        'excluded': [
+            {'nodeid': nodeid, 'reason': 'not_selected_by_profile'}
+            for nodeid in sorted(collected_set - selected)
+        ],
+        'outcomes': sorted(outcomes, key=lambda outcome: outcome['nodeid']),
+    }
 
 
 def validate_profile_result(expected_nodeids, process_exit_code, report):

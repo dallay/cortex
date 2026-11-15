@@ -47,7 +47,7 @@ async fn entity_resolution_pending_merge_distinct_and_rejection_effects() {
     );
     SchemaManager::new(&client, 2).setup_all().await.unwrap();
     let store = Arc::new(Neo4jLongTermStore::new(client.clone()));
-    let memory = LongTermMemory::new(store.clone(), Some(Arc::new(TestEmbedder)), false);
+    let memory = LongTermMemory::new(store.clone(), Some(Arc::new(TestEmbedder)), false).unwrap();
     let (candidate, no_resolution) = memory
         .add_entity(
             "zzzzzzzzzzzzzzzzzzzz",

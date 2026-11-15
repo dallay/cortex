@@ -3,6 +3,9 @@
 use rustix::fs::{Mode, OFlags};
 #[path = "artifact_acl.rs"]
 mod acl;
+#[cfg(test)]
+#[path = "artifact_diagnostics.rs"]
+mod diagnostics;
 #[path = "artifact_once.rs"]
 mod once;
 #[path = "artifact_recovery.rs"]

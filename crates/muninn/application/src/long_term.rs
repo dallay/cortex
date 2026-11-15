@@ -170,6 +170,7 @@ pub struct LongTermMemory {
     store: Arc<dyn LongTermStore>,
     embedder: Option<Arc<dyn Embedder>>,
     multi_tenant: bool,
+    preference_writes: bool,
     enrichment: Option<Arc<crate::enrichment::EnrichmentService>>,
     geocoding: Option<Arc<crate::enrichment::GeocodingService>>,
 }
@@ -187,25 +188,25 @@ fn with_similarity<T>(hit: Scored<T>, metadata: impl FnOnce(&mut T) -> &mut Meta
     item
 }
 
-/// Trims, collapses internal whitespace runs to a single space and lowercases.
-fn normalize_preference_text(text: &str) -> String {
-    text.split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
-}
-
-/// True when two preference texts state the same value.
-///
-/// The comparison is deliberately textual: it ignores case and whitespace
-/// differences, but any change of the value itself (a different number, for
-/// example) makes the texts different.
-fn preferences_equivalent(left: &str, right: &str) -> bool {
-    normalize_preference_text(left) == normalize_preference_text(right)
-}
-
 impl LongTermMemory {
+    /// Construye un escritor; rechaza adaptadores sin capacidad atómica.
     pub fn new(
+        store: Arc<dyn LongTermStore>,
+        embedder: Option<Arc<dyn Embedder>>,
+        multi_tenant: bool,
+    ) -> MemoryResult<Self> {
+        if !store.supports_atomic_preference_write() {
+            return Err(MemoryError::invalid(
+                "writer requires atomic preference capability",
+            ));
+        }
+        let mut memory = Self::read_only(store, embedder, multi_tenant);
+        memory.preference_writes = true;
+        Ok(memory)
+    }
+
+    /// Cliente sin ingestión de preferencias; no exige la capacidad escritora.
+    pub fn read_only(
         store: Arc<dyn LongTermStore>,
         embedder: Option<Arc<dyn Embedder>>,
         multi_tenant: bool,
@@ -214,9 +215,14 @@ impl LongTermMemory {
             store,
             embedder,
             multi_tenant,
+            preference_writes: false,
             enrichment: None,
             geocoding: None,
         }
+    }
+
+    pub(crate) const fn enable_preference_writes(&mut self) {
+        self.preference_writes = true;
     }
 
     /// Opt in to entity enrichment. Without this call, no enrichment port is
@@ -670,10 +676,15 @@ impl LongTermMemory {
         preference: &str,
         options: AddPreferenceOptions,
     ) -> MemoryResult<Preference> {
+        if !self.preference_writes {
+            return Err(MemoryError::invalid(
+                "preference writes disabled on read-only client",
+            ));
+        }
         self.validate_preference_scope(options.user_identifier.as_deref())?;
         // SOURCE-CONFLICT: upstream skips missing explicit IDs. Reject the whole
         // list before embedding or writes, including the deduplication path.
-        // This preflight does not make concurrent entity deletion atomic.
+        // El puerto compuesto vuelve a comprobar destinos dentro de la escritura.
         for id in options.applies_to.iter().chain(&options.about_entities) {
             self.get_entity(*id)
                 .await?
@@ -684,56 +695,6 @@ impl LongTermMemory {
             text.push_str(&format!(" ({context})"));
         }
         let embedding = self.embed(options.generate_embedding, &text).await?;
-        // A near-identical record in the same category is a duplicate only when
-        // it states the same value. A different value is an update of that
-        // preference and must be stored, with the old record superseded.
-        let mut superseded: Option<Uuid> = None;
-        if let Some(embedding) = &embedding {
-            // Upstream ignores lookup failures (e.g. a missing vector index).
-            let duplicate = self
-                .store
-                .find_duplicate_preference(
-                    embedding,
-                    category,
-                    DUPLICATE_THRESHOLD,
-                    options.user_identifier.as_deref(),
-                )
-                .await
-                .unwrap_or_else(|err| {
-                    warn!(error = %err, "preference deduplication skipped");
-                    None
-                });
-            if let Some(mut existing) = duplicate {
-                let same_value = preferences_equivalent(&existing.preference, preference);
-                if same_value {
-                    existing
-                        .metadata
-                        .insert("deduplicated".to_owned(), Value::Bool(true));
-                    if let Some(user) = &options.user_identifier {
-                        self.store
-                            .link_user_to_preference(user, existing.id)
-                            .await?;
-                    }
-                    for entity in &options.applies_to {
-                        self.store
-                            .link_preference_to_entity(existing.id, *entity)
-                            .await?;
-                    }
-                    for entity in &options.about_entities {
-                        self.store
-                            .link_preference_about_entity(existing.id, *entity)
-                            .await?;
-                    }
-                    return Ok(existing);
-                }
-                // Without a user scope the duplicate lookup can match a record
-                // of another scope. Store the changed value, but do not
-                // supersede a record when ownership cannot be established.
-                if options.user_identifier.is_some() {
-                    superseded = Some(existing.id);
-                }
-            }
-        }
         let record = Preference {
             id: Uuid::new_v4(),
             category: category.to_owned(),
@@ -746,31 +707,27 @@ impl LongTermMemory {
             created_at: Utc::now(),
             metadata: options.metadata,
         };
-        let stored = self.store.create_preference(&record).await?;
-        if let Some(user) = &options.user_identifier {
-            self.store.link_user_to_preference(user, stored.id).await?;
-        }
-        for entity in &options.applies_to {
-            self.store
-                .link_preference_to_entity(stored.id, *entity)
-                .await?;
-        }
-        for entity in &options.about_entities {
-            self.store
-                .link_preference_about_entity(stored.id, *entity)
-                .await?;
-        }
-        if let Some(old_id) = superseded {
-            self.store.supersede_preference(old_id, stored.id).await?;
-        }
-        Ok(stored)
+        self.store
+            .write_preference(
+                &record,
+                options.user_identifier.as_deref(),
+                &options.applies_to,
+                &options.about_entities,
+                DUPLICATE_THRESHOLD,
+            )
+            .await
     }
 
     /// Marks `old` as superseded by `new`, closing its validity interval.
     ///
     /// Idempotent, as upstream: repeating the call keeps the first `valid_until`.
     pub async fn supersede_preference(&self, old_id: Uuid, new_id: Uuid) -> MemoryResult<()> {
-        self.store.supersede_preference(old_id, new_id).await
+        if !self.preference_writes {
+            return Err(MemoryError::invalid(
+                "preference writes disabled on read-only client",
+            ));
+        }
+        self.store.supersede_preference_atomic(old_id, new_id).await
     }
 
     /// Preferences linked to a user, most recent first.
@@ -1028,6 +985,7 @@ mod tests {
         preferences: Vec<Scored<Preference>>,
         owners: Vec<(String, Preference)>,
         forbid_preferences: bool,
+        dedup_fails: bool,
         entities: Vec<Entity>,
         created: Mutex<Vec<Preference>>,
         target_links: Mutex<Vec<(Uuid, Uuid)>>,
@@ -1104,6 +1062,9 @@ mod tests {
 
     #[async_trait]
     impl LongTermStore for FakeStore {
+        fn supports_atomic_preference_write(&self) -> bool {
+            true
+        }
         async fn upsert_entity(&self, entity: &Entity) -> MemoryResult<Entity> {
             *self.upserted.lock().unwrap() = Some(entity.clone());
             Ok(entity.clone())
@@ -1165,6 +1126,47 @@ mod tests {
         async fn entity_graph(&self, _: i64) -> MemoryResult<EntityGraph> {
             unimplemented!()
         }
+        async fn write_preference(
+            &self,
+            record: &Preference,
+            user: Option<&str>,
+            applies: &[Uuid],
+            about: &[Uuid],
+            threshold: f64,
+        ) -> MemoryResult<Preference> {
+            let duplicate = if let Some(embedding) = &record.embedding {
+                self.find_duplicate_preference(embedding, &record.category, threshold, user)
+                    .await?
+            } else {
+                None
+            };
+            let (stored, old) = match duplicate {
+                Some(mut existing) if existing.equivalent_value(&record.preference) => {
+                    existing
+                        .metadata
+                        .insert("deduplicated".into(), Value::Bool(true));
+                    (existing, None)
+                }
+                old => (
+                    self.create_preference(record).await?,
+                    old.filter(|_| user.is_some()).map(|p| p.id),
+                ),
+            };
+            if let Some(user) = user {
+                self.link_user_to_preference(user, stored.id).await?;
+            }
+            for id in applies {
+                self.link_preference_to_entity(stored.id, *id).await?;
+            }
+            for id in about {
+                self.link_preference_about_entity(stored.id, *id).await?;
+            }
+            if let Some(old) = old {
+                self.supersede_preference(old, stored.id).await?;
+            }
+            // Solo este doble determinista usa las primitivas heredadas.
+            Ok(stored)
+        }
         async fn create_preference(&self, preference: &Preference) -> MemoryResult<Preference> {
             assert!(
                 !self.forbid_preferences,
@@ -1184,6 +1186,9 @@ mod tests {
                 !self.forbid_preferences,
                 "preference store must not be called"
             );
+            if self.dedup_fails {
+                return Err(MemoryError::storage("dedup unavailable"));
+            }
             Ok(self
                 .owners
                 .iter()
@@ -1226,6 +1231,14 @@ mod tests {
                 links.push((preference, target));
             }
             drop(links);
+            Ok(())
+        }
+        async fn supersede_preference_atomic(
+            &self,
+            old_id: Uuid,
+            new_id: Uuid,
+        ) -> MemoryResult<()> {
+            self.superseded.lock().unwrap().push((old_id, new_id));
             Ok(())
         }
         async fn supersede_preference(&self, old_id: Uuid, new_id: Uuid) -> MemoryResult<()> {
@@ -1306,7 +1319,8 @@ mod tests {
 
     fn memory(store: FakeStore) -> (Arc<FakeStore>, LongTermMemory) {
         let store = Arc::new(store);
-        let memory = LongTermMemory::new(store.clone(), Some(Arc::new(FixedEmbedder)), false);
+        let memory =
+            LongTermMemory::new(store.clone(), Some(Arc::new(FixedEmbedder)), false).unwrap();
         (store, memory)
     }
 
@@ -1439,7 +1453,7 @@ mod tests {
     #[tokio::test]
     async fn multi_tenant_preferences_require_a_user() {
         let store = Arc::new(FakeStore::default());
-        let memory = LongTermMemory::new(store, None, true);
+        let memory = LongTermMemory::new(store, None, true).unwrap();
         let err = memory
             .add_preference("food", "pizza", AddPreferenceOptions::default())
             .await
@@ -1448,7 +1462,7 @@ mod tests {
     }
     #[tokio::test]
     async fn blank_preference_owner_is_rejected_before_store() {
-        let memory = LongTermMemory::new(Arc::new(FakeStore::default()), None, true);
+        let memory = LongTermMemory::new(Arc::new(FakeStore::default()), None, true).unwrap();
         for owner in ["", "   "] {
             assert!(memory
                 .add_preference(
@@ -1525,6 +1539,23 @@ mod tests {
     const EDITOR_CONFIG: &str = "editor_config";
     const TWO_SPACES: &str = "The default indentation of the project is 2 spaces.";
     const FOUR_SPACES: &str = "The default indentation of the project is 4 spaces.";
+
+    #[tokio::test]
+    async fn deduplication_error_rejects_write_without_mutation() {
+        let (store, memory) = memory(FakeStore {
+            dedup_fails: true,
+            ..FakeStore::default()
+        });
+        let error = memory
+            .add_preference("food", "tea", AddPreferenceOptions::default())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("dedup unavailable"));
+        assert!(store.created.lock().unwrap().is_empty());
+        assert!(store.target_links.lock().unwrap().is_empty());
+        assert!(store.about_links.lock().unwrap().is_empty());
+        assert!(store.superseded.lock().unwrap().is_empty());
+    }
 
     #[tokio::test]
     async fn scoped_preference_with_a_new_value_supersedes_the_stored_duplicate() {
@@ -1604,6 +1635,12 @@ mod tests {
         assert!(store.superseded.lock().unwrap().is_empty());
     }
 
+    fn preferences_equivalent(left: &str, right: &str) -> bool {
+        let mut record = stored_preference("test", left);
+        record.preference = left.into();
+        record.equivalent_value(right)
+    }
+
     #[test]
     fn preference_text_equivalence_ignores_case_and_whitespace_only() {
         assert!(preferences_equivalent(
@@ -1668,7 +1705,8 @@ mod tests {
                     ..FakeStore::default()
                 });
                 let memory =
-                    LongTermMemory::new(store.clone(), Some(Arc::new(ForbiddenEmbedder)), false);
+                    LongTermMemory::new(store.clone(), Some(Arc::new(ForbiddenEmbedder)), false)
+                        .unwrap();
                 let error = memory
                     .add_preference(
                         "food",
@@ -1818,7 +1856,8 @@ mod tests {
                     ..FakeStore::default()
                 });
                 let memory =
-                    LongTermMemory::new(store.clone(), Some(Arc::new(ForbiddenEmbedder)), false);
+                    LongTermMemory::new(store.clone(), Some(Arc::new(ForbiddenEmbedder)), false)
+                        .unwrap();
                 let error = memory
                     .add_preference(
                         "food",
@@ -1972,30 +2011,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_store_without_the_additive_writer_fails_closed_instead_of_dropping_about() {
-        let target = entity("target");
-        let inner = Arc::new(FakeStore {
-            entities: vec![target.clone()],
-            ..FakeStore::default()
-        });
-        let memory = LongTermMemory::new(Arc::new(LegacyAboutStore(inner.clone())), None, false);
-        let error = memory
-            .add_preference(
-                "food",
-                "tea",
-                AddPreferenceOptions {
-                    about_entities: vec![target.id],
-                    generate_embedding: false,
-                    ..AddPreferenceOptions::default()
-                },
-            )
+    async fn writer_requires_atomic_capability_at_construction_but_read_only_remains_available() {
+        let inner = Arc::new(FakeStore::default());
+        let legacy = Arc::new(LegacyAboutStore(inner.clone()));
+        assert!(LongTermMemory::new(legacy.clone(), None, false).is_err());
+        let reader = LongTermMemory::read_only(legacy, None, false);
+        assert!(reader
+            .add_preference("food", "tea", AddPreferenceOptions::default())
             .await
-            .unwrap_err();
-        assert_eq!(error.to_string(), "not supported: preference ABOUT");
-        assert!(inner.about_links.lock().unwrap().is_empty());
-        // Not a new transaction: the preference write already happened, so the
-        // failure is visible instead of a silently missing edge.
-        assert_eq!(inner.created.lock().unwrap().len(), 1);
+            .is_err());
+        assert!(reader
+            .supersede_preference(Uuid::new_v4(), Uuid::new_v4())
+            .await
+            .is_err());
+        assert!(inner.created.lock().unwrap().is_empty());
     }
     #[async_trait]
     impl Embedder for ForbiddenEmbedder {
@@ -2016,7 +2045,8 @@ mod tests {
             }),
             Some(Arc::new(ForbiddenEmbedder)),
             true,
-        );
+        )
+        .unwrap();
         for owner in [None, Some(""), Some("   ")] {
             assert!(memory
                 .add_preference(
@@ -2058,7 +2088,8 @@ mod tests {
             owners: vec![("A".into(), a.clone()), ("B".into(), b.clone())],
             ..FakeStore::default()
         });
-        let memory = LongTermMemory::new(store.clone(), Some(Arc::new(FixedEmbedder)), true);
+        let memory =
+            LongTermMemory::new(store.clone(), Some(Arc::new(FixedEmbedder)), true).unwrap();
         for (owner, expected) in [("A", a.id), ("B", b.id)] {
             let result = memory
                 .add_preference(
@@ -2095,7 +2126,7 @@ mod tests {
                 vec![expected]
             );
         }
-        let global = LongTermMemory::new(store, Some(Arc::new(FixedEmbedder)), false);
+        let global = LongTermMemory::new(store, Some(Arc::new(FixedEmbedder)), false).unwrap();
         assert_eq!(
             global
                 .search_preferences("tea", &SearchPreferencesOptions::default())

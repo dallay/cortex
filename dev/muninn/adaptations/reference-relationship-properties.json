@@ -1,0 +1,9 @@
+{
+  "id": "agent-memory-tck.relationship-properties-to-attributes.v1",
+  "repository": "agent-memory-tck",
+  "base_commit": "e60b410f1046dc21db50f9aba48e171dc8a9b5a1",
+  "target": "tck/reference/adapter.py",
+  "upstream_sha256": "1694c11742e553543f2ccf7d0202568508807b7bbf724624bb3e9b14079578ee",
+  "patch_file": "reference-relationship-properties.patch.json",
+  "patch_sha256": "09fe6866c13fc47435202fb1aaac1d6ceda74cdc2f829276addf13056132e768"
+}

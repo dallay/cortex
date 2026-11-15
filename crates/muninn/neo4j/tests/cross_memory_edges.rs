@@ -54,7 +54,8 @@ async fn preference_about_edge_shape_idempotency_and_owner_isolation() {
             cypher_query: None,
         },
         &MemoryOptions::default(),
-    );
+    )
+    .unwrap();
     let entity = memory
         .long_term()
         .add_entity(

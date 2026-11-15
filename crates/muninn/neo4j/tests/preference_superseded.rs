@@ -178,7 +178,8 @@ async fn a_changed_preference_value_is_stored_and_supersedes_the_old_record() {
         std::sync::Arc::new(store),
         Some(std::sync::Arc::new(CategoryDominantEmbedder)),
         false,
-    );
+    )
+    .unwrap();
     let user = format!("update-{}", Uuid::new_v4());
     let category = format!("category-{}", Uuid::new_v4());
     let options = || AddPreferenceOptions {

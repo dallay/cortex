@@ -279,6 +279,14 @@ adaptador oficial de la eliminación Python nativa. No mide conformidad de
 Muninn. Se preservan los tests oficiales y se sustituye solo su fixture de
 adaptación; no se parchea upstream.
 
+El perfil `adapted` aplica además una traducción local, versionada y verificada
+por SHA-256 al adaptador de referencia TCK en la copia temporal de las fuentes
+materializadas. Traduce `properties` del contrato TCK a `attributes` del modelo
+`Relationship` fijado y devuelve `attributes` como `properties`. No modifica los
+checkouts de referencia ni los tests oficiales. El recibo identifica por separado
+el commit y hash upstream, el hash del patch y el hash del adaptador adaptado;
+los resultados siguen siendo evidencia del oráculo adaptado, no de Muninn.
+
 Con las variables y el secreto preparados en los pasos anteriores:
 
 ```sh

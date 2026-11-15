@@ -35,6 +35,36 @@ NEW = (
      "let Ok(text) = tokio::fs::read_to_string(&file).await else {",
      "runtime-search", "Validated workspace root and regular non-link entries; stable-tree only."),
 )
+# Seven separately approved explicit-path library APIs. Reasons must remain sink-local.
+# File, enclosing function, exact sink line, exact consecutive reason comments.
+CANDLE = (
+    ("third_party/candle-core/src/npy.rs", "read_npy",
+     "let mut reader = File::open(path.as_ref())?;",
+     ("Explicit caller-selected input file, not a root-confined API. Callers must authorize untrusted paths.",)),
+    ("third_party/candle-core/src/npy.rs", "read_npz",
+     "let zip_reader = BufReader::new(File::open(path.as_ref())?);",
+     ("Explicit caller-selected archive; member names stay in memory, not host filesystem paths.",
+      "Callers must authorize untrusted paths; this general archive loader does not confine a root.")),
+    ("third_party/candle-core/src/npy.rs", "read_npz_by_name",
+     "let zip_reader = BufReader::new(File::open(path.as_ref())?);",
+     ("Explicit caller-selected archive; member names stay in memory, not host filesystem paths.",
+      "Callers must authorize untrusted paths; this general archive loader does not confine a root.")),
+    ("third_party/candle-core/src/npy.rs", "write_npy",
+     "let mut f = File::create(path.as_ref())?;",
+     ("Explicit caller-selected output file, not a root-confined API. Callers must authorize untrusted paths.",)),
+    ("third_party/candle-core/src/npy.rs", "write_npz",
+     "let mut zip = zip::ZipWriter::new(File::create(path.as_ref())?);",
+     ("Explicit caller-selected output archive; member names are ZIP metadata, not host output paths.",
+      "Callers must authorize untrusted paths; this general archive writer does not confine a root.")),
+    ("third_party/candle-core/src/quantized/imatrix_file.rs", "load_imatrix",
+     "let mut file = File::open(&fname).map_err(|e| {",
+     ("Explicit caller-selected imatrix file; parsed entry names are not filesystem paths.",
+      "Callers must authorize untrusted paths; this general file loader does not confine a root.")),
+    ("third_party/candle-core/src/safetensors.rs", "load",
+     "let data = std::fs::read(filename.as_ref())?;",
+     ("Explicit caller-selected input file, not a root-confined API. Callers must authorize untrusted paths.",
+      "Cortex MiniLM uses verified byte buffers instead of this path-based loader.")),
+)
 # Historical annotations: frozen inventory, NOT a new approval of their rationale.
 OLD = (
     ("apps/rook/src/di.rs", "is_in_memory_sqlite_target",
@@ -64,14 +94,14 @@ def check_inventory(root=ROOT):
         ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "*.rs"],
         cwd=root,
     ).decode().split("\0")
-    actual_old, actual_new = [], []
+    actual_old, actual_new, actual_candle = [], [], []
     for filename in sorted(set(files) - {""}):
         if {"target", "node_modules"}.intersection(Path(filename).parts):
             continue
         lines = (root / filename).read_text().splitlines()
         function = ""
         for index, line in enumerate(lines):
-            match = re.search(r"\bfn\s+(\w+)\s*\(", line)
+            match = re.search(r"\bfn\s+(\w+)\s*(?:<|\()", line)
             if match:
                 function = match[1]
             annotation = re.search(r"//\s*no(?:semgrep|sem)\b(.*)", line)
@@ -79,6 +109,21 @@ def check_inventory(root=ROOT):
                 continue
             require(annotation[1].strip().startswith(":") and annotation[1].strip()[1:].strip(),
                     ("unscoped suppression is not authorized", filename, index + 1))
+            candle_file = any(row[0] == filename for row in CANDLE)
+            if candle_file:
+                require(line.strip() == f"// nosemgrep: {RULE}",
+                        ("unapproved Candle rule", filename, index + 1))
+                candidates = [row for row in CANDLE if row[:2] == (filename, function)]
+                require(len(candidates) == 1, ("unapproved Candle function", filename, function))
+                _, _, sink, reasons = candidates[0]
+                require(index >= len(reasons) and
+                        tuple(s.strip() for s in lines[index - len(reasons):index]) ==
+                        tuple(f"// {reason}" for reason in reasons),
+                        ("Candle reason changed", filename, function))
+                require(index + 1 < len(lines) and lines[index + 1].strip() == sink,
+                        ("Candle annotation detached from sink", filename, function))
+                actual_candle.append(candidates[0])
+                continue
             if RULE not in line:
                 continue
             following = next((s.strip() for s in lines[index + 1:]
@@ -93,13 +138,16 @@ def check_inventory(root=ROOT):
                 next_function = re.match(r"fn\s+(\w+)\s*\(", following)
                 actual_old.append((filename, next_function[1] if next_function else function,
                                    line.strip(), following if line.strip().startswith("//") else ""))
+    require(sorted(actual_candle) == sorted(CANDLE),
+            ("Candle inventory mismatch: expected exactly seven exceptions", actual_candle))
     require(sorted(actual_old) == sorted(OLD), ("historical inventory changed", actual_old))
     require(sorted(actual_new) == sorted(NEW),
             ("authorized inventory mismatch: expected seven NEW exceptions", actual_new))
     evidence = (root / DOC).read_text()
     for _, _, _, anchor, _ in NEW:
         require(f"## {anchor}\n" in evidence, ("missing evidence anchor", anchor))
-    print("Inventory: 7 new exact exceptions; 7 historical annotations unchanged", flush=True)
+    print("Inventory: 7 new exact exceptions; 7 Candle exact exceptions; "
+          "7 historical annotations unchanged", flush=True)
 
 
 def initialize_fixture_repository(fixtures, target):

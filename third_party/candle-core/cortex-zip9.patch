@@ -1,58 +1,58 @@
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -187,7 +187,8 @@
- 
- [dependencies.gemm]
- version = "0.19.0"
+@@ -190 +190,2 @@
 -features = ["wasm-simd128-enable"]
 +features = ["std", "rayon", "wasm-simd128-enable"]
 +default-features = false
- 
- [dependencies.half]
- version = "2.5.0"
-@@ -251,7 +252,7 @@
- version = "0.8"
- 
- [dependencies.zip]
+@@ -254 +255 @@
 -version = "8.6.0"
-+version = "=9.0.0"
- default-features = false
- 
- [dev-dependencies.anyhow]
++version = "=9.0.5"
 --- a/src/npy.rs
 +++ b/src/npy.rs
-@@ -286,8 +286,8 @@
-         for i in 0..zip.len() {
-             let mut reader = zip.by_index(i)?;
-             let name = {
+@@ -271,0 +272,2 @@
++        // Explicit caller-selected input file, not a root-confined API. Callers must authorize untrusted paths.
++        // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
+@@ -282,0 +285,3 @@
++        // Explicit caller-selected archive; member names stay in memory, not host filesystem paths.
++        // Callers must authorize untrusted paths; this general archive loader does not confine a root.
++        // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
+@@ -289,2 +294,2 @@
 -                let name = reader.name();
 -                name.strip_suffix(NPY_SUFFIX).unwrap_or(name).to_owned()
 +                let name = reader.name()?;
 +                name.strip_suffix(NPY_SUFFIX).unwrap_or(name.as_ref()).to_owned()
-             };
-             let header = read_header(&mut reader)?;
-             let header = Header::parse(&header)?;
-@@ -383,8 +383,8 @@
-         for i in 0..zip.len() {
-             let file = zip.by_index(i)?;
-             let name = {
+@@ -304,0 +310,3 @@
++        // Explicit caller-selected archive; member names stay in memory, not host filesystem paths.
++        // Callers must authorize untrusted paths; this general archive loader does not confine a root.
++        // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
+@@ -347,0 +356,2 @@
++        // Explicit caller-selected output file, not a root-confined API. Callers must authorize untrusted paths.
++        // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
+@@ -356,0 +367,3 @@
++        // Explicit caller-selected output archive; member names are ZIP metadata, not host output paths.
++        // Callers must authorize untrusted paths; this general archive writer does not confine a root.
++        // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
+@@ -386,2 +399,2 @@
 -                let name = file.name();
 -                name.strip_suffix(NPY_SUFFIX).unwrap_or(name).to_owned()
 +                let name = file.name()?;
 +                name.strip_suffix(NPY_SUFFIX).unwrap_or(name.as_ref()).to_owned()
-             };
-             index_per_name.insert(name, i);
-         }
 --- a/src/pickle.rs
 +++ b/src/pickle.rs
-@@ -677,8 +677,8 @@
-     let mut zip = zip::ZipArchive::new(zip_reader)?;
-     let zip_file_names = zip
-         .file_names()
+@@ -680,2 +680,2 @@
 -        .map(|f| f.to_string())
 -        .collect::<Vec<String>>();
 +        .map(|name| name.map(|name| name.into_owned()))
 +        .collect::<zip::result::ZipResult<Vec<_>>>()?;
- 
-     let mut tensor_infos = vec![];
-     for file_name in zip_file_names.iter() {
+--- a/src/quantized/imatrix_file.rs
++++ b/src/quantized/imatrix_file.rs
+@@ -12,0 +13,3 @@
++    // Explicit caller-selected imatrix file; parsed entry names are not filesystem paths.
++    // Callers must authorize untrusted paths; this general file loader does not confine a root.
++    // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
+--- a/src/safetensors.rs
++++ b/src/safetensors.rs
+@@ -408,0 +409,3 @@
++    // Explicit caller-selected input file, not a root-confined API. Callers must authorize untrusted paths.
++    // Cortex MiniLM uses verified byte buffers instead of this path-based loader.
++    // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path

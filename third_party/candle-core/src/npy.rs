@@ -269,6 +269,8 @@ impl Tensor {
 
     /// Reads a npy file and return the stored multi-dimensional array as a tensor.
     pub fn read_npy<T: AsRef<Path>>(path: T) -> Result<Self> {
+        // Explicit caller-selected input file, not a root-confined API. Callers must authorize untrusted paths.
+        // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
         let mut reader = File::open(path.as_ref())?;
         let header = read_header(&mut reader)?;
         let header = Header::parse(&header)?;
@@ -280,6 +282,9 @@ impl Tensor {
 
     /// Reads a npz file and returns the stored multi-dimensional arrays together with their names.
     pub fn read_npz<T: AsRef<Path>>(path: T) -> Result<Vec<(String, Self)>> {
+        // Explicit caller-selected archive; member names stay in memory, not host filesystem paths.
+        // Callers must authorize untrusted paths; this general archive loader does not confine a root.
+        // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
         let zip_reader = BufReader::new(File::open(path.as_ref())?);
         let mut zip = zip::ZipArchive::new(zip_reader)?;
         let mut result = vec![];
@@ -302,6 +307,9 @@ impl Tensor {
 
     /// Reads a npz file and returns the stored multi-dimensional arrays for some specified names.
     pub fn read_npz_by_name<T: AsRef<Path>>(path: T, names: &[&str]) -> Result<Vec<Self>> {
+        // Explicit caller-selected archive; member names stay in memory, not host filesystem paths.
+        // Callers must authorize untrusted paths; this general archive loader does not confine a root.
+        // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
         let zip_reader = BufReader::new(File::open(path.as_ref())?);
         let mut zip = zip::ZipArchive::new(zip_reader)?;
         let mut result = vec![];
@@ -345,6 +353,8 @@ impl Tensor {
 
     /// Writes a multi-dimensional array in the npy format.
     pub fn write_npy<T: AsRef<Path>>(&self, path: T) -> Result<()> {
+        // Explicit caller-selected output file, not a root-confined API. Callers must authorize untrusted paths.
+        // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
         let mut f = File::create(path.as_ref())?;
         self.write(&mut f)
     }
@@ -354,6 +364,9 @@ impl Tensor {
         ts: &[(S, T)],
         path: P,
     ) -> Result<()> {
+        // Explicit caller-selected output archive; member names are ZIP metadata, not host output paths.
+        // Callers must authorize untrusted paths; this general archive writer does not confine a root.
+        // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
         let mut zip = zip::ZipWriter::new(File::create(path.as_ref())?);
         let options: zip::write::FileOptions<()> =
             zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);

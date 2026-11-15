@@ -16,6 +16,74 @@ import sys
 from tempfile import TemporaryDirectory
 
 
+ADAPTATION_MANIFEST = "reference-relationship-properties.json"
+ADAPTATION_PATCH = "reference-relationship-properties.patch.json"
+ADAPTATION_MANIFEST_SHA256 = "673fa1f4a84adb97dc0ee8c8dd406eb378af2a5efcf56a5c98e3f0b570f48b4a"
+ADAPTATION_PATCH_SHA256 = "09fe6866c13fc47435202fb1aaac1d6ceda74cdc2f829276addf13056132e768"
+
+
+def load_reference_adaptation(base, integrity):
+    """Carga el patch versionado y verifica que describe la fuente fijada."""
+    manifest_path = base / ADAPTATION_MANIFEST
+    patch_path = base / ADAPTATION_PATCH
+    manifest_bytes = manifest_path.read_bytes()
+    if hashlib.sha256(manifest_bytes).hexdigest() != ADAPTATION_MANIFEST_SHA256:
+        raise ValueError("El hash del manifiesto de adaptación no coincide")
+    manifest = json.loads(manifest_bytes)
+    patch_bytes = patch_path.read_bytes()
+    patch = json.loads(patch_bytes)
+    reference = integrity.get(manifest.get("repository"), {})
+    if manifest.get("base_commit") != reference.get("commit"):
+        raise ValueError("El commit base de la adaptación no coincide con el pin TCK")
+    if manifest.get("target") != "tck/reference/adapter.py":
+        raise ValueError("La adaptación apunta a una ruta no permitida")
+    expected_hash = reference.get("files", {}).get(manifest["target"])
+    if manifest.get("upstream_sha256") != expected_hash:
+        raise ValueError("El hash base de la adaptación no coincide con source-integrity")
+    if hashlib.sha256(patch_bytes).hexdigest() != manifest.get("patch_sha256"):
+        raise ValueError("El hash del patch de adaptación no coincide")
+    if manifest.get("patch_file") != ADAPTATION_PATCH:
+        raise ValueError("El manifiesto apunta a un patch no permitido")
+    if not isinstance(patch.get("replacements"), list) or not patch["replacements"]:
+        raise ValueError("El patch de adaptación no contiene reemplazos")
+    manifest["patch"] = patch
+    manifest["patch_sha256"] = hashlib.sha256(patch_bytes).hexdigest()
+    return manifest
+
+
+def apply_reference_adaptation(source_root, adaptation):
+    """Aplica el patch solo al adaptador fijado y devuelve hashes separados."""
+    relative = Path(adaptation["target"])
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError("Ruta de adaptación fuera del árbol de fuentes")
+    root = Path(source_root).resolve()
+    target = (root / relative).resolve()
+    if not target.is_relative_to(root) or not target.is_file():
+        raise ValueError("Ruta de adaptación fuera del árbol de fuentes")
+    original = target.read_bytes()
+    upstream_hash = hashlib.sha256(original).hexdigest()
+    if upstream_hash != adaptation["upstream_sha256"]:
+        raise ValueError("El hash del adaptador upstream no coincide")
+    patched = original
+    for replacement in adaptation["patch"]["replacements"]:
+        old = replacement["old"].encode("utf-8")
+        new = replacement["new"].encode("utf-8")
+        count = patched.count(old)
+        if count != 1:
+            raise ValueError("El contexto del patch debe coincidir exactamente una vez")
+        patched = patched.replace(old, new, 1)
+    target.write_bytes(patched)
+    return {
+        "id": adaptation["id"],
+        "applied": True,
+        "base_commit": adaptation["base_commit"],
+        "upstream_sha256": upstream_hash,
+        "patch_sha256": adaptation["patch_sha256"],
+        "adapted_sha256": hashlib.sha256(patched).hexdigest(),
+        "scope": "oráculo adaptado; no es Muninn ni demuestra conformidad completa",
+    }
+
+
 async def claim_transaction(transaction, token):
     """Marca solo una base vacía; nunca borra datos para prepararla."""
     result = await transaction.run("MATCH (n) RETURN count(n) AS count")
@@ -187,10 +255,13 @@ def main(argv=None):
         commits = {name: item["commit"] for name, item in references.items()}
         if commits != {name: item["commit"] for name, item in integrity.items()}:
             raise ValueError("Commits incompatibles entre manifiestos")
+        adaptation = load_reference_adaptation(base / "adaptations", integrity)
         args.output.mkdir(parents=True, exist_ok=False)
         with TemporaryDirectory(prefix="muninn-tck-") as execution:
             clean = Path(execution) / "sources"
             materialize_sources(args.sources, integrity, clean)
+            adapted_source = apply_reference_adaptation(
+                clean / adaptation["repository"], adaptation)
             suite = Path(execution) / "suite"
             test_hashes = prepare_suite(clean / "agent-memory-tck", suite)
             expected = expected_collection(suite, args.profile)
@@ -225,6 +296,7 @@ def main(argv=None):
             summary.update({
                 "profile": args.profile, "reference_commits": commits, "neo4j": neo4j,
                 "scope": "oraculo_con_adaptaciones_TCK; no es Muninn ni demuestra paridad completa",
+                "reference_adapter_adaptation": adapted_source,
                 "fixture_controls": {
                     "embedding": "tck.fixtures.mocks.MockEmbedder; SHA256, 1536 dimensiones",
                     "extraction": "none", "resolution": "none", "geocoding": False, "enrichment": False,
@@ -232,9 +304,16 @@ def main(argv=None):
                     "delete_message": "nativo" if args.profile == "native-delete" else "Cypher correctivo del ReferenceAdapter",
                 },
                 "test_files_sha256": test_hashes,
-                "local_files_sha256": {name: hashlib.sha256((base / name).read_bytes()).hexdigest()
-                                       for name in ("tck_runner.py", "tck_fixture.py", "tck-pytest.ini", "requirements-tck.txt",
-                                                    "reference.py", "Dockerfile.tck", "compose.tck.yaml")},
+                "local_files_sha256": {
+                    name: hashlib.sha256((base / name).read_bytes()).hexdigest()
+                    for name in ("tck_runner.py", "tck_fixture.py", "tck-pytest.ini", "requirements-tck.txt",
+                                 "reference.py", "Dockerfile.tck", "compose.tck.yaml")
+                },
+                "adaptation_files_sha256": {
+                    f"adaptations/{name}": hashlib.sha256(
+                        (base / "adaptations" / name).read_bytes()).hexdigest()
+                    for name in (ADAPTATION_MANIFEST, ADAPTATION_PATCH)
+                },
                 "runtime": {"python": platform.python_version(), "packages": {
                     name: version(name) for name in ("pytest", "pytest-asyncio", "pytest-json-report", "neo4j", "pydantic")}},
                 "cases": [],

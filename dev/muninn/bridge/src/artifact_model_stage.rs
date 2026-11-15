@@ -79,6 +79,16 @@ impl VerifiedArtifactCache {
         &self.bundle_id
     }
 
+    #[must_use]
+    pub fn model_id(&self) -> &str {
+        crate::model_manifest::MODEL_ID
+    }
+
+    #[must_use]
+    pub fn revision(&self) -> &str {
+        self.manifest.revision()
+    }
+
     pub fn read_artifact(
         &self,
         path: &str,

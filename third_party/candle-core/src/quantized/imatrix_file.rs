@@ -10,6 +10,9 @@ use crate::Result;
 pub fn load_imatrix<P: AsRef<Path>>(fname: P) -> Result<HashMap<String, Vec<f32>>> {
     let mut all_data = HashMap::new();
 
+    // Explicit caller-selected imatrix file; parsed entry names are not filesystem paths.
+    // Callers must authorize untrusted paths; this general file loader does not confine a root.
+    // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
     let mut file = File::open(&fname).map_err(|e| {
         crate::Error::msg(format!(
             "Failed to open {}: {}",

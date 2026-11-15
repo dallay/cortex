@@ -3,16 +3,18 @@
 use std::{sync::Arc, time::Duration};
 
 use axum::{
-    Json, Router,
-    extract::{DefaultBodyLimit, Request, State, rejection::JsonRejection},
+    extract::{rejection::JsonRejection, DefaultBodyLimit, Request, State},
     http::StatusCode,
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::post,
+    Json, Router,
 };
+#[cfg(feature = "h5-diagnostic")]
+use muninn_bridge_spike::embedding_port::EncoderIdentity;
 use muninn_bridge_spike::{
-    artifact_fs::ArtifactDir,
     artifact_fs::staging::model::VerifiedArtifactCache,
+    artifact_fs::ArtifactDir,
     auth::authorized,
     domain::{Conversation, Message, NewMessage, SessionInfo},
     embedding_port::{CandidateMiniLmEmbeddingAdapter, EmbeddingPort},
@@ -22,7 +24,7 @@ use muninn_bridge_spike::{
     storage::{StorageError, Store},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
 struct App {
@@ -452,6 +454,7 @@ struct H5DiagnosticInput {
 struct H5DiagnosticOutput {
     ann: Vec<muninn_bridge_spike::h5_diagnostic::RankedHit>,
     exact: Vec<muninn_bridge_spike::h5_diagnostic::RankedHit>,
+    encoder_identity: EncoderIdentity,
 }
 
 /// Authenticated, feature-gated H5-only comparison. Never returns message payloads.
@@ -481,7 +484,7 @@ async fn h5_diagnostic_search(
     {
         return Err(Error::Input);
     }
-    let embedding = embed(app.encoder.as_ref(), &request.query)?;
+    let (embedding, encoder_identity) = diagnostic_embedding(app.encoder.as_ref(), &request.query)?;
     let ann = storage_call(app.store.search_messages(
         &embedding,
         request.session_id.as_deref(),
@@ -502,7 +505,18 @@ async fn h5_diagnostic_search(
             .map_err(|_| Error::Input)?,
         exact: muninn_bridge_spike::h5_diagnostic::project(exact, &input.candidate_aliases)
             .map_err(|_| Error::Input)?,
+        encoder_identity,
     }))
+}
+
+#[cfg(feature = "h5-diagnostic")]
+fn diagnostic_embedding(
+    encoder: &dyn EmbeddingPort,
+    query: &str,
+) -> Result<(Vec<f32>, EncoderIdentity), Error> {
+    let embedding = embed(encoder, query)?;
+    let identity = encoder.diagnostic_identity().ok_or(Error::Encoder)?;
+    Ok((embedding, identity))
 }
 
 async fn get(
@@ -630,10 +644,7 @@ async fn run() -> Result<(), &'static str> {
     let app = app.route("/h5/diagnostic/search", post(h5_diagnostic_search));
     let app = app
         .layer(DefaultBodyLimit::max(1_048_576))
-        .layer(middleware::from_fn_with_state(
-            token,
-            authenticate,
-        ))
+        .layer(middleware::from_fn_with_state(token, authenticate))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080")
         .await
@@ -658,6 +669,74 @@ mod schema_input_tests {
         assert!(valid_schema_text("PERSON", 128));
         assert!(!valid_schema_text("  ", 128));
         assert!(!valid_schema_text(&"x".repeat(129), 128));
+    }
+
+    #[cfg(feature = "h5-diagnostic")]
+    #[test]
+    fn diagnostic_identity_comes_from_the_encoder_instance_that_encoded_the_query() {
+        use std::cell::Cell;
+
+        struct SpyEncoder {
+            encoded: Cell<bool>,
+        }
+
+        impl EmbeddingPort for SpyEncoder {
+            fn space_id(&self) -> &str {
+                "space-marker"
+            }
+
+            fn encode(
+                &self,
+                _text: &str,
+            ) -> Result<Vec<f32>, muninn_bridge_spike::embedding_port::EmbeddingError> {
+                self.encoded.set(true);
+                Ok(vec![0.25; 384])
+            }
+
+            fn diagnostic_identity(&self) -> Option<EncoderIdentity> {
+                self.encoded.get().then(|| EncoderIdentity {
+                    declared: muninn_bridge_spike::embedding_port::DeclaredEncoderIdentity {
+                        artifact_bundle_id: "bundle-marker".into(),
+                        model_id: "model-marker".into(),
+                        revision: "revision-marker".into(),
+                        space_id: self.space_id().into(),
+                    },
+                    loaded: muninn_bridge_spike::embedding_port::LoadedEncoderIdentity {
+                        validated_profile: "muninn-minilm-profile-v1".into(),
+                        config_sha256: "a".repeat(64),
+                    },
+                })
+            }
+        }
+
+        let encoder = SpyEncoder {
+            encoded: Cell::new(false),
+        };
+        let (_, identity) = match diagnostic_embedding(&encoder, "safe query") {
+            Ok(value) => value,
+            Err(_) => panic!("same encoder instance must provide identity after encoding"),
+        };
+        assert_eq!(identity.declared.artifact_bundle_id, "bundle-marker");
+        let encoded = serde_json::to_value(identity.clone()).expect("serializable allowlist");
+        assert_eq!(encoded.as_object().expect("identity object").len(), 2);
+        assert_eq!(encoded["declared"].as_object().expect("declared").len(), 4);
+        assert_eq!(encoded["loaded"].as_object().expect("loaded").len(), 2);
+        assert!(!encoded.to_string().contains("safe query"));
+        assert!(!encoded.to_string().contains("vector"));
+        assert!(!encoded.to_string().contains("path"));
+        let response = serde_json::to_value(H5DiagnosticOutput {
+            ann: Vec::new(),
+            exact: Vec::new(),
+            encoder_identity: identity,
+        })
+        .expect("diagnostic response");
+        let response_keys: std::collections::BTreeSet<_> = response
+            .as_object()
+            .expect("response object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(response_keys, ["ann", "encoder_identity", "exact"].into());
     }
 
     #[cfg(feature = "h5-diagnostic")]

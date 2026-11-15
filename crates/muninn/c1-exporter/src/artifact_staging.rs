@@ -95,7 +95,13 @@ impl ExclusiveStage {
         if owned.dev() != current.dev() || owned.ino() != current.ino() {
             return Err(FsError::UnsafeEntry);
         }
-        before(&self.directory.directory).map_err(|_| FsError::Io)?;
+        before(&self.directory.directory).map_err(|error| {
+            #[cfg(test)]
+            super::diagnostics::report("publish.pre_sync", &error);
+            #[cfg(not(test))]
+            let _ = error;
+            FsError::Io
+        })?;
         rustix::fs::renameat_with(
             &self.parent,
             &self.source_name,
@@ -103,8 +109,18 @@ impl ExclusiveStage {
             target,
             rustix::fs::RenameFlags::NOREPLACE,
         )
-        .map_err(map_errno)?;
-        after(&self.parent).map_err(|_| FsError::OutcomeUnknown)?;
+        .map_err(|error| {
+            #[cfg(test)]
+            super::diagnostics::report("publish.rename_noreplace", &std::io::Error::from(error));
+            map_errno(error)
+        })?;
+        after(&self.parent).map_err(|error| {
+            #[cfg(test)]
+            super::diagnostics::report("publish.post_sync", &error);
+            #[cfg(not(test))]
+            let _ = error;
+            FsError::OutcomeUnknown
+        })?;
         Ok(self.directory)
     }
 }
@@ -206,6 +222,23 @@ mod tests {
             before
         );
         assert!(root.path().join(source).is_dir());
+    }
+
+    #[test]
+    fn native_sync_error_keeps_classification_and_unpublished_source() {
+        let root = fixture();
+        let parent = ArtifactDir::open_root(root.path()).expect("root");
+        let stage = ExclusiveStage::begin(&parent).expect("stage");
+        let source = stage.source_name.clone();
+        let target = "a".repeat(64);
+        let result = stage.publish_with_sync(
+            &target,
+            |_| Err(std::io::Error::from_raw_os_error(5)),
+            |_| panic!("failed pre-sync must not reach post-sync"),
+        );
+        assert!(matches!(result, Err(FsError::Io)));
+        assert!(root.path().join(source).is_dir());
+        assert!(!root.path().join(target).exists());
     }
 
     #[test]

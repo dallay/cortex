@@ -151,6 +151,22 @@ fn pooling() -> Vec<u8> {
 #[test]
 fn accepts_only_the_declared_transformer_mean_pooling_normalize_profile() {
     assert_eq!(profile(&modules(), &pooling()), Ok(()));
+    assert_eq!(
+        validated_profile_id(&modules(), &pooling()),
+        Ok("muninn-minilm-profile-v1")
+    );
+}
+
+#[test]
+fn configuration_fingerprint_uses_framed_labels_and_lengths() {
+    assert_eq!(
+        configuration_sha256(b"modules", b"pooling"),
+        "bb9e624626926c9acf924bc7856227c51a4e2222cb159280a81153ad35063e79"
+    );
+    assert_ne!(
+        configuration_sha256(b"pooling", b"modules"),
+        configuration_sha256(b"modules", b"pooling")
+    );
 }
 
 #[test]
@@ -266,6 +282,13 @@ fn actual_candidate_forward_is_finite_and_repeats_without_inference_acceptance()
         .iter()
         .all(|row| row.len() == 384 && row.iter().all(|value| value.is_finite())));
     assert_eq!(encoder.artifact_bundle_id(), cache.bundle_id());
+    assert_eq!(encoder.model_id(), "sentence-transformers/all-MiniLM-L6-v2");
+    assert_eq!(
+        encoder.revision(),
+        "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
+    );
+    assert_eq!(encoder.validated_profile(), VALIDATED_PROFILE_ID);
+    assert_eq!(encoder.config_sha256().len(), 64);
     assert!(matches!(
         encoder.encode(&[]),
         Err(EncoderError::Tokenizer(TokenizerError::InputLimit))

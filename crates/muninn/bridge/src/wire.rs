@@ -3,8 +3,8 @@
 use chrono::{DateTime, Utc};
 use muninn_core::model::{
     AgentStep, Conversation, ConversationTrace, Entity, EntityGraph, EntityMention,
-    EntityProvenance, Fact, Message, Metadata, Preference, ReasoningStep, ReasoningTrace,
-    Relationship, SessionInfo, StepExplanation, ToolCall, ToolStats,
+    EntityProvenance, Fact, Message, Metadata, Observation, Preference, ReasoningStep,
+    ReasoningTrace, Relationship, SessionInfo, StepExplanation, ToolCall, ToolStats,
 };
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
@@ -146,6 +146,15 @@ pub fn conversation(conversation: &Conversation) -> Value {
         "title": conversation.title,
         "created_at": datetime(&conversation.created_at),
         "updated_at": opt_datetime(conversation.updated_at.as_ref()),
+    })
+}
+
+pub fn observation(observation: &Observation) -> Value {
+    json!({
+        "id": observation.id,
+        "conversation_id": observation.conversation_id,
+        "content": observation.content,
+        "created_at": datetime(&observation.created_at),
     })
 }
 

@@ -42,7 +42,7 @@ async fn schema_migration_contract() {
         1,
         "setup must persist an independent schema version"
     );
-    assert_eq!(rows[0].get::<i64>("version").unwrap(), 1);
+    assert_eq!(rows[0].get::<i64>("version").unwrap(), 2);
     assert_eq!(rows[0].get::<String>("state").unwrap(), "ready");
 
     client
@@ -70,7 +70,7 @@ async fn schema_migration_contract() {
         .await
         .unwrap();
     for mutation in [
-        "MATCH (s:MuninnSchema) SET s.version = 2",
+        "MATCH (s:MuninnSchema) SET s.version = 3",
         "MATCH (s:MuninnSchema) SET s.version = 1, s.state = 'migrating'",
     ] {
         client.execute(mutation, vec![]).await.unwrap();

@@ -31,6 +31,41 @@ class ProductTckValidationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             product_tck_report.validate_profile_result(expected, code, result)
 
+    def test_profile_receipt_partitions_collection_and_preserves_selected_outcomes(self):
+        collected = [
+            {'nodeid': 'case-a', 'markers': ['bronze']},
+            {'nodeid': 'case-b', 'markers': []},
+            {'nodeid': 'case-c', 'markers': ['silver']},
+        ]
+        pytest_tests = report(['case-a', 'case-c'], outcomes=['passed', 'failed'])['tests']
+
+        receipt = product_tck_report.build_profile_receipt(
+            collected, {'case-a', 'case-c'}, pytest_tests,
+        )
+
+        self.assertEqual(receipt['collected_ids'], ['case-a', 'case-b', 'case-c'])
+        self.assertEqual(receipt['selected_ids'], ['case-a', 'case-c'])
+        self.assertEqual(receipt['excluded'], [
+            {'nodeid': 'case-b', 'reason': 'not_selected_by_profile'},
+        ])
+        self.assertEqual(receipt['outcomes'], [
+            {'nodeid': 'case-a', 'outcome': 'passed'},
+            {'nodeid': 'case-c', 'outcome': 'failed'},
+        ])
+        selected_ids = set(receipt['selected_ids'])
+        excluded_ids = {item['nodeid'] for item in receipt['excluded']}
+        collected_ids = set(receipt['collected_ids'])
+        self.assertFalse(selected_ids & excluded_ids)
+        self.assertEqual(selected_ids | excluded_ids, collected_ids)
+        self.assertEqual(selected_ids, {item['nodeid'] for item in receipt['outcomes']})
+
+    def test_profile_receipt_rejects_duplicate_collection_and_uncollected_selection(self):
+        item = {'nodeid': 'case-a', 'markers': []}
+        with self.assertRaisesRegex(ValueError, 'duplicate_collected_nodeid'):
+            product_tck_report.build_profile_receipt([item, item], {'case-a'}, [])
+        with self.assertRaisesRegex(ValueError, 'selected_nodeid_not_collected'):
+            product_tck_report.build_profile_receipt([item], {'case-b'}, [])
+
     def test_accepts_exact_complete_success_report(self):
         expected = {'case-a', 'case-b'}
         product_tck_report.validate_profile_result(expected, 0, report(sorted(expected)))

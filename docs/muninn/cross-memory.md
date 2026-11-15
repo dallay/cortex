@@ -93,15 +93,47 @@ so a deduplicated request does not lose the requested edge.
   case `ABOUT` — like the older `APPLIES_TO` write it mirrors — attaches the
   edge to that existing preference. Muninn does not tighten or re-interpret
   this scope rule here; it is recorded as an input to the S6 follow-up.
-- Legacy adapters inherit the port default
-  `not supported: preference ABOUT` (HTTP 501) and fail closed instead of
-  silently dropping the requested edge. Like the rest of ingestion, the
-  preference write is not rolled back, so this is not a new transaction.
-- No DDL. Both endpoints are matched on `Preference.id` and `Entity.id`, which
-  already carry unique constraints (`preference_id`, `entity_id`). No index,
-  constraint or migration is added; a missing constraint makes the `MATCH`
-  write nothing, which is a pre-existing schema fault, not an `ABOUT`
-  requirement.
+- La implementación actual de `add_preference` usa el puerto compuesto
+  `LongTermStore::write_preference`. El adaptador Neo4j incluye deduplicación,
+  preferencia, relaciones y supersesión en una transacción. Un destino ausente
+  produce un error y revierte la operación, en lugar de aceptar un `MATCH` vacío.
+- La garantía de coordinación cubre `write_preference` y
+  `supersede_preference_atomic`. La aplicación y el endpoint Bridge de
+  supersesión usan esta segunda operación, con el mismo propietario, límites y
+  lock global. Valida ambos nodos dentro de la transacción y conserva la
+  idempotencia de `SUPERSEDED_BY` y `valid_until`.
+- Las primitivas públicas heredadas `create_preference`, `link_*` y
+  `LongTermStore::supersede_preference` no participan en ese protocolo. Los
+  escritores deben usar las operaciones atómicas; la aplicación no llama a la
+  primitiva heredada de supersesión.
+- El esquema añade la restricción única `PreferenceWriteLock.id`. El escritor
+  compuesto comprueba su existencia antes de iniciar la transacción.
+- La operación compuesta tiene un propietario independiente que conserva la
+  transacción cuando el consumidor cancela. El plazo de respuesta de cinco
+  segundos no cancela intercambios Bolt. El propietario termina el intercambio
+  pendiente y comprueba cancelación antes de continuar o confirmar. Un plazo
+  vencido o un fallo de `COMMIT` devuelve resultado desconocido, no una promesa
+  de rollback. La admisión global permite como máximo 16 propietarios activos,
+  sin cola ilimitada. El permiso se conserva hasta finalizar la transacción.
+- La API pública de neo4rs 0.8 no permite configurar `tx_timeout`. Por eso el
+  escritor comprueba límites de servidor: `db.transaction.timeout` y
+  `db.lock.acquisition.timeout` deben estar en `(0, 5s]`, y
+  `db.transaction.monitor.check.interval` en `(0, 1s]`. Exige permisos para
+  `SHOW SETTINGS`. No cambia la configuración del servidor. La monitorización
+  y el transporte pueden retrasar la finalización respecto al plazo de respuesta.
+- Cambio contractual autorizado: `LongTermMemory::new` y `MemoryClient::new`
+  devuelven ahora `MemoryResult` y rechazan al construir un escritor cuyo puerto
+  no declare `supports_atomic_preference_write()`. Un adaptador escritor debe
+  implementar esa capacidad, `write_preference` y
+  `supersede_preference_atomic`, sin composición parcial de primitivas. Los adaptadores antiguos pueden usar los constructores
+  `read_only`, que deshabilitan la ingestión de preferencias. Este nombre no
+  constituye una frontera de autorización para otros tipos de memoria.
+- QA ejecutó siete pruebas DB del snapshot
+  `dfbfead333248f57b1035c022b30e709e35727ed97be9f1d1ca190ed8213fc68`:
+  dos de ciclo de vida, tres de atomicidad y dos de preferencias supersedidas;
+  todas pasaron sin ignoradas. Esa evidencia precede a la operación de
+  supersesión atómica explícita. Sus dos pruebas DB nuevas están pendientes de
+  ejecutar; las pruebas unitarias no sustituyen esa validación.
 
 ## Evidence and proof limits
 

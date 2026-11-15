@@ -1,0 +1,307 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "retrieval-h5-protocol.schema.json",
+  "title": "H5 acceptance protocol-run",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "protocol_id", "protocol_version", "repository_review", "run_inputs", "gates"],
+  "properties": {
+    "schema_version": {"enum": ["h5-acceptance/v1", "h5-acceptance/v2"]},
+    "protocol_id": {"$ref": "#/$defs/pendingMetadata"},
+    "protocol_version": {"$ref": "#/$defs/pendingMetadata"},
+    "repository_review": {
+      "type": "object", "additionalProperties": false,
+      "required": ["commit", "review_reference", "approved_at", "approved_gates"],
+      "properties": {
+        "commit": {"$ref": "#/$defs/pendingMetadata"},
+        "review_reference": {"$ref": "#/$defs/pendingMetadata"},
+        "approved_at": {"anyOf": [
+          {"const": "PENDING"},
+          {"type": "string", "format": "date-time",
+           "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]+)?(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$"}
+        ]},
+        "approved_gates": {"type": "array", "uniqueItems": true, "items": {"enum": ["ann_exact", "absolute_relevance"]}}
+      }
+    },
+    "run_inputs": {
+      "type": "object", "additionalProperties": false,
+      "required": ["metrics_and_k", "acceptance_rules_and_tolerances", "run_count_and_aggregation", "corpus_and_query_candidate_scope", "encoder_identity", "provenance"],
+      "properties": {
+        "metrics_and_k": {"$ref": "#/$defs/decision"},
+        "acceptance_rules_and_tolerances": {"$ref": "#/$defs/decision"},
+        "run_count_and_aggregation": {"$ref": "#/$defs/decision"},
+        "corpus_and_query_candidate_scope": {"$ref": "#/$defs/decision"},
+        "labels_rubric_and_adjudication": {"$ref": "#/$defs/decisions/labels_rubric_and_adjudication"},
+        "ann_exact_comparison_scope": {"$ref": "#/$defs/decision"},
+        "encoder_identity": {"$ref": "#/$defs/decisions/encoder_identity"},
+        "provenance": {"$ref": "#/$defs/decisions/provenance"}
+      }
+    },
+    "gates": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ann_exact", "absolute_relevance"],
+      "properties": {"ann_exact": {"type": "boolean"}, "absolute_relevance": {"type": "boolean"}}
+    }
+  },
+  "allOf": [
+    {"if": {"properties": {"schema_version": {"const": "h5-acceptance/v1"}}},
+      "then": {"properties": {"run_inputs": {"properties": {"metrics_and_k": {"$ref": "#/$defs/decisions/metrics_and_k"},
+      "acceptance_rules_and_tolerances": {"$ref": "#/$defs/decisions/acceptance_rules_and_tolerances"},
+      "run_count_and_aggregation": {"$ref": "#/$defs/decisions/run_count_and_aggregation"},
+      "corpus_and_query_candidate_scope": {"$ref": "#/$defs/decisions/corpus_and_query_candidate_scope"},
+      "ann_exact_comparison_scope": {"$ref": "#/$defs/decisions/ann_exact_comparison_scope"}}}}}},
+    {
+      "if": {"properties": {"schema_version": {"const": "h5-acceptance/v2"}}},
+      "then": {
+        "properties": {
+          "gates": {"properties": {"ann_exact": {"const": true}, "absolute_relevance": {"const": false}}},
+          "run_inputs": {
+            "properties": {
+              "metrics_and_k": {
+                "if": {"properties": {"status": {"const": "approved"}}},
+                "then": {"properties": {"value": {"$ref": "#/$defs/v2/metrics_and_k"}}}
+              },
+              "acceptance_rules_and_tolerances": {
+                "if": {"properties": {"status": {"const": "approved"}}},
+                "then": {"properties": {"value": {"$ref": "#/$defs/v2/acceptance_rules_and_tolerances"}}}
+              },
+              "run_count_and_aggregation": {
+                "if": {"properties": {"status": {"const": "approved"}}},
+                "then": {"properties": {"value": {"$ref": "#/$defs/v2/run_count_and_aggregation"}}}
+              },
+              "corpus_and_query_candidate_scope": {
+                "if": {"properties": {"status": {"const": "approved"}}},
+                "then": {"properties": {"value": {"$ref": "#/$defs/v2/corpus_and_query_candidate_scope"}}}
+              },
+              "ann_exact_comparison_scope": {
+                "if": {"properties": {"status": {"const": "approved"}}},
+                "then": {"properties": {"value": {"$ref": "#/$defs/v2/ann_exact_comparison_scope"}}}
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"gates": {"properties": {"ann_exact": {"const": true}}},
+        "run_inputs": {"properties": {"metrics_and_k": {"properties": {"status": {"const": "approved"}}}}}},
+        "required": ["gates", "run_inputs"]},
+      "then": {"properties": {"run_inputs": {"properties": {"metrics_and_k": {"properties": {
+        "value": {"properties": {"k_by_metric": {"required": ["ExactTopKRecall@K", "OrderedTopKMatch@K"]}}}
+      }}}}}}
+    },
+    {
+      "if": {"properties": {"gates": {"properties": {"absolute_relevance": {"const": true}}},
+        "run_inputs": {"properties": {"metrics_and_k": {"properties": {"status": {"const": "approved"}}}}}},
+        "required": ["gates", "run_inputs"]},
+      "then": {"properties": {"run_inputs": {"properties": {"metrics_and_k": {"properties": {
+        "value": {"properties": {"k_by_metric": {"required": ["Recall@K", "nDCG@K"]}}}
+      }}}}}}
+    },
+    {"if": {"properties": {"gates": {"properties": {"ann_exact": {"const": true}}}}, "required": ["gates"]},
+      "then": {"properties": {"run_inputs": {"required": ["ann_exact_comparison_scope"]}}}},
+    {"if": {"properties": {"gates": {"properties": {"absolute_relevance": {"const": true}}}}, "required": ["gates"]},
+      "then": {"properties": {"run_inputs": {"required": ["labels_rubric_and_adjudication"]}}}},
+    {
+      "if": {"properties": {"gates": {"properties": {"ann_exact": {"const": false}}},
+        "run_inputs": {"properties": {"metrics_and_k": {"properties": {"status": {"const": "approved"}}}}}},
+        "required": ["gates", "run_inputs"]},
+      "then": {"properties": {"run_inputs": {"properties": {"metrics_and_k": {"properties": {
+        "value": {"properties": {"k_by_metric": {"not": {"anyOf": [
+          {"required": ["ExactTopKRecall@K"]}, {"required": ["OrderedTopKMatch@K"]}
+        ]}}}}
+      }}}}}}
+    },
+    {
+      "if": {"properties": {"gates": {"properties": {"absolute_relevance": {"const": false}}},
+        "run_inputs": {"properties": {"metrics_and_k": {"properties": {"status": {"const": "approved"}}}}}},
+        "required": ["gates", "run_inputs"]},
+      "then": {"properties": {"run_inputs": {"properties": {"metrics_and_k": {"properties": {
+        "value": {"properties": {"k_by_metric": {"not": {"anyOf": [
+          {"required": ["Recall@K"]}, {"required": ["nDCG@K"]}
+        ]}}}}
+      }}}}}}
+    },
+    {
+      "if": {"properties": {"gates": {"properties": {"ann_exact": {"const": true}}},
+        "run_inputs": {"properties": {"acceptance_rules_and_tolerances": {"properties": {"status": {"const": "approved"}}}}}},
+        "required": ["gates", "run_inputs"]},
+      "then": {"properties": {"run_inputs": {"properties": {"acceptance_rules_and_tolerances": {"properties": {
+        "value": {"required": ["ann_exact"]}
+      }}}}}}
+    },
+    {
+      "if": {"properties": {"gates": {"properties": {"absolute_relevance": {"const": true}}},
+        "run_inputs": {"properties": {"acceptance_rules_and_tolerances": {"properties": {"status": {"const": "approved"}}}}}},
+        "required": ["gates", "run_inputs"]},
+      "then": {"properties": {"run_inputs": {"properties": {"acceptance_rules_and_tolerances": {"properties": {
+        "value": {"required": ["absolute_relevance"]}
+      }}}}}}
+    },
+    {
+      "if": {"properties": {"gates": {"properties": {"ann_exact": {"const": false}}},
+        "run_inputs": {"properties": {"acceptance_rules_and_tolerances": {"properties": {"status": {"const": "approved"}}}}}},
+        "required": ["gates", "run_inputs"]},
+      "then": {"properties": {"run_inputs": {"properties": {"acceptance_rules_and_tolerances": {"properties": {
+        "value": {"not": {"required": ["ann_exact"]}}
+      }}}}}}
+    },
+    {
+      "if": {"properties": {"gates": {"properties": {"absolute_relevance": {"const": false}}},
+        "run_inputs": {"properties": {"acceptance_rules_and_tolerances": {"properties": {"status": {"const": "approved"}}}}}},
+        "required": ["gates", "run_inputs"]},
+      "then": {"properties": {"run_inputs": {"properties": {"acceptance_rules_and_tolerances": {"properties": {
+        "value": {"not": {"required": ["absolute_relevance"]}}
+      }}}}}}
+    },
+    {
+      "if": {"properties": {"gates": {"properties": {
+        "ann_exact": {"const": false}, "absolute_relevance": {"const": false}
+      }, "required": ["ann_exact", "absolute_relevance"]}}, "required": ["gates"]},
+      "then": {"properties": {"run_inputs": {"properties": {"metrics_and_k": {"properties": {
+        "status": {"const": "pending"}
+      }}}}}}
+    }
+  ],
+  "$defs": {
+    "pendingMetadata": {"anyOf": [{"const": "PENDING"}, {"$ref": "#/$defs/nonPlaceholder"}]},
+    "nonPlaceholder": {"type": "string", "minLength": 1, "pattern": "\\S", "not": {"pattern": "^(?:\\s*[pP][eE][nN][dD][iI][nN][gG]|[pP][lL][aA][cC][eE][hH][oO][lL][dD][eE][rR]|[tT][oO][dD][oO]|[tT][bB][dD]|[cC][hH][aA][nN][gG][eE]_[mM][eE]|[cC][hH][oO][oO][sS][eE]\\s|[uU][nN][kK][nN][oO][wW][nN]$|[nN][oO][nN][eE]$|[nN][uU][lL][lL]$|[nN]/[aA]$|[tT][bB][cC]$|\\.\\.\\.$|<)"}},
+    "positiveInteger": {"type": "integer", "minimum": 1},
+    "decision": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "value", "rationale"],
+      "properties": {
+        "status": {"enum": ["pending", "approved"]},
+        "value": {},
+        "rationale": {"$ref": "#/$defs/nonPlaceholder"}
+      },
+      "allOf": [
+        {"if": {"properties": {"status": {"const": "pending"}}, "required": ["status"]},
+         "then": {"properties": {"value": {"type": "null"}}}},
+        {"if": {"properties": {"status": {"const": "approved"}}, "required": ["status"]},
+         "then": {"properties": {"value": {"not": {"type": "null"}}}}}
+      ]
+    },
+    "decisions": {
+      "metrics_and_k": {"allOf": [{"$ref": "#/$defs/decision"}, {"if": {"properties": {"status": {"const": "approved"}}, "required": ["status"]}, "then": {"properties": {"value": {"$ref": "#/$defs/metricsAndK"}}}}]},
+      "acceptance_rules_and_tolerances": {"allOf": [{"$ref": "#/$defs/decision"}, {"if": {"properties": {"status": {"const": "approved"}}, "required": ["status"]}, "then": {"properties": {"value": {"$ref": "#/$defs/values/acceptance_rules_and_tolerances"}}}}]},
+      "run_count_and_aggregation": {"allOf": [{"$ref": "#/$defs/decision"}, {"if": {"properties": {"status": {"const": "approved"}}, "required": ["status"]}, "then": {"properties": {"value": {"$ref": "#/$defs/values/run_count_and_aggregation"}}}}]},
+      "corpus_and_query_candidate_scope": {"allOf": [{"$ref": "#/$defs/decision"}, {"if": {"properties": {"status": {"const": "approved"}}, "required": ["status"]}, "then": {"properties": {"value": {"$ref": "#/$defs/values/corpus_and_query_candidate_scope"}}}}]},
+      "labels_rubric_and_adjudication": {"allOf": [{"$ref": "#/$defs/decision"}, {"if": {"properties": {"status": {"const": "approved"}}, "required": ["status"]}, "then": {"properties": {"value": {"$ref": "#/$defs/values/labels_rubric_and_adjudication"}}}}]},
+      "ann_exact_comparison_scope": {"allOf": [{"$ref": "#/$defs/decision"}, {"if": {"properties": {"status": {"const": "approved"}}, "required": ["status"]}, "then": {"properties": {"value": {"$ref": "#/$defs/values/ann_exact_comparison_scope"}}}}]},
+      "encoder_identity": {"allOf": [{"$ref": "#/$defs/decision"}, {"if": {"properties": {"status": {"const": "approved"}}, "required": ["status"]}, "then": {"properties": {"value": {"$ref": "#/$defs/values/encoder_identity"}}}}]},
+      "provenance": {"allOf": [{"$ref": "#/$defs/decision"}, {"if": {"properties": {"status": {"const": "approved"}}, "required": ["status"]}, "then": {"properties": {"value": {"$ref": "#/$defs/values/provenance"}}}}]}
+    },
+    "metricsAndK": {"type": "object", "additionalProperties": false,
+      "required": ["k_by_metric"], "properties": {"k_by_metric": {"type": "object", "additionalProperties": false,
+        "properties": {"ExactTopKRecall@K": {"$ref": "#/$defs/positiveInteger"}, "OrderedTopKMatch@K": {"$ref": "#/$defs/positiveInteger"},
+          "Recall@K": {"$ref": "#/$defs/positiveInteger"}, "nDCG@K": {"$ref": "#/$defs/positiveInteger"}}}}},
+    "v2": {
+      "metrics_and_k": {"type": "object",
+        "additionalProperties": false,
+        "required": ["k_by_metric"],
+        "properties": {"k_by_metric": {"type": "object",
+        "additionalProperties": false,
+        "required": ["ExactTopKRecall@K",
+        "OrderedTopKMatch@K"],
+        "properties": {"ExactTopKRecall@K": {"type": "integer",
+        "const": 10},
+        "OrderedTopKMatch@K": {"type": "integer",
+        "const": 10}}}}},
+      "acceptance_rules_and_tolerances": {"type": "object",
+        "additionalProperties": false,
+        "required": ["ann_exact"],
+        "properties": {"ann_exact": {"type": "object",
+        "additionalProperties": false,
+        "required": ["criterion",
+        "threshold",
+        "policy_id"],
+        "properties": {"criterion": {"$ref": "#/$defs/nonPlaceholder"},
+        "threshold": {"type": "number",
+        "const": 1},
+        "policy_id": {"type": "string",
+        "const": "ann-exact-per-query-equality-v1"}}}}},
+      "run_count_and_aggregation": {"type": "object",
+        "additionalProperties": false,
+        "required": ["run_count",
+        "aggregation",
+        "tie_policy",
+        "undefined_policy"],
+        "properties": {"run_count": {"type": "integer",
+        "const": 1},
+        "aggregation": {"type": "string",
+        "const": "per-query-governing-macro-descriptive-v1"},
+        "tie_policy": {"type": "string",
+        "const": "observed-ranking-no-retrospective-tiebreak-v1"},
+        "undefined_policy": {"type": "string",
+        "const": "required-undefined-blocks-pass-v1"}}},
+      "corpus_and_query_candidate_scope": {"type": "object",
+        "additionalProperties": false,
+        "required": ["corpus_id",
+        "version",
+        "queries",
+        "corpus_hash"],
+        "properties": {"corpus_id": {"$ref": "#/$defs/nonPlaceholder"},
+        "version": {"$ref": "#/$defs/nonPlaceholder"},
+        "queries": {"type": "array",
+        "minItems": 1,
+        "items": {"type": "object",
+        "additionalProperties": false,
+        "required": ["query_id",
+        "candidate_ids"],
+        "properties": {"query_id": {"$ref": "#/$defs/nonPlaceholder"},
+        "candidate_ids": {"type": "array",
+        "minItems": 1,
+        "items": {"$ref": "#/$defs/nonPlaceholder"}}}}},
+        "corpus_hash": {"type": "string",
+        "minLength": 71, "maxLength": 71, "pattern": "^sha256:[0-9a-f]{64}$"}}},
+      "ann_exact_comparison_scope": {"type": "object",
+        "additionalProperties": false,
+        "required": ["retrieval_path",
+        "candidate_scope",
+        "search_config"],
+        "properties": {"retrieval_path": {"type": "string",
+        "const": "/h5/diagnostic/search"},
+        "candidate_scope": {"type": "string",
+        "const": "same-query-candidates-v1"},
+        "search_config": {"type": "object",
+        "additionalProperties": false,
+        "required": ["limit",
+        "threshold"],
+        "properties": {"limit": {"type": "integer",
+        "minimum": 10,
+        "maximum": 100},
+        "threshold": {"type": "number",
+        "minimum": 0,
+        "maximum": 1}}}}}
+    },
+    "values": {
+      "acceptance_rules_and_tolerances": {"type": "object", "minProperties": 1, "additionalProperties": false, "properties": {
+        "ann_exact": {"$ref": "#/$defs/values/gateRule"}, "absolute_relevance": {"$ref": "#/$defs/values/gateRule"}}},
+      "gateRule": {"type": "object", "additionalProperties": false, "required": ["criterion", "threshold"], "properties": {
+        "criterion": {"$ref": "#/$defs/nonPlaceholder"}, "threshold": {"type": "number"}}},
+      "run_count_and_aggregation": {"type": "object", "additionalProperties": false, "required": ["run_count", "aggregation", "tie_policy", "undefined_policy"], "properties": {
+        "run_count": {"$ref": "#/$defs/positiveInteger"}, "aggregation": {"$ref": "#/$defs/nonPlaceholder"},
+        "tie_policy": {"$ref": "#/$defs/nonPlaceholder"}, "undefined_policy": {"$ref": "#/$defs/nonPlaceholder"}}},
+      "corpus_and_query_candidate_scope": {"type": "object", "additionalProperties": false, "required": ["corpus_id", "version", "queries"], "properties": {
+        "corpus_id": {"$ref": "#/$defs/nonPlaceholder"}, "version": {"$ref": "#/$defs/nonPlaceholder"},
+        "queries": {"type": "array", "minItems": 1, "items": {"type": "object", "additionalProperties": false,
+          "required": ["query_id", "candidate_ids"], "properties": {"query_id": {"$ref": "#/$defs/nonPlaceholder"},
+            "candidate_ids": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/nonPlaceholder"}}}}}}},
+      "labels_rubric_and_adjudication": {"type": "object", "additionalProperties": false, "required": ["labels_version", "rubric", "adjudication"], "properties": {
+        "labels_version": {"$ref": "#/$defs/nonPlaceholder"}, "rubric": {"$ref": "#/$defs/nonPlaceholder"}, "adjudication": {"$ref": "#/$defs/nonPlaceholder"}}},
+      "ann_exact_comparison_scope": {"type": "object", "additionalProperties": false, "required": ["retrieval_path", "candidate_scope"], "properties": {
+        "retrieval_path": {"$ref": "#/$defs/nonPlaceholder"}, "candidate_scope": {"$ref": "#/$defs/nonPlaceholder"}}},
+      "encoder_identity": {"type": "object", "additionalProperties": false, "required": ["declared", "loaded"], "properties": {
+        "declared": {"type": "object", "additionalProperties": false, "required": ["artifact_bundle_id", "model_id", "revision", "space_id"], "properties": {
+          "artifact_bundle_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "model_id": {"const": "sentence-transformers/all-MiniLM-L6-v2"},
+          "revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"}, "space_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}},
+        "loaded": {"type": "object", "additionalProperties": false, "required": ["validated_profile", "config_sha256"], "properties": {
+          "validated_profile": {"const": "muninn-minilm-profile-v1"}, "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}}},
+      "provenance": {"type": "object", "additionalProperties": false, "required": ["encoder_model", "build_bridge", "dependencies", "corpus_labels", "retrieval_configuration", "runtime_environment"], "properties": {
+        "encoder_model": {"$ref": "#/$defs/nonPlaceholder"}, "build_bridge": {"$ref": "#/$defs/nonPlaceholder"},
+        "dependencies": {"$ref": "#/$defs/nonPlaceholder"}, "corpus_labels": {"$ref": "#/$defs/nonPlaceholder"},
+        "retrieval_configuration": {"$ref": "#/$defs/nonPlaceholder"}, "runtime_environment": {"$ref": "#/$defs/nonPlaceholder"}}}
+    }
+  }
+}

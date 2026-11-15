@@ -1,83 +1,116 @@
-# Propuesta: protocolo de aceptación H5
+# Proposal: H5 Acceptance Protocol
 
-## Intención
+## Intent
 
-Definir un contrato de aceptación de producto para H5 que permita decidir por separado si la búsqueda ANN reproduce la búsqueda exhaustiva y si la recuperación alcanza la calidad absoluta requerida según juicios humanos. El usuario aprobó la intención de mantener dos gates separados. La evidencia H5 disponible es descriptiva y exploratoria; todavía no existe un protocolo concreto de corrida con todos sus valores aprobado.
+Define a candidate H5 acceptance protocol that keeps ANN–exact equivalence separate from absolute retrieval relevance. Record the user-approved ANN–exact criteria and run treatment, and define a new, independent, unlabelled corpus candidate for human review. This proposal does not claim product readiness, protocol approval for measurement, or acceptance of any prior result.
 
-La corrida existente no se considerará preinscrita ni aceptada retroactivamente. La re-medición se hará únicamente después de que el usuario apruebe el protocolo, sus valores y la procedencia exigida.
+The existing six-query/twelve-candidate pilot and its hypothetical C0/C1 cases are excluded from the candidate corpus and from retrospective acceptance. No measurement is authorized by this change.
 
-## Alcance
+## Scope
 
-### Incluido
+### In Scope
 
-- Proponer dos gates independientes: equivalencia ANN–exact y calidad absoluta de recuperación etiquetada.
-- Dejar abiertos todos los valores estadísticos y específicos de cada corrida: métricas y K, reglas de aceptación y tolerancias, número y tratamiento de corridas, agregación, corpus y adjudicación, procedencia y unidad de comparación ANN–exact.
-- Mantener la corrida disponible como evidencia descriptiva, con sus límites de corpus, anotación y procedencia; no asignarle un veredicto PASS.
-- Permitir que la arquitectura y la especificación definan los campos obligatorios y el protocolo de aprobación, sin elegir valores para esos campos.
-- Bloquear cada protocolo concreto de corrida y toda medición confirmatoria hasta que se completen y aprueben explícitamente todos los campos aplicables.
+- Record a candidate ANN–exact gate at `K=10`: for every query, require `ExactTopKRecall@10=1.0` and `OrderedTopKMatch@10=1.0` for `PASS`.
+- Record one run, per-query metric reporting, and macro-averages as descriptive summaries only. Do not use macro-averages to override a failed per-query criterion.
+- Do not break ties retrospectively. An undefined required metric blocks `PASS`.
+- Keep absolute relevance disabled. No product utility threshold has been approved; any future activation requires a separately approved threshold and human labels.
+- Define a separate, versioned and frozen, unlabelled corpus candidate assembled from eligible project material for independent human review. Its proposed artifact contains query text, candidate text, source-path provenance, and a corpus hash. Keep the corpus in draft status: do not approve it, label it, or treat it as sufficient or representative.
+- Require user review and an explicit freeze decision for the corpus. Keep human labeling and adjudication as separate, later steps; the candidate process is two blind reviewers followed by adjudication.
+- Keep the candidate protocol non-ready until the exact frozen corpus is identified, applicable labels exist if absolute relevance is later enabled, encoder and provenance are verified, commit and review metadata are recorded, and all applicable thresholds and approvals are complete.
+- Preserve the existing descriptive-only status of prior results and existing QA/Clippy blockers. Do not perform measurements or claim acceptance.
 
-### Excluido
+### Out of Scope
 
-- Elegir por cuenta propia métricas gobernantes, K, umbrales, tolerancias, cantidad de corridas, corpus formal o proceso de adjudicación.
-- Tratar la tolerancia H4 `1e-9` como criterio H5, o inferir un umbral de la diferencia de score observada o del orden coincidente en la corrida disponible.
-- Presentar la especificación de paridad externa marcada **Proposed** como aprobación del contrato H5.
-- Reetiquetar la corrida existente como preinscrita, aceptada o prueba de calidad general.
-- Ejecutar una re-medición, cambiar el ranking, los filtros, el scope, el threshold o el fallback para ajustarse a un criterio no aprobado.
-- Cambiar código, informes de resultados o el estado del cambio durante esta fase.
+- Creating or labeling the corpus, freezing it, deciding its sufficiency or representativeness, or performing human review/adjudication in this proposal phase.
+- Enabling absolute relevance or selecting a product utility threshold, relevance rubric, or acceptance criteria for that gate.
+- Running measurements, changing retrieval behavior, or treating existing pilot or hypothetical C0/C1 cases as acceptance evidence.
+- Claiming readiness, product acceptance, or confirmation that the candidate corpus has adequate size or coverage.
+- Modifying code, tests, configuration, reports, SDD specs/design/tasks/state, or any file other than this proposal.
 
-## Enfoque
+## Approach
 
-La propuesta conserva los dos gates aprobados como preguntas independientes, con resultados y criterios de aceptación separados:
+Represent the candidate protocol and corpus as reviewable, versioned artifacts in later change phases. The protocol records the approved ANN–exact criteria and run handling, while retaining explicit gates for all inputs and approvals that remain applicable. Required per-query metrics must be defined for every query; an undefined value prevents `PASS`. Ties are evaluated as observed and are not retrospectively resolved to improve agreement. The macro-average is descriptive, not an alternative acceptance path.
 
-1. **Equivalencia ANN–exact:** determinar si la salida ANN concuerda con la búsqueda exhaustiva bajo datos, consulta, scope, encoder y configuración fijados. El contrato deberá decidir si compara las salidas directas o el comportamiento público completo, incluidos filtros y fallback por underfill.
-2. **Calidad absoluta de recuperación:** determinar si los candidatos ordenados satisfacen el objetivo de relevancia establecido con juicios humanos. La coincidencia ANN–exact no demuestra relevancia; una métrica de relevancia tampoco demuestra equivalencia entre algoritmos.
+The corpus candidate is a new independent collection of unlabelled query/candidate text drawn from eligible, versioned Markdown material under `docs/muninn/`. Record source paths and a hash of the corpus contents. Exclude `docs/muninn/retrieval-h5-runner.md` because it has a pre-existing modification. The available inventory is 29 versioned documents; this inventory does not establish that the candidate is large or representative enough for `K=10`. Do not reuse the existing six-query/twelve-candidate pilot or hypothetical C0/C1 cases.
 
-No se combinan ambos gates en un único resultado agregado. La arquitectura y la especificación pueden formalizar qué campos debe contener cada protocolo concreto de corrida y cómo se bloquea una ejecución incompleta, pero no eligen los valores de esos campos ni constituyen su aprobación. Los valores estadísticos y operativos permanecen abiertos. Antes de iniciar cada corrida confirmatoria, el usuario o responsable autorizado debe aprobar explícitamente todos los campos aplicables y la versión completa de ese protocolo. Si falta cualquier campo o aprobación, esa corrida y cualquier medición confirmatoria quedan bloqueadas. La evidencia actual seguirá identificada como medición descriptiva, no aceptada y no preinscrita; no se permite preinscribirla retroactivamente. La referencia externa de paridad continúa siendo **Proposed** y no sustituye la aprobación del protocolo de corrida.
+The user must review the draft and explicitly approve its frozen version before it can serve as a protocol input. Keep labels and adjudication out of this draft corpus artifact. If absolute relevance is later proposed, require a separately approved utility threshold, human labels, and adjudication before enabling that gate. The candidate protocol remains not ready until the exact corpus, required labels (if applicable), encoder/provenance, commit and review metadata, thresholds, and all applicable approvals are recorded. This is a definition of candidate gates, not a readiness determination or authorization to measure.
 
-## Campos abiertos que requieren aprobación para cada protocolo de corrida
+## Affected Areas
 
-1. **Métrica y K:** definir qué métrica o métricas gobiernan cada gate y los valores de K aplicables. Recall, MRR, nDCG y los K del piloto son evidencia descriptiva existente, no valores de aceptación aprobados.
-2. **Reglas de aceptación y tolerancias:** definir la condición de aceptación de cada gate, incluidas igualdad de ranking, comparación numérica de scores, márgenes u otra regla. No se asignan valores predeterminados.
-3. **Corridas y agregación:** definir el número de ejecuciones, el tratamiento de variabilidad y datos indefinidos, y la agregación entre consultas y ejecuciones.
-4. **Corpus y adjudicación:** definir si el piloto es suficiente para la corrida prevista; establecer requisitos de tamaño y representatividad, número de revisores, adjudicación, consultas sin candidatos relevantes y versionado/cambio de etiquetas.
-5. **Procedencia:** definir qué identidad y versiones se deben fijar y verificar para encoder/modelo, código/build/bridge, dependencias, corpus/etiquetas, configuración de búsqueda y entorno de ejecución.
-6. **Alcance de ANN–exact:** definir si se comparan salidas directas o el comportamiento completo de producción, incluidos underfill/fallback, filtros, límites, threshold, empates y scope.
-7. **Campos específicos de cada corrida:** completar y aprobar todas las decisiones aplicables para la versión concreta del protocolo, incluidos objetivo, datos y corpus identificados, ruta bajo prueba y evidencia de procedencia. Ningún campo estadístico u operativo queda aprobado por el mero hecho de figurar como requisito en la arquitectura o especificación.
-
-La intención de dos gates ya está aprobada y no se vuelve a abrir como decisión de alcance. La arquitectura y la especificación pueden describir estos campos sin elegir sus valores. La aprobación debe resolver todos los campos aplicables antes de iniciar cada protocolo concreto de corrida; mientras falte un campo o su aprobación explícita, no se iniciará esa corrida ni ninguna medición confirmatoria.
-
-## Áreas afectadas previstas
-
-| Área | Impacto previsto | Descripción |
+| Area | Impact | Description |
 |---|---|---|
-| `.agents/sdd/changes/muninn-h5-acceptance-protocol/` | Nuevo artefacto | Esta propuesta documenta la intención, el alcance y las decisiones pendientes. |
-| `docs/muninn/retrieval-h5-local-results.md` | Referencia; sin cambio en esta fase | Conservar el estado descriptivo y las limitaciones de la corrida existente. |
-| `docs/muninn/retrieval-judgment-pilot-v1.md` y `dev/muninn/fixtures/retrieval-pilot-v1-corpus.json` | Revisión posterior condicionada | Evaluar adecuación del corpus y la rúbrica cuando se decida el protocolo. |
-| `dev/muninn/retrieval_quality.py` y `dev/muninn/retrieval_h5_runner.py` | Posible cambio posterior | Solo tras aprobar las reglas y requisitos de procedencia. |
-| `crates/muninn/neo4j/src/queries/short_term.rs` y `crates/muninn/neo4j/src/short_term.rs` | Referencia técnica; cambio no autorizado aquí | La especificación posterior precisará qué rutas y comportamientos cubre el gate ANN–exact. |
-| `tmp/plans/muninn-feature-parity-spec.md` | Referencia externa no normativa | Su estado **Proposed** no representa aprobación de producto para H5. |
+| `.agents/sdd/changes/muninn-h5-acceptance-protocol/proposal.md` | Modified | Record the candidate protocol decisions, corpus-review boundary, exclusions, and non-readiness conditions. |
+| Future protocol and corpus artifacts for this change | Proposed, not created here | Define a versioned protocol candidate and a draft unlabelled corpus artifact with query/candidate text, source-path provenance, and corpus hash. |
+| `docs/muninn/` | Read-only source material | Candidate corpus preparation may use eligible versioned Markdown; exclude the modified runner guide. No source document is changed by this proposal. |
+| Existing H5 pilot/results and runner | No change | Preserve them as descriptive evidence only; they are not the candidate corpus or acceptance evidence. |
 
-## Riesgos
+## Risks
 
-| Riesgo | Mitigación propuesta |
+| Risk | Mitigation |
 |---|---|
-| Confundir equivalencia algorítmica con calidad semántica. | Mantener gates, criterios y resultados separados. |
-| Generalizar a partir del piloto pequeño o de juicios de un solo revisor sin adjudicación. | Solicitar aprobación explícita del corpus y del proceso de anotación antes de aceptarlos como evidencia formal. |
-| Convertir resultados ya observados en aceptación retrospectiva. | Preservar el estado descriptivo no preinscrito y exigir aprobación previa a cualquier re-medición. |
-| Importar un umbral no autorizado, incluida la tolerancia H4 `1e-9`. | No fijar valores en esta propuesta; decidir cada regla H5 de forma explícita. |
-| Aceptar resultados con identidad de build, corpus o configuración no verificada. | Definir los requisitos de procedencia en la especificación y aprobar/verificar los valores correspondientes antes de cada corrida confirmatoria. |
-| Alterar el comportamiento de búsqueda para satisfacer un gate. | Mantener ranking, filtros, scope, threshold y fallback fuera de cambios motivados por criterios aún no aprobados. |
+| A small or unrepresentative corpus is mistaken for adequate K=10 coverage. | Keep the corpus unapproved and draft until user review; make no sufficiency or representativeness claim. |
+| Existing pilot content or hypothetical cases leak into the independent corpus. | Explicitly exclude the six-query/twelve-candidate pilot and C0/C1 cases. |
+| Descriptive aggregation obscures per-query failures. | Require both ANN–exact metrics to equal 1.0 for every query; label macro-averages descriptive only. |
+| Missing values, unresolved ties, or missing provenance are treated as success. | Do not break ties retrospectively; block `PASS` on undefined required metrics or incomplete applicable protocol inputs. |
+| A relevance gate is enabled without an approved product utility threshold. | Keep absolute relevance disabled until a threshold, labels, and adjudication are separately approved. |
 
-## Reversión
+## Rollback Plan
 
-Esta fase solo crea una propuesta documental. Si el usuario rechaza o cambia la propuesta, actualizar o retirar esta propuesta mediante una decisión explícita antes de iniciar la especificación. No hay cambios de código, datos, informes de medición ni estado que revertir en esta fase.
+This phase changes only this proposal. If the candidate decisions or corpus boundary change, revise or withdraw this proposal with explicit user direction before later phases use it. No corpus, code, configuration, measurements, or runtime state is created or changed here.
 
-## Criterios de éxito
+## Dependencies
 
-- [ ] La propuesta distingue formalmente el gate de equivalencia ANN–exact del gate de calidad absoluta etiquetada.
-- [ ] La intención de dos gates permanece como alcance aprobado; arquitectura y especificación pueden formalizar campos requeridos sin escoger sus valores.
-- [ ] Todos los valores estadísticos y específicos de corrida permanecen abiertos hasta la aprobación explícita de cada protocolo concreto.
-- [ ] Cada corrida confirmatoria queda bloqueada hasta que se hayan completado y aprobado todos los campos aplicables.
-- [ ] La corrida actual se conserva como descriptiva, no aceptada y no preinscrita; la propuesta no le atribuye un veredicto de aceptación.
-- [ ] No se deriva ningún umbral H5 de H4, de resultados observados ni de la especificación externa **Proposed**.
-- [ ] No se preinscribe ni acepta retroactivamente la corrida exploratoria existente.
+- Explicit user review and approval are required to freeze the corpus candidate.
+- Any later absolute-relevance gate depends on a separately approved product utility threshold, labels, and adjudication.
+- Later protocol readiness depends on the exact corpus version, encoder/provenance, commit and review metadata, applicable thresholds, and approvals.
+
+## Success Criteria
+
+- [ ] The proposal records `K=10`, both per-query ANN–exact metrics at `1.0`, one run, descriptive per-query and macro reporting, no retrospective tie-breaking, and undefined-required-metric blocking.
+- [ ] Absolute relevance remains disabled because no product utility threshold is approved.
+- [ ] The corpus candidate is defined as new, independent, versioned, frozen only after user review, and unlabelled at draft stage, with query/candidate text, source-path provenance, and corpus hash.
+- [ ] Two blind reviewers and subsequent adjudication are specified as the candidate labeling process, separate from corpus preparation and freeze.
+- [ ] The existing pilot and hypothetical C0/C1 cases are excluded, and no claim is made that the available material is sufficient or representative for `K=10`.
+- [ ] The protocol is explicitly not ready until all exact corpus, applicable labels, encoder/provenance, commit/review metadata, threshold, and approval inputs are present.
+- [ ] No corpus is created or labeled, no measurement is run, and no readiness or product-acceptance claim is made in this phase.
+
+## Enmienda autorizada: slice técnico offline ANN-only
+
+### Autorización y continuidad
+
+El usuario autorizó explícitamente incorporar al SDD existente un slice técnico offline que conecte el protocolo con un flujo ANN–exact sin annotations cuando `gates.ann_exact=true` y `gates.absolute_relevance=false`. Esta enmienda amplía el alcance de las fases posteriores; no autoriza una medición real, un protocolo-run ni la aceptación de H5. En esta fase solo se modifica `proposal.md` y se preserva el WIP previo.
+
+La ampliación reabre `spec -> design -> tasks -> apply` con TDD para el comportamiento ejecutable. Prevalece sobre las exclusiones anteriores solo en cuanto al cambio técnico futuro del runner y sus pruebas. No modifica ahora esos artefactos ni `state.yaml`: el estado registrado sigue siendo `qa / blocked / next: qa`. `qa-report.md` y `verify-report.md` conservan su evidencia histórica; no verifican ni aceptan este slice nuevo. Los blockers anteriores, incluido Clippy con `-D warnings`, permanecen abiertos. No aceptar H5 ni archivar el cambio.
+
+### Alcance acotado para las fases posteriores
+
+- Añadir un flujo protocol-aware ANN–exact que no lea, requiera ni fabrique annotations, CSV, etiquetas, rúbrica o adjudicación cuando `absolute_relevance=false`. Ese gate permanece `not_evaluated`; no recibe métricas de relevancia ni `PASS` y no se deriva aceptación global de H5.
+- Ejecutar un preflight local fail-closed antes de cualquier interacción con el bridge, inserción de candidatos o creación/escritura de artefactos de medición. Bloquear ante protocolo ausente, inválido, pendiente, no aprobado/corroborado, hash incoherente, corpus/scope incompatible o contrato ejecutable no soportado. No usar la ruta piloto como fallback para eludir el bloqueo.
+- Mantener coherentes el hash canónico del protocolo completo y su aprobación corroborada, el corpus/hash y los IDs de consultas/candidatos, la configuración aprobada, la identidad esperada y la procedencia externa aplicable. Correlacionar después la identidad allowlisted de cada respuesta con esa misma consulta/run y evidencia externa; ausencia o discrepancia bloquea `PASS`. El self-report no sustituye evidencia independiente ni constituye atestación.
+- Separar en spec/design los requisitos verificables antes de interactuar de la evidencia que solo existe después de responder el bridge. El preflight no puede fabricar resultados, identidad observada, `finished_at` ni evidencia de finalización para declararse elegible. La comprobación posterior no permite omitir la autorización previa ni aceptar procedencia `partial`/`insufficient`.
+- Reutilizar las métricas y helpers existentes; no rehacer sus fórmulas, serialización, validación o evaluación de procedencia. Conservar `K=10`, ambas métricas iguales a `1.0` por consulta, una corrida, macro-promedios solo descriptivos, ranking observado sin desempate retrospectivo e indefinidos requeridos bloqueando `PASS`.
+- Probar el flujo mediante bridge falso y fixtures sintéticas independientes del corpus candidato y del piloto. Aplicar Red -> Green -> Refactor en la fase apply: camino ANN-only sin annotations, bloqueo previo con cero llamadas/escrituras, discrepancias de hashes/IDs/identidad/procedencia, criterio incumplido o indefinido, contrato no soportado y no regresión descriptiva. Una prueba positiva sintética demuestra el contrato técnico, no aprobación ni aceptación de datos reales.
+- Preservar la invocación y los informes del piloto descriptivo actual, sus annotations y su clasificación histórica. La nueva ruta no reclasifica resultados ni modifica el piloto, C0 o product retrieval.
+
+### Contrato mínimo pendiente de spec/design
+
+`acceptance_rules_and_tolerances.value.ann_exact` contiene hoy `criterion` en prosa y `threshold` numérico; `run_count_and_aggregation.value` contiene políticas en texto. La validación estructural no ejecuta esas reglas. No inferir comparadores, métricas, conjunción por consulta, agregación, desempates ni tratamiento de indefinidos a partir de texto libre, ni ejecutar prosa como código.
+
+Antes de apply, spec/design deben fijar un contrato explícito mínimo y cerrado para reconocer únicamente la política autorizada: las dos métricas ANN–exact y su K, igualdad de ambas al umbral aprobado por cada consulta, una corrida, resumen macro no gobernante, ranking observado e indefinidos bloqueantes. Reutilizar campos existentes cuando sea posible y definir cómo se reconoce inequívocamente cada política soportada; rechazar toda variante desconocida o contradictoria antes de interactuar. Si la estructura actual no puede expresarlo sin ambigüedad, documentar el cambio mínimo de contrato y su compatibilidad en spec/design; no inventarlo en implementación ni ampliar a un motor genérico de reglas. Ningún valor implícito sustituye un campo pendiente o una aprobación.
+
+### Áreas afectadas previstas y reversión
+
+- `dev/muninn/retrieval_h5_runner.py`: integración futura de la ruta protocol-aware, preflight y reporte ANN-only; mantener separado el piloto descriptivo existente.
+- `dev/muninn/tests/test_retrieval_h5_runner.py`: pruebas futuras con bridge falso, fixtures sintéticas y aserciones de cero interacciones/escrituras cuando se bloquea.
+- `dev/muninn/retrieval_h5_protocol.py`, `dev/muninn/fixtures/retrieval-h5-protocol.schema.json` y `dev/muninn/tests/test_retrieval_h5_protocol.py`: solo si spec/design justifican ajustes mínimos para expresar/validar el contrato soportado y su coherencia. No rehacer helpers ni completar el candidato con aprobaciones ficticias.
+- `docs/muninn/retrieval-h5-runner.md`: documentación futura del flujo y sus límites, preservando su WIP previo. `retrieval_quality.py` y `retrieval_h5_provenance.py` se reutilizan; no se propone reescribirlos.
+
+La reversión actual retira únicamente esta enmienda mediante edición selectiva, sin revertir el WIP anterior. La reversión del slice futuro retira solo su integración y pruebas específicas, manteniendo el piloto descriptivo, las métricas/helpers y toda evidencia histórica; no borra corpus, informes ni datos persistentes.
+
+### Exclusiones y criterios de éxito adicionales
+
+No ejecutar builds, tests ni mediciones en esta fase. El slice posterior se verifica solo offline con dobles: sin modelos/inferencia real, Docker, bridge vivo, base de datos real ni corpus aprobado. No congelar/aprobar el corpus candidato, resolver C0, activar relevancia absoluta, aceptar H5 ni archivar. Las autorizaciones operativas y el freeze/review real siguen pendientes.
+
+- [ ] Spec/design resuelven el contrato ejecutable mínimo sin interpretar prosa libre y tasks define su implementación TDD acotada.
+- [ ] Las pruebas sintéticas del slice posterior demuestran ANN-only sin annotations y fail-closed antes de cualquier interacción/escritura de medición, sin debilitar las comprobaciones posteriores de identidad/procedencia/hash.
+- [ ] El piloto continúa descriptivo; la evidencia histórica y los blockers permanecen intactos. La corrección técnica offline no se presenta como readiness, autorización de medición ni aceptación H5.

@@ -7,8 +7,8 @@ use uuid::Uuid;
 use crate::error::{MemoryError, MemoryResult};
 use crate::model::{
     Conversation, Entity, EntityGraph, EntityMention, EntityRef, Fact, Message, Metadata,
-    NewMessage, Preference, ReasoningStep, ReasoningStepWithContext, ReasoningTrace, Relationship,
-    SessionInfo, ToolCall, ToolStats,
+    NewMessage, Observation, Preference, ReasoningStep, ReasoningStepWithContext, ReasoningTrace,
+    Relationship, SessionInfo, ToolCall, ToolStats,
 };
 
 /// Stable identity of a vector space. The key must pin the model revision and
@@ -166,7 +166,7 @@ impl OwnerScope {
     }
 
     /// Decode a stored owner_scope back into a scope. Legacy rows whose stored
-    /// value can never be produced by [`storage_key`] are rejected instead of
+    /// value can never be produced by [`Self::storage_key`] are rejected instead of
     /// being silently adopted into a namespace.
     pub fn from_storage_key(raw: &str) -> MemoryResult<Self> {
         if raw == "unowned" {
@@ -239,6 +239,20 @@ pub trait ShortTermStore: Send + Sync {
         conversation_id: Uuid,
         scope: &OwnerScope,
     ) -> MemoryResult<Option<Conversation>>;
+
+    async fn append_observation(
+        &self,
+        observation: &Observation,
+        scope: &OwnerScope,
+    ) -> MemoryResult<()>;
+
+    async fn list_observations(
+        &self,
+        conversation_id: Uuid,
+        scope: &OwnerScope,
+        limit: i64,
+        offset: i64,
+    ) -> MemoryResult<Vec<Observation>>;
 
     async fn list_conversations(
         &self,
@@ -511,6 +525,36 @@ pub trait LongTermStore: Send + Sync {
     async fn entity_mentions(&self, id: Uuid) -> MemoryResult<Option<Vec<EntityMention>>>;
 
     async fn entity_graph(&self, limit: i64) -> MemoryResult<EntityGraph>;
+
+    /// Capacidad explícita: implementa write_preference y
+    /// supersede_preference_atomic bajo el mismo protocolo compuesto.
+    fn supports_atomic_preference_write(&self) -> bool {
+        false
+    }
+
+    /// Deduplica y persiste la preferencia y sus relaciones de forma atómica.
+    /// El adaptador debe serializar las búsquedas/escrituras concurrentes,
+    /// rechazar destinos ausentes y revertir errores previos a la confirmación.
+    /// Si no puede conocer el resultado de la confirmación, debe indicarlo sin
+    /// prometer rollback. No se permite una alternativa con escrituras parciales.
+    async fn write_preference(
+        &self,
+        _preference: &Preference,
+        _user_identifier: Option<&str>,
+        _applies_to: &[Uuid],
+        _about_entities: &[Uuid],
+        _duplicate_threshold: f64,
+    ) -> MemoryResult<Preference> {
+        Err(MemoryError::NotSupported("atomic preference write".into()))
+    }
+
+    /// Supersesión explícita bajo el mismo protocolo que write_preference.
+    /// La capacidad atómica exige implementar ambas operaciones.
+    async fn supersede_preference_atomic(&self, _old_id: Uuid, _new_id: Uuid) -> MemoryResult<()> {
+        Err(MemoryError::NotSupported(
+            "atomic preference supersession".into(),
+        ))
+    }
 
     async fn create_preference(&self, preference: &Preference) -> MemoryResult<Preference>;
 

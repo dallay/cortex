@@ -659,14 +659,30 @@ RETURN p
 ";
 
 pub const FIND_DUPLICATE_PREFERENCES: &str = "
-CALL db.index.vector.queryNodes('preference_embedding_idx', $limit, $embedding)
-YIELD node, score
+CALL {
+MATCH (p:Preference)
+WHERE NOT (p)-[:SUPERSEDED_BY]->(:Preference)
+  AND ($user_identifier IS NULL OR EXISTS { MATCH (:User {identifier: $user_identifier})-[:HAS_PREFERENCE]->(p) })
+  AND p.embedding IS NOT NULL AND size(p.embedding) = size($embedding)
+  AND p.category = $category
+WITH p LIMIT $candidate_probe_limit
+RETURN collect(p) AS candidates
+}
+CALL {
+WITH candidates
+WITH candidates WHERE size(candidates) <= $max_candidates
+UNWIND candidates AS p
+WITH p, vector.similarity.cosine(p.embedding, $embedding) AS score
 WHERE score >= $threshold
-  AND node.category = $category
-  AND NOT (node)-[:SUPERSEDED_BY]->(:Preference)
-  AND ($user_identifier IS NULL OR EXISTS { MATCH (:User {identifier: $user_identifier})-[:HAS_PREFERENCE]->(node) })
-RETURN node AS p, score
-ORDER BY score DESC
+RETURN p, score, false AS over_limit
+ORDER BY score DESC, p.id ASC
+LIMIT $limit
+UNION ALL
+WITH candidates
+WITH candidates WHERE size(candidates) > $max_candidates
+RETURN null AS p, null AS score, true AS over_limit
+}
+RETURN p, score, over_limit
 ";
 
 /// Upstream `_link_user_to_preference` (inline statement).
@@ -721,13 +737,29 @@ MERGE (p)-[:ABOUT]->(e)
 ";
 
 pub const SEARCH_PREFERENCES_BY_EMBEDDING: &str = "
-CALL db.index.vector.queryNodes('preference_embedding_idx', $limit, $embedding)
-YIELD node, score
+CALL {
+MATCH (p:Preference)
+WHERE NOT (p)-[:SUPERSEDED_BY]->(:Preference)
+  AND ($user_identifier IS NULL OR EXISTS { MATCH (:User {identifier: $user_identifier})-[:HAS_PREFERENCE]->(p) })
+  AND p.embedding IS NOT NULL AND size(p.embedding) = size($embedding)
+WITH p LIMIT $candidate_probe_limit
+RETURN collect(p) AS candidates
+}
+CALL {
+WITH candidates
+WITH candidates WHERE size(candidates) <= $max_candidates
+UNWIND candidates AS p
+WITH p, vector.similarity.cosine(p.embedding, $embedding) AS score
 WHERE score >= $threshold
-  AND NOT (node)-[:SUPERSEDED_BY]->(:Preference)
-  AND ($user_identifier IS NULL OR EXISTS { MATCH (:User {identifier: $user_identifier})-[:HAS_PREFERENCE]->(node) })
-RETURN node AS p, score
-ORDER BY score DESC
+RETURN p, score, false AS over_limit
+ORDER BY score DESC, p.id ASC
+LIMIT $limit
+UNION ALL
+WITH candidates
+WITH candidates WHERE size(candidates) > $max_candidates
+RETURN null AS p, null AS score, true AS over_limit
+}
+RETURN p, score, over_limit
 ";
 
 pub const SEARCH_PREFERENCES_BY_CATEGORY: &str = "
@@ -793,6 +825,22 @@ LIMIT $limit
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preference_retrieval_filters_before_bounded_exact_scoring() {
+        for query in [FIND_DUPLICATE_PREFERENCES, SEARCH_PREFERENCES_BY_EMBEDDING] {
+            assert!(
+                !query.contains("db.index.vector.queryNodes"),
+                "global ANN loses scoped candidates"
+            );
+            assert!(query.contains("LIMIT $candidate_probe_limit"));
+            assert!(
+                query.find("$user_identifier").unwrap()
+                    < query.find("LIMIT $candidate_probe_limit").unwrap()
+            );
+            assert!(query.contains("over_limit"));
+        }
+    }
 
     #[test]
     fn keys_clause_matches_upstream() {
@@ -889,14 +937,11 @@ mod tests {
         // A superseded preference stays in the graph as history, but it must
         // never be returned as a live result nor as the duplicate of a new
         // write, otherwise the new value is lost.
-        assert!(SEARCH_PREFERENCES_BY_EMBEDDING
-            .contains("AND NOT (node)-[:SUPERSEDED_BY]->(:Preference)"));
+        assert!(SEARCH_PREFERENCES_BY_EMBEDDING.contains("NOT (p)-[:SUPERSEDED_BY]->(:Preference)"));
         assert!(
             SEARCH_PREFERENCES_BY_CATEGORY.contains("AND NOT (p)-[:SUPERSEDED_BY]->(:Preference)")
         );
-        assert!(
-            FIND_DUPLICATE_PREFERENCES.contains("AND NOT (node)-[:SUPERSEDED_BY]->(:Preference)")
-        );
+        assert!(FIND_DUPLICATE_PREFERENCES.contains("NOT (p)-[:SUPERSEDED_BY]->(:Preference)"));
         // The same predicate already guards the scoped user read.
         assert!(PREFERENCES_FOR_USER.contains("NOT (p)-[:SUPERSEDED_BY]->(:Preference)"));
     }

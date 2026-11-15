@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use muninn_core::codec::{deserialize_metadata, python_json_dumps, serialize_metadata};
-use muninn_core::model::{Conversation, Message, Metadata, SessionInfo};
+use muninn_core::model::{Conversation, Message, Metadata, Observation, SessionInfo};
 use muninn_core::ports::{
     EmbeddingIdentity, KeyedMessage, MessageRecord, OwnerScope, ScoredMessage, SessionQuery,
     ShortTermStore,
@@ -445,6 +445,63 @@ impl ShortTermStore for Neo4jShortTermStore {
         }
     }
 
+    async fn append_observation(
+        &self,
+        observation: &Observation,
+        scope: &OwnerScope,
+    ) -> MemoryResult<()> {
+        let rows = self
+            .client
+            .execute(
+                q::CREATE_OBSERVATION,
+                vec![
+                    ("id", observation.id.to_string().into()),
+                    (
+                        "conversation_id",
+                        observation.conversation_id.to_string().into(),
+                    ),
+                    ("owner_scope", scope.storage_key().into()),
+                    ("content", observation.content.clone().into()),
+                    ("created_at", observation.created_at.to_rfc3339().into()),
+                ],
+            )
+            .await?;
+        if rows.is_empty() {
+            return Err(MemoryError::not_found("conversation"));
+        }
+        Ok(())
+    }
+
+    async fn list_observations(
+        &self,
+        conversation_id: Uuid,
+        scope: &OwnerScope,
+        limit: i64,
+        offset: i64,
+    ) -> MemoryResult<Vec<Observation>> {
+        let params = || {
+            vec![
+                ("conversation_id", conversation_id.to_string().into()),
+                ("owner_scope", scope.storage_key().into()),
+            ]
+        };
+        let conversation = self
+            .client
+            .execute(q::GET_OBSERVATION_CONVERSATION, params())
+            .await?;
+        if conversation.is_empty() {
+            return Err(MemoryError::not_found("conversation"));
+        }
+        let mut query_params = params();
+        query_params.push(("limit", limit.into()));
+        query_params.push(("offset", offset.into()));
+        let rows = self
+            .client
+            .execute(q::LIST_OBSERVATIONS, query_params)
+            .await?;
+        rows.iter().map(observation_from_row).collect()
+    }
+
     async fn list_conversations(
         &self,
         scope: &OwnerScope,
@@ -687,6 +744,36 @@ impl ShortTermStore for Neo4jShortTermStore {
             )
             .await
             .map(|_| ())
+    }
+}
+
+fn observation_from_row(row: &Row) -> MemoryResult<Observation> {
+    let value = column(row, "o")?;
+    let props = Props::of(&value)?;
+    let created_at = props.datetime("created_at").ok_or_else(|| {
+        MemoryError::storage("observation property 'created_at' is missing or invalid")
+    })?;
+    Ok(Observation {
+        id: props.uuid("id")?,
+        conversation_id: props.uuid("conversation_id")?,
+        content: props.required_string("content")?,
+        created_at,
+    })
+}
+
+#[cfg(test)]
+mod observation_tests {
+    use crate::queries::short_term as q;
+
+    #[test]
+    fn observation_queries_enforce_owner_scope_and_stable_pagination() {
+        assert!(q::CREATE_OBSERVATION.contains("WHERE c.owner_scope = $owner_scope"));
+        assert!(q::CREATE_OBSERVATION.contains("CREATE (c)-[:HAS_OBSERVATION]->(o)"));
+        assert!(q::LIST_OBSERVATIONS.contains("WHERE c.owner_scope = $owner_scope"));
+        assert!(q::LIST_OBSERVATIONS.contains("ORDER BY o.created_at ASC, o.id ASC"));
+        assert!(q::LIST_OBSERVATIONS.contains("SKIP $offset"));
+        assert!(q::LIST_OBSERVATIONS.contains("LIMIT $limit"));
+        assert!(q::GET_OBSERVATION_CONVERSATION.contains("WHERE c.owner_scope = $owner_scope"));
     }
 }
 

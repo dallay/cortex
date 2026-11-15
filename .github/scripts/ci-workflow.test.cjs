@@ -354,6 +354,61 @@ it('keeps the 87% Rust threshold and includes the Muninn product packages', () =
   assert.match(sonar, /cargo llvm-cov report --lcov --output-path coverage\/rust-lcov\.info/);
 });
 
+it('includes isolated Neo4j preference atomic tests in the 87% Rust coverage profile', () => {
+  const coverage = jobBlock('coverage');
+  assert.match(coverage, /^    container:\n      image: node:24-bookworm\s*$/m);
+  assert.match(coverage,
+      /neo4j:5\.26-community@sha256:414adfe41c6ff32abb752be37f265c77607c166cab298f65a917fc4f05776218/);
+  assert.match(coverage, /tmpfs \/data:rw,noexec,nosuid,size=1g/);
+  assert.match(coverage, /tmpfs \/logs:rw,noexec,nosuid,size=256m/);
+  assert.doesNotMatch(coverage, /^\s+ports:/m);
+  assert.match(coverage, /NEO4J_AUTH: neo4j\/\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/);
+  assert.match(coverage, /MUNINN_FIXTURE_URI: bolt:\/\/neo4j:7687/);
+  assert.match(coverage, /MUNINN_FIXTURE_PASSWORD: \$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}-coverage/);
+
+  const readiness = namedStep('coverage', 'Wait for Neo4j readiness and verify authentication');
+  assert.match(readiness, /curl --silent --show-error --fail-with-body/);
+  assert.match(readiness, /neo4j:7474\/db\/neo4j\/tx\/commit/);
+  assert.match(readiness, /jq -e '\.errors \| length == 0'/);
+
+  const generate = namedStep('coverage', 'Generate coverage report');
+  const atomic = 'cargo llvm-cov -p muninn-neo4j --test preference_atomic --no-report -- --include-ignored';
+  assert.ok(generate.includes(atomic), 'run only the explicitly selected ignored tests');
+  assert.ok(generate.indexOf('cargo llvm-cov -p muninn-providers -p muninn --no-report') <
+      generate.indexOf(atomic), 'merge profile before generating report');
+  assert.ok(generate.indexOf(atomic) <
+      generate.indexOf('cargo llvm-cov report --fail-under-lines 87'),
+  'include integration-test coverage before enforcing the existing gate');
+  assert.doesNotMatch(generate, /--workspace[^\\n]*--include-ignored/,
+      'do not enable ignored tests workspace-wide');
+  assert.match(generate, /cargo llvm-cov report --fail-under-lines 87/);
+
+  // Sonar generates LCOV in a separate job. Do not imply that its coverage
+  // includes the Neo4j fixture tests unless that job provisions the fixture too.
+  assert.doesNotMatch(namedStep('sonar', 'Generate Rust coverage'),
+      /preference_atomic|include-ignored/);
+});
+
+it('retains Rust LCOV after a failed gate and prints totals before enforcing 87%', () => {
+  const coverage = jobBlock('coverage');
+  const summary = 'cargo llvm-cov report | tee -a "$GITHUB_STEP_SUMMARY"';
+  const gate = 'cargo llvm-cov report --fail-under-lines 87 --lcov --output-path lcov.info';
+  assert.ok(coverage.includes(summary), 'print existing profile totals without rerunning tests');
+  assert.ok(coverage.indexOf(summary) < coverage.indexOf(gate));
+  const retain = coverage.slice(coverage.indexOf('      - name: Retain Rust coverage report artifact'),
+      coverage.indexOf('      - name: Upload coverage to Codecov'));
+  assert.match(retain, /if: \$\{\{ always\(\) && hashFiles\('lcov\.info'\) != '' \}\}/);
+  assert.match(retain, /uses: actions\/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7\.0\.2/);
+  assert.match(retain, /name: coverage-rust\n/);
+  assert.match(retain, /path: lcov\.info\n/);
+  assert.match(retain, /retention-days: 7/);
+  const generate = coverage.slice(coverage.indexOf('      - name: Generate coverage report'),
+      coverage.indexOf('      - name: Retain Rust coverage report artifact'));
+  assert.doesNotMatch(generate, /continue-on-error|\|\| true|set \+e/);
+  assert.equal((generate.match(/cargo llvm-cov --workspace/g) || []).length, 1);
+  assert.equal((generate.match(/cargo llvm-cov -p muninn-providers/g) || []).length, 1);
+});
+
 it('Gitleaks has the full history without persisting credentials', () => {
   const gitleaks = jobBlock('gitleaks-pr');
   assert.match(gitleaks, /fetch-depth: 0\s*\n\s*persist-credentials: false/);

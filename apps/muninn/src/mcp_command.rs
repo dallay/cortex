@@ -163,7 +163,7 @@ pub fn server(
 ) -> Result<Server, &'static str> {
     let retriever = Arc::new(ApplicationRetriever {
         messages: ShortTermMemory::new(short_term_store, embedder.clone(), true),
-        preferences: LongTermMemory::new(long_term_store, embedder, true),
+        preferences: LongTermMemory::read_only(long_term_store, embedder, true),
     });
     register_tools(owner, retriever)
 }

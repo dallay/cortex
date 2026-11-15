@@ -95,6 +95,15 @@ impl Conversation {
     }
 }
 
+/// An explicitly recorded observation associated with a conversation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Observation {
+    pub id: Uuid,
+    pub conversation_id: Uuid,
+    pub content: String,
+    pub created_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionInfo {
     pub session_id: String,
@@ -187,6 +196,19 @@ pub struct Preference {
     pub valid_until: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub metadata: Metadata,
+}
+
+impl Preference {
+    /// Igualdad textual: las mayúsculas y los espacios no cambian el valor.
+    pub fn equivalent_value(&self, value: &str) -> bool {
+        fn normalize(text: &str) -> String {
+            text.split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase()
+        }
+        normalize(&self.preference) == normalize(value)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

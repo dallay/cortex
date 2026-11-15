@@ -1,0 +1,171 @@
+{
+  "schema_version": "1.0",
+  "corpus_id": "muninn-h5-literal-draft-v1",
+  "status": "draft/not frozen",
+  "review_status": "Pending owner review of content, sensitivity, rights, source assignments, and approval.",
+  "baseline_commit": "09bb21d5fd2c847ac7df5e48f7be06eb08cec445",
+  "allowlist": [
+    "docs/muninn/NOTICE.md",
+    "docs/muninn/README.md",
+    "docs/muninn/context.md",
+    "docs/muninn/cross-memory.md",
+    "docs/muninn/enrichment.md",
+    "docs/muninn/entity-resolution.md",
+    "docs/muninn/extraction.md",
+    "docs/muninn/gm01-acceptance.md",
+    "docs/muninn/gm01-deviations.md",
+    "docs/muninn/gm01-runner.md",
+    "docs/muninn/h3-execution-memory.md",
+    "docs/muninn/h4-measurement.md",
+    "docs/muninn/long-term-isolation-deletion.md",
+    "docs/muninn/minilm-product.md",
+    "docs/muninn/owner-session-namespace.md",
+    "docs/muninn/preference-filters.md",
+    "docs/muninn/reference-api-artifacts.md",
+    "docs/muninn/reference-lock.md",
+    "docs/muninn/reference-mcp.md",
+    "docs/muninn/reference-tck.md",
+    "docs/muninn/schema-operations.md"
+  ],
+  "query_count": 1,
+  "candidate_count": 9,
+  "unique_passage_count": 9,
+  "corpus_sha256": "ec87fb08a3aaa5a67894905c72fc30477e8597c4cfae3e6ce965845ef61ed664",
+  "sources": [
+    {
+      "item_type": "query",
+      "item_id": "q-lit-01",
+      "source_path": null,
+      "source_sha256": null,
+      "text_sha256": "699032e576f48178598ce0efd0e4c1f5076d0531538556d865236b47a362806c",
+      "locator": {
+        "type": "authored_query",
+        "note": "Authored for this draft; no source passage and no relevance assertion."
+      }
+    },
+    {
+      "item_type": "candidate",
+      "item_id": "d-lit-01",
+      "source_path": "docs/muninn/cross-memory.md",
+      "source_sha256": "ef7910629f278fe365ae40c6b70bc052a3ed1d012f440b8f1e0406225dea151f",
+      "text_sha256": "32b3382a52ece5c86edd2dba7ba0c7375637aede64c440978764d36f02f5a6fa",
+      "locator": {
+        "heading": "## Request contract",
+        "line_start": 61,
+        "line_end": 62,
+        "exact_segment": "`add_preference` accepts optional `about_entities` (list of UUID strings).\nAbsent, `null` and `[]` are equivalent and produce no edge."
+      }
+    },
+    {
+      "item_type": "candidate",
+      "item_id": "d-lit-02",
+      "source_path": "docs/muninn/enrichment.md",
+      "source_sha256": "f78252c59556ad06a4b765b54f3beb09629e03057d66db9d0fdba3b89f53e192",
+      "text_sha256": "1e69035e717e0f0ee29f8b78e372471cbe1a2f199527687c9077eaed7cc8adcc",
+      "locator": {
+        "heading": "## Explicit limitations",
+        "line_start": 180,
+        "line_end": 183,
+        "exact_segment": "The `EntityEnrichmentStore` port keeps default implementations that return\n`not supported: entity enrichment properties` and\n`not supported: entity location coordinates`, so a client configured without a\nwriter still refuses loudly (`501`) instead of silently discarding data."
+      }
+    },
+    {
+      "item_type": "candidate",
+      "item_id": "d-lit-03",
+      "source_path": "docs/muninn/entity-resolution.md",
+      "source_sha256": "b62e9c2533120c4d2ce57a352467293c12846483c7031fec531d69b9bff1299c",
+      "text_sha256": "d0192d42eb63dc685ec95d213018620a08a942acd4a45ef8dc8cd4c2e8e42793",
+      "locator": {
+        "heading": "## Defaults and source conflict",
+        "line_start": 31,
+        "line_end": 35,
+        "exact_segment": "The pinned deployment measured by GM-04 runs without the optional rapidfuzz\nextra, so the reference's ImportError path disables fuzzy scoring entirely;\nthe frozen GM-04 fixture therefore declares `use_fuzzy_matching: false` for\nboth engines (the product honors it, the reference reaches the same state\nthrough its missing dependency). The authority for the algorithm itself is"
+      }
+    },
+    {
+      "item_type": "candidate",
+      "item_id": "d-lit-04",
+      "source_path": "docs/muninn/long-term-isolation-deletion.md",
+      "source_sha256": "87d86178d928313070480555e2cb09978ad34640282c5aeddb9bd54c9bef0a72",
+      "text_sha256": "4477675c90e23c7ad3170e6d02531131b80d826e6a6049b3d5df26f451443676",
+      "locator": {
+        "heading": "## Isolation guarantees",
+        "line_start": 20,
+        "line_end": 23,
+        "exact_segment": "For `get_preferences_for` and its filtered variant:\n\n- A read for one owner returns only preferences reachable from that owner's\n  `User` node."
+      }
+    },
+    {
+      "item_type": "candidate",
+      "item_id": "d-lit-05",
+      "source_path": "docs/muninn/owner-session-namespace.md",
+      "source_sha256": "aaf4ce1e4d6352db2b29244452bddfc9424e0b5348481bf51c3392294e726aa7",
+      "text_sha256": "79277867ee6b993dfb5a79fd9aae64f4ee6f1a127726e8a28786cc649c91c79a",
+      "locator": {
+        "heading": "## Prototype contract",
+        "line_start": 5,
+        "line_end": 9,
+        "exact_segment": "A conversation is identified by `(owner_scope, session_id)`. The same\n`session_id` can exist for two owners and for the ownerless namespace. Omitting\n`user_identifier` selects only the latter; it never selects every owner.\n\n`OwnerScope` keeps the exact identifier and rejects empty or whitespace-only"
+      }
+    },
+    {
+      "item_type": "candidate",
+      "item_id": "d-lit-06",
+      "source_path": "docs/muninn/preference-filters.md",
+      "source_sha256": "36aca9b9e32308047b4e3ad7b918ea1bee56f8b4b1d3ef7d86ab24a1f96d5cad",
+      "text_sha256": "b3ec67c2b640602a854b7a80b0f0ed25855cdb255e235959371effc430c3b45d",
+      "locator": {
+        "heading": "## Preference creation",
+        "line_start": 38,
+        "line_end": 42,
+        "exact_segment": "`POST /add_preference` retains its optional UUID-list `applies_to` input.\nEvery explicit target is looked up before embeddings, duplicate lookup, or any\nwrites. One missing target rejects the entire request with HTTP 404 and\n`not found: entity <UUID>`, even in a mixed valid/missing list or when the\npreference would otherwise deduplicate. Successful new and deduplicated"
+      }
+    },
+    {
+      "item_type": "candidate",
+      "item_id": "d-lit-07",
+      "source_path": "docs/muninn/schema-operations.md",
+      "source_sha256": "e762fe07c79dd078a4b813e2ac321e085788772b2b43c3e9b23642b4ca1794fb",
+      "text_sha256": "1897f5bcb61b0d20e492f809463dd384da83ffb7a6bdadc69590c824cf9c1163",
+      "locator": {
+        "heading": "## Scope",
+        "line_start": 5,
+        "line_end": 7,
+        "exact_segment": "This document describes v1 migrations and schema initialization. It does not\ndeclare H1 or the remaining Muninn requirements accepted. Migrations run no\ninference and do not depend on embedding-provider identity."
+      }
+    },
+    {
+      "item_type": "candidate",
+      "item_id": "d-lit-08",
+      "source_path": "docs/muninn/minilm-product.md",
+      "source_sha256": "8997781cc796487210517fd442a948fe2f31d2d97752cdfd6a20f13f0ab473b3",
+      "text_sha256": "0b6dc352f8e248a9cb119106b93a4db355184d60e1ba60fe6bdf93d52a502e9e",
+      "locator": {
+        "heading": "## Vector space identity",
+        "line_start": 34,
+        "line_end": 37,
+        "exact_segment": "Each message with a vector retains its identity and dimensions. Search requires\nthe same identity, together with the owner and requested filters, before sorting\nand limiting. Legacy vectors without identity are not mixed with new data.\nThey are neither automatically migrated nor deleted."
+      }
+    },
+    {
+      "item_type": "candidate",
+      "item_id": "d-lit-09",
+      "source_path": "docs/muninn/reference-lock.md",
+      "source_sha256": "ae28bbe4f784c110edb8807900520fc670030b8f2727711de0e4e272efbfa316",
+      "text_sha256": "586692123a3feb63a912af940c186836b51efde4c742b23850daa0bde74615e3",
+      "locator": {
+        "heading": "## Gates still open",
+        "line_start": 75,
+        "line_end": 79,
+        "exact_segment": "1. No Muninn service parity or Bronze→Platinum acceptance exists.\n2. The deletion discrepancy needs separate characterization; the oracle must\n   not be changed to force the expected result.\n3. Retrieval, real embeddings, LLMs, external integrations, and advanced paths\n   were not executed. The G0 API unit pins their references, but does not run them."
+      }
+    }
+  ],
+  "limitations": [
+    "No labels, scores, ranks, or relevance judgments.",
+    "No claim of representativeness, adequacy for H5, or readiness.",
+    "The exploration target of 20–30 queries × 50–100 candidates is not met; no padding was used.",
+    "This draft does not authorize inference, model, bridge, database, benchmark, QA, or freeze execution.",
+    "No final sensitivity or rights review was performed."
+  ]
+}

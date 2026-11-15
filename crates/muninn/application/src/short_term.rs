@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use muninn_core::model::{Conversation, Message, MessageRole, Metadata, NewMessage, SessionInfo};
+use muninn_core::model::{
+    Conversation, Message, MessageRole, Metadata, NewMessage, Observation, SessionInfo,
+};
 use muninn_core::ports::{Embedder, MessageRecord, OwnerScope, SessionQuery, ShortTermStore};
 use muninn_core::{MemoryError, MemoryResult};
 use serde_json::Value;
@@ -337,6 +339,48 @@ impl ShortTermMemory {
         let scope = self.enforce_multi_tenant(user_identifier)?;
         self.store
             .get_conversation_by_id(conversation_id, &scope)
+            .await
+    }
+
+    pub async fn create_observation(
+        &self,
+        conversation_id: Uuid,
+        content: &str,
+        user_identifier: Option<&str>,
+    ) -> MemoryResult<Observation> {
+        let scope = self.enforce_multi_tenant(user_identifier)?;
+        if content.trim().is_empty() {
+            return Err(MemoryError::invalid(
+                "observation content must not be blank",
+            ));
+        }
+        let observation = Observation {
+            id: Uuid::new_v4(),
+            conversation_id,
+            content: content.to_owned(),
+            created_at: chrono::Utc::now(),
+        };
+        self.store.append_observation(&observation, &scope).await?;
+        Ok(observation)
+    }
+
+    pub async fn get_observations(
+        &self,
+        conversation_id: Uuid,
+        user_identifier: Option<&str>,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> MemoryResult<Vec<Observation>> {
+        let scope = self.enforce_multi_tenant(user_identifier)?;
+        let limit = limit.unwrap_or(100);
+        let offset = offset.unwrap_or(0);
+        if !(1..=500).contains(&limit) || offset < 0 {
+            return Err(MemoryError::invalid(
+                "observation pagination requires limit in 1..=500 and non-negative offset",
+            ));
+        }
+        self.store
+            .list_observations(conversation_id, &scope, limit, offset)
             .await
     }
 

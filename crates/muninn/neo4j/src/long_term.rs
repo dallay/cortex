@@ -28,6 +28,96 @@ const NULL: BoltType = BoltType::Null(BoltNull);
 /// `limit: 3`).
 const DUPLICATE_CANDIDATES: i64 = 3;
 
+const PREFERENCE_WRITE_LOCK: &str = "MERGE (l:PreferenceWriteLock {id:'preferences'}) SET l.version = coalesce(l.version, 0) + 1 RETURN l.version AS version";
+
+const PREFERENCE_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
+
+fn bounded_preference_params(mut params: Params) -> Params {
+    params.push(("candidate_probe_limit", 10_001_i64.into()));
+    params.push(("max_candidates", 10_000_i64.into()));
+    params
+}
+
+fn check_preference_bound(rows: Vec<Row>) -> MemoryResult<Vec<Row>> {
+    if rows
+        .iter()
+        .any(|row| row.get::<bool>("over_limit").unwrap_or(false))
+    {
+        return Err(MemoryError::storage(
+            "preference candidate set exceeds 10000",
+        ));
+    }
+    Ok(rows)
+}
+
+fn valid_server_limit(value: &str, maximum: f64) -> bool {
+    server_duration_seconds(value).is_some_and(|seconds| seconds > 0.0 && seconds <= maximum)
+}
+
+fn server_duration_seconds(value: &str) -> Option<f64> {
+    for (unit, factor) in [
+        ("ms", 0.001),
+        ("ns", 1e-9),
+        ("μs", 1e-6),
+        ("us", 1e-6),
+        ("s", 1.0),
+        ("m", 60.0),
+        ("h", 3600.0),
+        ("d", 86400.0),
+    ] {
+        if let Some(number) = value.strip_suffix(unit) {
+            return number.parse::<f64>().ok().map(|number| number * factor);
+        }
+    }
+    None
+}
+
+async fn preference_transaction_rows<T>(
+    txn: &mut neo4rs::Txn,
+    control: &crate::preference_worker::Control<T>,
+    cypher: &str,
+    params: Params,
+) -> MemoryResult<Vec<Row>> {
+    control.check()?;
+    transaction_rows(txn, cypher, params).await
+}
+
+async fn transaction_rows(
+    txn: &mut neo4rs::Txn,
+    cypher: &str,
+    params: Params,
+) -> MemoryResult<Vec<Row>> {
+    let mut query = neo4rs::Query::new(cypher.to_owned());
+    for (name, value) in params {
+        query = query.param(name, value);
+    }
+    let mut stream = txn
+        .execute(query)
+        .await
+        .map_err(|e| MemoryError::storage(e.to_string()))?;
+    let mut rows = Vec::new();
+    while let Some(row) = stream
+        .next(txn.handle())
+        .await
+        .map_err(|e| MemoryError::storage(e.to_string()))?
+    {
+        rows.push(row);
+    }
+    Ok(rows)
+}
+
+fn preference_params(record: &Preference) -> Params {
+    vec![
+        ("id", id_param(record.id)),
+        ("category", record.category.as_str().into()),
+        ("preference", record.preference.as_str().into()),
+        ("context", opt_string(record.context.as_deref())),
+        ("confidence", record.confidence.into()),
+        ("embedding", opt_vector(record.embedding.as_deref())),
+        ("metadata", metadata_param(&record.metadata)),
+    ]
+}
+
 fn id_param(id: Uuid) -> BoltType {
     id.to_string().into()
 }
@@ -154,6 +244,205 @@ fn related_from_row(row: &Row, entity_id: Uuid) -> MemoryResult<RelatedEntity> {
 impl Neo4jLongTermStore {
     pub const fn new(client: Neo4jClient) -> Self {
         Self { client }
+    }
+
+    async fn preference_rows(&self, cypher: &str, params: Params) -> MemoryResult<Vec<Row>> {
+        let rows = tokio::time::timeout(
+            PREFERENCE_BUDGET,
+            self.client
+                .execute(cypher, bounded_preference_params(params)),
+        )
+        .await
+        .map_err(|_| MemoryError::storage("preference query exceeded 5 second budget"))??;
+        check_preference_bound(rows)
+    }
+
+    async fn require_preference_timeouts(&self) -> MemoryResult<()> {
+        // neo4rs 0.8 no expone tx_timeout en BEGIN. No se altera configuración.
+        let rows = self.client.execute("SHOW SETTINGS YIELD name, value WHERE name IN ['db.transaction.timeout', 'db.lock.acquisition.timeout', 'db.transaction.monitor.check.interval'] RETURN name, value", vec![]).await?;
+        let mut valid = 0;
+        for row in rows {
+            let name: String = row
+                .get("name")
+                .map_err(|e| MemoryError::storage(e.to_string()))?;
+            let value: String = row
+                .get("value")
+                .map_err(|e| MemoryError::storage(e.to_string()))?;
+            let maximum = if name == "db.transaction.monitor.check.interval" {
+                1.0
+            } else {
+                5.0
+            };
+            if valid_server_limit(&value, maximum) {
+                valid += 1;
+            }
+        }
+        if valid != 3 {
+            return Err(MemoryError::storage("atomic preferences require server transaction/lock timeouts in (0,5s] and monitor interval in (0,1s]"));
+        }
+        Ok(())
+    }
+
+    async fn begin_preference_write<T>(
+        &self,
+        control: &crate::preference_worker::Control<T>,
+    ) -> MemoryResult<neo4rs::Txn> {
+        control.check()?;
+        self.require_preference_timeouts().await?;
+        control.check()?;
+        let constraints = self.client.execute(
+            "SHOW CONSTRAINTS YIELD type, labelsOrTypes, properties WHERE type = 'UNIQUENESS' AND labelsOrTypes = ['PreferenceWriteLock'] AND properties = ['id'] RETURN type", vec![]).await?;
+        if constraints.len() != 1 {
+            return Err(MemoryError::storage(
+                "preference write lock requires its unique constraint; run schema setup",
+            ));
+        }
+        control.check()?;
+        self.client.start_txn().await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn write_preference_owned(
+        &self,
+        record: &Preference,
+        user: Option<&str>,
+        applies: &[Uuid],
+        about: &[Uuid],
+        threshold: f64,
+        control: &crate::preference_worker::Control<Preference>,
+    ) -> MemoryResult<Preference> {
+        let mut txn = self.begin_preference_write(control).await?;
+        // El nodo único serializa incluso la búsqueda vacía entre procesos.
+        // Se bloquea antes de leer candidatos. Los escritores de primitivas
+        // heredadas no participan en este protocolo.
+        let result = async {
+            preference_transaction_rows(&mut txn, control, PREFERENCE_WRITE_LOCK, vec![]).await?;
+            let duplicate = if let Some(embedding) = &record.embedding {
+                let mut params = search_params(embedding, 1, threshold);
+                params.push(("category", record.category.as_str().into()));
+                params.push(("user_identifier", opt_string(user)));
+                let rows = check_preference_bound(
+                    preference_transaction_rows(
+                        &mut txn,
+                        control,
+                        q::FIND_DUPLICATE_PREFERENCES,
+                        bounded_preference_params(params),
+                    )
+                    .await?,
+                )?;
+                rows.first()
+                    .map(|row| preference_from_value(&column(row, "p")?))
+                    .transpose()?
+            } else {
+                None
+            };
+            let (mut stored, old) = match duplicate {
+                Some(mut existing) if existing.equivalent_value(&record.preference) => {
+                    existing
+                        .metadata
+                        .insert("deduplicated".into(), Value::Bool(true));
+                    (existing, None)
+                }
+                old => {
+                    let rows = preference_transaction_rows(
+                        &mut txn,
+                        control,
+                        q::CREATE_PREFERENCE,
+                        preference_params(record),
+                    )
+                    .await?;
+                    if rows.len() != 1 {
+                        return Err(MemoryError::storage("preference was not stored"));
+                    }
+                    let rows = preference_transaction_rows(
+                        &mut txn,
+                        control,
+                        q::SET_PREFERENCE_VALID_FROM,
+                        vec![("id", id_param(record.id))],
+                    )
+                    .await?;
+                    let row = rows
+                        .first()
+                        .ok_or_else(|| MemoryError::storage("preference disappeared"))?;
+                    (
+                        preference_from_value(&column(row, "p")?)?,
+                        old.filter(|_| user.is_some()).map(|p| p.id),
+                    )
+                }
+            };
+            if let Some(user) = user {
+                let rows = preference_transaction_rows(
+                    &mut txn,
+                    control,
+                    &format!("{} RETURN p.id AS id", q::LINK_USER_TO_PREFERENCE),
+                    vec![
+                        ("user_identifier", user.into()),
+                        ("preference_id", id_param(stored.id)),
+                    ],
+                )
+                .await?;
+                if rows.len() != 1 {
+                    return Err(MemoryError::not_found("preference"));
+                }
+            }
+            for (targets, query) in [
+                (applies, q::LINK_PREFERENCE_TO_ENTITY),
+                (about, q::LINK_PREFERENCE_ABOUT_ENTITY),
+            ] {
+                for target in targets {
+                    let rows = preference_transaction_rows(
+                        &mut txn,
+                        control,
+                        &format!("{query} RETURN e.id AS id"),
+                        vec![
+                            ("preference_id", id_param(stored.id)),
+                            ("entity_id", id_param(*target)),
+                        ],
+                    )
+                    .await?;
+                    if rows.len() != 1 {
+                        return Err(MemoryError::not_found(format!("entity {target}")));
+                    }
+                }
+            }
+            if let Some(old) = old {
+                let rows = preference_transaction_rows(
+                    &mut txn,
+                    control,
+                    &format!("{} RETURN old.id AS id", q::SUPERSEDE_PREFERENCE),
+                    vec![("old_id", id_param(old)), ("new_id", id_param(stored.id))],
+                )
+                .await?;
+                if rows.len() != 1 {
+                    return Err(MemoryError::not_found("superseded preference"));
+                }
+            }
+            if stored.id == record.id {
+                stored.metadata = record.metadata.clone();
+            }
+            Ok(stored)
+        }
+        .await;
+        match result {
+            Ok(stored) => {
+                if let Err(error) = control.check() {
+                    txn.rollback()
+                        .await
+                        .map_err(|e| MemoryError::storage(e.to_string()))?;
+                    return Err(error);
+                }
+                txn.commit().await.map_err(|e| {
+                    MemoryError::storage(format!("preference commit failed; outcome unknown: {e}"))
+                })?;
+                Ok(stored)
+            }
+            Err(error) => {
+                txn.rollback()
+                    .await
+                    .map_err(|e| MemoryError::storage(e.to_string()))?;
+                Err(error)
+            }
+        }
     }
 
     /// Run a vector-index query. A missing index means nothing was embedded
@@ -682,6 +971,39 @@ impl LongTermStore for Neo4jLongTermStore {
         })
     }
 
+    fn supports_atomic_preference_write(&self) -> bool {
+        true
+    }
+
+    async fn write_preference(
+        &self,
+        record: &Preference,
+        user: Option<&str>,
+        applies: &[Uuid],
+        about: &[Uuid],
+        threshold: f64,
+    ) -> MemoryResult<Preference> {
+        let store = self.clone();
+        let record = record.clone();
+        let user = user.map(str::to_owned);
+        let applies = applies.to_vec();
+        let about = about.to_vec();
+        crate::preference_worker::run(move |control| async move {
+            let result = store
+                .write_preference_owned(
+                    &record,
+                    user.as_deref(),
+                    &applies,
+                    &about,
+                    threshold,
+                    &control,
+                )
+                .await;
+            (control, result)
+        })
+        .await
+    }
+
     async fn create_preference(&self, preference: &Preference) -> MemoryResult<Preference> {
         self.client
             .execute(
@@ -723,11 +1045,7 @@ impl LongTermStore for Neo4jLongTermStore {
         params.push(("category", category.into()));
         params.push(("user_identifier", opt_string(user_identifier)));
         let rows = self
-            .vector_rows(
-                q::FIND_DUPLICATE_PREFERENCES,
-                "preference_embedding_idx",
-                params,
-            )
+            .preference_rows(q::FIND_DUPLICATE_PREFERENCES, params)
             .await?;
         rows.first()
             .map(|row| preference_from_value(&column(row, "p")?))
@@ -785,6 +1103,48 @@ impl LongTermStore for Neo4jLongTermStore {
             .map(|_| ())
     }
 
+    async fn supersede_preference_atomic(&self, old_id: Uuid, new_id: Uuid) -> MemoryResult<()> {
+        let store = self.clone();
+        crate::preference_worker::run(move |control| async move {
+            let result = async {
+                let mut txn = store.begin_preference_write(&control).await?;
+                let result = async {
+                    preference_transaction_rows(&mut txn, &control, PREFERENCE_WRITE_LOCK, vec![])
+                        .await?;
+                    let rows = preference_transaction_rows(
+                        &mut txn,
+                        &control,
+                        &format!("{} RETURN old.id AS id", q::SUPERSEDE_PREFERENCE),
+                        vec![("old_id", id_param(old_id)), ("new_id", id_param(new_id))],
+                    )
+                    .await?;
+                    if rows.len() != 1 {
+                        return Err(MemoryError::not_found("supersession preference endpoints"));
+                    }
+                    control.check()?;
+                    Ok(())
+                }
+                .await;
+                match result {
+                    Ok(()) => txn.commit().await.map_err(|e| {
+                        MemoryError::storage(format!(
+                            "preference commit failed; outcome unknown: {e}"
+                        ))
+                    }),
+                    Err(error) => {
+                        txn.rollback()
+                            .await
+                            .map_err(|e| MemoryError::storage(e.to_string()))?;
+                        Err(error)
+                    }
+                }
+            }
+            .await;
+            (control, result)
+        })
+        .await
+    }
+
     async fn supersede_preference(&self, old_id: Uuid, new_id: Uuid) -> MemoryResult<()> {
         self.client
             .execute(
@@ -839,15 +1199,11 @@ impl LongTermStore for Neo4jLongTermStore {
         user_identifier: Option<&str>,
     ) -> MemoryResult<Vec<Scored<Preference>>> {
         let rows = self
-            .vector_rows(
-                q::SEARCH_PREFERENCES_BY_EMBEDDING,
-                "preference_embedding_idx",
-                {
-                    let mut params = search_params(embedding, limit, threshold);
-                    params.push(("user_identifier", opt_string(user_identifier)));
-                    params
-                },
-            )
+            .preference_rows(q::SEARCH_PREFERENCES_BY_EMBEDDING, {
+                let mut params = search_params(embedding, limit, threshold);
+                params.push(("user_identifier", opt_string(user_identifier)));
+                params
+            })
             .await?;
         rows.iter()
             .map(|row| {
@@ -1052,5 +1408,289 @@ impl EntityEnrichmentStore for Neo4jLongTermStore {
             )
             .await?;
         Ok(!rows.is_empty())
+    }
+}
+
+#[cfg(test)]
+mod preference_lifecycle_tests {
+    use super::*;
+    use crate::{Neo4jConfig, SchemaManager};
+    use chrono::Utc;
+    use std::time::Duration;
+
+    #[test]
+    fn server_limits_require_positive_finite_and_bounded_durations() {
+        for value in ["5s", "500ms", "2000000ns"] {
+            assert!(valid_server_limit(value, 5.0));
+        }
+        for value in ["0s", "-1s", "NaNs", "infs", "unknown", "6s", "1m"] {
+            assert!(!valid_server_limit(value, 5.0), "{value}");
+        }
+        assert!(!valid_server_limit("2s", 1.0));
+    }
+
+    async fn connect() -> Neo4jClient {
+        Neo4jClient::connect(&Neo4jConfig {
+            uri: std::env::var("MUNINN_FIXTURE_URI").unwrap(),
+            password: std::env::var("MUNINN_FIXTURE_PASSWORD").unwrap(),
+            max_connections: 1,
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+    }
+
+    async fn blocked(observer: &Neo4jClient, fragment: &str) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let rows = observer
+                    .execute(
+                        "SHOW TRANSACTIONS YIELD currentQuery, status RETURN currentQuery, status",
+                        vec![],
+                    )
+                    .await
+                    .unwrap();
+                if rows.iter().any(|row| {
+                    let query = row.get::<String>("currentQuery").unwrap_or_default();
+                    let status = row.get::<String>("status").unwrap_or_default();
+                    query.contains(fragment) && status.to_lowercase().contains("blocked")
+                }) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("no se observó contención real en el servidor");
+    }
+
+    fn record(category: &str) -> Preference {
+        Preference {
+            id: Uuid::new_v4(),
+            category: category.into(),
+            preference: "tea".into(),
+            context: None,
+            confidence: 1.0,
+            embedding: Some(vec![1.0, 0.0, 0.0]),
+            valid_from: None,
+            valid_until: None,
+            created_at: Utc::now(),
+            metadata: Metadata::new(),
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requiere fixture Neo4j efímera, permisos SHOW TRANSACTIONS y límites de servidor"]
+    async fn cancelled_consumer_releases_global_lock_without_recycling_its_pool() {
+        let writer_client = connect().await;
+        SchemaManager::new(&writer_client, 3)
+            .setup_all()
+            .await
+            .unwrap();
+        let blocker_client = connect().await;
+        let observer = connect().await;
+        let probe_client = connect().await;
+        let target = Uuid::new_v4();
+        observer
+            .execute(
+                "CREATE (:Entity {id:$id, name:'target', type:'OBJECT'})",
+                vec![("id", id_param(target))],
+            )
+            .await
+            .unwrap();
+        let mut blocker = blocker_client.start_txn().await.unwrap();
+        transaction_rows(
+            &mut blocker,
+            "MATCH (e:Entity {id:$id}) WITH e, e.id AS id DELETE e RETURN id",
+            vec![("id", id_param(target))],
+        )
+        .await
+        .unwrap();
+        let store = Neo4jLongTermStore::new(writer_client.clone());
+        let category = Uuid::new_v4().to_string();
+        let new = record(&category);
+        let new_id = new.id;
+        let caller = tokio::spawn(async move {
+            store
+                .write_preference(&new, Some(&category), &[target], &[], 0.95)
+                .await
+        });
+        // El escritor ya adquirió el lock global y está bloqueado en APPLIES_TO.
+        blocked(&observer, "MERGE (p)-[:APPLIES_TO]").await;
+        caller.abort();
+        assert!(caller.await.unwrap_err().is_cancelled());
+        // Otro pool debe esperar al lock global mientras el propietario sigue vivo.
+        let probe = tokio::spawn(async move {
+            let mut txn = probe_client.start_txn().await.unwrap();
+            transaction_rows(&mut txn, "MATCH (l:PreferenceWriteLock {id:'preferences'}) SET l.version = l.version + 1 RETURN l", vec![]).await.unwrap();
+            txn.rollback().await.unwrap();
+        });
+        blocked(&observer, "SET l.version = l.version + 1").await;
+        blocker.rollback().await.unwrap();
+        // No hay consulta nueva en writer_client: RESET por reciclaje no ayuda.
+        tokio::time::timeout(Duration::from_secs(3), probe)
+            .await
+            .unwrap()
+            .unwrap();
+        let rows = observer
+            .execute(
+                "MATCH (p:Preference {id:$id}) RETURN p",
+                vec![("id", id_param(new_id))],
+            )
+            .await
+            .unwrap();
+        assert!(
+            rows.is_empty(),
+            "el consumidor cancelado no debe confirmar cambios"
+        );
+        drop(writer_client);
+    }
+
+    #[tokio::test]
+    #[ignore = "requiere fixture Neo4j efímera, permisos SHOW TRANSACTIONS y límites de servidor"]
+    async fn contending_writer_deduplicates_only_after_lock_holder_commits() {
+        let first = connect().await;
+        SchemaManager::new(&first, 3).setup_all().await.unwrap();
+        let second = Neo4jLongTermStore::new(connect().await);
+        let observer = connect().await;
+        let user = Uuid::new_v4().to_string();
+        let category = Uuid::new_v4().to_string();
+        let original = record(&category);
+        let original_id = original.id;
+        let mut holder = first.start_txn().await.unwrap();
+        transaction_rows(&mut holder, "MERGE (l:PreferenceWriteLock {id:'preferences'}) SET l.version = coalesce(l.version,0)+1 RETURN l", vec![]).await.unwrap();
+        let competing = record(&category);
+        let owner = user.clone();
+        let caller = tokio::spawn(async move {
+            second
+                .write_preference(&competing, Some(&owner), &[], &[], 0.95)
+                .await
+        });
+        blocked(&observer, "SET l.version = coalesce(l.version, 0) + 1").await;
+        // El primer registro aparece después de que el segundo escritor espera.
+        transaction_rows(
+            &mut holder,
+            q::CREATE_PREFERENCE,
+            preference_params(&original),
+        )
+        .await
+        .unwrap();
+        transaction_rows(
+            &mut holder,
+            q::LINK_USER_TO_PREFERENCE,
+            vec![
+                ("user_identifier", user.clone().into()),
+                ("preference_id", id_param(original_id)),
+            ],
+        )
+        .await
+        .unwrap();
+        holder.commit().await.unwrap();
+        let stored = caller.await.unwrap().unwrap();
+        assert_eq!(stored.id, original_id);
+        assert_eq!(stored.metadata["deduplicated"], true);
+        let rows = observer
+            .execute(
+                "MATCH (:User {identifier:$user})-[:HAS_PREFERENCE]->(p) RETURN count(p) AS n",
+                vec![("user", user.into())],
+            )
+            .await
+            .unwrap();
+        assert_eq!(rows[0].get::<i64>("n").unwrap(), 1);
+    }
+    #[tokio::test]
+    #[ignore = "requiere fixture Neo4j efímera, permisos SHOW TRANSACTIONS y límites de servidor"]
+    async fn atomic_supersession_waits_for_compound_writer_before_matching_endpoints() {
+        let writer_client = connect().await;
+        SchemaManager::new(&writer_client, 3)
+            .setup_all()
+            .await
+            .unwrap();
+        let writer = Neo4jLongTermStore::new(writer_client);
+        let superseder = Neo4jLongTermStore::new(connect().await);
+        let blocker_client = connect().await;
+        let observer = connect().await;
+        let target = Uuid::new_v4();
+        observer
+            .execute(
+                "CREATE (:Entity {id:$id, name:'target', type:'OBJECT'})",
+                vec![("id", id_param(target))],
+            )
+            .await
+            .unwrap();
+        let mut blocker = blocker_client.start_txn().await.unwrap();
+        transaction_rows(
+            &mut blocker,
+            "MATCH (e:Entity {id:$id}) WITH e, e.id AS id DELETE e RETURN id",
+            vec![("id", id_param(target))],
+        )
+        .await
+        .unwrap();
+        let category = Uuid::new_v4().to_string();
+        let old = record(&category);
+        let old_id = old.id;
+        let new = record(&Uuid::new_v4().to_string());
+        let new_id = new.id;
+        superseder.create_preference(&new).await.unwrap();
+        let owner = category.clone();
+        let writing = tokio::spawn(async move {
+            writer
+                .write_preference(&old, Some(&owner), &[target], &[], 0.95)
+                .await
+        });
+        blocked(&observer, "MERGE (p)-[:APPLIES_TO]").await;
+        let replay = superseder.clone();
+        let superseding =
+            tokio::spawn(
+                async move { superseder.supersede_preference_atomic(old_id, new_id).await },
+            );
+        // Debe esperar al lock global, no fallar por el old aún no confirmado.
+        blocked(&observer, "SET l.version = coalesce(l.version, 0) + 1").await;
+        blocker.rollback().await.unwrap();
+        assert_eq!(writing.await.unwrap().unwrap().id, old_id);
+        superseding.await.unwrap().unwrap();
+        replay
+            .supersede_preference_atomic(old_id, new_id)
+            .await
+            .unwrap();
+        let rows = observer.execute("MATCH (p:Preference {id:$id})-[r:SUPERSEDED_BY]->(n) RETURN count(r) AS n, p.valid_until AS until", vec![("id", id_param(old_id))]).await.unwrap();
+        assert_eq!(rows[0].get::<i64>("n").unwrap(), 1);
+        let first_until = column(&rows[0], "until").unwrap();
+        replay
+            .supersede_preference_atomic(old_id, new_id)
+            .await
+            .unwrap();
+        let rows = observer
+            .execute(
+                "MATCH (p:Preference {id:$id}) RETURN p.valid_until AS until",
+                vec![("id", id_param(old_id))],
+            )
+            .await
+            .unwrap();
+        assert_eq!(column(&rows[0], "until").unwrap(), first_until);
+        assert!(replay
+            .preferences_for(&category, true)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "requiere fixture Neo4j efímera y límites de servidor"]
+    async fn atomic_supersession_rejects_each_missing_endpoint_without_mutation() {
+        let client = connect().await;
+        SchemaManager::new(&client, 3).setup_all().await.unwrap();
+        let store = Neo4jLongTermStore::new(client.clone());
+        let existing = record(&Uuid::new_v4().to_string());
+        store.create_preference(&existing).await.unwrap();
+        for (old, new) in [(existing.id, Uuid::new_v4()), (Uuid::new_v4(), existing.id)] {
+            assert!(matches!(
+                store.supersede_preference_atomic(old, new).await,
+                Err(MemoryError::NotFound(_))
+            ));
+        }
+        let rows = client.execute("MATCH (p:Preference {id:$id}) OPTIONAL MATCH (p)-[r:SUPERSEDED_BY]->() RETURN count(r) AS n, p.valid_until IS NULL AS open", vec![("id", id_param(existing.id))]).await.unwrap();
+        assert_eq!(rows[0].get::<i64>("n").unwrap(), 0);
+        assert!(rows[0].get::<bool>("open").unwrap());
     }
 }

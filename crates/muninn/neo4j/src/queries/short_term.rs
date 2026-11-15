@@ -34,6 +34,35 @@ ORDER BY c.updated_at DESC
 LIMIT $limit
 ";
 
+pub const CREATE_OBSERVATION: &str = "
+MATCH (c:Conversation {id: $conversation_id})
+WHERE c.owner_scope = $owner_scope
+CREATE (o:Observation {
+    id: $id,
+    conversation_id: $conversation_id,
+    content: $content,
+    created_at: datetime($created_at)
+})
+CREATE (c)-[:HAS_OBSERVATION]->(o)
+RETURN o.id AS id
+";
+
+pub const GET_OBSERVATION_CONVERSATION: &str = "
+MATCH (c:Conversation {id: $conversation_id})
+WHERE c.owner_scope = $owner_scope
+RETURN c.id AS id
+";
+
+pub const LIST_OBSERVATIONS: &str = "
+MATCH (c:Conversation {id: $conversation_id})
+WHERE c.owner_scope = $owner_scope
+MATCH (c)-[:HAS_OBSERVATION]->(o:Observation)
+RETURN o
+ORDER BY o.created_at ASC, o.id ASC
+SKIP $offset
+LIMIT $limit
+";
+
 pub const LINK_USER_TO_CONVERSATION: &str = "
 MERGE (u:User {identifier: $user_identifier})
 ON CREATE SET u.id = $user_identifier, u.created_at = datetime()

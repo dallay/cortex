@@ -19,6 +19,32 @@ Building or testing this package does not authorize inference. Verify binary
 provenance separately before executing the exporter. The existing actual-cache
 differential test remains ignored and requires explicit authorization and cache.
 
+## Filesystem test diagnostics
+
+Unit-test builds emit `[c1-fs-test] operation=<fixed label> errno=<native code>`
+when instrumented staging, freezing, receipt or publication operations fail.
+The diagnostics contain neither paths nor native error messages. An injected
+error without a native code reports `errno=None`. Error classification, permissions,
+synchronization and exclusive publication remain unchanged. Normal library and
+exporter builds do not compile the diagnostic module.
+
+On the affected macOS 15 runner, first run the focused publication test:
+
+```sh
+cargo test --locked -p muninn-c1-exporter --features cpu-f32 --target aarch64-apple-darwin publishes_only_a_complete_verified_artifact_set_with_its_receipt -- --nocapture
+```
+
+Then run the package tests without a filter. Failed tests include their captured
+diagnostics by default; `--nocapture` also displays expected injected failures.
+The labels distinguish `freeze.chmod_directory`, `freeze.sync_directory`,
+`publish.pre_sync`, `publish.rename_noreplace`, `publish.post_sync` and file/receipt
+operations. These diagnostics do not establish the cause of the macOS 15 failure.
+
+Keep this test-only instrumentation for platform regressions. To remove it, remove
+`artifact_diagnostics.rs`, its `cfg(test)` module declaration and the matching
+`cfg(test)` reporting statements. Do not remove the filesystem operations or their
+error mappings.
+
 ## Reusable seam
 
 The library exposes `model_manifest::PinnedMiniLmManifest`,

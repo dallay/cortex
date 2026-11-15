@@ -15,8 +15,8 @@ use muninn_application::{MemoryClient, MemoryOptions, MemoryPorts};
 use muninn_bridge::{router, BridgeState};
 use muninn_core::model::{
     Conversation, Entity, EntityGraph, EntityMention, EntityRef, Fact, Message, MessageRole,
-    Metadata, Preference, ReasoningStep, ReasoningStepWithContext, ReasoningTrace, Relationship,
-    SessionInfo, ToolCall, ToolStats,
+    Metadata, Observation, Preference, ReasoningStep, ReasoningStepWithContext, ReasoningTrace,
+    Relationship, SessionInfo, ToolCall, ToolStats,
 };
 use muninn_core::ports::{
     ConversationStep, EmbeddingIdentity, EntityUpdate, KeyedMessage, LongTermStore, MessageRecord,
@@ -201,7 +201,7 @@ async fn post(
 
 fn bridge(store: &Arc<ContextStore>, embedder: &Arc<FixedEmbedder>) -> Arc<BridgeState> {
     Arc::new(BridgeState {
-        memory: Arc::new(MemoryClient::new(
+        memory: Arc::new(MemoryClient::read_only(
             MemoryPorts {
                 short_term: store.clone(),
                 long_term: store.clone(),
@@ -467,6 +467,18 @@ impl ShortTermStore for ContextStore {
         _: Uuid,
         _: &OwnerScope,
     ) -> MemoryResult<Option<Conversation>> {
+        unimplemented!()
+    }
+    async fn append_observation(&self, _: &Observation, _: &OwnerScope) -> MemoryResult<()> {
+        unimplemented!()
+    }
+    async fn list_observations(
+        &self,
+        _: Uuid,
+        _: &OwnerScope,
+        _: i64,
+        _: i64,
+    ) -> MemoryResult<Vec<Observation>> {
         unimplemented!()
     }
     async fn list_conversations(&self, _: &OwnerScope, _: i64) -> MemoryResult<Vec<Conversation>> {

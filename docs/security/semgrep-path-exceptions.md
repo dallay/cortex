@@ -10,6 +10,18 @@ Lens and Mirror gave `VERDICT CLEAN` to the complete tree backed by `ee44ab8`.
 This B1 unit rebuilds only the scanner over `origin/main` (`5945002`), without
 F1/F2 hooks or guards. Its evidence is verified separately; it is not inherited.
 
+PR #663 separately authorizes exactly seven additional sink-local exceptions
+for the same rule in Candle's explicit-path I/O APIs. The checker retains the
+original seven entries and historical inventory unchanged, and checks the seven
+Candle entries in a separate closed inventory. Each Candle entry fixes the file,
+function, exact sink, immediately adjacent annotation, exact rule ID, and all
+nearby reason comments. Missing, additional, moved, or modified annotations fail
+validation; other rule IDs in the three covered Candle files also fail validation.
+The seven APIs and their caller-boundary assessment are documented in
+`third_party/candle-core/CORTEX-PATCH.md`. These are contextual API-contract
+exceptions, not a directory or vendor exemption. Reassess before a new caller
+passes lower-trust paths.
+
 I/O, validators, rules, severity, exclusions, and baseline are unchanged.
 An annotation affects only the immediately following expression. Changing the
 expression, function, reason, link, or inventory requires a new review.
