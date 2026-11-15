@@ -276,4 +276,4 @@ The provider redirects with `state` and `code`; on cancellation it may send `err
 
 Management APIs use a session cookie. `GET /login` obtains a CSRF token and cookie. `POST /login` accepts the configured credentials and requires the CSRF cookie plus matching `X-CSRF-Token`; on success it creates the session. `POST /logout` revokes the session and also requires CSRF. Other mutating admin APIs follow the same CSRF requirement.
 
-For first-run installation, use the bootstrap API above. For pre-seeding an admin password in a controlled environment, the CLI command is `rook seed-admin <password>`.
+For first-run installation, use the bootstrap API above. For pre-seeding an admin password in a controlled environment, use `rook seed-admin` with the `$ROOK_SEED_PASSWORD` environment variable set.

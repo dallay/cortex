@@ -109,7 +109,7 @@ for i in {1..30}; do
 done
 
 log_info "Seeding admin password..."
-if ! docker exec -u non-root "$CONTAINER_NAME" /usr/local/bin/rook seed-admin --config /app/rook.toml "$ADMIN_PASSWORD"; then
+if ! docker exec -u non-root -e ROOK_SEED_PASSWORD="$ADMIN_PASSWORD" "$CONTAINER_NAME" /usr/local/bin/rook seed-admin --config /app/rook.toml; then
     log_error "Failed to seed admin password"
     docker logs "$CONTAINER_NAME" | tail -20
     cleanup

@@ -167,7 +167,7 @@ pub async fn logout_handler(
 fn build_auth_token_cookie(token: &str, rook_env: Option<&str>, is_release: bool) -> HeaderValue {
     let secure = is_secure(rook_env, is_release);
     let mut cookie = format!(
-        "auth_token={}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400",
+        "auth_token={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400",
         token
     );
     if secure {
@@ -210,10 +210,9 @@ pub struct LoginRequest {
 pub struct LoginResponse {
     pub session_id: String,
     pub expires_at: String,
-    /// Fresh CSRF token — the same value set as the csrf_token HttpOnly cookie.
-    /// Clients use this to seed their CSRF cache so the first state-changing
-    /// request after login has a pre-warmed token and avoids the GET /login
-    /// round-trip that races with the cookie being registered in WebKit.
+    /// Fresh CSRF token — the same value set as the csrf_token cookie.
+    /// Clients read this cookie and echo it in the X-CSRF-Token header
+    /// for state-changing requests (double-submit cookie pattern).
     pub csrf_token: String,
 }
 
@@ -282,7 +281,7 @@ fn generate_csrf_token() -> String {
 fn build_csrf_token_cookie(token: &str, rook_env: Option<&str>, is_release: bool) -> HeaderValue {
     let secure = is_secure(rook_env, is_release);
     let mut cookie = format!(
-        "csrf_token={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400",
+        "csrf_token={}; SameSite=Strict; Path=/; Max-Age=86400",
         token
     );
     if secure {
@@ -290,9 +289,9 @@ fn build_csrf_token_cookie(token: &str, rook_env: Option<&str>, is_release: bool
     }
     HeaderValue::from_str(&cookie).unwrap_or_else(|_| {
         let fallback = if secure {
-            "csrf_token=invalid; HttpOnly; Path=/; Secure"
+            "csrf_token=invalid; Path=/; Secure"
         } else {
-            "csrf_token=invalid; HttpOnly; Path=/"
+            "csrf_token=invalid; Path=/"
         };
         HeaderValue::from_str(fallback).unwrap()
     })
@@ -300,9 +299,11 @@ fn build_csrf_token_cookie(token: &str, rook_env: Option<&str>, is_release: bool
 
 fn build_clear_auth_token_cookie(rook_env: Option<&str>, is_release: bool) -> HeaderValue {
     if is_secure(rook_env, is_release) {
-        HeaderValue::from_static("auth_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0; Secure")
+        HeaderValue::from_static(
+            "auth_token=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0; Secure",
+        )
     } else {
-        HeaderValue::from_static("auth_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0")
+        HeaderValue::from_static("auth_token=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0")
     }
 }
 
