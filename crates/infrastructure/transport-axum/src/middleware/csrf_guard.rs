@@ -91,18 +91,20 @@ impl CsrfGuard {
         }
     }
 
-    /// Build the CSRF cookie header value
+    /// Build the CSRF cookie header value.
+    ///
+    /// Note: HttpOnly is intentionally omitted so that JavaScript can read
+    /// the cookie for the double-submit CSRF pattern.
     pub fn build_cookie_header(&self, token: &str, secure: bool) -> HeaderValue {
         let mut cookie = format!(
-            "csrf_token={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400",
+            "csrf_token={}; SameSite=Strict; Path=/; Max-Age=86400",
             token
         );
         if secure {
             cookie.push_str("; Secure");
         }
-        HeaderValue::from_str(&cookie).unwrap_or_else(|_| {
-            HeaderValue::from_str("csrf_token=invalid; HttpOnly; Path=/").unwrap()
-        })
+        HeaderValue::from_str(&cookie)
+            .unwrap_or_else(|_| HeaderValue::from_str("csrf_token=invalid; Path=/").unwrap())
     }
 }
 
@@ -272,14 +274,17 @@ mod tests {
     }
 
     #[test]
-    fn build_cookie_header_includes_http_only_and_same_site_strict() {
+    fn build_cookie_header_includes_same_site_strict_without_http_only() {
         let guard = csrf_guard();
         let token = guard.generate_token().expect("Should generate token");
 
         let header = guard.build_cookie_header(&token, false);
         let header_str = header.to_str().expect("Should be valid str");
 
-        assert!(header_str.contains("HttpOnly"));
+        assert!(
+            !header_str.contains("HttpOnly"),
+            "HttpOnly should be omitted for double-submit pattern"
+        );
         assert!(header_str.contains("SameSite=Strict"));
         assert!(header_str.contains(&format!("csrf_token={}", token)));
     }

@@ -37,6 +37,22 @@ const TRUSTED_HEADERS: &[&str] = &[
     "x-authz-requested-tier",
 ];
 
+/// Constant-time string comparison to prevent timing side-channel attacks.
+///
+/// Uses XOR byte-by-byte comparison (same pattern as `csrf_guard.rs`).
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    if a_bytes.len() != b_bytes.len() {
+        return false;
+    }
+    let mut diff: u8 = 0;
+    for (x, y) in a_bytes.iter().zip(b_bytes.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 #[derive(Clone)]
 pub struct AuthzConfig {
     api_keys: Vec<ApiKeyCredential>,
@@ -658,7 +674,7 @@ async fn client_api_policy(
     let Some(credential) = config
         .api_keys
         .iter()
-        .find(|credential| credential.is_active && credential.secret == api_key)
+        .find(|credential| credential.is_active && constant_time_eq(&credential.secret, &api_key))
     else {
         return AuthOutcome::reject(StatusCode::UNAUTHORIZED, "INVALID_API_KEY");
     };
@@ -951,7 +967,7 @@ fn insert_standard_cors_headers(headers: &mut HeaderMap) {
     );
     headers.insert(
         "access-control-allow-headers",
-        HeaderValue::from_static("Content-Type, Authorization, X-API-Key"),
+        HeaderValue::from_static("Content-Type, Authorization, X-API-Key, X-CSRF-Token"),
     );
     headers.insert("access-control-max-age", HeaderValue::from_static("86400"));
 }

@@ -1515,7 +1515,7 @@ mod tests {
                     );
                     assert_eq!(
                         headers["access-control-allow-headers"],
-                        "Content-Type, Authorization, X-API-Key"
+                        "Content-Type, Authorization, X-API-Key, X-CSRF-Token"
                     );
                     if allowed {
                         assert!(headers["vary"].to_str().unwrap().contains("Origin"));
