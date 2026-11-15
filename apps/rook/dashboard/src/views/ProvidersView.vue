@@ -104,12 +104,12 @@ function openAddDialog(kind: ProviderKind) {
 
 function onSaved() {
   addDialogOpen.value = false;
-  fetch();
+  void fetch();
 }
 
 function onDeleted() {
   addDialogOpen.value = false;
-  fetch();
+  void fetch();
 }
 </script>
 

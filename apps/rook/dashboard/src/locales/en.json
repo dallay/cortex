@@ -282,6 +282,7 @@
 			"noConnections": "No compatible connections configured. Add one to get started.",
 			"untitled": "Untitled",
 			"deleteConfirm": "Delete this compatible connection?",
+			"toggleAriaLabel": "Toggle {name} connection",
 			"protocol": {
 				"openai": "OpenAI",
 				"anthropic": "Anthropic"

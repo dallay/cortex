@@ -208,7 +208,7 @@ pub fn evaluate_connection_quota(
     let scoped: Vec<&QuotaObservation> = observations
         .iter()
         .filter(|observation| observation.connection_id.as_ref() == Some(connection_id))
-        .filter(|observation| provider.is_none_or(|p| &observation.provider == p))
+        .filter(|observation| provider.is_none() || &observation.provider == provider.unwrap())
         .collect();
 
     if scoped.is_empty() {
@@ -315,22 +315,14 @@ pub fn reduce_latest_observations(
                 .unwrap_or(false),
         })
         .filter(|observation| {
-            query
-                .provider
-                .as_ref()
-                .is_none_or(|p| &observation.provider == p)
+            query.provider.as_ref().is_none()
+                || &observation.provider == query.provider.as_ref().unwrap()
         })
         .filter(|observation| {
-            query
-                .metric
-                .as_ref()
-                .is_none_or(|m| &observation.metric == m)
+            query.metric.as_ref().is_none() || &observation.metric == query.metric.as_ref().unwrap()
         })
         .filter(|observation| {
-            query
-                .source
-                .as_ref()
-                .is_none_or(|s| &observation.source == s)
+            query.source.as_ref().is_none() || &observation.source == query.source.as_ref().unwrap()
         })
         .collect();
 

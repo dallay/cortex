@@ -236,7 +236,7 @@ pub enum MessageContent {
 
 impl MessageContent {
     /// Borrow text content when this is a text block.
-    pub const fn as_text(&self) -> &str {
+    pub fn as_text(&self) -> &str {
         match self {
             Self::Text(s) => s.as_str(),
             Self::ToolUse { .. } | Self::ToolResult { .. } => "",

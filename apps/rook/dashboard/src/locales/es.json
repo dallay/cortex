@@ -327,6 +327,7 @@
 			"noConnections": "No hay conexiones compatibles configuradas. Agrega una para comenzar.",
 			"untitled": "Sin título",
 			"deleteConfirm": "¿Eliminar esta conexión compatible?",
+			"toggleAriaLabel": "Activar/desactivar conexión {name}",
 			"protocol": {
 				"openai": "OpenAI",
 				"anthropic": "Anthropic"
