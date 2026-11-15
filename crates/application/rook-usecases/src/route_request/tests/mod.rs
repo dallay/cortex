@@ -104,6 +104,13 @@ impl ProviderPort for TestProvider {
         {
             return Err(CortexError::local_backpressure());
         }
+        if self
+            .complete_error
+            .as_ref()
+            .is_some_and(CortexError::is_invalid_request)
+        {
+            return Err(CortexError::invalid_request("invalid request"));
+        }
         if self.complete_error.is_some() {
             return Err(CortexError::provider("provider failed"));
         }
@@ -7751,4 +7758,67 @@ fn test_classify_connection_adapter_unusable_unavailable() {
         dec,
         ConnectionAdapterDecision::Unusable("provider_unavailable")
     );
+}
+
+#[tokio::test]
+async fn saved_provider_failure_is_recorded_on_terminal_exits() {
+    // Stop during preflight, non-retryable upstream error, and retry limit.
+    for terminal in ["stop", "invalid", "limit"] {
+        let count = if terminal == "limit" { 5 } else { 2 };
+        let providers = (0..count)
+            .map(|index| {
+                Arc::new(TestProvider {
+                    id: ProviderId::new(format!("provider-{index}")),
+                    complete_error: Some(if terminal == "invalid" && index == 1 {
+                        CortexError::invalid_request("invalid request")
+                    } else {
+                        CortexError::provider("provider failed")
+                    }),
+                    stream_error: None,
+                }) as Arc<dyn ProviderPort>
+            })
+            .collect();
+        let audit = Arc::new(TestAudit {
+            entries: Mutex::new(Vec::new()),
+        });
+        let usage = Arc::new(TestUsageRecorder {
+            entries: Mutex::new(Vec::new()),
+            fail_recording: false,
+        });
+        let telemetry = Arc::new(TelemetryTracker::new(
+            observability::TelemetryConfig::default(),
+        ));
+        let mut usecase = usecase_with_router_and_audit(
+            Arc::new(PriorityFallbackRouter { providers }),
+            audit.clone(),
+        );
+        usecase.telemetry = Some(telemetry.clone());
+        usecase.usage_recorder = Some(usage.clone());
+        let mut req = request();
+        req.stream = false;
+        req.metadata.cacheable = false;
+        if terminal == "stop" {
+            req.restrictions.allowed_providers = vec![ProviderId::new("provider-0")];
+        }
+        let error = usecase.execute(req).await.unwrap_err();
+        if terminal == "invalid" {
+            assert!(error.is_invalid_request());
+        }
+        let expected = if terminal == "invalid" { 2 } else { 1 };
+        assert_eq!(audit.entries.lock().unwrap().len(), expected, "{terminal}");
+        assert_eq!(usage.entries.lock().unwrap().len(), expected, "{terminal}");
+        let saved_id = ProviderId::new(if terminal == "limit" {
+            "provider-3"
+        } else {
+            "provider-0"
+        });
+        assert_eq!(
+            telemetry
+                .get_provider_summary(&saved_id)
+                .unwrap()
+                .failure_count,
+            1,
+            "{terminal}"
+        );
+    }
 }

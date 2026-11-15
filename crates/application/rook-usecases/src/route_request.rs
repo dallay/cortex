@@ -21,7 +21,7 @@ use rook_core::{
     QuotaEligibilityPolicy, QuotaObservationQuery, QuotaObservationRecorderPort, QuotaState,
     RequestStatus, RouterPort, StreamChunk, TokenUsage, UsageEntry, UsageRecorderPort,
 };
-use shared_kernel::{ComboId, ConnectionId, ModelId, ProviderId, RestrictionViolation};
+use shared_kernel::{ComboId, ConnectionId, ModelId, ProviderId, RequestId, RestrictionViolation};
 
 use crate::eligibility::{
     evaluate_candidates, AuthState, CandidateFacts, EligibilityResult, RejectionReason, TargetRef,
@@ -213,6 +213,7 @@ struct AttemptCursor {
     /// Set on the first successful admit; reused for subsequent attempts without
     /// re-admitting. None means no budget or no admission yet.
     spending_admission: Option<SpendingAdmissionCarrier>,
+    spending_reservation_request_id: Option<RequestId>,
 }
 
 /// Lifecycle state of a spending admission carrier.
@@ -914,6 +915,7 @@ impl RouteRequest {
             provider_attempts,
             policy_reselections: 0,
             spending_admission: None,
+            spending_reservation_request_id: None,
         };
         let context = AttemptContext {
             req: &req,
@@ -932,7 +934,7 @@ impl RouteRequest {
             }
         }
 
-        self.finish_provider_attempts(&mut cursor).await
+        self.finish_provider_attempts(&req, &mut cursor).await
     }
 
     /// Runs one select → preflight → upstream → outcome cycle of the failover loop.
@@ -949,6 +951,8 @@ impl RouteRequest {
             }
             AttemptPreparation::Reevaluate => {
                 if cursor.policy_reselections >= MAX_POLICY_RESELECTION_RETRIES {
+                    self.record_saved_provider_failure(context.req, cursor)
+                        .await;
                     // Settle any outstanding admission before stopping.
                     self.settle_outstanding_admission(cursor).await;
                     return AttemptStep::Done(Box::new(Err(CortexError::routing_snapshot_churn())));
@@ -957,6 +961,8 @@ impl RouteRequest {
                 return AttemptStep::Retry;
             }
             AttemptPreparation::Stop(error) => {
+                self.record_saved_provider_failure(context.req, cursor)
+                    .await;
                 // Settle any outstanding admission before stopping.
                 self.settle_outstanding_admission(cursor).await;
                 return AttemptStep::Done(Box::new(Err(error)));
@@ -1007,14 +1013,16 @@ impl RouteRequest {
                 return AttemptStep::Done(Box::new(response));
             }
             AttemptOutcome::LocalBackpressure(_error) => {
-                // Admission pressure happens before upstream I/O, so it does not
-                // consume the upstream retry allowance. Release the reservation
-                // and clear the cursor so the next attempt re-admits.
+                // Local admission pressure does not consume an upstream attempt.
                 cursor.provider_attempts -= 1;
-                if let Some(carrier) = &cursor.spending_admission {
-                    carrier.release().await;
+                if !cursor.provider_attempt_failed {
+                    if let Some(carrier) = cursor.spending_admission.take() {
+                        carrier.release().await;
+                        // Released ledger rows retain their identity. A later admission
+                        // needs a fresh reservation identity, while the request keeps its ID.
+                        cursor.spending_reservation_request_id = Some(RequestId::new());
+                    }
                 }
-                cursor.spending_admission.take();
                 drop(attempt.trial_permit);
                 cursor.local_backpressure = Some(CortexError::local_backpressure());
                 cursor.excluded.push(attempt.provider_id.clone());
@@ -1067,7 +1075,13 @@ impl RouteRequest {
         let Some(carrier) = cursor.spending_admission.as_ref() else {
             return;
         };
-        let cost = provider.strict_realized_cost_micros_usd(provider_req, provider_resp);
+        // Provider errors expose no verified realized cost. A successful fallback
+        // cannot resolve spend from an earlier upstream failure.
+        let cost = if cursor.provider_attempt_failed {
+            None
+        } else {
+            provider.strict_realized_cost_micros_usd(provider_req, provider_resp)
+        };
         carrier.settle(cost).await;
     }
 
@@ -1270,8 +1284,12 @@ impl RouteRequest {
             // Already admitted on a previous attempt; reuse the original admission.
             false
         } else {
+            let mut reservation_req = provider_req.clone();
+            if let Some(id) = &cursor.spending_reservation_request_id {
+                reservation_req.id = id.clone();
+            }
             match self
-                .admit_spending_budget(provider.as_ref(), &provider_req, context.req)
+                .admit_spending_budget(provider.as_ref(), &reservation_req, context.req)
                 .await
             {
                 Ok(Some(admission)) => {
@@ -1975,6 +1993,7 @@ impl RouteRequest {
         // Non-retryable errors end the request. Settle any outstanding admission
         // as unresolved before returning.
         if !error.is_retryable() {
+            self.record_saved_provider_failure(req, cursor).await;
             self.settle_outstanding_admission(cursor).await;
             self.record_failure_audit_usage(req, &provider_id, connection_id, latency_ms, &error)
                 .await;
@@ -2029,6 +2048,15 @@ impl RouteRequest {
             excluded = ?cursor.excluded,
             "all providers exhausted"
         );
+        self.record_saved_provider_failure(req, cursor).await;
+        AttemptStep::Done(Box::new(Err(CortexError::all_providers_exhausted())))
+    }
+
+    async fn record_saved_provider_failure(
+        &self,
+        req: &CompletionRequest,
+        cursor: &mut AttemptCursor,
+    ) {
         if let Some((provider_id, connection_id, latency_ms, error)) =
             cursor.last_provider_failure.take()
         {
@@ -2041,13 +2069,14 @@ impl RouteRequest {
                 .await;
             self.record_failure_observation(provider_id, latency_ms, status);
         }
-        AttemptStep::Done(Box::new(Err(CortexError::all_providers_exhausted())))
     }
 
     async fn finish_provider_attempts(
         &self,
+        req: &CompletionRequest,
         cursor: &mut AttemptCursor,
     ) -> Result<CompletionResponse, CortexError> {
+        self.record_saved_provider_failure(req, cursor).await;
         // Settle any outstanding spending admission as unresolved before returning.
         self.settle_outstanding_admission(cursor).await;
         // This should not be reached, but safety fallback
@@ -2215,6 +2244,7 @@ impl RouteRequest {
         let mut provider_attempts = 0;
         let mut excluded = Vec::new();
         let mut local_backpressure = None;
+        let mut reservation_request_id: Option<RequestId> = None;
         let mut snapshot_rechecks = 0;
         let mut policy_reselections = 0;
         for _ in 0..selection_budget {
@@ -2374,8 +2404,12 @@ impl RouteRequest {
                 excluded.push(provider_id);
                 continue;
             };
+            let mut reservation_req = provider_req.clone();
+            if let Some(id) = &reservation_request_id {
+                reservation_req.id = id.clone();
+            }
             let budget_admission = match self
-                .admit_spending_budget(provider.as_ref(), &provider_req, req)
+                .admit_spending_budget(provider.as_ref(), &reservation_req, req)
                 .await
             {
                 Ok(admission) => admission,
@@ -2454,6 +2488,7 @@ impl RouteRequest {
                     // upstream request can start, so release the budget.
                     if let (Some(guard), Some(admission)) = (&self.spending_guard, &admission) {
                         guard.release(admission).await;
+                        reservation_request_id = Some(RequestId::new());
                     }
                     drop(trial_permit);
                     excluded.push(provider_id);

@@ -23,6 +23,7 @@ type EventLog = Arc<Mutex<Vec<BudgetEvent>>>;
 
 struct RecordingLedger {
     events: EventLog,
+    rows: Mutex<std::collections::HashMap<RequestId, BudgetEvent>>,
     release_notify: Arc<tokio::sync::Notify>,
     reserve_outcome:
         Mutex<Option<Result<SpendingReservationOutcome, SpendingBudgetReservationError>>>,
@@ -32,6 +33,7 @@ impl RecordingLedger {
     fn new(events: EventLog) -> Self {
         Self {
             events,
+            rows: Mutex::new(std::collections::HashMap::new()),
             release_notify: Arc::new(tokio::sync::Notify::new()),
             reserve_outcome: Mutex::new(None),
         }
@@ -43,6 +45,7 @@ impl RecordingLedger {
     ) -> Self {
         Self {
             events,
+            rows: Mutex::new(std::collections::HashMap::new()),
             release_notify: Arc::new(tokio::sync::Notify::new()),
             reserve_outcome: Mutex::new(Some(outcome)),
         }
@@ -53,21 +56,29 @@ impl RecordingLedger {
 impl SpendingBudgetLedgerPort for RecordingLedger {
     async fn reserve_spending(
         &self,
-        _reservation: &SpendingBudgetReservation,
+        reservation: &SpendingBudgetReservation,
     ) -> Result<SpendingReservationOutcome, SpendingBudgetReservationError> {
         self.events.lock().unwrap().push(BudgetEvent::Reserve);
         if let Some(outcome) = self.reserve_outcome.lock().unwrap().take() {
             return outcome;
         }
+        let mut rows = self.rows.lock().unwrap();
+        if rows.contains_key(&reservation.request_id) {
+            return Ok(SpendingReservationOutcome::Existing);
+        }
+        rows.insert(reservation.request_id.clone(), BudgetEvent::Reserve);
         Ok(SpendingReservationOutcome::Reserved)
     }
 
     async fn settle_spending(
         &self,
         _api_key_id: &ApiKeyId,
-        _request_id: &RequestId,
+        request_id: &RequestId,
         cost_micros_usd: Option<u64>,
     ) -> Result<(), SpendingBudgetReservationError> {
+        let mut rows = self.rows.lock().unwrap();
+        assert_eq!(rows.get(request_id), Some(&BudgetEvent::Reserve));
+        rows.insert(request_id.clone(), BudgetEvent::Settle(cost_micros_usd));
         self.events
             .lock()
             .unwrap()
@@ -78,8 +89,11 @@ impl SpendingBudgetLedgerPort for RecordingLedger {
     async fn release_spending_before_upstream(
         &self,
         _api_key_id: &ApiKeyId,
-        _request_id: &RequestId,
+        request_id: &RequestId,
     ) -> Result<(), SpendingBudgetReservationError> {
+        let mut rows = self.rows.lock().unwrap();
+        assert_eq!(rows.get(request_id), Some(&BudgetEvent::Reserve));
+        rows.insert(request_id.clone(), BudgetEvent::Release);
         self.events.lock().unwrap().push(BudgetEvent::Release);
         self.release_notify.notify_one();
         Ok(())
@@ -511,7 +525,7 @@ async fn budgeted_request_falls_back_when_provider_bound_fits_initial_reservatio
     // Reserve exactly once before the first upstream attempt.
     // Retain the original admission across retryable provider failovers.
     // Do NOT re-admit against each provider.
-    // Settle once at the end with the successful attempt's realized cost.
+    // Earlier upstream spend is unknown, so settle as unresolved.
     let events: EventLog = Arc::new(Mutex::new(Vec::new()));
     let first = Arc::new(
         BoundedProvider::new("first-provider", events.clone())
@@ -541,9 +555,9 @@ async fn budgeted_request_falls_back_when_provider_bound_fits_initial_reservatio
             BudgetEvent::Reserve,
             BudgetEvent::UpstreamCall,
             BudgetEvent::UpstreamCall,
-            BudgetEvent::Settle(Some(120_000)),
+            BudgetEvent::Settle(None),
         ],
-        "reserve once, failover without re-admit, settle once with realized cost"
+        "reserve once, failover without re-admit, settle once with unresolved cost"
     );
 }
 
@@ -1269,4 +1283,85 @@ async fn budgeted_request_is_admitted_when_catalog_pricing_bounds_the_cost() {
         events.lock().unwrap().contains(&BudgetEvent::Reserve),
         "the guard must have reserved against the derived bound"
     );
+}
+
+#[tokio::test]
+async fn local_backpressure_exhaustion_preserves_ledger_rows() {
+    let events: EventLog = Arc::new(Mutex::new(Vec::new()));
+    let providers = ["first", "second"]
+        .into_iter()
+        .map(|id| {
+            Arc::new(
+                BoundedProvider::new(id, events.clone())
+                    .with_bound(500_000)
+                    .locally_backpressured(),
+            ) as Arc<dyn ProviderPort>
+        })
+        .collect();
+    let ledger = Arc::new(RecordingLedger::new(events.clone()));
+    let usecase = usecase_with_router(Arc::new(PriorityFallbackRouter { providers }))
+        .with_spending_budget_ledger(ledger.clone());
+    assert!(usecase
+        .execute(budgeted_request())
+        .await
+        .unwrap_err()
+        .is_local_backpressure());
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec![
+            BudgetEvent::Reserve,
+            BudgetEvent::Release,
+            BudgetEvent::Reserve,
+            BudgetEvent::Release
+        ]
+    );
+    assert_eq!(ledger.rows.lock().unwrap().len(), 2);
+    assert!(ledger
+        .rows
+        .lock()
+        .unwrap()
+        .values()
+        .all(|state| *state == BudgetEvent::Release));
+}
+
+#[tokio::test]
+async fn upstream_failure_then_local_pressure_retains_unresolved_admission() {
+    for fallback_succeeds in [false, true] {
+        let events: EventLog = Arc::new(Mutex::new(Vec::new()));
+        let mut providers: Vec<Arc<dyn ProviderPort>> = vec![
+            Arc::new(
+                BoundedProvider::new("failed", events.clone())
+                    .with_bound(500_000)
+                    .failing("unknown spend"),
+            ),
+            Arc::new(
+                BoundedProvider::new("busy", events.clone())
+                    .with_bound(500_000)
+                    .locally_backpressured(),
+            ),
+        ];
+        if fallback_succeeds {
+            providers.push(Arc::new(
+                BoundedProvider::new("success", events.clone())
+                    .with_bound(500_000)
+                    .with_realized_cost(120_000),
+            ));
+        }
+        let ledger = Arc::new(RecordingLedger::new(events.clone()));
+        let usecase = usecase_with_router(Arc::new(PriorityFallbackRouter { providers }))
+            .with_spending_budget_ledger(ledger.clone());
+        let result = usecase.execute(budgeted_request()).await;
+        assert_eq!(result.is_ok(), fallback_succeeds);
+        let mut expected = vec![BudgetEvent::Reserve, BudgetEvent::UpstreamCall];
+        if fallback_succeeds {
+            expected.push(BudgetEvent::UpstreamCall);
+        }
+        expected.push(BudgetEvent::Settle(None));
+        assert_eq!(*events.lock().unwrap(), expected);
+        assert_eq!(ledger.rows.lock().unwrap().len(), 1);
+        assert_eq!(
+            ledger.rows.lock().unwrap().values().next(),
+            Some(&BudgetEvent::Settle(None))
+        );
+    }
 }
