@@ -43,9 +43,9 @@ const searchQuery = ref("");
 const activeCategory = ref<CategoryFilter>("all");
 
 onMounted(() => {
-  fetch();
-  fetchModels();
-  fetchDescriptors();
+  void fetch();
+  void fetchModels();
+  void fetchDescriptors();
 });
 
 const filteredByCategory = computed(() => {
