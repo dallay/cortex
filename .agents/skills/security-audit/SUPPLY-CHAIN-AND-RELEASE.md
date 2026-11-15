@@ -66,8 +66,15 @@ An extension package gains host authority beyond its declared scope, a lower-tru
 
 ## Validation rules (apply before reporting ANY finding here)
 
-1. Name the lower-trust actor, controllable source/cache/artifact/metadata, consuming trusted job or updater, and resulting unauthorized publication, code inclusion, secret disclosure, or privileged execution.
-2. Prove artifact identity across the broken handoff. A different mutable name or unbound digest must reach a real consumer.
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:1ee445f0463a9d08c00e7eb51a14e1e51cf658c1c0ffba093d404a1693a41134 -->
+
+1. Name the lower-trust actor and distinguish reader access from writer control. Identify the controllable source/cache/artifact/metadata or the published artifact exposing a credential to a lower-trust reader; disclosure does not require the reader to control its source or contents. Identify the consuming trusted job, updater, or credential consumer and resulting unauthorized publication, code inclusion, secret disclosure, or privileged execution.
+2. When the suspected path involves an artifact handoff, prove artifact identity across the broken handoff: a different mutable name or unbound digest must reach a real consumer. For workflow-command findings, prove attacker-controlled input reaches a privileged command; no artifact need be produced or consumed.
 3. Verify built-in package-manager, repository-host, registry, and signing defaults for the pinned version. Unknown hosted controls require `needs_validation`.
 4. Keep local validation bounded: use a harmless fixture repository, dummy credential marker, local registry/config, and non-production artifact namespace. Do not publish or alter a real release.
-5. Return `confirmed` only with a complete source-visible handoff and meaningful result. Return `needs_validation` with the precise branch, runner, registry, signing, or deployment fact an owner must observe.
+5. Return `confirmed` only with a complete source-visible path and meaningful result. Return `needs_validation` with the precise branch, runner, registry, signing, or deployment fact an owner must observe.
+
+
+<!-- /coderabbit-ai-generated:v1 -->

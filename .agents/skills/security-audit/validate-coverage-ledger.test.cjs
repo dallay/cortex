@@ -439,6 +439,21 @@ test("preserves candidate provenance when reassignment must be deferred", () => 
   assert.deepEqual(errorsFor([deferred]), []);
 });
 
+test("allows shared artifacts within an archived attempt but rejects reuse across attempts", () => {
+  const sharedChecks = [localCheck(), localCheck("hunter-1", { result: "A second assertion uses the same fixture output." })];
+  const value = unit({
+    attempts: [archivedAttempt({ local_checks: sharedChecks })],
+    wave: 2,
+    status: "in_progress",
+    agent_id: "hunter-2",
+  });
+  assert.deepEqual(errorsFor([value]), []);
+  value.attempts.push(archivedAttempt({ wave: 2, agent_id: "hunter-2", local_checks: [localCheck()] }));
+  value.wave = 3;
+  value.agent_id = "hunter-3";
+  assert(errorsFor([value]).some((error) => error.includes("artifact from an earlier attempt cannot be reused")));
+});
+
 test("rejects reassignment owner reuse and evidence mixing", () => {
   const reusedOwner = unit({
     attempts: [archivedAttempt()],
