@@ -89,6 +89,7 @@ pub struct OAuthConfig {
 
 impl OAuthConfig {
     /// Substitute the `{tenant}` placeholder in an endpoint template.
+    #[allow(clippy::literal_string_with_formatting_args)]
     pub fn resolve_endpoint(&self, template: &str, tenant: &str) -> String {
         template.replace("{tenant}", tenant)
     }
@@ -121,28 +122,28 @@ pub enum ProviderCategory {
 
 impl ProviderCategory {
     /// Returns the display order for catalog sections.
-    pub fn order(self) -> u8 {
+    pub const fn order(self) -> u8 {
         match self {
-            ProviderCategory::Compatible => 0,
-            ProviderCategory::OAuth => 1,
-            ProviderCategory::IDE => 2,
-            ProviderCategory::ApiKey => 3,
-            ProviderCategory::Free => 4,
-            ProviderCategory::Local => 5,
-            ProviderCategory::Other => 6,
+            Self::Compatible => 0,
+            Self::OAuth => 1,
+            Self::IDE => 2,
+            Self::ApiKey => 3,
+            Self::Free => 4,
+            Self::Local => 5,
+            Self::Other => 6,
         }
     }
 
     /// Returns the kebab-case slug used by the frontend catalog.
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
-            ProviderCategory::Compatible => "compatible",
-            ProviderCategory::OAuth => "oauth",
-            ProviderCategory::IDE => "ide",
-            ProviderCategory::ApiKey => "api-key",
-            ProviderCategory::Free => "free",
-            ProviderCategory::Local => "local",
-            ProviderCategory::Other => "other",
+            Self::Compatible => "compatible",
+            Self::OAuth => "oauth",
+            Self::IDE => "ide",
+            Self::ApiKey => "api-key",
+            Self::Free => "free",
+            Self::Local => "local",
+            Self::Other => "other",
         }
     }
 }
@@ -227,7 +228,7 @@ impl ProviderDescriptor {
     }
 
     /// The identity serialized to clients and persisted to disk.
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         self.id
     }
 }

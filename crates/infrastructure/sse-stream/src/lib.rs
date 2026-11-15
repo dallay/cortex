@@ -110,7 +110,7 @@ impl SseBuffer {
     /// SSE event. Callers can use this at EOF to distinguish a clean close from
     /// a truncated event.
     #[must_use]
-    pub fn pending_len(&self) -> usize {
+    pub const fn pending_len(&self) -> usize {
         self.buffer.len()
     }
 }
