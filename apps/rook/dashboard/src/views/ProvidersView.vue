@@ -35,7 +35,7 @@ import {CATEGORIES, type ProviderKind} from "@/config/providerCatalog";
 
 const {t} = useI18n();
 
-const {fetch, loading, error} = useProviders();
+const {providers, update, test, fetch, loading, error} = useProviders();
 const {fetch: fetchModels} = useAvailableModels();
 const {items, byCategory, fetch: fetchDescriptors, loading: descriptorsLoading, error: descriptorsError} = useProviderCatalog();
 
@@ -62,8 +62,22 @@ const filteredByCategory = computed(() => {
   }));
 });
 
+const compatibleConnections = computed(() => {
+  const query = searchQuery.value.trim().toLowerCase();
+  return providers.value.filter((connection) =>
+    ["openai-compatible", "anthropic-compatible"].includes(connection.providerKind) &&
+    (query === "" || connection.name.toLowerCase().includes(query) || connection.providerKind.includes(query)),
+  );
+});
+
+const showCompatible = computed(() =>
+  (activeCategory.value === "all" || activeCategory.value === "compatible") &&
+  (searchQuery.value.trim() === "" || compatibleConnections.value.length > 0),
+);
+
 const totalMatches = computed(() =>
-  filteredByCategory.value.reduce((sum, entry) => sum + entry.items.length, 0),
+  visibleSections.value.reduce((sum, entry) => sum + entry.items.length, 0) +
+  (showCompatible.value ? compatibleConnections.value.length : 0),
 );
 
 const isFiltering = computed(
@@ -90,10 +104,12 @@ function openAddDialog(kind: ProviderKind) {
 
 function onSaved() {
   addDialogOpen.value = false;
+  fetch();
 }
 
 function onDeleted() {
   addDialogOpen.value = false;
+  fetch();
 }
 </script>
 
@@ -116,7 +132,11 @@ function onDeleted() {
       <ErrorBanner v-if="descriptorsError" :message="descriptorsError" @retry="fetchDescriptors" />
 
       <CompatibleConnectionsSection
-        v-if="activeCategory === 'all' || activeCategory === 'compatible'"
+        v-if="showCompatible"
+        :providers="compatibleConnections"
+        :update="update"
+        :test="test"
+        :refresh="fetch"
         @add="openAddDialog"
       />
 

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ref } from "vue";
 import { createI18n } from "vue-i18n";
 import { Button } from "@/components/ui/button";
+import type { ProviderConnectionResponse } from "@/lib/api";
 import en from "@/locales/en.json";
 import ProvidersView from "./ProvidersView.vue";
 
@@ -11,6 +12,8 @@ const state = vi.hoisted(() => ({
 	providersFetch: vi.fn(),
 	modelsFetch: vi.fn(),
 }));
+
+const mockProviders = ref<ProviderConnectionResponse[]>([]);
 
 const mockLoading = ref(false);
 const mockError = ref<string | null>(null);
@@ -46,6 +49,9 @@ const mockItems = ref([
 
 vi.mock("@/composables/useProviders", () => ({
 	useProviders: () => ({
+		providers: mockProviders,
+		update: vi.fn(),
+		test: vi.fn(),
 		fetch: state.providersFetch,
 		loading: mockProvidersLoading,
 		error: mockProvidersError,
@@ -84,6 +90,7 @@ function mountView(options = {}) {
 }
 describe("ProvidersView descriptor requests", () => {
 	beforeEach(() => {
+		mockProviders.value = [];
 		mockLoading.value = false;
 		mockError.value = null;
 		mockProvidersLoading.value = false;
@@ -209,6 +216,40 @@ describe("ProvidersView descriptor requests", () => {
 		await resetButton.trigger("click");
 		await flushPromises();
 		expect(wrapper.findComponent({ name: "EmptyState" }).exists()).toBe(false);
+	});
+
+	it("uses compatible matches for visibility and category-specific empty state", async () => {
+		mockProviders.value = [
+			{
+				id: "custom",
+				name: "Private Endpoint",
+				providerKind: "openai-compatible",
+			} as ProviderConnectionResponse,
+		];
+		const wrapper = mountView();
+		const filter = wrapper.findComponent({ name: "ProviderCatalogFilter" });
+		filter.vm.$emit("update:searchQuery", " private ");
+		await flushPromises();
+		const section = wrapper.findComponent({
+			name: "CompatibleConnectionsSection",
+		});
+		expect(section.exists()).toBe(true);
+		expect(section.props("providers")).toEqual(mockProviders.value);
+		expect(wrapper.findComponent({ name: "EmptyState" }).exists()).toBe(false);
+		filter.vm.$emit("update:searchQuery", "google");
+		filter.vm.$emit("update:activeCategory", "compatible");
+		await flushPromises();
+		expect(
+			wrapper.findComponent({ name: "CompatibleConnectionsSection" }).exists(),
+		).toBe(false);
+		expect(wrapper.findComponent({ name: "EmptyState" }).exists()).toBe(true);
+	});
+
+	it("refreshes the parent provider state after saving a connection", async () => {
+		const wrapper = mountView();
+		wrapper.findComponent({ name: "AddProviderDialog" }).vm.$emit("saved");
+		await flushPromises();
+		expect(state.providersFetch).toHaveBeenCalledTimes(2);
 	});
 
 	it("opens and closes AddProviderDialog on section add, saved, and deleted events", async () => {

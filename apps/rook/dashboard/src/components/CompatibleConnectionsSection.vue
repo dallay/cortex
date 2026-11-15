@@ -13,23 +13,31 @@ import {computed, ref} from "vue";
 import {useI18n} from "vue-i18n";
 import {Button} from "@/components/ui/button";
 import {Switch} from "@/components/ui/switch";
-import {useProviders} from "@/composables/useProviders";
+import type {useProviders} from "@/composables/useProviders";
 import type {ProviderKind} from "@/config/providerCatalog";
 
 const COMPATIBLE_KINDS: ProviderKind[] = ["openai-compatible", "anthropic-compatible"];
 
 const {t} = useI18n();
-const {providers, update, test, fetch} = useProviders();
+type ProviderActions = ReturnType<typeof useProviders>;
+const props = defineProps<{
+  providers: ProviderActions["providers"]["value"];
+  update: ProviderActions["update"];
+  test: ProviderActions["test"];
+  refresh: ProviderActions["fetch"];
+}>();
 
 const emit = defineEmits<{
   add: [kind: ProviderKind];
 }>();
 
 const testingIds = ref(new Set<string>());
+const testResults = ref<Record<string, NonNullable<Awaited<ReturnType<ProviderActions["test"]>>> | null>>({});
+const testingAll = ref(false);
 const busyIds = ref(new Set<string>());
 
 const compatibleConnections = computed(() =>
-  providers.value.filter((p) => COMPATIBLE_KINDS.includes(p.providerKind)),
+  props.providers.filter((p) => COMPATIBLE_KINDS.includes(p.providerKind)),
 );
 
 function isTesting(id: string) {
@@ -47,10 +55,13 @@ function getProtocolLabel(kind: string) {
 }
 
 async function handleTest(id: string) {
+  if (isTesting(id)) return;
   testingIds.value = new Set([...testingIds.value, id]);
   try {
-    await test(id);
-    await fetch();
+    const result = await props.test(id);
+    testResults.value[id] = result;
+    if (result === null) return;
+    await props.refresh();
   } finally {
     const next = new Set(testingIds.value);
     next.delete(id);
@@ -58,12 +69,24 @@ async function handleTest(id: string) {
   }
 }
 
+async function handleTestAll() {
+  if (testingAll.value) return;
+  testingAll.value = true;
+  try {
+    for (const conn of compatibleConnections.value) {
+      await handleTest(conn.id);
+    }
+  } finally {
+    testingAll.value = false;
+  }
+}
+
 async function handleToggle({id, enabled}: {id: string; enabled: boolean}) {
-  const conn = providers.value.find((p) => p.id === id);
+  const conn = props.providers.find((p) => p.id === id);
   if (!conn) return;
   busyIds.value = new Set([...busyIds.value, id]);
   try {
-    await update(id, {expectedUpdatedAt: conn.updatedAt, isActive: enabled});
+    await props.update(id, {expectedUpdatedAt: conn.updatedAt, isActive: enabled});
   } finally {
     const next = new Set(busyIds.value);
     next.delete(id);
@@ -89,6 +112,8 @@ async function handleToggle({id, enabled}: {id: string; enabled: boolean}) {
           variant="outline"
           size="sm"
           :data-testid="'test-all-compatible'"
+          :disabled="testingAll || testingIds.size > 0 || compatibleConnections.length === 0"
+          @click="handleTestAll"
         >
           <Play class="h-4 w-4 mr-1" />
           {{ t('providers.compatible.testAll') }}
@@ -142,20 +167,24 @@ async function handleToggle({id, enabled}: {id: string; enabled: boolean}) {
           />
         </div>
 
+        <p v-if="conn.id in testResults" :role="testResults[conn.id]?.valid ? 'status' : 'alert'" class="text-xs">
+          {{ testResults[conn.id]?.valid ? t('providers.testSuccess') : (testResults[conn.id]?.error || t('providers.testFailed')) }}
+        </p>
+
         <div class="flex items-center justify-between">
           <span class="text-xs text-muted-foreground">
             {{ conn.isActive ? t('providers.compatible.connected') : t('providers.compatible.disabled') }}
           </span>
           <div class="flex items-center gap-2">
             <Switch
-              :checked="conn.isActive"
+              :model-value="conn.isActive"
               :disabled="isBusy(conn.id)"
-              @update:checked="(val: boolean) => handleToggle({ id: conn.id, enabled: val })"
+              @update:model-value="(val: boolean) => handleToggle({ id: conn.id, enabled: val })"
             />
             <Button
               variant="outline"
               size="sm"
-              :disabled="isTesting(conn.id)"
+              :disabled="testingAll || isTesting(conn.id)"
               @click="handleTest(conn.id)"
             >
               <Loader2 v-if="isTesting(conn.id)" class="h-3 w-3 animate-spin" />

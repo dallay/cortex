@@ -10,19 +10,16 @@ const mockUpdate = vi.hoisted(() => vi.fn());
 const mockTest = vi.hoisted(() => vi.fn());
 const mockFetch = vi.hoisted(() => vi.fn());
 
-vi.mock("@/composables/useProviders", () => ({
-	useProviders: () => ({
-		providers: { value: mockProviders },
-		update: (...args: unknown[]) => mockUpdate(...args),
-		test: (...args: unknown[]) => mockTest(...args),
-		fetch: () => mockFetch(),
-	}),
-}));
-
 const i18n = createI18n({ legacy: false, locale: "en", messages: { en } });
 
 function mountSection() {
 	return mount(CompatibleConnectionsSection, {
+		props: {
+			providers: mockProviders,
+			update: mockUpdate,
+			test: mockTest,
+			refresh: mockFetch,
+		},
 		global: { plugins: [i18n] },
 	});
 }
@@ -43,7 +40,7 @@ describe("CompatibleConnectionsSection", () => {
 		vi.clearAllMocks();
 		mockProviders.length = 0;
 		mockUpdate.mockResolvedValue(undefined);
-		mockTest.mockResolvedValue(undefined);
+		mockTest.mockResolvedValue({ valid: true });
 		mockFetch.mockResolvedValue(undefined);
 	});
 
@@ -186,11 +183,65 @@ describe("CompatibleConnectionsSection", () => {
 		mockProviders.push(makeConnection({ id: "conn-1", isActive: true }));
 		const wrapper = mountSection();
 		const switchComponent = wrapper.findComponent({ name: "Switch" });
-		await switchComponent.vm.$emit("update:checked", false);
+		expect(switchComponent.props("modelValue")).toBe(true);
+		await switchComponent.vm.$emit("update:modelValue", false);
 		await flushPromises();
 		expect(mockUpdate).toHaveBeenCalledWith("conn-1", {
 			expectedUpdatedAt: "2026-01-01T00:00:00Z",
 			isActive: false,
+		});
+	});
+
+	it("keeps connection data and displays an error without fetching on null test", async () => {
+		mockProviders.push(makeConnection());
+		mockTest.mockResolvedValue(null);
+		const wrapper = mountSection();
+		await wrapper
+			.find('[data-testid="compatible-connection-card"]')
+			.findAll("button")
+			.at(-1)
+			?.trigger("click");
+		await flushPromises();
+		expect(mockFetch).not.toHaveBeenCalled();
+		expect(wrapper.find('[role="alert"]').text()).toContain(
+			"Connection failed",
+		);
+		expect(wrapper.text()).toContain("My Endpoint");
+	});
+
+	it("tests connections sequentially and displays each result before continuing", async () => {
+		mockProviders.push(makeConnection(), makeConnection({ id: "conn-2" }));
+		let finishFirst!: (value: { valid: boolean }) => void;
+		mockTest.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					finishFirst = resolve;
+				}),
+		);
+		const wrapper = mountSection();
+		await wrapper.find('[data-testid="test-all-compatible"]').trigger("click");
+		expect(mockTest.mock.calls).toEqual([["conn-1"]]);
+		finishFirst({ valid: true });
+		await flushPromises();
+		expect(mockTest.mock.calls).toEqual([["conn-1"], ["conn-2"]]);
+		expect(mockFetch).toHaveBeenCalledTimes(2);
+		expect(wrapper.text()).toContain("Connection successful");
+	});
+
+	it("renders refreshed parent data and toggles using its current version", async () => {
+		const wrapper = mountSection();
+		await wrapper.setProps({
+			providers: [
+				makeConnection({ updatedAt: "new-version", isActive: false }),
+			],
+		});
+		const toggle = wrapper.findComponent({ name: "Switch" });
+		expect(toggle.props("modelValue")).toBe(false);
+		await toggle.find("button").trigger("click");
+		await flushPromises();
+		expect(mockUpdate).toHaveBeenCalledWith("conn-1", {
+			expectedUpdatedAt: "new-version",
+			isActive: true,
 		});
 	});
 
