@@ -96,13 +96,13 @@ impl Default for ApiKeysAuthConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            allow_env_fallback: true,
+            allow_env_fallback: false,
         }
     }
 }
 
 fn default_allow_env_fallback() -> bool {
-    true
+    false
 }
 
 #[derive(Debug, Clone, Deserialize)]

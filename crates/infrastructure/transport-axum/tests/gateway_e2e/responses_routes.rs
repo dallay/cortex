@@ -1,7 +1,46 @@
 use super::*;
 use serde_json::json;
+use shared_kernel::CortexError;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, ResponseTemplate};
+
+#[derive(Clone, Copy)]
+enum RouteFailure {
+    AllProvidersExhausted,
+    RoutingSnapshotChurn,
+}
+
+impl RouteFailure {
+    fn error(self) -> CortexError {
+        match self {
+            Self::AllProvidersExhausted => CortexError::all_providers_exhausted(),
+            Self::RoutingSnapshotChurn => CortexError::routing_snapshot_churn(),
+        }
+    }
+}
+
+struct FailingRouter(RouteFailure);
+
+#[async_trait]
+impl RouterPort for FailingRouter {
+    async fn select(&self, _: &CompletionRequest) -> CortexResult<Arc<dyn ProviderPort>> {
+        Err(self.0.error())
+    }
+
+    async fn select_excluding(
+        &self,
+        _: &CompletionRequest,
+        _: &[ProviderId],
+    ) -> CortexResult<Arc<dyn ProviderPort>> {
+        Err(self.0.error())
+    }
+
+    async fn on_failure(&self, _: &ProviderId, _: &CortexError) {}
+
+    fn providers(&self) -> Vec<ProviderId> {
+        Vec::new()
+    }
+}
 
 async fn post_response(app: axum::Router, model: &str, stream: bool) -> axum::response::Response {
     app.oneshot(
@@ -60,6 +99,124 @@ async fn assert_route_failure(
             "param":null
         }})
     );
+}
+
+#[tokio::test]
+async fn routing_snapshot_churn_maps_to_service_unavailable_for_both_protocols() {
+    let error = RouteFailure::RoutingSnapshotChurn;
+    for (uri, body) in [
+        ("/v1/chat/completions", openai_body("gpt-4o", false)),
+        ("/v1/messages", anthropic_body("claude-e2e", false)),
+    ] {
+        let gateway = build_gateway_with_router(
+            vec![],
+            UpstreamMock::Json(openai_ok_body()),
+            UpstreamMock::Json(fallback_reply_body()),
+            Some(Arc::new(FailingRouter(error))),
+        )
+        .await;
+        let response = gateway
+            .app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(uri)
+                    .header("content-type", "application/json")
+                    .header("authorization", "Bearer e2e-key-1")
+                    .body(axum::body::Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE, "{uri}");
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = String::from_utf8(bytes.to_vec()).unwrap();
+        if uri == "/v1/chat/completions" {
+            let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(json["error"]["code"], "routing_snapshot_churn");
+        } else {
+            assert_eq!(body, "Routing snapshot changed");
+        }
+        assert!(gateway
+            .upstreams
+            .openai
+            .received_requests()
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(gateway
+            .upstreams
+            .anthropic
+            .received_requests()
+            .await
+            .unwrap()
+            .is_empty());
+    }
+}
+
+#[tokio::test]
+async fn stream_preflight_failures_return_service_unavailable_before_sse() {
+    for (error, code) in [
+        (
+            RouteFailure::AllProvidersExhausted,
+            "all_providers_exhausted",
+        ),
+        (RouteFailure::RoutingSnapshotChurn, "routing_snapshot_churn"),
+    ] {
+        for (uri, body) in [
+            ("/v1/chat/completions", openai_body("gpt-4o", true)),
+            ("/v1/messages", anthropic_body("claude-e2e", true)),
+        ] {
+            let gateway = build_gateway_with_router(
+                vec![],
+                UpstreamMock::Json(openai_ok_body()),
+                UpstreamMock::Json(fallback_reply_body()),
+                Some(Arc::new(FailingRouter(error))),
+            )
+            .await;
+            let response = gateway
+                .app
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri(uri)
+                        .header("content-type", "application/json")
+                        .header("authorization", "Bearer e2e-key-1")
+                        .body(axum::body::Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "{uri} {code}"
+            );
+            assert!(!response
+                .headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .starts_with("text/event-stream"));
+            let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let payload: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(payload["code"], code);
+            assert!(gateway
+                .upstreams
+                .openai
+                .received_requests()
+                .await
+                .unwrap()
+                .is_empty());
+            assert!(gateway
+                .upstreams
+                .anthropic
+                .received_requests()
+                .await
+                .unwrap()
+                .is_empty());
+        }
+    }
 }
 
 #[tokio::test]

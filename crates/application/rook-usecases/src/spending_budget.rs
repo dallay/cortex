@@ -7,7 +7,9 @@
 //!
 //! Invariants:
 //! - No upstream I/O happens before a reservation is admitted.
-//! - A reservation that already exists never authorizes a second upstream call.
+//! - Only `SpendingReservationOutcome::Reserved` grants a fresh admission.
+//!   `Existing` is rejected — failover within the same in-flight request retains
+//!   the original `SpendingAdmission` without calling `admit` again.
 //! - An unknown final cost keeps the reservation as unresolved spend. It is
 //!   never treated as zero.
 
@@ -98,9 +100,17 @@ impl SpendingBudgetGuard {
                 request_id: request.id.clone(),
                 reserved_micros_usd: bound,
             }),
-            Ok(SpendingReservationOutcome::Existing) => Err(CortexError::invalid_request(
-                "duplicate request: the spending reservation already exists and does not authorize another upstream call",
-            )),
+            Ok(SpendingReservationOutcome::Existing) => {
+                // The request ID already has a reservation. Accepting Existing as a
+                // new admission would authorize replayed request IDs. Only Reserved
+                // grants a fresh admission. Failover within the same in-flight request
+                // retains the original SpendingAdmission without calling admit again.
+                Err(CortexError::invalid_request(format!(
+                    "request {} is already reserved in the current {} window",
+                    request.id,
+                    window_label(budget.window)
+                )))
+            }
             Err(SpendingBudgetReservationError::BudgetExceeded) => {
                 Err(CortexError::spending_budget_exceeded(format!(
                     "the {} window budget of {} micro-USD is exhausted",
@@ -519,7 +529,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_an_existing_reservation_instead_of_repeating_upstream_io() {
+    async fn rejects_existing_reservation_as_a_new_admission() {
+        // Existing means the request ID already has a reservation. Accepting it
+        // as a new admission would authorize replayed request IDs. Only Reserved
+        // grants a fresh admission.
         let ledger = Arc::new(FakeLedger::with_reserve_outcome(Ok(
             SpendingReservationOutcome::Existing,
         )));
@@ -533,10 +546,42 @@ mod tests {
                 now(),
             )
             .await
-            .expect_err("an existing reservation must not authorize another upstream call");
+            .expect_err("an existing reservation must not be accepted as a new admission");
 
         assert!(error.is_invalid_request());
-        assert!(error.to_string().contains("duplicate request"));
+        assert!(!error.is_spending_budget_exceeded());
+        assert!(
+            error.to_string().contains("already reserved"),
+            "error message must indicate the request is already reserved: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_existing_reservation_even_with_different_provider_bound() {
+        // A realistic ledger returns Existing when the request ID is already
+        // reserved, regardless of the provider bound. Accepting it would allow
+        // replaying the same request ID against a different provider.
+        let ledger = Arc::new(FakeLedger::with_reserve_outcome(Ok(
+            SpendingReservationOutcome::Existing,
+        )));
+        let guard = SpendingBudgetGuard::new(ledger);
+
+        let error = guard
+            .admit(
+                &FakeProvider::with_bound(999_999),
+                &request(),
+                &budget(),
+                now(),
+            )
+            .await
+            .expect_err("existing reservation must be rejected regardless of bound");
+
+        assert!(error.is_invalid_request());
+        assert!(!error.is_spending_budget_exceeded());
+        assert!(
+            error.to_string().contains("already reserved"),
+            "error message must indicate the request is already reserved: {error}"
+        );
     }
 
     #[tokio::test]

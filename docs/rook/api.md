@@ -56,7 +56,14 @@ bound. The bound is derived from the model-catalog pricing for priced models (co
 proves its own bound. Rook rejects requests before provider I/O with HTTP
 `400` and error code `COST_UNAVAILABLE` when the requested model has no
 declared pricing, so budgeted requests on unpriced models remain
-fail-closed. A budgeted request does not retry after an upstream attempt. It may move to another eligible provider only after local admission backpressure, before any upstream I/O, and only after its reservation is released. For streaming requests, the pre-SSE attempt limit is bounded by the registered provider count (including for budgeted requests); local backpressure does not count as an upstream attempt. Streaming reservations are
+fail-closed. When a budgeted request encounters a retryable upstream error, Rook
+may fail over to another provider without a new reservation only when that
+provider's strict cost bound is less than or equal to the initial reservation.
+Rook stops before calling a provider whose bound exceeds the retained reservation.
+The budget is enforced against the reservation bound, not against the aggregate
+cost of all attempts, so aggregate spend may exceed the initial reservation. Unknown costs for failed upstream attempts remain
+unresolved in the ledger and are never settled as zero. Existing attempt limits
+and local pre-I/O backpressure behavior are preserved. Streaming reservations are
 marked unresolved before the stream is exposed and remain charged after EOF,
 upstream failure, or client cancellation. Combos with a budget are rejected
 because Rook cannot prove a strict bound for the complete combo request.
@@ -269,4 +276,4 @@ The provider redirects with `state` and `code`; on cancellation it may send `err
 
 Management APIs use a session cookie. `GET /login` obtains a CSRF token and cookie. `POST /login` accepts the configured credentials and requires the CSRF cookie plus matching `X-CSRF-Token`; on success it creates the session. `POST /logout` revokes the session and also requires CSRF. Other mutating admin APIs follow the same CSRF requirement.
 
-For first-run installation, use the bootstrap API above. For pre-seeding an admin password in a controlled environment, the CLI command is `rook seed-admin <password>`.
+For first-run installation, use the bootstrap API above. For pre-seeding an admin password in a controlled environment, use `rook seed-admin` with the `$ROOK_SEED_PASSWORD` environment variable set.

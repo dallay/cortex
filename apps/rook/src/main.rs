@@ -7,7 +7,7 @@ use rook::{config, di, server};
 use anyhow::Context;
 use clap::Parser;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use db_migration::MigrationRunner;
 use observability::init_tracing;
@@ -28,13 +28,11 @@ enum Commands {
         command: AdminCommands,
     },
     /// Seed the admin user with a password (for initial setup or E2E testing)
+    /// Password is read from $ROOK_SEED_PASSWORD, or prompted from stdin.
     SeedAdmin {
         /// Path to the config file (defaults to $ROOK_CONFIG or ~/.cortex/rook/config.toml)
         #[arg(short, long)]
         config: Option<PathBuf>,
-
-        /// The password to set for the admin user
-        password: String,
     },
     /// Database migration commands
     Db {
@@ -67,23 +65,91 @@ enum DbCommands {
     Rollback,
 }
 
+/// Load .env from the same directory as the config file.
+///
+/// Tries locations in order:
+/// 1. Same directory as the explicit config path (from CLI `--config` or `$ROOK_CONFIG`)
+/// 2. `~/.cortex/rook/` (default config directory)
+/// 3. Current working directory
+///
+/// Silently fails if no .env is found at any location.
+/// If a found .env fails to load, logs a warning and continues.
+fn load_dotenv(config_path: Option<&Path>) {
+    let candidates: Vec<PathBuf> = {
+        // 1. Same directory as the explicit config path
+        let from_config = config_path
+            .and_then(|p| p.parent())
+            .map(|dir| dir.join(".env"));
+
+        // Fallback: same directory as $ROOK_CONFIG (if no explicit --config was passed)
+        let from_env_config = std::env::var("ROOK_CONFIG")
+            .ok()
+            .and_then(|p| PathBuf::from(p).parent().map(|dir| dir.join(".env")));
+
+        // 2. Default config directory (~/.cortex/rook/)
+        let from_default = config::cortex_home_dir()
+            .join(config::ROOK_HOME_DIR)
+            .join(".env");
+
+        // 3. Current working directory
+        let from_cwd = std::env::current_dir().ok().map(|cwd| cwd.join(".env"));
+
+        [from_config, from_env_config, Some(from_default), from_cwd]
+            .into_iter()
+            .flatten()
+            .collect()
+    };
+
+    for candidate in &candidates {
+        if candidate.exists() {
+            match dotenvy::from_path(candidate) {
+                Ok(()) => {
+                    tracing::debug!(env_file = %candidate.display(), "loaded environment variables");
+                }
+                Err(dotenvy::Error::LineParse(_, position)) => {
+                    tracing::warn!(
+                        env_file = %candidate.display(),
+                        position,
+                        "failed to parse .env file, continuing without it"
+                    );
+                }
+                Err(dotenvy::Error::Io(error)) => {
+                    tracing::warn!(
+                        env_file = %candidate.display(),
+                        error_kind = ?error.kind(),
+                        "failed to read .env file, continuing without it"
+                    );
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        env_file = %candidate.display(),
+                        "failed to load .env file, continuing without it"
+                    );
+                }
+            }
+            return;
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Load .env file from repo root (silent failure if missing)
-    let dotenv_path = std::path::Path::new("/Users/acosta/Dev/dallay/cortex/.env");
-    if dotenv_path.exists() {
-        let _ = dotenvy::from_path(dotenv_path);
-    }
-
     init_tracing();
 
     let cli = Cli::parse();
 
+    // Extract the explicit config path (if any) so dotenv loads from the right directory
+    let explicit_config_path: Option<PathBuf> = match &cli.command {
+        Some(Commands::SeedAdmin { config }) => config.clone(),
+        _ => None,
+    };
+
+    // Load .env from the same directory as the config file (silent failure if missing)
+    load_dotenv(explicit_config_path.as_deref());
+
     match cli.command {
         Some(Commands::Admin { command }) => return run_admin_command(command).await,
-        Some(Commands::SeedAdmin { config, password }) => {
-            return seed_admin(config, password).await
-        }
+        Some(Commands::SeedAdmin { config }) => return seed_admin(config).await,
         Some(Commands::Db { command }) => return run_db_command(command).await,
         None => {}
     }
@@ -93,10 +159,7 @@ async fn main() -> anyhow::Result<()> {
 
 async fn run_admin_command(command: AdminCommands) -> anyhow::Result<()> {
     match command {
-        AdminCommands::Bootstrap => {
-            let password = prompt_password()?;
-            seed_admin(None, password).await
-        }
+        AdminCommands::Bootstrap => seed_admin(None).await,
         AdminCommands::CreateUser { email } => {
             anyhow::bail!(
                 "creating additional admin users is not supported yet (requested: {email})"
@@ -130,8 +193,15 @@ fn prompt_password() -> anyhow::Result<String> {
     Ok(password)
 }
 
-async fn seed_admin(config_path: Option<PathBuf>, password: String) -> anyhow::Result<()> {
+async fn seed_admin(config_path: Option<PathBuf>) -> anyhow::Result<()> {
     use rook_usecases::SetAdminPasswordInput;
+
+    // Get password from environment variable or prompt from stdin
+    let password = std::env::var("ROOK_SEED_PASSWORD").or_else(|_| {
+        prompt_password().map_err(|e| {
+            anyhow::anyhow!("password required: set ROOK_SEED_PASSWORD or provide via stdin ({e})")
+        })
+    })?;
 
     let config = load_config_with_path(config_path)?;
     let container = di::RookContainer::build(&config)
@@ -267,19 +337,21 @@ async fn run_db_command(cmd: DbCommands) -> anyhow::Result<()> {
 /// Build a dynamically-sized ASCII box for the bootstrap banner.
 ///
 /// Computes the box width from the longest content line so the border aligns
-/// regardless of token length.
+/// regardless of token length. The full token is displayed because this banner
+/// goes to stderr (local console only), never to remote logs or the HTTP API.
 fn build_bootstrap_banner(sanitized_token: &str) -> String {
     let header = "ROOK -- BOOTSTRAP MODE ACTIVE";
     let dash_url = "http://localhost:4747";
     let instruction = "To complete setup, open the dashboard at";
     let token_label = "Setup token:";
+    let token_display = sanitized_token;
 
     // Lines to measure — compute max visible width
     let lines: &[&str] = &[
         header,
         instruction,
         dash_url,
-        &format!("{} {}", token_label, sanitized_token),
+        &format!("{} {}", token_label, token_display),
         "along with your desired admin password.",
     ];
 
@@ -305,11 +377,12 @@ fn build_bootstrap_banner(sanitized_token: &str) -> String {
     };
 
     format!(
-        "{0}\n{1}\n{0}\n{2}\n{3}\n{4}\n{5}\n{6}\n{0}",
+        "{0}\n{1}\n{0}\n{2}\n{3}\n{4}\n{5}\n{6}\n{7}\n{0}",
         border,
         center_pad(header),
-        left_pad(&format!("{} {}", token_label, sanitized_token)),
+        left_pad(&format!("{} {}", token_label, token_display)),
         left_pad(""),
+        left_pad("Paste it into the dashboard to complete setup."),
         left_pad(instruction),
         left_pad(dash_url),
         left_pad("along with your desired admin password."),

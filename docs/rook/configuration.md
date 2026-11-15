@@ -40,7 +40,7 @@ db_path = "~/.cortex/rook/rook.db"
 
 [auth.api_keys]
 enabled = false
-allow_env_fallback = true
+allow_env_fallback = false
 
 [provider_crud]
 enabled = false
@@ -283,13 +283,13 @@ Persistent client API key auth is disabled by default. When enabled, `/v1/*` req
 ```toml
 [auth.api_keys]
 enabled = true
-allow_env_fallback = true
+allow_env_fallback = false
 ```
 
 | Field                | Type | Default | Description                              |
 |----------------------|------|---------|------------------------------------------|
 | `enabled`            | bool | `false` | Use SQLite-backed client API key auth    |
-| `allow_env_fallback` | bool | `true`  | Permit legacy `CLIENT_API_KEYS` fallback |
+| `allow_env_fallback` | bool | `false` | Permit legacy `CLIENT_API_KEYS` fallback |
 
 When `enabled = true`, Rook resolves the hash secret in the following priority order:
 
@@ -301,10 +301,11 @@ Production deployments **must** set `API_KEY_HASH_SECRET` via environment variab
 
 ### CLI: seed-admin
 
-The `seed-admin` subcommand sets the initial admin password (stored as Argon2id hash):
+The `seed-admin` subcommand sets the initial admin password (stored as Argon2id hash).
+The password is read from the `$ROOK_SEED_PASSWORD` environment variable, or prompted from stdin if not set.
 
 ```bash
-rook seed-admin <password>
+rook seed-admin
 ```
 
 Reads the configuration from `~/.cortex/rook/config.toml` unless `ROOK_CONFIG` points
@@ -316,7 +317,8 @@ elsewhere. Set `API_KEY_HASH_SECRET` to pin the API key hash secret. Use this fo
 ```bash
 ROOK_CONFIG=dev/test-configs/rook.toml \
 API_KEY_HASH_SECRET="your-secret" \
-rook seed-admin admin123
+ROOK_SEED_PASSWORD="admin123" \
+rook seed-admin
 ```
 
 ### `[rate_limiting]`
@@ -621,7 +623,7 @@ There is no minimum provider requirement at startup — the registry starts empt
 
    [auth.api_keys]
    enabled = true
-   allow_env_fallback = false
+   allow_env_fallback = false  # Explicitly disabled by default
    ```
 
 3. Start the container and seed the admin password:
@@ -634,7 +636,7 @@ There is no minimum provider requirement at startup — the registry starts empt
      rook:e2e
 
    # Seed admin password
-   docker exec rook-e2e rook seed-admin admin123
+   docker exec -e ROOK_SEED_PASSWORD=admin123 rook-e2e rook seed-admin
 
    # Test health
    curl http://localhost:3773/health
