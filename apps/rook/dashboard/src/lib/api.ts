@@ -7,6 +7,7 @@ import type { ProviderKind } from "@/config/providerCatalog";
 export interface ProviderDescriptorResponse {
 	id: ProviderKind;
 	label: string;
+	category: string;
 	protocol: string;
 	authKinds: string[];
 	capabilityCeiling: {

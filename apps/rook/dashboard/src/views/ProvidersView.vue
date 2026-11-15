@@ -6,8 +6,9 @@
  * moves to its own dedicated route (`/providers/quota` → Phase 6),
  * keeping this view focused on provider discovery + connection setup.
  *
- * Renders a search + category filter at the top, then a 3-section grid
- * (API Key / OAuth / Local) populated from `useProviderCatalog`. Click
+ * Renders a search + category filter at the top, then 7 sections
+ * (Compatible / OAuth / IDE / API Key / Free / Local / Other) populated
+ * from `useProviderCatalog`. Click
  * "Add" on a card to open the AddProviderDialog pre-scoped to that
  * provider kind. Click the card body to drill into the per-kind
  * details view at `/providers/:kind`.
@@ -17,6 +18,7 @@ import {SearchX} from "@lucide/vue";
 import {computed, onMounted, ref} from "vue";
 import {useI18n} from "vue-i18n";
 import AddProviderDialog from "@/components/AddProviderDialog.vue";
+import CompatibleConnectionsSection from "@/components/CompatibleConnectionsSection.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import ErrorBanner from "@/components/ErrorBanner.vue";
 import LoadingState from "@/components/LoadingState.vue";
@@ -70,10 +72,10 @@ const isFiltering = computed(
 
 const visibleSections = computed(() => {
   if (activeCategory.value === "all") {
-    return filteredByCategory.value;
+    return filteredByCategory.value.filter((entry) => entry.category.kind !== "compatible");
   }
   return filteredByCategory.value.filter(
-    (entry) => entry.category.kind === activeCategory.value,
+    (entry) => entry.category.kind === activeCategory.value && entry.category.kind !== "compatible",
   );
 });
 
@@ -112,6 +114,11 @@ function onDeleted() {
     <LoadingState v-if="(descriptorsLoading || loading) && items.length === 0" />
     <template v-else>
       <ErrorBanner v-if="descriptorsError" :message="descriptorsError" @retry="fetchDescriptors" />
+
+      <CompatibleConnectionsSection
+        v-if="activeCategory === 'all' || activeCategory === 'compatible'"
+        @add="openAddDialog"
+      />
 
       <ProviderCategorySection
         v-for="entry in visibleSections"

@@ -129,6 +129,7 @@ async function mountView(
 	].map((id) => ({
 		id: id as ProviderDescriptorResponse["id"],
 		label: id === "openai" ? "OpenAI" : id === "xai" ? "xAI" : "Ollama Cloud",
+		category: "api-key",
 		protocol: "openAiChat",
 		authKinds: ["apiKey"],
 		supportsOAuth: false,
@@ -279,6 +280,7 @@ describe("ProviderDetailsView", () => {
 			{
 				id: "custom-provider" as unknown as ProviderDescriptorResponse["id"],
 				label: "Fallback Label",
+				category: "other",
 				protocol: "openAiChat",
 				authKinds: ["apiKey"],
 				supportsOAuth: false,
@@ -336,6 +338,7 @@ describe("ProviderDetailsView", () => {
 			{
 				id: "openai" as ProviderDescriptorResponse["id"],
 				label: "OpenAI",
+				category: "api-key",
 				protocol: "openAiChat",
 				authKinds: ["apiKey"],
 				supportsOAuth: false,

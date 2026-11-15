@@ -105,6 +105,48 @@ pub enum AuthKind {
     ImportedToken,
 }
 
+/// Functional category for catalog organization in the dashboard.
+/// Controls section order and filter chips; `Compatible` appears first,
+/// followed by `OAuth`, `IDE`, `ApiKey`, `Free`, `Local`, and `Other`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderCategory {
+    Compatible,
+    OAuth,
+    IDE,
+    ApiKey,
+    Free,
+    Local,
+    Other,
+}
+
+impl ProviderCategory {
+    /// Returns the display order for catalog sections.
+    pub fn order(self) -> u8 {
+        match self {
+            ProviderCategory::Compatible => 0,
+            ProviderCategory::OAuth => 1,
+            ProviderCategory::IDE => 2,
+            ProviderCategory::ApiKey => 3,
+            ProviderCategory::Free => 4,
+            ProviderCategory::Local => 5,
+            ProviderCategory::Other => 6,
+        }
+    }
+
+    /// Returns the kebab-case slug used by the frontend catalog.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProviderCategory::Compatible => "compatible",
+            ProviderCategory::OAuth => "oauth",
+            ProviderCategory::IDE => "ide",
+            ProviderCategory::ApiKey => "api-key",
+            ProviderCategory::Free => "free",
+            ProviderCategory::Local => "local",
+            ProviderCategory::Other => "other",
+        }
+    }
+}
+
 /// Provider-specific quota schema used by a protocol adapter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum QuotaHeaderPolicy {
@@ -143,6 +185,8 @@ pub struct ProviderDescriptor {
     pub id: &'static str,
     /// Legacy spellings accepted on read so pre-migration rows never fail.
     pub aliases: &'static [&'static str],
+    /// Functional category for catalog organization (dashboard sections).
+    pub category: ProviderCategory,
     pub protocol: Protocol,
     pub adapter: ProviderAdapter,
     pub auth: AuthKind,
@@ -192,17 +236,19 @@ impl ProviderDescriptor {
 /// `all_provider_kinds`, `format_for` and the dashboard union were fan-out
 /// copies of this table; iterate this instead.
 pub const PROVIDER_DESCRIPTORS: &[ProviderDescriptor] = &[
-    openai(),
     openai_compatible(),
+    anthropic_compatible(),
+    openai_codex(),
+    openai(),
     anthropic(),
-    ollama(),
-    ollama_cloud(),
     gemini(),
     azure_openai(),
     groq(),
     xai(),
     mistral(),
     deepseek(),
+    ollama(),
+    ollama_cloud(),
     together(),
     fireworks(),
     cerebras(),
@@ -262,6 +308,7 @@ const fn openai() -> ProviderDescriptor {
         id: "openai",
         label: "OpenAI",
         aliases: &[],
+        category: ProviderCategory::ApiKey,
         protocol: Protocol::OpenAiChat,
         adapter: ProviderAdapter::OpenAi,
         auth: AuthKind::ApiKey,
@@ -280,12 +327,67 @@ const fn openai() -> ProviderDescriptor {
     }
 }
 
+const fn openai_codex() -> ProviderDescriptor {
+    ProviderDescriptor {
+        accepts_oauth_credentials: false,
+        id: "openai-codex",
+        label: "OpenAI Codex",
+        aliases: &[],
+        category: ProviderCategory::OAuth,
+        protocol: Protocol::OpenAiChat,
+        adapter: ProviderAdapter::OpenAi,
+        display_name: "OpenAI Codex",
+        quota_header_policy: QuotaHeaderPolicy::OpenAi,
+        auth: AuthKind::ApiKey,
+        accepted_auth_kinds: &[AuthKind::ApiKey],
+        default_base_url: "",
+        requires_base_url: true,
+        endpoint_validation: EndpointValidation::OpenAiEndpointPolicy,
+        model_listing: ModelListing::SupportedModels,
+        oauth: None,
+        paths: openai_paths(),
+        canonical_base_urls: &[],
+        capability_ceiling: openai_ceiling(),
+        models: ModelSource::Dynamic,
+    }
+}
+
+const fn anthropic_compatible() -> ProviderDescriptor {
+    ProviderDescriptor {
+        accepts_oauth_credentials: false,
+        id: "anthropic-compatible",
+        label: "Anthropic Compatible",
+        aliases: &[],
+        category: ProviderCategory::Compatible,
+        protocol: Protocol::AnthropicMessages,
+        adapter: ProviderAdapter::OpenAiCompatible,
+        display_name: "Anthropic-compatible",
+        quota_header_policy: QuotaHeaderPolicy::OpenAi,
+        auth: AuthKind::ApiKey,
+        accepted_auth_kinds: &[AuthKind::ApiKey],
+        default_base_url: "",
+        requires_base_url: true,
+        endpoint_validation: EndpointValidation::OpenAiEndpointPolicy,
+        model_listing: ModelListing::SupportedModels,
+        oauth: None,
+        paths: WirePaths {
+            chat: "/v1/messages",
+            models: "/v1/models",
+            health: "/v1/models",
+        },
+        canonical_base_urls: &[],
+        capability_ceiling: openai_ceiling(),
+        models: ModelSource::Dynamic,
+    }
+}
+
 const fn openai_compatible() -> ProviderDescriptor {
     ProviderDescriptor {
         accepts_oauth_credentials: false,
         id: "openai-compatible",
         label: "OpenAI Compatible",
         aliases: &[],
+        category: ProviderCategory::Compatible,
         protocol: Protocol::OpenAiChat,
         adapter: ProviderAdapter::OpenAiCompatible,
         display_name: "OpenAI-compatible",
@@ -310,6 +412,7 @@ const fn anthropic() -> ProviderDescriptor {
         id: "anthropic",
         label: "Anthropic",
         aliases: &[],
+        category: ProviderCategory::ApiKey,
         protocol: Protocol::AnthropicMessages,
         adapter: ProviderAdapter::Anthropic,
         display_name: "Anthropic",
@@ -338,6 +441,7 @@ const fn ollama() -> ProviderDescriptor {
         id: "ollama",
         label: "Ollama",
         aliases: &[],
+        category: ProviderCategory::Local,
         protocol: Protocol::OllamaNative,
         adapter: ProviderAdapter::Ollama,
         display_name: "Ollama",
@@ -364,6 +468,7 @@ const fn ollama_cloud() -> ProviderDescriptor {
         label: "Ollama Cloud",
         // Pre-migration rows and serde output spelled it `ollamacloud`.
         aliases: &["ollamacloud"],
+        category: ProviderCategory::ApiKey,
         protocol: Protocol::OllamaNative,
         adapter: ProviderAdapter::OllamaCloud,
         display_name: "Ollama Cloud",
@@ -388,6 +493,7 @@ const fn gemini() -> ProviderDescriptor {
         id: "gemini",
         label: "Gemini",
         aliases: &[],
+        category: ProviderCategory::ApiKey,
         protocol: Protocol::GeminiGenerateContent,
         adapter: ProviderAdapter::Gemini,
         display_name: "Google Gemini",
@@ -425,6 +531,7 @@ const fn azure_openai() -> ProviderDescriptor {
         label: "Azure OpenAI",
         // Pre-migration rows and serde output spelled it `azureopenai`.
         aliases: &["azureopenai"],
+        category: ProviderCategory::OAuth,
         protocol: Protocol::OpenAiChat,
         adapter: ProviderAdapter::AzureOpenAi,
         display_name: "Azure OpenAI",
@@ -460,6 +567,7 @@ const fn groq() -> ProviderDescriptor {
         id: "groq",
         label: "Groq",
         aliases: &[],
+        category: ProviderCategory::ApiKey,
         protocol: Protocol::OpenAiChat,
         adapter: ProviderAdapter::OpenAi,
         display_name: "Groq",
@@ -484,6 +592,7 @@ const fn xai() -> ProviderDescriptor {
         id: "xai",
         label: "xAI",
         aliases: &[],
+        category: ProviderCategory::ApiKey,
         protocol: Protocol::OpenAiChat,
         adapter: ProviderAdapter::OpenAi,
         display_name: "xAI",
@@ -508,6 +617,7 @@ const fn mistral() -> ProviderDescriptor {
         id: "mistral",
         label: "Mistral",
         aliases: &[],
+        category: ProviderCategory::ApiKey,
         protocol: Protocol::OpenAiChat,
         adapter: ProviderAdapter::OpenAi,
         display_name: "Mistral",
@@ -536,6 +646,7 @@ const fn deepseek() -> ProviderDescriptor {
         id: "deepseek",
         label: "DeepSeek",
         aliases: &[],
+        category: ProviderCategory::ApiKey,
         protocol: Protocol::OpenAiChat,
         adapter: ProviderAdapter::OpenAi,
         display_name: "DeepSeek",
@@ -560,6 +671,7 @@ const fn together() -> ProviderDescriptor {
         id: "together",
         label: "Together AI",
         aliases: &[],
+        category: ProviderCategory::Other,
         protocol: Protocol::OpenAiChat,
         adapter: ProviderAdapter::OpenAi,
         display_name: "Together AI",
@@ -584,6 +696,7 @@ const fn fireworks() -> ProviderDescriptor {
         id: "fireworks",
         label: "Fireworks AI",
         aliases: &[],
+        category: ProviderCategory::Other,
         protocol: Protocol::OpenAiChat,
         adapter: ProviderAdapter::OpenAi,
         display_name: "Fireworks",
@@ -608,6 +721,7 @@ const fn cerebras() -> ProviderDescriptor {
         id: "cerebras",
         label: "Cerebras",
         aliases: &[],
+        category: ProviderCategory::Other,
         protocol: Protocol::OpenAiChat,
         adapter: ProviderAdapter::OpenAi,
         display_name: "Cerebras",
@@ -632,6 +746,7 @@ const fn openrouter() -> ProviderDescriptor {
         id: "openrouter",
         label: "OpenRouter",
         aliases: &[],
+        category: ProviderCategory::Other,
         protocol: Protocol::OpenAiChat,
         adapter: ProviderAdapter::OpenAi,
         display_name: "OpenRouter",
@@ -656,6 +771,7 @@ const fn nan() -> ProviderDescriptor {
         id: "nan",
         label: "NAN",
         aliases: &[],
+        category: ProviderCategory::Other,
         protocol: Protocol::OpenAiChat,
         adapter: ProviderAdapter::OpenAi,
         display_name: "Nan",

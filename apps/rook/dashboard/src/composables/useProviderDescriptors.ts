@@ -29,9 +29,13 @@ export function useProviderDescriptors() {
 	const catalog = computed(() =>
 		descriptors.value.map((descriptor) => {
 			const presentation = findCatalogEntry(descriptor.id);
+			// Prefer the backend category; fall back to the static catalog entry.
+			const category = (descriptor.category ||
+				presentation.category) as import("@/config/providerCatalog").CategoryKind;
 			return {
 				...presentation,
 				kind: descriptor.id as ProviderKind,
+				category,
 				displayNameKey: presentation.displayNameKey || "",
 				label: descriptor.label,
 				supportsOAuth: descriptor.supportsOAuth,
