@@ -446,7 +446,7 @@ fn harness(providers: Vec<Arc<dyn ProviderPort>>) -> ComboHarness {
         vec![("rook/progressive", id)],
         Arc::new(crate::FallbackRouter::new(
             providers,
-            crate::RoutingStrategy::Priority,
+            rook_core::PolicyKind::Priority,
         )),
         Arc::new(Mutex::new(vec![])),
     )
@@ -557,7 +557,7 @@ async fn combo_stream_all_locally_busy_steps_preserve_backpressure_and_circuit_h
     let fallback = scripted("fallback", vec![]);
     let router = Arc::new(crate::FallbackRouter::new(
         vec![primary.clone(), fallback.clone()],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     let mut h = harness(vec![primary.clone(), fallback.clone()]);
     h.usecase.router = router.clone();
@@ -709,7 +709,7 @@ async fn combo_stream_cancel_before_first_consumer_poll_keeps_usage_and_circuit_
     let primary = scripted("openai", vec![Ok(first), Ok(finished_chunk())]);
     let router = Arc::new(crate::FallbackRouter::new(
         vec![primary.clone()],
-        crate::RoutingStrategy::Priority,
+        rook_core::PolicyKind::Priority,
     ));
     for _ in 0..2 {
         router
@@ -763,7 +763,7 @@ async fn combo_stream_cancellation_releases_half_open_trial_before_and_after_sel
         let clock = Arc::new(TestClock(Mutex::new(std::time::Instant::now())));
         let router = Arc::new(crate::FallbackRouter::with_clock(
             vec![primary.clone()],
-            crate::RoutingStrategy::Priority,
+            rook_core::PolicyKind::Priority,
             clock.clone(),
         ));
         for _ in 0..3 {

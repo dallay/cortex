@@ -115,7 +115,7 @@ mod tests {
 
         let fallback_router = Arc::new(rook_usecases::FallbackRouter::new(
             vec![provider],
-            rook_usecases::RoutingStrategy::Priority,
+            rook_core::PolicyKind::Priority,
         ));
         let user_repo = Arc::new(DummyUserRepo);
         let hasher = Arc::new(DummyHasher);

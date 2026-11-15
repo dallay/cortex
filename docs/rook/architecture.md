@@ -66,7 +66,8 @@ Domain model and port traits. Completely provider-agnostic.
 Application orchestration.
 
 - **`RouteRequest`** — the main orchestrator: cache → select provider → execute → cache response → audit → handle failure. Supports combo execution for multi-step fallback chains.
-- **`FallbackRouter`** — implements RouterPort with three strategies: Priority, RoundRobin, ModelBased. Includes circuit breaker (3 failures → 30s cooldown).
+- **`FallbackRouter`** — implements RouterPort with six routing policies (Priority, Weighted, RoundRobin, LeastLatency, LeastCost, Auto). Includes circuit breaker (3 failures → 30s cooldown) and identity-keyed weights.
+- **`Policy engine`** (`policy.rs`) — pure functions behind `select_policy()` dispatcher. Consumes `PolicySelectionContext` (eligible targets, scoring snapshot, request facts) and produces `PolicySelectionDecision`. No I/O, no side effects.
 - **`ManageProviders`** — enable/disable providers (interface only for now)
 - **`HealthCheck`** — aggregated health status across all providers
 - **`ManageConnections`** — runtime-managed provider connection CRUD/test workflow

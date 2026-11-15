@@ -9,7 +9,7 @@ use rook_core::{
     CortexResult, HealthStatus, MessageContent, ModelId, ProviderId, ProviderPort, RequestMetadata,
     Role, RouterPort, StreamChunk,
 };
-use rook_usecases::{FallbackRouter, RoutingStrategy};
+use rook_usecases::FallbackRouter;
 use shared_kernel::RequestId;
 
 // --- Fake Provider for Testing ---
@@ -74,7 +74,7 @@ async fn test_circuit_states_returns_snapshot_for_all_providers() {
     let provider3 = Arc::new(FakeProvider::new("provider-3", vec!["claude-3"]));
 
     let providers: Vec<Arc<dyn ProviderPort>> = vec![provider1, provider2, provider3];
-    let router = FallbackRouter::new(providers, RoutingStrategy::Priority);
+    let router = FallbackRouter::new(providers, rook_core::PolicyKind::Priority);
 
     // Trigger failures on provider-2 to open the circuit
     let request = CompletionRequest {
@@ -171,7 +171,7 @@ async fn test_circuit_states_returns_snapshot_for_all_providers() {
 #[test]
 fn test_circuit_states_empty_router() {
     // Arrange: Create empty router
-    let router = FallbackRouter::new_empty(RoutingStrategy::Priority);
+    let router = FallbackRouter::new_empty(rook_core::PolicyKind::Priority);
 
     // Act: Get circuit states
     let states = router.circuit_states();
