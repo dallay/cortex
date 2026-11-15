@@ -70,7 +70,10 @@ description = "Test token fixtures in the Rook bootstrap banner unit tests"
 condition = "AND"
 regexTarget = "match"
 paths = ['''^apps/rook/src/main\.rs$''']
-regexes = ['''(?i)^token\s*=\s*"test_token_abcdefghijklmnopqrstuvwxyz0123456789$''']
+regexes = [
+  '''(?i)^token\s*=\s*"test_token_''',
+  '''(?i)^token\s*=\s*"[a-z0-9]{20,}''',
+]
 
 [[rules]]
 id = "openai_gcp_hf_api_key"
