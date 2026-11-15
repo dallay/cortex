@@ -65,6 +65,18 @@ regexes = [
   '''(?i)^secret\s*=\s*"(other-workspace-secret-value|credential-fixture-secret-not-real|external-fixture-secret|unassigned-temp-fixture-secret|cwd-does-not-expand-permissions|symlink-target-fixture-secret)$''',
 ]
 
+[[rules.allowlists]]
+description = "Test token fixtures in the Rook bootstrap banner unit tests"
+condition = "AND"
+regexTarget = "match"
+paths = ['''^apps/rook/src/main\.rs$''']
+regexes = [
+  '''(?i)^let\s+token\s*=\s*"test_token_''',
+  '''(?i)^let\s+token\s*=\s*"short"$''',
+  '''(?i)^let\s+token\s*=\s*"abcdefghij01"$''',
+  '''(?i)^let\s+token\s*=\s*"abcdefghijklm"$''',
+]
+
 [[rules]]
 id = "openai_gcp_hf_api_key"
 description = "OpenAI/GCP/Hugging Face API Key pattern"

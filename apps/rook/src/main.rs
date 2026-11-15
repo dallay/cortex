@@ -184,9 +184,11 @@ async fn seed_admin(config_path: Option<PathBuf>) -> anyhow::Result<()> {
     use rook_usecases::SetAdminPasswordInput;
 
     // Get password from environment variable or prompt from stdin
-    let password = std::env::var("ROOK_SEED_PASSWORD").unwrap_or_else(|_| {
-        prompt_password().expect("password required: set ROOK_SEED_PASSWORD or provide via stdin")
-    });
+    let password = std::env::var("ROOK_SEED_PASSWORD").or_else(|_| {
+        prompt_password().map_err(|e| {
+            anyhow::anyhow!("password required: set ROOK_SEED_PASSWORD or provide via stdin ({e})")
+        })
+    })?;
 
     let config = load_config_with_path(config_path)?;
     let container = di::RookContainer::build(&config)
