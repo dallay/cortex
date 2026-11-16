@@ -6,13 +6,13 @@ The current proposal/spec/design replace the previous parity/grants plan and the
 
 ## Review forecast
 
-| Field                   | Value                                                                                                                                                                        |
-|-------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Budget                  | 400 modified lines per review                                                                                                                                              |
-| Load                    | High: runtime, macOS enforcement, adversarial tests, CI and docs                                                                                                           |
-| Decision before apply   | Resolved: run locally on the current branch; do not push nor open a PR                                                                                                   |
-| Chained PRs             | Not authorized for this cycle. Branch `feature/huginn-workspace-autonomy-policy`, parent/base `integration/huginn-autonomous-workspace-permissions`, position 1; trunk `main` |
-| Balance                 | Local slices: builder/paths; launcher/lifecycle; enforcement/CI; docs/ADR. Keep each unit reviewable, without creating branches nor publishing PRs                             |
+| Field                 | Value                                                                                                                                                                         |
+|-----------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Budget                | 400 modified lines per review                                                                                                                                                 |
+| Load                  | High: runtime, macOS enforcement, adversarial tests, CI and docs                                                                                                              |
+| Decision before apply | Resolved: run locally on the current branch; do not push nor open a PR                                                                                                        |
+| Chained PRs           | Not authorized for this cycle. Branch `feature/huginn-workspace-autonomy-policy`, parent/base `integration/huginn-autonomous-workspace-permissions`, position 1; trunk `main` |
+| Balance               | Local slices: builder/paths; launcher/lifecycle; enforcement/CI; docs/ADR. Keep each unit reviewable, without creating branches nor publishing PRs                            |
 
 Decision needed before apply: No
 Chained PRs recommended: No (user-authorized delivery boundary is local-only)

@@ -89,13 +89,14 @@ The system SHALL execute combo steps in priority order until one succeeds.
 The system SHALL provide REST endpoints for combo CRUD operations.
 
 **Endpoints**:
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/combos` | List all combos |
-| POST | `/api/combos` | Create combo |
-| GET | `/api/combos/{id}` | Get combo by ID |
-| PUT | `/api/combos/{id}` | Update combo |
-| DELETE | `/api/combos/{id}` | Delete combo |
+
+| Method | Path               | Description     |
+|--------|--------------------|-----------------|
+| GET    | `/api/combos`      | List all combos |
+| POST   | `/api/combos`      | Create combo    |
+| GET    | `/api/combos/{id}` | Get combo by ID |
+| PUT    | `/api/combos/{id}` | Update combo    |
+| DELETE | `/api/combos/{id}` | Delete combo    |
 
 **Status Codes**:
 

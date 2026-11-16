@@ -1075,7 +1075,7 @@ pub fn build_provider_from_connection_with_policy(
                 provider_id: descriptor.id,
                 api_key,
                 base_url,
-                models: models.clone(),
+                models,
                 timeout_secs: 60,
             };
             let provider_result = match (&oauth_token_port, credentials) {
@@ -1117,7 +1117,7 @@ pub fn build_provider_from_connection_with_policy(
                 api_key,
                 base_url: base_url_override
                     .unwrap_or_else(|| descriptor.default_base_url.to_string()),
-                models: models.clone(),
+                models,
                 timeout_secs: 60,
             };
             providers_anthropic::AnthropicProvider::new_with_quota_recorder(
@@ -1138,7 +1138,7 @@ pub fn build_provider_from_connection_with_policy(
             let config = providers_ollama::OllamaProviderConfig {
                 id: ProviderId::new(connection_id.to_string()),
                 base_url,
-                models: models.clone(),
+                models,
                 timeout_secs: 300,
                 api_key: (!api_key.is_empty()).then_some(api_key),
             };
@@ -1157,7 +1157,7 @@ pub fn build_provider_from_connection_with_policy(
                 base_url: Some(
                     base_url_override.unwrap_or_else(|| descriptor.default_base_url.to_string()),
                 ),
-                models: models.clone(),
+                models,
                 timeout_secs: 60,
             };
             match (oauth_token_port, credentials) {

@@ -139,14 +139,15 @@ pub struct HttpError {
 ```
 
 **Errors**:
-| Condition | Status | Code |
-|-----------|--------|------|
-| Invalid scope string | 400 | `VALIDATION_ERROR` |
-| Invalid tier string | 400 | `VALIDATION_ERROR` |
-| `expires_at` in past | 400 | `VALIDATION_ERROR` |
-| Empty label | 400 | `VALIDATION_ERROR` |
-| Duplicate hash | 409 | `CONFLICT` |
-| Database error | 500 | `INTERNAL_ERROR` |
+
+| Condition            | Status | Code               |
+|----------------------|--------|--------------------|
+| Invalid scope string | 400    | `VALIDATION_ERROR` |
+| Invalid tier string  | 400    | `VALIDATION_ERROR` |
+| `expires_at` in past | 400    | `VALIDATION_ERROR` |
+| Empty label          | 400    | `VALIDATION_ERROR` |
+| Duplicate hash       | 409    | `CONFLICT`         |
+| Database error       | 500    | `INTERNAL_ERROR`   |
 
 ### GET /api/api-keys — list_api_keys
 
@@ -212,12 +213,13 @@ pub struct HttpError {
 **Response**: `200 OK` — same shape as GET response
 
 **Errors**:
-| Condition | Status | Code |
-|-----------|--------|------|
-| Invalid scope string | 400 | `VALIDATION_ERROR` |
-| Invalid tier string | 400 | `VALIDATION_ERROR` |
-| Key not found | 404 | `NOT_FOUND` |
-| Database error | 500 | `INTERNAL_ERROR` |
+
+| Condition            | Status | Code               |
+|----------------------|--------|--------------------|
+| Invalid scope string | 400    | `VALIDATION_ERROR` |
+| Invalid tier string  | 400    | `VALIDATION_ERROR` |
+| Key not found        | 404    | `NOT_FOUND`        |
+| Database error       | 500    | `INTERNAL_ERROR`   |
 
 ### DELETE /api/api-keys/:id — revoke_api_key
 
@@ -232,10 +234,11 @@ pub struct HttpError {
 **Note**: This is a soft revocation. The key record remains in the database with `is_active = false`.
 
 **Errors**:
-| Condition | Status | Code |
-|-----------|--------|------|
-| Key not found | 404 | `NOT_FOUND` |
-| Database error | 500 | `INTERNAL_ERROR` |
+
+| Condition      | Status | Code             |
+|----------------|--------|------------------|
+| Key not found  | 404    | `NOT_FOUND`      |
+| Database error | 500    | `INTERNAL_ERROR` |
 
 ---
 

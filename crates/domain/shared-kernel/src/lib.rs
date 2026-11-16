@@ -42,7 +42,7 @@ impl From<&RequestId> for CacheKey {
 
 impl CacheKey {
     /// Test helper for constructing cache keys with explicit signature
-    pub fn test_key(request_id: RequestId, signature: String) -> Self {
+    pub const fn test_key(request_id: RequestId, signature: String) -> Self {
         Self {
             request_id,
             signature,

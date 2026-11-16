@@ -184,20 +184,80 @@
 			"ollamaCloud": {
 				"name": "Ollama Cloud",
 				"description": "Run open-source models on Ollama's managed cloud. Requires an API key from ollama.com/settings/keys."
+			},
+			"openaiCompatible": {
+				"name": "OpenAI Compatible",
+				"description": "Connect to any OpenAI-compatible API endpoint."
+			},
+			"anthropicCompatible": {
+				"name": "Anthropic Compatible",
+				"description": "Connect to any Anthropic-compatible API endpoint."
+			},
+			"openaiCodex": {
+				"name": "OpenAI Codex",
+				"description": "OpenAI Codex via OAuth authentication."
+			},
+			"xai": {
+				"name": "xAI",
+				"description": "xAI Grok models for chat and reasoning."
+			},
+			"mistral": {
+				"name": "Mistral",
+				"description": "Mistral AI models including Codestral."
+			},
+			"deepseek": {
+				"name": "DeepSeek",
+				"description": "DeepSeek chat and reasoning models."
+			},
+			"together": {
+				"name": "Together AI",
+				"description": "Together AI inference for open-source models."
+			},
+			"fireworks": {
+				"name": "Fireworks AI",
+				"description": "Fireworks fast inference platform."
+			},
+			"cerebras": {
+				"name": "Cerebras",
+				"description": "Cerebras wafer-scale inference."
+			},
+			"openrouter": {
+				"name": "OpenRouter",
+				"description": "Unified API for multiple model providers."
+			},
+			"nan": {
+				"name": "NAN",
+				"description": "NAN builders API for diverse models."
 			}
 		},
 		"category": {
-			"apiKey": {
-				"name": "API Key",
-				"description": "Cloud providers authenticated with an API key."
+			"compatible": {
+				"name": "Compatible Providers",
+				"description": "OpenAI or Anthropic-compatible endpoints you configure yourself."
 			},
 			"oauth": {
-				"name": "OAuth",
+				"name": "OAuth Providers",
 				"description": "Providers authenticated via OAuth flow."
 			},
+			"ide": {
+				"name": "IDE Providers",
+				"description": "Integrations using IDE credentials."
+			},
+			"apiKey": {
+				"name": "API Key Providers",
+				"description": "Cloud providers authenticated with an API key."
+			},
+			"free": {
+				"name": "Free / No Auth",
+				"description": "Services that do not require authentication."
+			},
 			"local": {
-				"name": "Local",
+				"name": "Local Providers",
 				"description": "Self-hosted providers running on your machine."
+			},
+			"other": {
+				"name": "Other Providers",
+				"description": "Upstream proxies and additional integrations."
 			}
 		},
 		"catalog": {
@@ -211,6 +271,22 @@
 			"connectionsCount": "{count} connection | {count} connections",
 			"active": "Active",
 			"notConfigured": "Not configured"
+		},
+		"compatible": {
+			"addOpenAi": "Add OpenAI Compatible",
+			"addAnthropic": "Add Anthropic Compatible",
+			"testAll": "Test All",
+			"test": "Test",
+			"connected": "Connected",
+			"disabled": "Disabled",
+			"noConnections": "No compatible connections configured. Add one to get started.",
+			"untitled": "Untitled",
+			"deleteConfirm": "Delete this compatible connection?",
+			"toggleAriaLabel": "Toggle {name} connection",
+			"protocol": {
+				"openai": "OpenAI",
+				"anthropic": "Anthropic"
+			}
 		},
 		"details": {
 			"title": "{providerName} connections",

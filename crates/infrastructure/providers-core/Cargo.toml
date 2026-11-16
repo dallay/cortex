@@ -11,3 +11,6 @@ serde_json = { workspace = true }
 
 # Domain types — needed for Role conversion helpers
 rook-core = { path = "../../domain/rook-core" }
+
+[lints]
+workspace = true

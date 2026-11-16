@@ -66,7 +66,7 @@ fn runs_in_wal_mode(conn: &rusqlite::Connection) -> bool {
 }
 
 /// Return true when the error reports a locked or busy database.
-fn is_busy(error: &rusqlite::Error) -> bool {
+const fn is_busy(error: &rusqlite::Error) -> bool {
     match error {
         rusqlite::Error::SqliteFailure(inner, _) => matches!(
             inner.code,

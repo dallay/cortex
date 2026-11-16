@@ -55,7 +55,7 @@ pub enum ProbeClassification {
 /// Callers that observe a transport-layer error (no response at all)
 /// should construct [`ProbeClassification::NetworkError`] directly
 /// rather than calling this helper with `0`.
-pub fn classify_status_code(status_code: u16) -> ProbeClassification {
+pub const fn classify_status_code(status_code: u16) -> ProbeClassification {
     match status_code {
         200..=299 => ProbeClassification::Ok,
         429 => ProbeClassification::RateLimited,

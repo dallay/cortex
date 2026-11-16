@@ -25,7 +25,6 @@ metrics = "0.24"
 
 # Errors
 thiserror = "2"
-anyhow = "1"
 ring = "0.17"
 
 # DashMap for circuit breaker
@@ -36,7 +35,6 @@ parking_lot = "0.13"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
-time = "0.3"
 
 # Random (for WeightedRandom routing)
 rand = "0.10"
@@ -60,3 +58,6 @@ wiremock = "=0.6.5"
 serde_json = "=1.0.154"
 tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring", "tls12"] }
 rcgen = "=0.14.10"
+
+[lints]
+workspace = true

@@ -50,13 +50,13 @@ Validation includes adversarial tests on macOS: allowed workspace access; denial
 
 ## Affected areas
 
-| Area                                                                    | Impact              | Description                                                                                                 |
-|-------------------------------------------------------------------------|----------------------|-------------------------------------------------------------------------------------------------------------|
-| `crates/huginn/runtime/src/tools.rs`                                    | Modified            | Wrap the real shell execution, preserve the lifecycle and fail closed.                                      |
-| `crates/huginn/runtime/`                                                | Modified            | Safe policy generation and unit, integration and adversarial tests on macOS.                                |
-| `docs/huginn/README.md`, `docs/huginn/architecture.md` and relevant ADR  | Modified            | Explain limits, deprecation, default, compatibility impact and platform scope.                             |
-| `.github/workflows/ci.yml`                                              | Possible modification | Bring macOS tests into a suitable blocking path; define it in design and tasks.                             |
-| `.agents/sdd/changes/huginn-autonomous-workspace-permissions/`          | Updated             | Align the proposal with fail-closed and leave any elevation outside the sandbox for a separate change.      |
+| Area                                                                    | Impact                | Description                                                                                            |
+|-------------------------------------------------------------------------|-----------------------|--------------------------------------------------------------------------------------------------------|
+| `crates/huginn/runtime/src/tools.rs`                                    | Modified              | Wrap the real shell execution, preserve the lifecycle and fail closed.                                 |
+| `crates/huginn/runtime/`                                                | Modified              | Safe policy generation and unit, integration and adversarial tests on macOS.                           |
+| `docs/huginn/README.md`, `docs/huginn/architecture.md` and relevant ADR | Modified              | Explain limits, deprecation, default, compatibility impact and platform scope.                         |
+| `.github/workflows/ci.yml`                                              | Possible modification | Bring macOS tests into a suitable blocking path; define it in design and tasks.                        |
+| `.agents/sdd/changes/huginn-autonomous-workspace-permissions/`          | Updated               | Align the proposal with fail-closed and leave any elevation outside the sandbox for a separate change. |
 
 ## Compatibility impact
 
@@ -64,14 +64,14 @@ The active default on macOS is an intentional behavior change. Commands that rea
 
 ## Risks
 
-| Risk                                                                                                                                                          | Probability | Mitigation                                                                                                                                                                           |
-|-----------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Apple changes or removes a deprecated interface.                                                                                                                 | High         | Test target macOS versions, report errors and do not enable an unconfined fallback.                                                                                              |
-| The sandbox blocks valid commands because of the minimum profile.                                                                                               | High         | Document the impact, test representative tools and return actionable errors; do not allow an opt-out in this change.                                                       |
-| An error in SBPL generation or escaping widens permissions.                                                                                                    | Medium       | Small and testable generator, validated inputs, adversarial tests and default deny.                                                                                |
-| Path races, symbolic links or inherited descriptors elude the expected confinement.                                                                               | Medium       | Safe normalization, review and tests of paths, links, descriptors and descendants; do not claim unverified guarantees.                                                       |
-| The wrapper alters timeout, cancellation or signals to the process group; cleanup may not complete on abrupt termination or operating system failures. | Medium       | Test controlled exits and observable error propagation; treat `Drop` as best effort, without promising removal on abrupt cancellation or operating system failure. |
-| The active default affects current macOS users.                                                                                                                | High         | Treat it as an explicit compatibility change and provide clear errors; do not run outside the sandbox.                                                                       |
+| Risk                                                                                                                                                   | Probability | Mitigation                                                                                                                                                         |
+|--------------------------------------------------------------------------------------------------------------------------------------------------------|-------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Apple changes or removes a deprecated interface.                                                                                                       | High        | Test target macOS versions, report errors and do not enable an unconfined fallback.                                                                                |
+| The sandbox blocks valid commands because of the minimum profile.                                                                                      | High        | Document the impact, test representative tools and return actionable errors; do not allow an opt-out in this change.                                               |
+| An error in SBPL generation or escaping widens permissions.                                                                                            | Medium      | Small and testable generator, validated inputs, adversarial tests and default deny.                                                                                |
+| Path races, symbolic links or inherited descriptors elude the expected confinement.                                                                    | Medium      | Safe normalization, review and tests of paths, links, descriptors and descendants; do not claim unverified guarantees.                                             |
+| The wrapper alters timeout, cancellation or signals to the process group; cleanup may not complete on abrupt termination or operating system failures. | Medium      | Test controlled exits and observable error propagation; treat `Drop` as best effort, without promising removal on abrupt cancellation or operating system failure. |
+| The active default affects current macOS users.                                                                                                        | High        | Treat it as an explicit compatibility change and provide clear errors; do not run outside the sandbox.                                                             |
 
 ## Rollback plan
 

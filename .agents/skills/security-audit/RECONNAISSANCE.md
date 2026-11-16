@@ -140,14 +140,14 @@ The parent may add bookkeeping fields but keeps the semantic fields above stable
 
 Enforce this state table exactly:
 
-| Status | Unit `agent_id` | `reviewed_paths` / `local_checks` | `result_fingerprints` | `unresolved` |
-|---|---|---|---|---|
-| `planned` | null | empty | empty | empty |
-| `not_applicable`, `out_of_scope`, `deferred` | null | empty | empty | nonempty reason |
-| `in_progress` | canonical owner | empty | empty | empty |
-| `blocked` | canonical owner | both nonempty owned partial evidence | empty | nonempty blocker |
-| `covered` | canonical owner | both nonempty | empty | empty |
-| `candidate` | canonical owner | both nonempty | nonempty | optional |
+| Status                                       | Unit `agent_id` | `reviewed_paths` / `local_checks`    | `result_fingerprints` | `unresolved`     |
+|----------------------------------------------|-----------------|--------------------------------------|-----------------------|------------------|
+| `planned`                                    | null            | empty                                | empty                 | empty            |
+| `not_applicable`, `out_of_scope`, `deferred` | null            | empty                                | empty                 | nonempty reason  |
+| `in_progress`                                | canonical owner | empty                                | empty                 | empty            |
+| `blocked`                                    | canonical owner | both nonempty owned partial evidence | empty                 | nonempty blocker |
+| `covered`                                    | canonical owner | both nonempty                        | empty                 | empty            |
+| `candidate`                                  | canonical owner | both nonempty                        | nonempty              | optional         |
 
 Canonical agent IDs match `^[a-z0-9][a-z0-9_-]{0,63}$` and are not Windows device names. Lowercase is mandatory, so one ledger cannot contain case-fold aliases. The unit `agent_id` records the assignment owner. Every check records its own `agent_id` and nonempty `reviewed_paths`; the unit-level `reviewed_paths` is exactly their union. A source-only check uses `artifact: null`. A local check requires a regular file promoted only by trusted parent-side code under exactly `agents/<check.agent_id>/artifacts/`. This lets hunter and verifier checks coexist in one unit. Scratch paths, output-root files, symlinks, special files, and another check owner's artifacts are not evidence.
 

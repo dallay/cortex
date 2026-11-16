@@ -62,8 +62,7 @@ The QA verdict was not rewritten. It remains `PASS WITH WARNINGS`.
 These items are deferred by slice issue #509, are excluded from the epic acceptance outcome, and
 have no tracking issue today:
 
-1. A kernel-level lifecycle event stream for subscribers. Typed events exist at loop scope
-   (`huginn_core::Event`, `EventSink`, `ScopedEventSink`), but the kernel publishes no composition
+1. A kernel-level lifecycle event stream for subscribers. Typed events exist at loop scope (`huginn_core::Event`, `EventSink`, `ScopedEventSink`), but the kernel publishes no composition
    lifecycle events. **Recommended follow-up: open a slice issue in GitHub before any
    implementation.**
 2. Semantic-version compatibility rules beyond the explicit major version of a `ServiceId`.
@@ -72,8 +71,7 @@ have no tracking issue today:
 4. A resolution scope in the sense of a namespaced registry. Authority is scoped per operation
    through cooperative leases and slot handles.
 
-A second recommendation: add a regression test for the activation-order repeatability clause
-(finding V-04), which can ride along with the next kernel change.
+A second recommendation: add a regression test for the activation-order repeatability clause (finding V-04), which can ride along with the next kernel change.
 
 ## Limits
 

@@ -92,7 +92,7 @@ The Rust compiler enforces some naming conventions.
 ## Conversion Pattern Summary
 
 | Prefix  | Cost      | Ownership         | Example                |
- |---------|-----------|-------------------|------------------------|
+|---------|-----------|-------------------|------------------------|
 | `as_`   | Free      | `&T -> &U`        | `str::as_bytes()`      |
 | `to_`   | Expensive | `&T -> U` (alloc) | `str::to_lowercase()`  |
 | `into_` | Variable  | `T -> U`          | `String::into_bytes()` |

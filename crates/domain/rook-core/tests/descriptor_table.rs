@@ -8,7 +8,7 @@ use rook_core::{
 
 #[test]
 fn every_descriptor_is_fully_declared() {
-    assert_eq!(PROVIDER_DESCRIPTORS.len(), 16);
+    assert_eq!(PROVIDER_DESCRIPTORS.len(), 18);
     for descriptor in PROVIDER_DESCRIPTORS {
         assert!(!descriptor.id.is_empty());
         assert!(!descriptor.label.is_empty());

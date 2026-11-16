@@ -33,3 +33,6 @@ tracing = "0.1"
 
 [dev-dependencies]
 wiremock = "=0.6.5"
+
+[lints]
+workspace = true

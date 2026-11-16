@@ -96,13 +96,13 @@ impl Default for ApiKeysAuthConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            allow_env_fallback: true,
+            allow_env_fallback: false,
         }
     }
 }
 
-fn default_allow_env_fallback() -> bool {
-    true
+const fn default_allow_env_fallback() -> bool {
+    false
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -131,7 +131,7 @@ impl From<ModelAliasesConfig> for rook_usecases::route_request::ModelAliasesConf
     }
 }
 
-fn default_true() -> bool {
+const fn default_true() -> bool {
     true
 }
 
@@ -158,15 +158,15 @@ impl Default for TelemetryConfig {
     }
 }
 
-fn default_telemetry_max_observations() -> usize {
+const fn default_telemetry_max_observations() -> usize {
     1000
 }
 
-fn default_telemetry_max_age_seconds() -> u64 {
+const fn default_telemetry_max_age_seconds() -> u64 {
     3600
 }
 
-fn default_telemetry_cleanup_interval_seconds() -> u64 {
+const fn default_telemetry_cleanup_interval_seconds() -> u64 {
     60
 }
 
@@ -195,7 +195,7 @@ impl Default for ProviderCrudConfig {
     }
 }
 
-fn default_provider_crud_enabled() -> bool {
+const fn default_provider_crud_enabled() -> bool {
     true
 }
 
@@ -216,11 +216,11 @@ impl Default for UsageConfig {
     }
 }
 
-fn default_usage_retention_days() -> u32 {
+const fn default_usage_retention_days() -> u32 {
     90
 }
 
-fn default_usage_sweep_interval_hours() -> u32 {
+const fn default_usage_sweep_interval_hours() -> u32 {
     6
 }
 
@@ -233,7 +233,7 @@ pub struct ServerConfig {
     pub health_check_interval_secs: u64,
 }
 
-fn default_health_check_interval_secs() -> u64 {
+const fn default_health_check_interval_secs() -> u64 {
     30
 }
 
@@ -328,12 +328,12 @@ pub enum StrategyConfig {
 impl From<StrategyConfig> for rook_core::PolicyKind {
     fn from(s: StrategyConfig) -> Self {
         match s {
-            StrategyConfig::Priority => rook_core::PolicyKind::Priority,
-            StrategyConfig::RoundRobin => rook_core::PolicyKind::RoundRobin,
-            StrategyConfig::Weighted => rook_core::PolicyKind::Weighted,
-            StrategyConfig::LeastLatency => rook_core::PolicyKind::LeastLatency,
-            StrategyConfig::LeastCost => rook_core::PolicyKind::LeastCost,
-            StrategyConfig::Auto => rook_core::PolicyKind::Auto,
+            StrategyConfig::Priority => Self::Priority,
+            StrategyConfig::RoundRobin => Self::RoundRobin,
+            StrategyConfig::Weighted => Self::Weighted,
+            StrategyConfig::LeastLatency => Self::LeastLatency,
+            StrategyConfig::LeastCost => Self::LeastCost,
+            StrategyConfig::Auto => Self::Auto,
         }
     }
 }
@@ -404,12 +404,12 @@ impl Default for TokenCacheConfig {
     }
 }
 
-fn default_cache_mode() -> CacheMode {
+const fn default_cache_mode() -> CacheMode {
     CacheMode::Never
 }
 
 impl CacheConfig {
-    pub fn ttl(&self) -> Duration {
+    pub const fn ttl(&self) -> Duration {
         Duration::from_secs(self.ttl_secs)
     }
 
@@ -424,7 +424,7 @@ impl CacheConfig {
         }
 
         // Reject max_entries = Some(0)
-        if let Some(0) = self.max_entries {
+        if self.max_entries == Some(0) {
             return Err(
                 "cache.max_entries must be greater than 0 or None for unlimited".to_string(),
             );
@@ -488,11 +488,11 @@ impl Default for RateLimiterConfig {
     }
 }
 
-fn default_rate_limiting_enabled() -> bool {
+const fn default_rate_limiting_enabled() -> bool {
     false
 }
 
-fn default_tier() -> ApiKeyTier {
+const fn default_tier() -> ApiKeyTier {
     ApiKeyTier::Free
 }
 
@@ -508,7 +508,7 @@ pub struct IpRateLimitConfig {
     pub requests_per_minute: u32,
 }
 
-fn default_ip_requests_per_minute() -> u32 {
+const fn default_ip_requests_per_minute() -> u32 {
     30
 }
 
@@ -524,7 +524,7 @@ impl RookConfig {
                 .and_then(|token_cache| token_cache.get(key))
                 .is_some()
         });
-        let mut config: RookConfig = value.try_into()?;
+        let mut config: Self = value.try_into()?;
         for (key, present) in ["mode", "providers"]
             .into_iter()
             .zip(unsupported_token_cache_keys)

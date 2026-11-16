@@ -21,7 +21,7 @@ use rook_core::{
     QuotaEligibilityPolicy, QuotaObservationQuery, QuotaObservationRecorderPort, QuotaState,
     RequestStatus, RouterPort, StreamChunk, TokenUsage, UsageEntry, UsageRecorderPort,
 };
-use shared_kernel::{ComboId, ConnectionId, ModelId, ProviderId, RestrictionViolation};
+use shared_kernel::{ComboId, ConnectionId, ModelId, ProviderId, RequestId, RestrictionViolation};
 
 use crate::eligibility::{
     evaluate_candidates, AuthState, CandidateFacts, EligibilityResult, RejectionReason, TargetRef,
@@ -207,8 +207,233 @@ struct AttemptCursor {
     local_backpressure: Option<CortexError>,
     last_provider_failure: Option<(ProviderId, Option<ConnectionId>, u64, CortexError)>,
     provider_attempt_failed: bool,
+    /// At least one upstream attempt failed, so its spend cannot be verified.
+    upstream_spend_unknown: bool,
     provider_attempts: usize,
     policy_reselections: usize,
+    /// The spending budget admission retained across retryable provider failovers.
+    /// Set on the first successful admit; reused for subsequent attempts without
+    /// re-admitting. None means no budget or no admission yet.
+    spending_admission: Option<SpendingAdmissionCarrier>,
+    spending_reservation_request_id: Option<RequestId>,
+}
+
+/// Lifecycle state of a spending admission carrier.
+///
+/// `Pending` — reservation exists but no upstream I/O has started; Drop may
+/// safely release the reservation.
+/// `UpstreamStarted` — upstream I/O has begun; the reservation may represent
+/// incurred spend. Drop must NOT release; the reservation stays charged.
+/// `Terminal` — the reservation has been explicitly settled or released;
+/// Drop is a no-op.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AdmissionState {
+    Pending,
+    UpstreamStarted,
+    Terminal,
+}
+
+impl AdmissionState {
+    fn as_u8(self) -> u8 {
+        match self {
+            AdmissionState::Pending => 0,
+            AdmissionState::UpstreamStarted => 1,
+            AdmissionState::Terminal => 2,
+        }
+    }
+
+    fn from_u8(v: u8) -> Self {
+        match v {
+            0 => AdmissionState::Pending,
+            1 => AdmissionState::UpstreamStarted,
+            _ => AdmissionState::Terminal,
+        }
+    }
+}
+
+/// Carries a spending admission and its guard across retryable failovers.
+///
+/// State machine:
+///   Pending ──upstream_started()──> UpstreamStarted ──settle()/release()──> Terminal
+///   Pending ──settle()/release()──> Terminal
+///
+/// Drop behavior:
+///   Pending     → spawns async release (no I/O occurred)
+///   UpstreamStarted → no-op (reservation stays charged)
+///   Terminal    → no-op (already settled or released)
+#[derive(Clone)]
+struct SpendingAdmissionCarrier {
+    guard: Arc<crate::spending_budget::SpendingBudgetGuard>,
+    admission: crate::spending_budget::SpendingAdmission,
+    /// Lifecycle state, shared across clones via Arc.
+    state: std::sync::Arc<std::sync::atomic::AtomicU8>,
+}
+
+impl SpendingAdmissionCarrier {
+    fn new(
+        guard: Arc<crate::spending_budget::SpendingBudgetGuard>,
+        admission: crate::spending_budget::SpendingAdmission,
+    ) -> Self {
+        Self {
+            guard,
+            admission,
+            state: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(
+                AdmissionState::Pending.as_u8(),
+            )),
+        }
+    }
+
+    /// Mark that upstream I/O has begun. After this, Drop will NOT release.
+    fn upstream_started(&self) {
+        let current = self.state.load(std::sync::atomic::Ordering::SeqCst);
+        let state = AdmissionState::from_u8(current);
+        // Only transition from Pending → UpstreamStarted.
+        // If already Terminal or UpstreamStarted, this is a no-op.
+        if state == AdmissionState::Pending {
+            self.state
+                .compare_exchange(
+                    AdmissionState::Pending.as_u8(),
+                    AdmissionState::UpstreamStarted.as_u8(),
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                )
+                .ok();
+        }
+    }
+
+    /// Settle the reservation with the final cost.
+    /// Transitions to Terminal so Drop is a no-op.
+    async fn settle(&self, cost_micros_usd: Option<u64>) {
+        self.guard.settle(&self.admission, cost_micros_usd).await;
+        // Transition any state → Terminal (CAS loop for correctness).
+        loop {
+            let current = self.state.load(std::sync::atomic::Ordering::SeqCst);
+            let result = self.state.compare_exchange(
+                current,
+                AdmissionState::Terminal.as_u8(),
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+            );
+            if result.is_ok() {
+                break;
+            }
+            // If another thread already moved to Terminal, we're done.
+            if AdmissionState::from_u8(current) == AdmissionState::Terminal {
+                break;
+            }
+        }
+    }
+
+    /// Release the reservation. This is an explicit deliberate action and
+    /// always succeeds regardless of state. Transitions to Terminal so Drop
+    /// is a no-op.
+    ///
+    /// The ledger release work is owned by a bounded spawned task so that
+    /// cancellation of the caller cannot cancel the release. The caller
+    /// awaits a notification that the release completed, but if the caller
+    /// is cancelled during that wait, the spawned task continues.
+    /// On semaphore saturation the reservation stays charged and we log.
+    async fn release(&self) {
+        // Transition to Terminal first so Drop is a no-op. If another path
+        // already moved to Terminal, we skip entirely.
+        let current = self.state.load(std::sync::atomic::Ordering::SeqCst);
+        if AdmissionState::from_u8(current) == AdmissionState::Terminal {
+            return;
+        }
+        let result = self.state.compare_exchange(
+            current,
+            AdmissionState::Terminal.as_u8(),
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        if result.is_err() {
+            // Another path won the race to Terminal.
+            return;
+        }
+        // Spawn the actual ledger release as a bounded task so caller
+        // cancellation cannot cancel it. We use a oneshot channel so the
+        // caller can await completion; if the caller is cancelled, the
+        // spawned task still runs to completion.
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let guard = self.guard.clone();
+        let admission = self.admission.clone();
+        let permit = match pending_spending_release_slots().try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => {
+                tracing::error!(
+                    "spending reservation release is saturated; reservation remains charged"
+                );
+                let _ = tx.send(());
+                return;
+            }
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn(async move {
+                    let _permit = permit;
+                    guard.release(&admission).await;
+                    let _ = tx.send(());
+                });
+            }
+            Err(error) => {
+                tracing::error!(%error, "cannot release a spending reservation outside a Tokio runtime");
+                let _ = tx.send(());
+            }
+        }
+        // Await the spawned task's completion. If the caller is cancelled
+        // here, the spawned task continues independently.
+        let _ = rx.await;
+    }
+
+    /// Check the current state (for Drop).
+    fn state(&self) -> AdmissionState {
+        let current = self.state.load(std::sync::atomic::Ordering::SeqCst);
+        AdmissionState::from_u8(current)
+    }
+}
+
+impl Drop for SpendingAdmissionCarrier {
+    fn drop(&mut self) {
+        // Only release if still in Pending state (no upstream I/O occurred).
+        // UpstreamStarted → no-op (reservation stays charged).
+        // Terminal → no-op (already settled or released).
+        if self.state() != AdmissionState::Pending {
+            return;
+        }
+        // Try to claim the release. If another path (e.g. explicit release)
+        // already moved to Terminal, skip.
+        let result = self.state.compare_exchange(
+            AdmissionState::Pending.as_u8(),
+            AdmissionState::Terminal.as_u8(),
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        if result.is_err() {
+            return;
+        }
+        let guard = self.guard.clone();
+        let admission = self.admission.clone();
+        let permit = match pending_spending_release_slots().try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => {
+                tracing::error!(
+                    "spending reservation cleanup is saturated; reservation remains charged"
+                );
+                return;
+            }
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn(async move {
+                    let _permit = permit;
+                    guard.release(&admission).await;
+                });
+            }
+            Err(error) => {
+                tracing::error!(%error, "cannot release a spending reservation outside a Tokio runtime");
+            }
+        }
+    }
 }
 
 struct RoutingEligibility {
@@ -242,7 +467,6 @@ struct EligibleAttempt {
     connection_id: Option<ConnectionId>,
     provider_req: CompletionRequest,
     trial_permit: rook_core::RouterTrialPermit,
-    spending_reservation: PendingSpendingAdmission,
     /// Explanation of why this provider was selected.
     /// Stored for future telemetry emission (DALLAY-779).
     #[expect(dead_code, reason = "consumed by DALLAY-779 telemetry emission")]
@@ -653,13 +877,7 @@ impl RouteRequest {
         let selection_budget = total_providers
             .max(1)
             .saturating_add(MAX_ELIGIBILITY_SNAPSHOT_RETRIES);
-        // Budgeted upstream errors remain terminal. Local admission pressure
-        // does not consume this upstream-attempt allowance.
-        let max_attempts = if req.restrictions.spending_budget.is_some() {
-            1
-        } else {
-            MAX_RETRY_ATTEMPTS.min(total_providers.max(1))
-        };
+        let max_attempts = MAX_RETRY_ATTEMPTS.min(total_providers.max(1));
         let provider_attempts = 0;
 
         self.execute_provider_attempts(
@@ -696,8 +914,11 @@ impl RouteRequest {
             local_backpressure,
             last_provider_failure: None,
             provider_attempt_failed,
+            upstream_spend_unknown: false,
             provider_attempts,
             policy_reselections: 0,
+            spending_admission: None,
+            spending_reservation_request_id: None,
         };
         let context = AttemptContext {
             req: &req,
@@ -725,7 +946,7 @@ impl RouteRequest {
         context: &AttemptContext<'_>,
         cursor: &mut AttemptCursor,
     ) -> AttemptStep {
-        let mut attempt = match self.prepare_attempt(context, cursor).await {
+        let attempt = match self.prepare_attempt(context, cursor).await {
             AttemptPreparation::Ready(attempt) => attempt,
             AttemptPreparation::Retry(provider_id) => {
                 cursor.excluded.push(provider_id);
@@ -733,6 +954,10 @@ impl RouteRequest {
             }
             AttemptPreparation::Reevaluate => {
                 if cursor.policy_reselections >= MAX_POLICY_RESELECTION_RETRIES {
+                    self.record_saved_provider_failure(context.req, cursor)
+                        .await;
+                    // Settle any outstanding admission before stopping.
+                    self.settle_outstanding_admission(cursor).await;
                     return AttemptStep::Done(Box::new(Err(CortexError::routing_snapshot_churn())));
                 }
                 cursor.policy_reselections += 1;
@@ -741,24 +966,32 @@ impl RouteRequest {
             AttemptPreparation::Stop(error) => {
                 self.record_saved_provider_failure(context.req, cursor)
                     .await;
+                // Settle any outstanding admission before stopping.
+                self.settle_outstanding_admission(cursor).await;
                 return AttemptStep::Done(Box::new(Err(error)));
             }
         };
 
         cursor.provider_attempts += 1;
-        let admission = attempt.spending_reservation.activate();
+        // Mark upstream I/O as started so Drop does not release the reservation
+        // if the task is cancelled mid-call.
+        if let Some(carrier) = &cursor.spending_admission {
+            carrier.upstream_started();
+        }
         let result = attempt.provider.complete(&attempt.provider_req).await;
         let latency_ms = context.start.elapsed().as_millis() as u64;
-        self.settle_spending_reservation(
-            &admission,
-            attempt.provider.as_ref(),
-            &attempt.provider_req,
-            &result,
-        )
-        .await;
 
         let error = match classify_attempt_result(AttemptResult::Provider(result)) {
             AttemptOutcome::Success(provider_resp) => {
+                // Settle the reservation once with the realized cost.
+                self.settle_spending_from_cursor(
+                    cursor,
+                    attempt.provider.as_ref(),
+                    &attempt.provider_req,
+                    &provider_resp,
+                )
+                .await;
+                cursor.spending_admission.take();
                 notify_provider_success(self.router.as_ref(), &attempt.provider_id).await;
                 attempt.trial_permit.complete();
                 // If this is a retry (excluded list is not empty), record successful failover
@@ -782,21 +1015,37 @@ impl RouteRequest {
                     .await;
                 return AttemptStep::Done(Box::new(response));
             }
-            AttemptOutcome::LocalBackpressure(error) => {
-                // Admission pressure happens before upstream I/O, so it does not
-                // consume the upstream retry allowance.
+            AttemptOutcome::LocalBackpressure(_error) => {
+                // Local admission pressure does not consume an upstream attempt.
                 cursor.provider_attempts -= 1;
-                // Local admission pressure releases the half-open reservation
-                // without touching the circuit state.
+                if !cursor.provider_attempt_failed {
+                    if let Some(carrier) = cursor.spending_admission.take() {
+                        carrier.release().await;
+                        // Released ledger rows retain their identity. A later admission
+                        // needs a fresh reservation identity, while the request keeps its ID.
+                        cursor.spending_reservation_request_id = Some(RequestId::new());
+                    }
+                }
                 drop(attempt.trial_permit);
                 cursor.local_backpressure = Some(CortexError::local_backpressure());
-                error
+                cursor.excluded.push(attempt.provider_id.clone());
+                // If all providers are now excluded, finish immediately rather
+                // than going through another prepare_attempt that would fail to
+                // select a candidate.
+                if cursor.excluded.len() >= context.total_providers {
+                    return self.finish_exhausted_attempts(context.req, cursor).await;
+                }
+                return AttemptStep::Retry;
             }
             AttemptOutcome::UpstreamFailure(error) => {
+                cursor.upstream_spend_unknown = true;
                 // Record failure for circuit breaker before checking retryability.
                 notify_provider_failure(self.router.as_ref(), &attempt.provider_id, &error).await;
                 attempt.trial_permit.complete();
                 cursor.provider_attempt_failed = true;
+                // Do NOT settle between retryable upstream failures.
+                // The admission is retained in the cursor for the next attempt.
+                // Settlement happens at the end of the retry chain.
                 error
             }
             AttemptOutcome::TimedOut => {
@@ -808,7 +1057,7 @@ impl RouteRequest {
             req: context.req,
             provider_id: attempt.provider_id,
             connection_id: attempt.connection_id,
-            // Measured after the attempt settled, so the audit entry carries end-to-end latency.
+            // Measured after the attempt, so the audit entry carries end-to-end latency.
             latency_ms: context.start.elapsed().as_millis() as u64,
             error,
             max_attempts: context.max_attempts,
@@ -816,6 +1065,37 @@ impl RouteRequest {
             cursor,
         };
         self.handle_attempt_failure(failure).await
+    }
+
+    /// Settle the spending reservation from the cursor with the realized cost,
+    /// or as unresolved when the cost is unknown.
+    async fn settle_spending_from_cursor(
+        &self,
+        cursor: &mut AttemptCursor,
+        provider: &dyn rook_core::ProviderPort,
+        provider_req: &CompletionRequest,
+        provider_resp: &CompletionResponse,
+    ) {
+        let Some(carrier) = cursor.spending_admission.as_ref() else {
+            return;
+        };
+        // Provider errors expose no verified realized cost. A successful fallback
+        // cannot resolve spend from an earlier upstream failure.
+        let cost = if cursor.upstream_spend_unknown {
+            None
+        } else {
+            provider.strict_realized_cost_micros_usd(provider_req, provider_resp)
+        };
+        carrier.settle(cost).await;
+    }
+
+    /// If there is an outstanding spending admission in the cursor, settle it
+    /// as unresolved (None). This is called when the retry chain terminates
+    /// without a successful upstream response.
+    async fn settle_outstanding_admission(&self, cursor: &mut AttemptCursor) {
+        if let Some(carrier) = cursor.spending_admission.take() {
+            carrier.settle(None).await;
+        }
     }
 
     /// Selects the next candidate and runs every preflight gate before any upstream I/O.
@@ -975,37 +1255,82 @@ impl RouteRequest {
 
         let provider_req = context.req.clone();
 
+        // A retained reservation authorizes this provider only when its strict
+        // maximum cost fits within the original reserved amount. Check before
+        // acquiring a trial permit or performing any provider I/O.
+        if let Some(carrier) = &cursor.spending_admission {
+            let reserved = carrier.admission.reserved_micros_usd();
+            match provider.strict_max_cost_micros_usd(&provider_req) {
+                Some(bound) if bound > 0 && bound <= reserved => {}
+                Some(bound) if bound > reserved => {
+                    return AttemptPreparation::Stop(CortexError::cost_unavailable(
+                        format!("fallback provider cost bound of {bound} micro-USD exceeds the initial reservation of {reserved} micro-USD"),
+                    ));
+                }
+                _ => {
+                    return AttemptPreparation::Stop(CortexError::cost_unavailable(
+                        "fallback provider does not expose a verifiable, enforceable request cost bound",
+                    ));
+                }
+            }
+        }
+
         // Acquire the half-open trial only after preflight checks and just before upstream I/O.
         // Keep the half-open permit until the outcome updates circuit state.
         let Some(trial_permit) = self.router.try_acquire_trial(&provider_id).await else {
             return AttemptPreparation::Retry(provider_id);
         };
 
-        // Strict spending budget admission. The reservation must exist before any upstream I/O,
-        // and a budgeted request is never retried on another provider.
-        let admission = match self
-            .admit_spending_budget(provider.as_ref(), &provider_req, context.req)
-            .await
-        {
-            Ok(admission) => admission,
-            Err(error) => {
-                // No upstream I/O happened for this attempt.
-                drop(trial_permit);
-                return AttemptPreparation::Stop(error);
+        // Strict spending budget admission. Reserve exactly once before the first
+        // upstream attempt. Retryable failover retains the original admission without
+        // re-admitting against each provider.
+        let spending_pending_release = if cursor.spending_admission.is_some() {
+            // Already admitted on a previous attempt; reuse the original admission.
+            false
+        } else {
+            let mut reservation_req = provider_req.clone();
+            if let Some(id) = &cursor.spending_reservation_request_id {
+                reservation_req.id = id.clone();
+            }
+            match self
+                .admit_spending_budget(provider.as_ref(), &reservation_req, context.req)
+                .await
+            {
+                Ok(Some(admission)) => {
+                    cursor.spending_admission = Some(SpendingAdmissionCarrier::new(
+                        self.spending_guard
+                            .clone()
+                            .expect("admission implies a configured guard"),
+                        admission,
+                    ));
+                    true
+                }
+                Ok(None) => {
+                    // No budget on this request.
+                    false
+                }
+                Err(error) => {
+                    // No upstream I/O happened for this attempt.
+                    drop(trial_permit);
+                    return AttemptPreparation::Stop(error);
+                }
             }
         };
-        let mut spending_reservation =
-            PendingSpendingAdmission::new(self.spending_guard.clone(), admission);
 
-        // Recheck connection state after budget admission. The reservation guard releases the
-        // durable budget if this read is canceled or rejects the connection before upstream I/O.
+        // Recheck connection state after budget admission. If the connection is
+        // unavailable and we just created a reservation, release it before stopping.
         let current_connection = match self
             .resolve_connection(provider.as_ref(), &provider_id, eligibility.as_ref())
             .await
         {
             Ok(connection) => connection,
             Err(error) => {
-                spending_reservation.release().await;
+                if spending_pending_release {
+                    if let Some(carrier) = &cursor.spending_admission {
+                        carrier.release().await;
+                    }
+                    cursor.spending_admission.take();
+                }
                 drop(trial_permit);
                 if !cursor.provider_attempt_failed {
                     if let Some(backpressure) = cursor.local_backpressure.take() {
@@ -1029,7 +1354,12 @@ impl RouteRequest {
             ) && current_connection.is_none())
             || runtime_mapping_changed
         {
-            spending_reservation.release().await;
+            if spending_pending_release {
+                if let Some(carrier) = &cursor.spending_admission {
+                    carrier.release().await;
+                }
+                cursor.spending_admission.take();
+            }
             drop(trial_permit);
             return if eligibility.is_some() {
                 AttemptPreparation::Reevaluate
@@ -1045,7 +1375,6 @@ impl RouteRequest {
             connection_id,
             provider_req,
             trial_permit,
-            spending_reservation,
             selection_reason,
         }))
     }
@@ -1626,40 +1955,6 @@ impl RouteRequest {
         true
     }
 
-    /// Settles the spending reservation with the realized cost of this attempt.
-    async fn settle_spending_reservation(
-        &self,
-        admission: &Option<crate::spending_budget::SpendingAdmission>,
-        provider: &dyn rook_core::ProviderPort,
-        provider_req: &CompletionRequest,
-        result: &Result<CompletionResponse, CortexError>,
-    ) {
-        // Settle the reservation with the final cost when the adapter reports it. An unknown
-        // cost keeps the reservation charged as unresolved spend.
-        let Some(admission) = admission.as_ref() else {
-            return;
-        };
-        let guard = self
-            .spending_guard
-            .as_ref()
-            .expect("admission implies a configured guard");
-        match result {
-            Ok(provider_resp) => {
-                guard
-                    .settle(
-                        admission,
-                        provider.strict_realized_cost_micros_usd(provider_req, provider_resp),
-                    )
-                    .await;
-            }
-            Err(error) if error.is_local_backpressure() => {
-                // The concurrency adapter rejects before upstream I/O.
-                guard.release(admission).await;
-            }
-            Err(_) => guard.settle(admission, None).await,
-        }
-    }
-
     fn record_failure_observation(
         &self,
         provider_id: ProviderId,
@@ -1695,14 +1990,15 @@ impl RouteRequest {
             if cursor.provider_attempt_failed {
                 return self.finish_exhausted_attempts(req, cursor).await;
             }
+            self.settle_outstanding_admission(cursor).await;
             return AttemptStep::Done(Box::new(Err(error)));
         }
 
-        // Non-retryable errors end the request; so does a budgeted request, because a second
-        // attempt could spend more than the configured per-request limit.
-        if !error.is_retryable() || req.restrictions.spending_budget.is_some() {
-            // First flush any earlier saved provider failure so it is not dropped
+        // Non-retryable errors end the request. Settle any outstanding admission
+        // as unresolved before returning.
+        if !error.is_retryable() {
             self.record_saved_provider_failure(req, cursor).await;
+            self.settle_outstanding_admission(cursor).await;
             self.record_failure_audit_usage(req, &provider_id, connection_id, latency_ms, &error)
                 .await;
             self.record_failure_observation(provider_id, latency_ms, ObservationStatus::Failure);
@@ -1744,8 +2040,11 @@ impl RouteRequest {
         req: &CompletionRequest,
         cursor: &mut AttemptCursor,
     ) -> AttemptStep {
+        // Settle any outstanding spending admission as unresolved.
+        self.settle_outstanding_admission(cursor).await;
         if !cursor.provider_attempt_failed {
             if let Some(backpressure) = cursor.local_backpressure.take() {
+                self.record_saved_provider_failure(req, cursor).await;
                 return AttemptStep::Done(Box::new(Err(backpressure)));
             }
         }
@@ -1783,6 +2082,9 @@ impl RouteRequest {
         cursor: &mut AttemptCursor,
     ) -> Result<CompletionResponse, CortexError> {
         self.record_saved_provider_failure(req, cursor).await;
+        // Settle any outstanding spending admission as unresolved before returning.
+        self.settle_outstanding_admission(cursor).await;
+        // This should not be reached, but safety fallback
         if !cursor.provider_attempt_failed {
             if let Some(error) = cursor.local_backpressure.take() {
                 return Err(error);
@@ -1947,6 +2249,7 @@ impl RouteRequest {
         let mut provider_attempts = 0;
         let mut excluded = Vec::new();
         let mut local_backpressure = None;
+        let mut reservation_request_id: Option<RequestId> = None;
         let mut snapshot_rechecks = 0;
         let mut policy_reselections = 0;
         for _ in 0..selection_budget {
@@ -2106,8 +2409,12 @@ impl RouteRequest {
                 excluded.push(provider_id);
                 continue;
             };
+            let mut reservation_req = provider_req.clone();
+            if let Some(id) = &reservation_request_id {
+                reservation_req.id = id.clone();
+            }
             let budget_admission = match self
-                .admit_spending_budget(provider.as_ref(), &provider_req, req)
+                .admit_spending_budget(provider.as_ref(), &reservation_req, req)
                 .await
             {
                 Ok(admission) => admission,
@@ -2186,6 +2493,7 @@ impl RouteRequest {
                     // upstream request can start, so release the budget.
                     if let (Some(guard), Some(admission)) = (&self.spending_guard, &admission) {
                         guard.release(admission).await;
+                        reservation_request_id = Some(RequestId::new());
                     }
                     drop(trial_permit);
                     excluded.push(provider_id);

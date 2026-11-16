@@ -8,7 +8,6 @@ shared-kernel = { path = "../shared-kernel" }
 
 # Async
 async-trait = "0.1"
-tokio = { version = "1", features = ["rt"] }
 futures = "0.3"
 
 # Serialization
@@ -24,7 +23,6 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # Errors
 thiserror = "2"
-anyhow = "1"
 
 # Logging
 tracing = "0.1"
@@ -32,3 +30,6 @@ tracing = "0.1"
 # Hashing (for cache keys)
 sha2 = "0.11"
 hex = "0.4"
+
+[lints]
+workspace = true

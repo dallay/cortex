@@ -218,7 +218,7 @@ impl std::fmt::Display for RepositoryError {
 impl std::error::Error for RepositoryError {}
 
 impl TestStatus {
-    pub fn latency_ms(&self) -> Option<u64> {
+    pub const fn latency_ms(&self) -> Option<u64> {
         match self {
             Self::Active { latency_ms, .. } => Some(*latency_ms),
             _ => None,
@@ -233,14 +233,14 @@ impl TestStatus {
         }
     }
 
-    pub fn expires_at(&self) -> Option<i64> {
+    pub const fn expires_at(&self) -> Option<i64> {
         match self {
             Self::Expired { expires_at, .. } => Some(*expires_at),
             _ => None,
         }
     }
 
-    pub fn last_test_at(&self) -> Option<DateTime<Utc>> {
+    pub const fn last_test_at(&self) -> Option<DateTime<Utc>> {
         match self {
             Self::Active { last_test_at, .. }
             | Self::Unhealthy { last_test_at, .. }

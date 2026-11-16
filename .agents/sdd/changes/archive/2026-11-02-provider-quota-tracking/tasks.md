@@ -2,14 +2,14 @@
 
 ## Review Workload Forecast
 
-| Field                   | Value                                                       |
-|-------------------------|-------------------------------------------------------------|
-| Estimated changed lines | 750–950                                                     |
-| 400-line budget risk    | High                                                        |
-| Chained PRs recommended | No (delivery requested in one ordinary PR)                  |
-| Suggested split         | One PR: cost → backend contract → dashboard → verification  |
-| Delivery strategy       | single-pr                                                   |
-| Chain strategy          | single-pr                                                   |
+| Field                   | Value                                                      |
+|-------------------------|------------------------------------------------------------|
+| Estimated changed lines | 750–950                                                    |
+| 400-line budget risk    | High                                                       |
+| Chained PRs recommended | No (delivery requested in one ordinary PR)                 |
+| Suggested split         | One PR: cost → backend contract → dashboard → verification |
+| Delivery strategy       | single-pr                                                  |
+| Chain strategy          | single-pr                                                  |
 
 Decision needed before apply: No
 Chained PRs recommended: No
@@ -20,9 +20,9 @@ The user authorized consolidating the whole scope into a single PR even though t
 
 ### Suggested Work Units
 
-| Unit | Goal                                                                                      | Likely PR | Notes                                                                                                                           |
-|------|-------------------------------------------------------------------------------------------|-----------|---------------------------------------------------------------------------------------------------------------------------------|
-| 1    | Complete costs, truthful backend summary and localized dashboard with trends and refresh.  | Single PR | Base=`main`; issue/Linear=#132. Start: `cost_usd` aggregate; end: phase technical criteria and verifications completed. |
+| Unit | Goal                                                                                      | Likely PR | Notes                                                                                                                   |
+|------|-------------------------------------------------------------------------------------------|-----------|-------------------------------------------------------------------------------------------------------------------------|
+| 1    | Complete costs, truthful backend summary and localized dashboard with trends and refresh. | Single PR | Base=`main`; issue/Linear=#132. Start: `cost_usd` aggregate; end: phase technical criteria and verifications completed. |
 
 ## Project Test Mode and Runners
 

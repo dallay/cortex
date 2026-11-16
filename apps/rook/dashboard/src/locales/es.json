@@ -229,20 +229,80 @@
 			"ollamaCloud": {
 				"name": "Ollama Cloud",
 				"description": "Ejecuta modelos de código abierto en la nube gestionada de Ollama. Requiere una API key de ollama.com/settings/keys."
+			},
+			"openaiCompatible": {
+				"name": "OpenAI Compatible",
+				"description": "Conecta a cualquier endpoint compatible con la API de OpenAI."
+			},
+			"anthropicCompatible": {
+				"name": "Anthropic Compatible",
+				"description": "Conecta a cualquier endpoint compatible con la API de Anthropic."
+			},
+			"openaiCodex": {
+				"name": "OpenAI Codex",
+				"description": "OpenAI Codex mediante autenticación OAuth."
+			},
+			"xai": {
+				"name": "xAI",
+				"description": "Modelos Grok de xAI para chat y razonamiento."
+			},
+			"mistral": {
+				"name": "Mistral",
+				"description": "Modelos de Mistral AI incluyendo Codestral."
+			},
+			"deepseek": {
+				"name": "DeepSeek",
+				"description": "Modelos de chat y razonamiento de DeepSeek."
+			},
+			"together": {
+				"name": "Together AI",
+				"description": "Inferencia de Together AI para modelos de código abierto."
+			},
+			"fireworks": {
+				"name": "Fireworks AI",
+				"description": "Plataforma de inferencia rápida de Fireworks."
+			},
+			"cerebras": {
+				"name": "Cerebras",
+				"description": "Inferencia a escala de wafer de Cerebras."
+			},
+			"openrouter": {
+				"name": "OpenRouter",
+				"description": "API unificada para múltiples proveedores de modelos."
+			},
+			"nan": {
+				"name": "NAN",
+				"description": "API de NAN builders para diversos modelos."
 			}
 		},
 		"category": {
-			"apiKey": {
-				"name": "API Key",
-				"description": "Proveedores en la nube autenticados con una API key."
+			"compatible": {
+				"name": "Proveedores Compatibles",
+				"description": "Endpoints compatibles con OpenAI o Anthropic que configuras tú."
 			},
 			"oauth": {
-				"name": "OAuth",
+				"name": "Proveedores OAuth",
 				"description": "Proveedores autenticados mediante flujo OAuth."
 			},
+			"ide": {
+				"name": "Proveedores IDE",
+				"description": "Integraciones que usan credenciales de IDE."
+			},
+			"apiKey": {
+				"name": "Proveedores API Key",
+				"description": "Proveedores en la nube autenticados con una API key."
+			},
+			"free": {
+				"name": "Gratis / Sin Auth",
+				"description": "Servicios que no requieren autenticación."
+			},
 			"local": {
-				"name": "Local",
+				"name": "Proveedores Locales",
 				"description": "Proveedores auto-hospedados en tu máquina."
+			},
+			"other": {
+				"name": "Otros Proveedores",
+				"description": "Proxies upstream e integraciones adicionales."
 			}
 		},
 		"catalog": {
@@ -256,6 +316,22 @@
 			"connectionsCount": "{count} conexión | {count} conexiones",
 			"active": "Activo",
 			"notConfigured": "Sin configurar"
+		},
+		"compatible": {
+			"addOpenAi": "Agregar OpenAI Compatible",
+			"addAnthropic": "Agregar Anthropic Compatible",
+			"testAll": "Probar Todo",
+			"test": "Probar",
+			"connected": "Conectado",
+			"disabled": "Deshabilitado",
+			"noConnections": "No hay conexiones compatibles configuradas. Agrega una para comenzar.",
+			"untitled": "Sin título",
+			"deleteConfirm": "¿Eliminar esta conexión compatible?",
+			"toggleAriaLabel": "Activar/desactivar conexión {name}",
+			"protocol": {
+				"openai": "OpenAI",
+				"anthropic": "Anthropic"
+			}
 		},
 		"details": {
 			"title": "Conexiones de {providerName}",

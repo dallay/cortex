@@ -35,7 +35,7 @@ pub enum KnownScope {
 }
 
 impl KnownScope {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::ChatRead => "chat:read",
             Self::ChatWrite => "chat:write",
@@ -104,7 +104,7 @@ pub enum ApiKeyTier {
 }
 
 impl ApiKeyTier {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Free => "free",
             Self::Pro => "pro",
@@ -178,13 +178,13 @@ impl SpendingBudgetWindow {
     pub fn utc_bounds(&self, at: DateTime<Utc>) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
         let date = at.date_naive();
         let start_date = match self {
-            SpendingBudgetWindow::Daily => date,
-            SpendingBudgetWindow::Monthly => date.with_day(1)?,
+            Self::Daily => date,
+            Self::Monthly => date.with_day(1)?,
         };
         let start = start_date.and_hms_opt(0, 0, 0)?.and_utc();
         let end = match self {
-            SpendingBudgetWindow::Daily => start.checked_add_signed(chrono::Duration::days(1))?,
-            SpendingBudgetWindow::Monthly => {
+            Self::Daily => start.checked_add_signed(chrono::Duration::days(1))?,
+            Self::Monthly => {
                 let (next_year, next_month) = if date.month() == 12 {
                     (date.year().checked_add(1)?, 1)
                 } else {
