@@ -1,16 +1,29 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createI18n } from "vue-i18n";
-import type { ProviderConnectionResponse } from "@/lib/api";
+import type {
+	ProviderConnectionResponse,
+	TestConnectionResponse,
+	UpdateProviderRequest,
+} from "@/lib/api";
 import en from "@/locales/en.json";
 import CompatibleConnectionsSection from "./CompatibleConnectionsSection.vue";
 
-const mockProviders = vi.hoisted(() => [] as ProviderConnectionResponse[]);
-const mockUpdate = vi.hoisted(() => vi.fn());
-const mockTest = vi.hoisted(() => vi.fn());
-const mockFetch = vi.hoisted(() => vi.fn());
-
 const i18n = createI18n({ legacy: false, locale: "en", messages: { en } });
+
+let mockProviders: ProviderConnectionResponse[];
+let mockUpdate: ReturnType<
+	typeof vi.fn<
+		(
+			id: string,
+			data: UpdateProviderRequest,
+		) => Promise<ProviderConnectionResponse | null>
+	>
+>;
+let mockTest: ReturnType<
+	typeof vi.fn<(id: string) => Promise<TestConnectionResponse | null>>
+>;
+let mockFetch: ReturnType<typeof vi.fn<() => Promise<void>>>;
 
 function mountSection() {
 	return mount(CompatibleConnectionsSection, {
@@ -37,11 +50,10 @@ function makeConnection(overrides = {}): ProviderConnectionResponse {
 
 describe("CompatibleConnectionsSection", () => {
 	beforeEach(() => {
-		vi.clearAllMocks();
-		mockProviders.length = 0;
-		mockUpdate.mockResolvedValue(undefined);
-		mockTest.mockResolvedValue({ valid: true });
-		mockFetch.mockResolvedValue(undefined);
+		mockProviders = [];
+		mockUpdate = vi.fn().mockResolvedValue(undefined);
+		mockTest = vi.fn().mockResolvedValue({ valid: true });
+		mockFetch = vi.fn().mockResolvedValue(undefined);
 	});
 
 	it("shows empty state when there are no compatible connections", () => {
@@ -192,26 +204,35 @@ describe("CompatibleConnectionsSection", () => {
 		});
 	});
 
-	it("keeps connection data and displays an error without fetching on null test", async () => {
+	it("keeps connection data and displays error on null test", async () => {
 		mockProviders.push(makeConnection());
 		mockTest.mockResolvedValue(null);
 		const wrapper = mountSection();
+		const initialFetchCalls = mockFetch.mock.calls.length;
 		await wrapper
 			.find('[data-testid="compatible-connection-card"]')
 			.findAll("button")
 			.at(-1)
 			?.trigger("click");
 		await flushPromises();
-		expect(mockFetch).not.toHaveBeenCalled();
-		expect(wrapper.find('[role="alert"]').text()).toContain(
-			"Connection failed",
-		);
+		// When test returns null, refresh should not be called
+		expect(mockFetch.mock.calls.length).toBe(initialFetchCalls);
+		// When test returns null, the component should show a failure message
+		expect(wrapper.get('[role="alert"]').text()).toBe("Connection failed");
+		expect(
+			wrapper
+				.find('[data-testid="compatible-connection-card"]')
+				.findAll("button")
+				.at(-1)
+				?.attributes("disabled"),
+		).toBeUndefined();
+		expect(wrapper.find('[role="status"]').exists()).toBe(false);
 		expect(wrapper.text()).toContain("My Endpoint");
 	});
 
 	it("tests connections sequentially and displays each result before continuing", async () => {
 		mockProviders.push(makeConnection(), makeConnection({ id: "conn-2" }));
-		let finishFirst!: (value: { valid: boolean }) => void;
+		let finishFirst!: (value: TestConnectionResponse) => void;
 		mockTest.mockImplementationOnce(
 			() =>
 				new Promise((resolve) => {
@@ -221,7 +242,14 @@ describe("CompatibleConnectionsSection", () => {
 		const wrapper = mountSection();
 		await wrapper.find('[data-testid="test-all-compatible"]').trigger("click");
 		expect(mockTest.mock.calls).toEqual([["conn-1"]]);
-		finishFirst({ valid: true });
+		finishFirst({
+			valid: true,
+			status: "ok",
+			latencyMs: 100,
+			error: null,
+			warning: null,
+			method: null,
+		});
 		await flushPromises();
 		expect(mockTest.mock.calls).toEqual([["conn-1"], ["conn-2"]]);
 		expect(mockFetch).toHaveBeenCalledTimes(2);

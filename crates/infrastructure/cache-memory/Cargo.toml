@@ -16,7 +16,6 @@ serde = { version = "1", features = ["derive"] }
 
 # Caching
 dashmap = "6"
-ttl_cache = "0.5"
 
 # Observability
 metrics = "0.24"

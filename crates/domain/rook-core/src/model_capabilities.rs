@@ -122,7 +122,7 @@ impl RequiredCapabilities {
             tools: req.tools.as_ref().is_some_and(|v| {
                 !v.is_null()
                     && (v.as_array().is_none()
-                        || v.as_array().map_or(true, |values| !values.is_empty()))
+                        || v.as_array().is_none_or(|values| !values.is_empty()))
             }) || req.tool_choice.as_ref().is_some_and(|v| {
                 !v.is_null()
                     && v.as_str() != Some("none")

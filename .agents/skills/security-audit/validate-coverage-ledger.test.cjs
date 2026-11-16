@@ -494,6 +494,19 @@ test("archives prior evidence when a critic assigns a fresh owner", () => {
   assert.deepEqual(errorsFor([finalClosure]), []);
 });
 
+test("allows checks in one archived attempt to share an artifact", () => {
+  const reassigned = unit({
+    attempts: [archivedAttempt({local_checks: [
+      localCheck(),
+      localCheck("hunter-1", {invariant: "A second invariant is checked."}),
+    ]})],
+    wave: 2,
+    status: "in_progress",
+    agent_id: "hunter-2",
+  });
+  assert.deepEqual(errorsFor([reassigned]), []);
+});
+
 test("preserves candidate provenance when reassignment must be deferred",
     () => {
       const candidateAttempt = archivedAttempt({

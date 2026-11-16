@@ -110,6 +110,10 @@ this session. No scenario is `FAIL`, `BLOCKED` or `NOT TESTED`.
 
 ## Untested Scope
 
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:089bce2f15fdfd9eb92c8a05bc3ddb51fdebcc126f785c2f0ddffe9d59b18419 -->
+
 - Scope:
     1. Kernel-level lifecycle event stream for subscribers (discovered, activated, deactivated,
        replaced, blocked, failed).
@@ -121,31 +125,33 @@ this session. No scenario is `FAIL`, `BLOCKED` or `NOT TESTED`.
     7. Substitution against a live, credentialed model provider.
     8. A user-facing (TUI or browser) substitution action.
 - Reason:
-    1. – 4. are explicitly deferred by slice issue #509 and are excluded from the epic acceptance
+    - **Items 1–4:** are explicitly deferred by slice issue #509 and are excluded from the epic acceptance
        outcome by the deferred-scope section of `specs/huginn-microkernel/spec.md`. They are untested
        by design, not a failure of the epic outcome. Their absence was confirmed, not assumed:
        `crates/huginn/core/src/kernel.rs` contains no `EventSink`, `emit(` or `Event::` reference, so
        the kernel publishes no composition lifecycle events.
-    5. The change modifies no Rust source. The package-level clippy gate (exit 0) and the executed
+    - **Item 5:** The change modifies no Rust source. The package-level clippy gate (exit 0) and the executed
        suites cover the runtime contract that the epic claims. The gate additionally requires Docker
        and the `just test-e2e-build` image.
-    6. No GitHub or Linear connector is exposed in this session's tool catalog (verified by tool
+    - **Item 6:** No GitHub or Linear connector is exposed in this session's tool catalog (verified by tool
        search).
-    7. Nondeterministic and credential-bearing; it would add no acceptance evidence over the
+    - **Item 7:** Nondeterministic and credential-bearing; it would add no acceptance evidence over the
        deterministic in-process fakes already used by the conformance and application suites.
-    8. The epic defines no user-facing substitution action, and the delivered slice recorded QA-02 ("substitution from an already open TUI") as outside the acceptance scenarios.
+    - **Item 8:** The epic defines no user-facing substitution action, and the delivered slice recorded QA-02 ("substitution from an already open TUI") as outside the acceptance scenarios.
 - Re-run prerequisite:
-    1. – 4. require a new SDD change under the epic planning policy, with its own slice issue in
+    - **Items 1–4:** require a new SDD change under the epic planning policy, with its own slice issue in
        GitHub, before a kernel-level event stream or semver rules can be implemented and accepted.
-    5. requires the documented prerequisites of `docs/development.md` and `dev/README.md`:
+    - **Item 5:** requires the documented prerequisites of `docs/development.md` and `dev/README.md`:
        `just setup`, Docker and the `just test-e2e-build` image, followed by `just ci-local`.
-    6. requires an authorized GitHub or Linear connector bound to the `dallay/cortex` organization.
-    7. requires a credentialed provider plus a deterministic-model harness so that the provider
+    - **Item 6:** requires an authorized GitHub or Linear connector bound to the `dallay/cortex` organization.
+    - **Item 7:** requires a credentialed provider plus a deterministic-model harness so that the provider
        response cannot change the assertion outcome.
-    8. requires an epic decision that defines the user-facing substitution action and its
+    - **Item 8:** requires an epic decision that defines the user-facing substitution action and its
        acceptance scenarios.
 
 ## Findings
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 | ID    | Severity | Scenario / location                                                                    | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Status                           |
 |-------|----------|----------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------|
