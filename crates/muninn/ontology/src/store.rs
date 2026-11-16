@@ -429,15 +429,6 @@ fn parse_inline(content: &str, _requested: &str) -> MemoryResult<serde_json::Val
     }
 }
 
-fn is_arrows_shape(data: &serde_json::Value) -> bool {
-    if let serde_json::Value::Object(map) = data {
-        map.get("nodes").map_or(false, |v| v.is_array())
-            && map.get("relationships").map_or(false, |v| v.is_array())
-    } else {
-        false
-    }
-}
-
 // -----------------------------------------------------------------------------
 // BoltOntology
 // -----------------------------------------------------------------------------
@@ -945,11 +936,7 @@ impl BoltOntology {
                     ("spec", bs(serde_json::to_string(&spec).unwrap_or_default())),
                     (
                         "error_message",
-                        bs(error_message
-                            .as_ref()
-                            .map(|s| s.as_str())
-                            .unwrap_or("")
-                            .to_owned()),
+                        bs(error_message.as_deref().unwrap_or("").to_owned()),
                     ),
                 ],
             )
@@ -1349,6 +1336,15 @@ mod tests {
         assert!(ontology_node_label("TvShow").is_some());
         assert!(ontology_node_label("").is_none());
         assert!(ontology_node_label("1invalid").is_none());
+    }
+
+    fn is_arrows_shape(data: &serde_json::Value) -> bool {
+        if let serde_json::Value::Object(map) = data {
+            map.get("nodes").is_some_and(|v| v.is_array())
+                && map.get("relationships").is_some_and(|v| v.is_array())
+        } else {
+            false
+        }
     }
 
     #[test]

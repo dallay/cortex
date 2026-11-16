@@ -97,10 +97,7 @@ fn poleo_relationships() -> Vec<RelationshipDef> {
     let e = "Event";
     let obj = "Object";
     let all = [p, o, l, e, obj];
-    let mut rels = Vec::new();
-
-    // Person relations
-    rels.push(RelationshipDef {
+    let mut rels = vec![RelationshipDef {
         r#type: "KNOWS".into(),
         source: p.into(),
         target: p.into(),
@@ -113,7 +110,7 @@ fn poleo_relationships() -> Vec<RelationshipDef> {
         unique_target: false,
         acyclic: false,
         allow_self: false,
-    });
+    }];
     rels.push(RelationshipDef {
         r#type: "ALIAS_OF".into(),
         source: p.into(),
@@ -332,7 +329,7 @@ pub fn get_template(name: &str) -> OntologyDocument {
     if name == "poleo" {
         return poleo_ontology();
     }
-    let available: Vec<&str> = list_templates().iter().copied().collect();
+    let available: Vec<&str> = list_templates().to_vec();
     panic!(
         "Unknown ontology template {:?}. Available: {:?}",
         name, available

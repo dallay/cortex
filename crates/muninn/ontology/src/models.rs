@@ -244,10 +244,8 @@ impl OntologyDocument {
 
         for et in &self.entity_types {
             let key = et.label.to_lowercase();
-            if known.contains_key(&key) {
+            if known.insert(key, et).is_some() {
                 problems.push(format!("duplicate entity label: {:?}", et.label));
-            } else {
-                known.insert(key, et);
             }
             if !POLEO_TYPES
                 .iter()
@@ -395,10 +393,10 @@ impl OntologyDocument {
         let mut data = serde_json::to_value(self).unwrap_or_default();
         // Sort entity_types and relationships for deterministic hashing
         if let Some(serde_json::Value::Array(arr)) = data.get_mut("entity_types") {
-            arr.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
+            arr.sort_by_key(|a| a.to_string());
         }
         if let Some(serde_json::Value::Array(arr)) = data.get_mut("relationships") {
-            arr.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
+            arr.sort_by_key(|a| a.to_string());
         }
         serde_json::to_string(&data).unwrap_or_default()
     }

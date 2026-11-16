@@ -175,7 +175,7 @@ impl MemoryObserver {
 
         // Sort by frequency
         let mut topics: Vec<_> = topic_counts.into_iter().collect();
-        topics.sort_by(|a, b| b.1.cmp(&a.1));
+        topics.sort_by_key(|x| std::cmp::Reverse(x.1));
         let top_topics: Vec<String> = topics.into_iter().take(5).map(|(k, _)| k).collect();
 
         let reflection = format!(

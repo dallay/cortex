@@ -23,21 +23,16 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 /// Supported tracing provider backends.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TracingProvider {
     /// No-op tracer — traces are collected but not exported.
+    #[default]
     None,
     /// OpenTelemetry-based tracing.
     OpenTelemetry,
     /// Opik-based tracing (LLM-focused).
     Opik,
-}
-
-impl Default for TracingProvider {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 impl std::fmt::Display for TracingProvider {
@@ -202,7 +197,7 @@ impl NoOpSpan {
                 span_id: Uuid::new_v4().to_string(),
                 parent_id,
                 name: name.to_owned(),
-                start_time: now as u64,
+                start_time: now,
                 end_time: 0,
                 status: SpanStatus::Unset,
                 status_description: None,

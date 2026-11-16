@@ -1251,6 +1251,9 @@ mod tests {
             }
             Command::Schema => panic!("bridge invocation must not select schema"),
             Command::Mcp { .. } => panic!("bridge invocation must not select MCP"),
+            Command::Stats { .. } => panic!("bridge invocation must not select stats"),
+            Command::Doctor => panic!("bridge invocation must not select doctor"),
+            Command::Ontology { .. } => panic!("bridge invocation must not select ontology"),
         }
     }
 

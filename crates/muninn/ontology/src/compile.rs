@@ -14,7 +14,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::models::{EntityTypeDef, OntologyDocument, RelationshipDef};
+use crate::models::{OntologyDocument, RelationshipDef};
 
 // -----------------------------------------------------------------------------
 // spaCy NER label -> POLE+O mapping
@@ -505,7 +505,7 @@ fn constraint_notes(rel: &MergedRelation) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{DomainInfo, PropertyDef};
+    use crate::models::{DomainInfo, EntityTypeDef, PropertyDef};
 
     fn make_doc(entities: Vec<EntityTypeDef>, relations: Vec<RelationshipDef>) -> OntologyDocument {
         OntologyDocument {
@@ -628,25 +628,13 @@ mod tests {
 
     #[test]
     fn compile_schema_canonicalizes_labels() {
-        let mut person = person_entity();
-        let mut org = org_entity();
-        let rel = RelationshipDef {
-            r#type: "WORKS_FOR".into(),
-            source: "person".into(),       // lowercase
-            target: "organization".into(), // lowercase
-            description: None,
-            threshold: None,
-            inverse: None,
-            unique_source: false,
-            unique_target: false,
-            acyclic: false,
-            allow_self: false,
-        };
+        let _person = person_entity();
+        let _org = org_entity();
         // Document with lowercase source/target in relation
         // validate_structure will pass since it's case-insensitive
         // but we need a valid doc, so use correct casing
         let doc = make_doc(
-            vec![person, org],
+            vec![_person, _org],
             vec![RelationshipDef {
                 r#type: "WORKS_FOR".into(),
                 source: "Person".into(),

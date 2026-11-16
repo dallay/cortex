@@ -102,7 +102,7 @@ const DEFAULT_LABEL_MAPPING: &[(&str, &str)] = &[
 /// Otherwise, falls back to `OBJECT` with the label as subtype.
 fn map_label_to_poleo(label: &str) -> (String, Option<String>) {
     let upper = label.to_uppercase();
-    if POLEO_TYPES.iter().any(|&pt| pt == upper.as_str()) {
+    if POLEO_TYPES.contains(&upper.as_str()) {
         return (upper, None);
     }
 
@@ -591,7 +591,7 @@ pub fn from_arrows(
         let lower = label.to_lowercase();
         let upper = label.to_uppercase();
         let is_known = DEFAULT_LABEL_MAPPING.iter().any(|(l, _)| *l == lower)
-            || POLEO_TYPES.iter().any(|&pt| pt == upper.as_str());
+            || POLEO_TYPES.contains(&upper.as_str());
 
         if !is_known {
             warnings.push(ImportWarning {

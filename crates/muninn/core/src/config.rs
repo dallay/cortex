@@ -1369,7 +1369,7 @@ fn default_nams_backoff() -> f64 {
 ///
 /// Aggregates all sub-configs into a single top-level struct. Callers construct
 /// this directly or deserialize from JSON/YAML.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct MemorySettings {
     /// Neo4j connection configuration.
     #[serde(default)]
@@ -1407,25 +1407,6 @@ pub struct MemorySettings {
     /// NAMS configuration.
     #[serde(default)]
     pub nams: NamsConfig,
-}
-
-impl Default for MemorySettings {
-    fn default() -> Self {
-        Self {
-            neo4j: Neo4jConfig::default(),
-            embedding: EmbeddingConfig::default(),
-            llm: None,
-            schema_config: SchemaConfig::default(),
-            extraction: ExtractionConfig::default(),
-            resolution: ResolutionConfig::default(),
-            memory: MemoryBehaviorConfig::default(),
-            search: SearchConfig::default(),
-            geocoding: GeocodingConfig::default(),
-            enrichment: EnrichmentConfig::default(),
-            backend: None,
-            nams: NamsConfig::default(),
-        }
-    }
 }
 
 impl MemorySettings {
