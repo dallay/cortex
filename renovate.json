@@ -19,7 +19,9 @@
     "area/dependencies"
   ],
   "minimumReleaseAge": "3 days",
-  "dependencyDashboard": true,
+  "dependencyDashboard": {
+    "enabled": true
+  },
   "prConcurrentLimit": 10,
   "semanticCommits": "enabled",
   "osvVulnerabilityAlerts": true,
