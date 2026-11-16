@@ -65,7 +65,7 @@ async function handleTest(id: string) {
       valid: false,
       status: "unhealthy",
       latencyMs: null,
-      error: null,
+      error: t("providers.testFailed"),
       warning: null,
       method: null,
     };
