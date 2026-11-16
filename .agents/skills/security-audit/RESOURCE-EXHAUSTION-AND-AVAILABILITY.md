@@ -48,10 +48,10 @@ Accounting uses attacker-influenceable IP, route, tenant, key prefix, task ID, o
 
 <!-- coderabbit-ai-generated:v1 -->
 
-<!-- coderabbit-ai-generated-section:v1:6290f577dfb43744c61e747db8aa05a617b1ff5da943c0f06d6b1f9c09a80738 -->
+<!-- coderabbit-ai-generated-section:v1:0105e5c6c07114290ab15de93af8cfdbb6dfb1026b9c4a95807ff2f844686a66 -->
 
 **Worker, pool, and priority starvation**
-Low-priority or attacker-controlled jobs hold shared locks, workers, database pools, event-loop turns, or scheduler priority needed by unrelated users. Require a path that bypasses queue/concurrency fairness, retains a slot beyond its deadline, or lets attacker-controlled work occupy a shared resource with no effective duration bound, even when queue/concurrency fairness is respected and no deadline is exceeded.
+Low-priority or attacker-controlled jobs hold shared locks, workers, database pools, event-loop turns, or scheduler priority needed by unrelated users. Require a path that bypasses queue/concurrency fairness, retains a slot beyond its deadline, or lets attacker-controlled work occupy the fair pool without an effective duration bound and prevent unrelated users from making progress.
 
 <!-- /coderabbit-ai-generated:v1 -->
 

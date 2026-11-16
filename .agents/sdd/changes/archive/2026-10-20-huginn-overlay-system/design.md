@@ -125,13 +125,13 @@ application of a key validates both against the current state; if there was a cl
 replacement or preemption, it is discarded. Esc consumed to close is not reinserted.
 Paste keeps a fresh epoch per lease; fragments of a revoked epoch are discarded.
 
-| Current origin                         | Adaptation inside Overlay                                                                                                                   | Host retention / close                                                                                        |
-|-----------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------|
-| Modal/Approval                          | exact Approval payload, own `oneshot` and epoch; never a plugin requested `OverlayKind`                                                       | Only the host creates/resolves; close/shutdown invalidates the epoch and resolves as cancelled, with no concession                    |
-| `plugin_dialog` / `DialogHandle`        | `Dialog(String)` keeps exactly handle, registration and associated renderer/callback; typed surfaces use their own variant and payload   | Revocation cancels local work; no substitute contribution is looked up by name                                |
-| `workflow` / `HostWorkflow` / `Pending` | `Workflow` keeps the registered definition, fields, callback, continuation and context; an optional surface does not replace the workflow                | Pending/cancel/abort stay under the host; a receipt applies only if the origin ticket and operation are still current |
-| `SettingsDialog`                        | adapts to `Overlay::Settings` with an exact editable copy, without a second authority                                                           | persistence uses the captured snapshot; a late receipt does not close/edit the current overlay nor affect Approval          |
-| Widgets                                 | widgets that represent modal interaction are integrated as variant payload; purely informative widgets stay in their `UiView` region | no informative widget owns focus/active overlay state                                                     |
+| Current origin                          | Adaptation inside Overlay                                                                                                                 | Host retention / close                                                                                                |
+|-----------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| Modal/Approval                          | exact Approval payload, own `oneshot` and epoch; never a plugin requested `OverlayKind`                                                   | Only the host creates/resolves; close/shutdown invalidates the epoch and resolves as cancelled, with no concession    |
+| `plugin_dialog` / `DialogHandle`        | `Dialog(String)` keeps exactly handle, registration and associated renderer/callback; typed surfaces use their own variant and payload    | Revocation cancels local work; no substitute contribution is looked up by name                                        |
+| `workflow` / `HostWorkflow` / `Pending` | `Workflow` keeps the registered definition, fields, callback, continuation and context; an optional surface does not replace the workflow | Pending/cancel/abort stay under the host; a receipt applies only if the origin ticket and operation are still current |
+| `SettingsDialog`                        | adapts to `Overlay::Settings` with an exact editable copy, without a second authority                                                     | persistence uses the captured snapshot; a late receipt does not close/edit the current overlay nor affect Approval    |
+| Widgets                                 | widgets that represent modal interaction are integrated as variant payload; purely informative widgets stay in their `UiView` region      | no informative widget owns focus/active overlay state                                                                 |
 
 The typed definition can be `Overlay { kind, payload }` with payloads that
 keep their legacy types during this migration; `OverlaySnapshot` only exposes
@@ -231,13 +231,13 @@ input/render capability nor Approval resolution.
 
 ## Test strategy
 
-| Layer              | What to test                                                                                                   | Approach                                                           |
-|-------------------|--------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------|
-| Unit             | authorization, ticket/origin/revision, monotonicity, lease/paste, transitions and redacted snapshot               | controlled clock/channels, overflow fails closed                 |
+| Layer            | What to test                                                                                           | Approach                                                   |
+|------------------|--------------------------------------------------------------------------------------------------------|------------------------------------------------------------|
+| Unit             | authorization, ticket/origin/revision, monotonicity, lease/paste, transitions and redacted snapshot    | controlled clock/channels, overflow fails closed           |
 | Host integration | real opening, settings, workflows, preemption, cancellation, reentrant callbacks/Drop and late results | `UiState`/terminal/render harness, barriers to order races |
-| Contracts        | declarative commands, unreachable Approval, exact registration                                             | plugin-api tests and host dispatch                                  |
-| Persistence/PTY | categories outside conversation, close without a reinjected key, >256 without truncating the session                      | existing projection/session and PTY tests                         |
-| Selection/bar    | versioned local snapshot and connection events                                                              | application/core unit tests and the UI consumer                     |
+| Contracts        | declarative commands, unreachable Approval, exact registration                                         | plugin-api tests and host dispatch                         |
+| Persistence/PTY  | categories outside conversation, close without a reinjected key, >256 without truncating the session   | existing projection/session and PTY tests                  |
+| Selection/bar    | versioned local snapshot and connection events                                                         | application/core unit tests and the UI consumer            |
 
 ## Migration / Deployment
 

@@ -157,8 +157,7 @@ deadline", "Drain and resumption", "Rebinding of application consumers".
 The following items are known gaps of EPIC 01. They are explicitly deferred in slice issue #509 and
 are **not** part of the epic acceptance outcome:
 
-- A kernel-level lifecycle event stream for subscribers. Typed events exist at loop scope
-  (`huginn_core::Event`, `EventSink`, `ScopedEventSink`), but the kernel does not publish
+- A kernel-level lifecycle event stream for subscribers. Typed events exist at loop scope (`huginn_core::Event`, `EventSink`, `ScopedEventSink`), but the kernel does not publish
   discovered, activated, deactivated, replaced, blocked or failed composition events.
 - Semantic-version compatibility rules beyond the explicit major version of a `ServiceId`.
 - Multi-candidate provider selection. The kernel resolves exactly one provider per service and

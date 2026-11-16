@@ -68,13 +68,12 @@ An extension package gains host authority beyond its declared scope, a lower-tru
 
 <!-- coderabbit-ai-generated:v1 -->
 
-<!-- coderabbit-ai-generated-section:v1:1ee445f0463a9d08c00e7eb51a14e1e51cf658c1c0ffba093d404a1693a41134 -->
+<!-- coderabbit-ai-generated-section:v1:e8b711ae0c97fde666cbca22451353f9036c665b799363edb57a269097dbe575 -->
 
-1. Name the lower-trust actor and distinguish reader access from writer control. Identify the controllable source/cache/artifact/metadata or the published artifact exposing a credential to a lower-trust reader; disclosure does not require the reader to control its source or contents. Identify the consuming trusted job, updater, or credential consumer and resulting unauthorized publication, code inclusion, secret disclosure, or privileged execution.
-2. When the suspected path involves an artifact handoff, prove artifact identity across the broken handoff: a different mutable name or unbound digest must reach a real consumer. For credential-disclosure findings where no artifact substitution is involved, this requirement does not apply. For workflow-command findings, prove attacker-controlled input reaches a privileged command; no artifact need be produced or consumed.
+1. For unauthorized publication, code inclusion, or privileged execution, name the lower-trust actor, controllable source/cache/artifact/metadata, consuming trusted job or updater, and resulting impact. For credential disclosure, name the lower-trust reader, exposed credential, disclosure source, and resulting authority or impact; a lower-trust writer or trusted consuming job is not required.
+2. When a finding involves an artifact handoff, prove artifact identity across the broken handoff: a different mutable name or unbound digest must reach a real consumer. Workflow-command findings may instead prove privileged shell-command injection without artifact substitution or an artifact consumer.
 3. Verify built-in package-manager, repository-host, registry, and signing defaults for the pinned version. Unknown hosted controls require `needs_validation`.
 4. Keep local validation bounded: use a harmless fixture repository, dummy credential marker, local registry/config, and non-production artifact namespace. Do not publish or alter a real release.
-5. Return `confirmed` only with a complete source-visible path and meaningful result. Return `needs_validation` with the precise branch, runner, registry, signing, or deployment fact an owner must observe.
-
+5. Return `confirmed` only with a complete source-visible handoff and meaningful result. Return `needs_validation` with the precise branch, runner, registry, signing, or deployment fact an owner must observe.
 
 <!-- /coderabbit-ai-generated:v1 -->

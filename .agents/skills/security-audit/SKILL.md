@@ -122,9 +122,9 @@ The ledger makes spend countable: one unit is roughly one hunter assignment, and
 
 <!-- coderabbit-ai-generated:v1 -->
 
-<!-- coderabbit-ai-generated-section:v1:30f89605c7cbac09a5a0d837852751fc4c33a9cdac46001b3c4245c4575407e4 -->
+<!-- coderabbit-ai-generated-section:v1:ce7b9b2b98a24559b31f1def86b4f23df6af0ad8d34a7a04e35849e666ad77be -->
 
-Apply the strict budget gate before launching any reconnaissance agent. Reserve the four baseline reconnaissance calls, at least one hunter call, one final post-wave critic for `quick` or one post-wave plus one distinct final-clean critic for `standard`/`deep`, and at least one verifier call. Recalculate affordability before launching any agent, including each focused reconnaissance call: the budget must cover that call and all remaining required calls. If the requested budget cannot fund that minimum, launch no agent: ask for a larger budget, narrower scope, or different profile. If the request remains unchanged, set `run_status: "incomplete"` with `incomplete_reason: "budget_cannot_fund_reconnaissance_and_reserves"` and report that no audit pass ran.
+Apply the strict budget gate before launching any reconnaissance agent. Reserve the four baseline reconnaissance calls, at least one hunter call for the required first wave, one final post-wave critic for `quick` or one post-wave plus one distinct final-clean critic for `standard`/`deep`, and at least one verifier call. Add focused reconnaissance only after repeating this gate for each extra call. If the requested budget cannot fund that minimum, launch no agent: ask for a larger budget, narrower scope, or different profile. If the request remains unchanged, set `run_status: "incomplete"` with `incomplete_reason: "budget_cannot_fund_reconnaissance_and_reserves"` and report that no audit pass ran.
 
 <!-- /coderabbit-ai-generated:v1 -->
 

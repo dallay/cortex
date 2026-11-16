@@ -142,13 +142,14 @@ For `needs_validation`, require it to check:
 
 Each verifier returns exactly one JSON object: `{"decision":"verified","fingerprint":"..."}` or `{"decision":"replace","reason":"...","record":{...}}`, with no surrounding prose. A replacement record must match its `confirmed`, `needs_validation`, or `rejected` schema branch. Treat a malformed or prose-wrapped Phase 5 result the same way as in Phase 3: discard it without repairing it and re-run with a fresh verifier when the budget permits.
 
-Do not apply a Phase 5 replacement as final when it promotes a record to a stronger verdict, including any promotion to `confirmed`, or materially changes the root cause, trace, execution input or observed result, demonstrated impact, or severity. Give that complete replacement to a new independent verifier that did not hunt, perform Phase 3 validation, or propose the Phase 5 replacement. The new verifier rechecks the current source and independently reproduces any decisive local result under the execution boundary, then returns `verified` or another replacement. Apply a material replacement only after this fresh verification. If another material replacement results, repeat with a fresh verifier. If budget or independence is unavailable, remove the disputed record from `findings.json`, keep its ledger unit as an unresolved candidate, and set `run_status: "incomplete"` with an exact `incomplete_reason`. Non-material wording or repository-line corrections may be applied directly when they do not change meaning or evidence.
+Do not apply a Phase 5 replacement as final when it promotes a record to a stronger verdict, including any promotion to `confirmed`, or materially changes the root cause, trace, execution input or observed result, demonstrated impact, or severity. Give that complete replacement to a new independent verifier that did not hunt, perform Phase 3 validation, or propose the Phase 5 replacement. The new verifier rechecks the current source and independently reproduces any decisive local result under the execution boundary, then returns `verified` or another replacement. Apply a material replacement only after this fresh verification. If another material replacement results, repeat with a fresh verifier. If budget or independence is unavailable, remove the disputed record from `findings.json`, keep its ledger unit as an unresolved candidate, and set `run_status: "incomplete"` with an exact `incomplete_reason`. Non-material wording or repository-line corrections may be applied directly when
+they do not change meaning or evidence.
 
 <!-- coderabbit-ai-generated:v1 -->
 
-<!-- coderabbit-ai-generated-section:v1:c54ffd7578b0d877b74370e54da220ace1aeb7b38b356d352cfa24d2868bfac9 -->
+<!-- coderabbit-ai-generated-section:v1:d95971690d1bf9ed9fbfca5f2c27d1b61013ad411524b1c765674c83cf9b37d5 -->
 
-After every applied replacement, rerun both validators and update linked ledger decisions. If a final verifier identifies a separate root cause, assign a new fingerprint and send it through independent candidate validation before inclusion. Set `run_status: "complete"` only when every ledger candidate has an independent final disposition and every retained `confirmed` or `needs_validation` record passes Phase 5; retained records rejected in Phase 3 already have their independent final disposition.
+After every applied replacement, rerun both validators and update linked ledger decisions. If a final verifier identifies a separate root cause, assign a new fingerprint and send it through independent candidate validation before inclusion. Set `run_status: "complete"` only when every ledger candidate has an independent final disposition. A record rejected by the independent Phase 3 verifier is independently disposed and does not require Phase 5; every record eligible for Phase 5 must pass it.
 
 <!-- /coderabbit-ai-generated:v1 -->
 
@@ -156,13 +157,7 @@ Do not verify only `confirmed` records. A misleading `needs_validation` handoff 
 
 ### Phase 6: Produce target-neutral reports from final records
 
-<!-- coderabbit-ai-generated:v1 -->
-
-<!-- coderabbit-ai-generated-section:v1:3f042edae258e1c061f0dd32e2798836f7be62268c26ff4c27f901a9d1af052d -->
-
-Only after Phase 5 passes for every `confirmed` or `needs_validation` record retained in `findings.json` and retained Phase 3 rejections have their independent final disposition, derive prose from the final records, the ledger, and the hunter `hardening` notes retained in ledger bookkeeping. An incomplete run may report independently verified records, but it must identify each unresolved ledger candidate and must not present it as a finding. The prose files never change a verdict, severity, blocker, or demonstrated impact.
-
-<!-- /coderabbit-ai-generated:v1 -->
+Only after Phase 5 passes for every record retained in `findings.json`, derive prose from the final records, the ledger, and the hunter `hardening` notes retained in ledger bookkeeping. An incomplete run may report independently verified records, but it must identify each unresolved ledger candidate and must not present it as a finding. The prose files never change a verdict, severity, blocker, or demonstrated impact.
 
 #### `REPORT.md`
 
@@ -170,13 +165,13 @@ Write:
 
 <!-- coderabbit-ai-generated:v1 -->
 
-<!-- coderabbit-ai-generated-section:v1:bd9611420a915994d8d3251bcdbfa6d3391cf498ad7488c2f854b17d7d3e9e62 -->
+<!-- coderabbit-ai-generated-section:v1:50222785dd1aa5ebada98bd522fa102f79d040c377b3f119f55e04b32e724e28 -->
 
 1. Run profile, scope, budget (if set) with agents spent versus planned, source ref, sandboxed source-and-local-only execution statement, prior-run use, and explicit deferred and out-of-scope coverage. Name carried same-source confirmations and changed-source revalidations. A `quick`, scoped, budget-limited, or incomplete run states plainly that it is a partial pass. If candidate validation exhausted a strict budget, state that the run is incomplete and list every unvalidated fingerprint and linked unit; do not describe those candidates as findings. If the budget prevented a mandatory critic, state which critic did not run and make no clean-coverage claim.
 2. One short security posture summary.
 3. A confirmed-findings table: severity, title, affected boundary, and one-line observed result.
 4. Each confirmed finding: repository source location, lower-trust principal, target-native bounded reproduction, conditions, actual result, impact, priority rationale, and smallest source fix.
-5. A separate `NEEDS VALIDATION` table. Give each lead's title, repository trace, exact blocker, and the steps from its applicable validation-plan fields: a bounded local next step when `local` applies and a safe owner-observed deployment check when `deployment` applies. Local-only leads do not require a deployment check. Do not assign severity or call it a confirmed vulnerability.
+5. A separate `NEEDS VALIDATION` table. Give each lead's title, repository trace, exact blocker, and only applicable validation steps: a bounded local next step when relevant, and a safe owner-observed deployment check only when a deployment exists. Do not require or invent an inapplicable check. Do not assign severity or call it a confirmed vulnerability.
 6. Separate hardening notes and positive source patterns.
 7. Coverage summary from the ledger: covered, candidate, blocked, and deferred counts, plus important exclusions and the final critic result.
 
