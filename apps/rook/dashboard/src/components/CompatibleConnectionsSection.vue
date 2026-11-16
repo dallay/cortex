@@ -61,7 +61,14 @@ async function handleTest(id: string) {
   testingIds.value = new Set([...testingIds.value, id]);
   try {
     const result = await props.test(id);
-    testResults.value[id] = result;
+    testResults.value[id] = result ?? {
+      valid: false,
+      status: "unhealthy",
+      latencyMs: null,
+      error: null,
+      warning: null,
+      method: null,
+    };
     if (result === null) return;
     await props.refresh();
   } finally {

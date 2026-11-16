@@ -203,8 +203,14 @@ describe("CompatibleConnectionsSection", () => {
 			?.trigger("click");
 		await flushPromises();
 		expect(mockFetch).not.toHaveBeenCalled();
-		// When test returns null, the component does not render a success/error message
-		expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+		expect(wrapper.get('[role="alert"]').text()).toBe("Connection failed");
+		expect(
+			wrapper
+				.find('[data-testid="compatible-connection-card"]')
+				.findAll("button")
+				.at(-1)
+				?.attributes("disabled"),
+		).toBeUndefined();
 		expect(wrapper.find('[role="status"]').exists()).toBe(false);
 		expect(wrapper.text()).toContain("My Endpoint");
 	});
