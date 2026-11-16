@@ -193,6 +193,7 @@ describe("CompatibleConnectionsSection", () => {
 	});
 
 	it("keeps connection data and displays error on null test", async () => {
+		mockFetch.mockClear();
 		mockProviders.push(makeConnection());
 		mockTest.mockResolvedValue(null);
 		const wrapper = mountSection();
