@@ -4,13 +4,13 @@
 //!
 //! Four primitives, all idempotent and dry-runnable:
 //!
-//! * [`dedupe_entities`] — find pairs of entities with high embedding
+//! * `dedupe_entities` — find pairs of entities with high embedding
 //!   similarity and either flag them with `:SAME_AS` or report them.
-//! * [`summarize_long_traces`] — find traces with many steps that
+//! * `summarize_long_traces` — find traces with many steps that
 //!   haven't been summarized yet.
-//! * [`detect_superseded_preferences`] — find preferences with
+//! * `detect_superseded_preferences` — find preferences with
 //!   near-duplicate content suggesting one supersedes the other.
-//! * [`archive_expired_conversations`] — archive old conversations
+//! * `archive_expired_conversations` — archive old conversations
 //!   based on TTL.
 //!
 //! Each primitive:

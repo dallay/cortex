@@ -1,6 +1,6 @@
 //! Built-in ontologies: POLE+O plus domain catalog templates.
 //!
-//! [`POLEO_ONTOLOGY`] is the library default — the same five entity types
+//! `POLEO_ONTOLOGY` is the library default — the same five entity types
 //! and relationship types that the schema declares, but written as GLiNER2.5
 //! annotation guidelines with explicit endpoint typing and conservative
 //! decoding constraints.

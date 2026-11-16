@@ -1,9 +1,9 @@
 //! The ``client.ontology`` surface, as a backend-neutral trait.
 //!
-//! Both implementations satisfy it: [`BoltOntology`] (bolt, local Neo4j) and
+//! Both implementations satisfy it: `BoltOntology` (bolt, local Neo4j) and
 //! any future hosted backend (NAMS, REST). Typing the accessor as
 //! [`OntologyApi`] keeps call sites backend-agnostic; operations a backend
-//! cannot honour return [`MemoryError::NotSupported`] at runtime.
+//! cannot honour return `MemoryError::NotSupported` at runtime.
 //!
 //! This module provides the Rust equivalent of `neo4j_agent_memory.ontology.protocol`.
 
@@ -21,7 +21,7 @@ use crate::models::{
 ///
 /// Implementors store ontologies in different backends (bolt, REST, etc.)
 /// but expose the same lifecycle surface. Operations a backend cannot honour
-/// return [`MemoryError::NotSupported`].
+/// return `MemoryError::NotSupported`.
 #[async_trait]
 pub trait OntologyApi: Send + Sync {
     /// List system templates + workspace-owned ontologies (active flagged).

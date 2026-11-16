@@ -157,10 +157,10 @@ fn subtype_label(type_name: &str, subtype: &str, declared: &HashSet<String>) -> 
 /// label is what relationship endpoints refer to.
 ///
 /// A type name that is not one of the five POLE+O types is mapped onto one
-/// using [`map_label_to_poleo`] and keeps its own name as the subtype.
+/// using `map_label_to_poleo` and keeps its own name as the subtype.
 ///
 /// A subtype name that collides with another declared label is qualified as
-/// `TYPE_SUBTYPE` by [`subtype_label`].
+/// `TYPE_SUBTYPE` by `subtype_label`.
 ///
 /// `RelationTypeConfig` is expanded over `source_types x target_types`;
 /// an empty list on either side means "every declared base type".
