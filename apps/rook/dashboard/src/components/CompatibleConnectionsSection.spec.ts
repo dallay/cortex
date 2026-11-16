@@ -37,7 +37,9 @@ function makeConnection(overrides = {}): ProviderConnectionResponse {
 
 describe("CompatibleConnectionsSection", () => {
 	beforeEach(() => {
-		vi.clearAllMocks();
+		mockUpdate.mockReset();
+		mockTest.mockReset();
+		mockFetch.mockReset();
 		mockProviders.length = 0;
 		mockUpdate.mockResolvedValue(undefined);
 		mockTest.mockResolvedValue({ valid: true });
@@ -193,7 +195,6 @@ describe("CompatibleConnectionsSection", () => {
 	});
 
 	it("keeps connection data and displays error on null test", async () => {
-		mockFetch.mockClear();
 		mockProviders.push(makeConnection());
 		mockTest.mockResolvedValue(null);
 		const wrapper = mountSection();
@@ -218,7 +219,6 @@ describe("CompatibleConnectionsSection", () => {
 	});
 
 	it("tests connections sequentially and displays each result before continuing", async () => {
-		mockFetch.mockClear();
 		mockProviders.push(makeConnection(), makeConnection({ id: "conn-2" }));
 		let finishFirst!: (value: { valid: boolean }) => void;
 		mockTest.mockImplementationOnce(
