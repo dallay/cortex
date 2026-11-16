@@ -232,7 +232,7 @@ describe("CompatibleConnectionsSection", () => {
 
 	it("tests connections sequentially and displays each result before continuing", async () => {
 		mockProviders.push(makeConnection(), makeConnection({ id: "conn-2" }));
-		let finishFirst!: (value: { valid: boolean }) => void;
+		let finishFirst!: (value: TestConnectionResponse) => void;
 		mockTest.mockImplementationOnce(
 			() =>
 				new Promise((resolve) => {
@@ -242,7 +242,14 @@ describe("CompatibleConnectionsSection", () => {
 		const wrapper = mountSection();
 		await wrapper.find('[data-testid="test-all-compatible"]').trigger("click");
 		expect(mockTest.mock.calls).toEqual([["conn-1"]]);
-		finishFirst({ valid: true });
+		finishFirst({
+			valid: true,
+			status: "healthy",
+			latencyMs: 100,
+			error: null,
+			warning: null,
+			method: null,
+		});
 		await flushPromises();
 		expect(mockTest.mock.calls).toEqual([["conn-1"], ["conn-2"]]);
 		expect(mockFetch).toHaveBeenCalledTimes(2);
