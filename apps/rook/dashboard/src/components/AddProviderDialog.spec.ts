@@ -1186,6 +1186,7 @@ describe("AddProviderDialog — auth type gating", () => {
 			{
 				id: "ollama",
 				label: "Ollama",
+				category: "local",
 				protocol: "ollamaNative",
 				authKinds: ["apiKey"],
 				supportsOAuth: false,
@@ -1218,6 +1219,7 @@ describe("AddProviderDialog — auth type gating", () => {
 			{
 				id: "azure-openai",
 				label: "Azure OpenAI",
+				category: "oauth",
 				protocol: "openAiChat",
 				authKinds: ["oauth"],
 				supportsOAuth: true,

@@ -230,7 +230,7 @@ pub enum MessageContent {
     },
     ToolResult {
         tool_use_id: String,
-        content: Vec<MessageContent>,
+        content: Vec<Self>,
     },
 }
 
@@ -280,7 +280,7 @@ pub struct Message {
 
 /// Complete provider-neutral function call attached to an assistant message
 /// or completion. `id` is optional because some providers do not supply one.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageToolCall {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
@@ -423,11 +423,11 @@ impl HealthStatus {
     /// connection (`Healthy` and `Warning`). `Warning` is considered
     /// healthy because credentials are accepted by the upstream — the
     /// caller is simply rate-limited or has not yet configured a key.
-    pub fn is_healthy(&self) -> bool {
+    pub const fn is_healthy(&self) -> bool {
         matches!(self, Self::Healthy { .. } | Self::Warning { .. })
     }
 
-    pub fn provider_id(&self) -> &ProviderId {
+    pub const fn provider_id(&self) -> &ProviderId {
         match self {
             Self::Healthy { provider, .. }
             | Self::Warning { provider, .. }
@@ -436,7 +436,7 @@ impl HealthStatus {
         }
     }
 
-    pub fn latency_ms(&self) -> Option<u64> {
+    pub const fn latency_ms(&self) -> Option<u64> {
         match self {
             Self::Healthy { latency_ms, .. } => Some(*latency_ms),
             Self::Warning { latency_ms, .. } => Some(*latency_ms),

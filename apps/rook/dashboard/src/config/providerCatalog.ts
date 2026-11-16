@@ -42,7 +42,14 @@ export type ProviderKind = string;
 export type AuthType = "apikey" | "oauth";
 
 /** Coarse grouping used by the catalog view (filters + section headers). */
-export type CategoryKind = "api-key" | "oauth" | "local";
+export type CategoryKind =
+	| "compatible"
+	| "oauth"
+	| "ide"
+	| "api-key"
+	| "free"
+	| "local"
+	| "other";
 
 /** Single static entry in the provider catalog. */
 export interface CatalogEntry {
@@ -92,7 +99,7 @@ export interface CatalogEntry {
 }
 
 /**
- * Shared defaults for API-key cloud providers (5 of 6 kinds).
+ * Shared defaults for API-key cloud providers.
  * Spread into entries to avoid repeating the same two fields —
  * Sonar-flagged duplication with zero information content.
  */
@@ -101,12 +108,60 @@ const API_KEY_DEFAULTS = {
 	authTypes: ["apikey"],
 } as const;
 
+const OTHER_DEFAULTS = {
+	category: "other",
+	authTypes: ["apikey"],
+} as const;
+
 /**
- * The full provider catalog. Order is intentional: API-key cloud
- * providers first (most common), then local. This order is also the
- * default render order in the catalog view.
+ * The full provider catalog. Order follows the category order defined
+ * by the backend: compatible first, then OAuth, API-key, local, other.
+ * This array provides presentation metadata (icons, brand URLs, default
+ * models) that the backend does not carry. The authoritative category
+ * comes from the backend `ProviderDescriptor.category` field.
  */
 export const PROVIDER_KINDS: readonly CatalogEntry[] = [
+	// Compatible providers
+	{
+		kind: "openai-compatible",
+		category: "compatible",
+		displayNameKey: "providers.kind.openaiCompatible.name",
+		defaultBaseUrl: "",
+		authTypes: ["apikey"],
+		descriptionKey: "providers.kind.openaiCompatible.description",
+		defaultModels: [],
+	},
+	{
+		kind: "anthropic-compatible",
+		category: "compatible",
+		displayNameKey: "providers.kind.anthropicCompatible.name",
+		defaultBaseUrl: "",
+		authTypes: ["apikey"],
+		descriptionKey: "providers.kind.anthropicCompatible.description",
+		defaultModels: [],
+	},
+	// OAuth providers
+	{
+		kind: "openai-codex",
+		category: "oauth",
+		displayNameKey: "providers.kind.openaiCodex.name",
+		defaultBaseUrl: "",
+		authTypes: ["apikey"],
+		descriptionKey: "providers.kind.openaiCodex.description",
+		defaultModels: [],
+	},
+	{
+		kind: "azure-openai",
+		category: "oauth",
+		defaultBaseUrl: "",
+		authTypes: ["oauth"],
+		displayNameKey: "providers.kind.azureOpenai.name",
+		brandUrl: "https://azure.microsoft.com/products/ai-services/openai-service",
+		descriptionKey: "providers.kind.azureOpenai.description",
+		docsUrl: "https://learn.microsoft.com/azure/ai-services/openai/",
+		defaultModels: [],
+	},
+	// API Key providers
 	{
 		kind: "openai",
 		...API_KEY_DEFAULTS,
@@ -156,17 +211,6 @@ export const PROVIDER_KINDS: readonly CatalogEntry[] = [
 		],
 	},
 	{
-		kind: "azure-openai",
-		category: "oauth",
-		defaultBaseUrl: "",
-		authTypes: ["oauth"],
-		displayNameKey: "providers.kind.azureOpenai.name",
-		brandUrl: "https://azure.microsoft.com/products/ai-services/openai-service",
-		descriptionKey: "providers.kind.azureOpenai.description",
-		docsUrl: "https://learn.microsoft.com/azure/ai-services/openai/",
-		defaultModels: [],
-	},
-	{
 		kind: "groq",
 		...API_KEY_DEFAULTS,
 		displayNameKey: "providers.kind.groq.name",
@@ -182,16 +226,35 @@ export const PROVIDER_KINDS: readonly CatalogEntry[] = [
 		],
 	},
 	{
-		kind: "ollama",
-		displayNameKey: "providers.kind.ollama.name",
-		category: "local",
-		defaultBaseUrl: "http://localhost:11434",
-		iconFile: "ollama.svg",
-		brandUrl: "https://ollama.com",
-		authTypes: ["apikey"],
-		descriptionKey: "providers.kind.ollama.description",
-		docsUrl: "https://github.com/ollama/ollama/blob/main/docs/api.md",
-		defaultModels: [],
+		kind: "xai",
+		...API_KEY_DEFAULTS,
+		displayNameKey: "providers.kind.xai.name",
+		defaultBaseUrl: "https://api.x.ai/v1",
+		descriptionKey: "providers.kind.xai.description",
+		docsUrl: "https://docs.x.ai/",
+		defaultModels: ["grok-2", "grok-2-mini"],
+	},
+	{
+		kind: "mistral",
+		...API_KEY_DEFAULTS,
+		displayNameKey: "providers.kind.mistral.name",
+		defaultBaseUrl: "https://api.mistral.ai/v1",
+		descriptionKey: "providers.kind.mistral.description",
+		docsUrl: "https://docs.mistral.ai/",
+		defaultModels: [
+			"mistral-large-latest",
+			"mistral-small-latest",
+			"codestral-latest",
+		],
+	},
+	{
+		kind: "deepseek",
+		...API_KEY_DEFAULTS,
+		displayNameKey: "providers.kind.deepseek.name",
+		defaultBaseUrl: "https://api.deepseek.com/v1",
+		descriptionKey: "providers.kind.deepseek.description",
+		docsUrl: "https://api-docs.deepseek.com/",
+		defaultModels: ["deepseek-chat", "deepseek-reasoner"],
 	},
 	{
 		kind: "ollama-cloud",
@@ -205,6 +268,72 @@ export const PROVIDER_KINDS: readonly CatalogEntry[] = [
 		docsUrl: "https://docs.ollama.com/api-reference/chat.md",
 		defaultModels: [],
 	},
+	// Local providers
+	{
+		kind: "ollama",
+		displayNameKey: "providers.kind.ollama.name",
+		category: "local",
+		defaultBaseUrl: "http://localhost:11434",
+		iconFile: "ollama.svg",
+		brandUrl: "https://ollama.com",
+		authTypes: ["apikey"],
+		descriptionKey: "providers.kind.ollama.description",
+		docsUrl: "https://github.com/ollama/ollama/blob/main/docs/api.md",
+		defaultModels: [],
+	},
+	// Other providers
+	{
+		kind: "together",
+		...OTHER_DEFAULTS,
+		displayNameKey: "providers.kind.together.name",
+		defaultBaseUrl: "https://api.together.xyz/v1",
+		descriptionKey: "providers.kind.together.description",
+		docsUrl: "https://docs.together.ai/",
+		defaultModels: ["meta-llama/Llama-3.3-70B-Instruct-Turbo"],
+	},
+	{
+		kind: "fireworks",
+		...OTHER_DEFAULTS,
+		displayNameKey: "providers.kind.fireworks.name",
+		defaultBaseUrl: "https://api.fireworks.ai/inference/v1",
+		descriptionKey: "providers.kind.fireworks.description",
+		docsUrl: "https://docs.fireworks.ai/",
+		defaultModels: ["accounts/fireworks/models/llama-v3p3-70b-instruct"],
+	},
+	{
+		kind: "cerebras",
+		...OTHER_DEFAULTS,
+		displayNameKey: "providers.kind.cerebras.name",
+		defaultBaseUrl: "https://api.cerebras.ai/v1",
+		descriptionKey: "providers.kind.cerebras.description",
+		docsUrl: "https://docs.cerebras.ai/",
+		defaultModels: ["llama3.1-8b", "llama-3.3-70b"],
+	},
+	{
+		kind: "openrouter",
+		...OTHER_DEFAULTS,
+		displayNameKey: "providers.kind.openrouter.name",
+		defaultBaseUrl: "https://openrouter.ai/api/v1",
+		descriptionKey: "providers.kind.openrouter.description",
+		docsUrl: "https://openrouter.ai/docs",
+		defaultModels: ["openai/gpt-4o", "anthropic/claude-sonnet-4"],
+	},
+	{
+		kind: "nan",
+		...OTHER_DEFAULTS,
+		displayNameKey: "providers.kind.nan.name",
+		defaultBaseUrl: "https://api.nan.builders/v1",
+		descriptionKey: "providers.kind.nan.description",
+		defaultModels: [
+			"deepseek-v4-flash",
+			"glm5.3",
+			"glm5.3-flash",
+			"qwen3.8-flash",
+			"qwen3.6",
+			"mimo-v2.6-flash",
+			"gemma4",
+		],
+	},
 ] as const;
 
 /** Catalog filter categories — the 3 grouping buckets used by the view. */
@@ -216,9 +345,9 @@ export interface CategoryDescriptor {
 
 export const CATEGORIES: readonly CategoryDescriptor[] = [
 	{
-		kind: "api-key",
-		displayNameKey: "providers.category.apiKey.name",
-		descriptionKey: "providers.category.apiKey.description",
+		kind: "compatible",
+		displayNameKey: "providers.category.compatible.name",
+		descriptionKey: "providers.category.compatible.description",
 	},
 	{
 		kind: "oauth",
@@ -226,9 +355,29 @@ export const CATEGORIES: readonly CategoryDescriptor[] = [
 		descriptionKey: "providers.category.oauth.description",
 	},
 	{
+		kind: "ide",
+		displayNameKey: "providers.category.ide.name",
+		descriptionKey: "providers.category.ide.description",
+	},
+	{
+		kind: "api-key",
+		displayNameKey: "providers.category.apiKey.name",
+		descriptionKey: "providers.category.apiKey.description",
+	},
+	{
+		kind: "free",
+		displayNameKey: "providers.category.free.name",
+		descriptionKey: "providers.category.free.description",
+	},
+	{
 		kind: "local",
 		displayNameKey: "providers.category.local.name",
 		descriptionKey: "providers.category.local.description",
+	},
+	{
+		kind: "other",
+		displayNameKey: "providers.category.other.name",
+		descriptionKey: "providers.category.other.description",
 	},
 ] as const;
 
@@ -244,7 +393,7 @@ export function findCatalogEntry(kind: ProviderKind): CatalogEntry {
 	if (!entry) {
 		return {
 			kind,
-			category: "api-key",
+			category: "other",
 			displayNameKey: "",
 			defaultBaseUrl: "",
 			authTypes: ["apikey"],

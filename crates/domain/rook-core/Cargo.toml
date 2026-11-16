@@ -32,3 +32,6 @@ tracing = "0.1"
 # Hashing (for cache keys)
 sha2 = "0.11"
 hex = "0.4"
+
+[lints]
+workspace = true

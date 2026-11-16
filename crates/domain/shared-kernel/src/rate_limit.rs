@@ -101,7 +101,7 @@ mod tests {
 
         let zero_rpm_rule = RateLimitRule {
             requests_per_minute: 0,
-            ..valid_rule.clone()
+            ..valid_rule
         };
         assert_eq!(
             zero_rpm_rule.validate().unwrap_err(),

@@ -117,22 +117,22 @@ pub enum QuotaState {
 impl QuotaState {
     /// Whether the state proves exhaustion. Only this state may skip a
     /// connection.
-    pub fn is_exhausted(&self) -> bool {
+    pub const fn is_exhausted(&self) -> bool {
         matches!(self, Self::Exhausted(_))
     }
 
     /// Whether capacity is known to be available.
-    pub fn is_available(&self) -> bool {
+    pub const fn is_available(&self) -> bool {
         matches!(self, Self::Available(_))
     }
 
     /// Whether the state leaves capacity unknown.
-    pub fn is_unknown(&self) -> bool {
+    pub const fn is_unknown(&self) -> bool {
         matches!(self, Self::Unknown | Self::Stale(_))
     }
 
     /// Evidence behind the state, when the state carries any.
-    pub fn evidence(&self) -> Option<&QuotaEvidence> {
+    pub const fn evidence(&self) -> Option<&QuotaEvidence> {
         match self {
             Self::Exhausted(evidence)
             | Self::Available(evidence)
@@ -208,10 +208,7 @@ pub fn evaluate_connection_quota(
     let scoped: Vec<&QuotaObservation> = observations
         .iter()
         .filter(|observation| observation.connection_id.as_ref() == Some(connection_id))
-        .filter(|observation| match provider {
-            Some(provider) => &observation.provider == provider,
-            None => true,
-        })
+        .filter(|observation| provider.is_none() || &observation.provider == provider.unwrap())
         .collect();
 
     if scoped.is_empty() {
@@ -317,17 +314,15 @@ pub fn reduce_latest_observations(
                 .map(|connection_id| ids.contains(connection_id))
                 .unwrap_or(false),
         })
-        .filter(|observation| match &query.provider {
-            Some(provider) => &observation.provider == provider,
-            None => true,
+        .filter(|observation| {
+            query.provider.as_ref().is_none()
+                || &observation.provider == query.provider.as_ref().unwrap()
         })
-        .filter(|observation| match &query.metric {
-            Some(metric) => &observation.metric == metric,
-            None => true,
+        .filter(|observation| {
+            query.metric.as_ref().is_none() || &observation.metric == query.metric.as_ref().unwrap()
         })
-        .filter(|observation| match &query.source {
-            Some(source) => &observation.source == source,
-            None => true,
+        .filter(|observation| {
+            query.source.as_ref().is_none() || &observation.source == query.source.as_ref().unwrap()
         })
         .collect();
 

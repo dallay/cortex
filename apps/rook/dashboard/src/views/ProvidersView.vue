@@ -6,8 +6,9 @@
  * moves to its own dedicated route (`/providers/quota` → Phase 6),
  * keeping this view focused on provider discovery + connection setup.
  *
- * Renders a search + category filter at the top, then a 3-section grid
- * (API Key / OAuth / Local) populated from `useProviderCatalog`. Click
+ * Renders a search + category filter at the top, then 7 sections
+ * (Compatible / OAuth / IDE / API Key / Free / Local / Other) populated
+ * from `useProviderCatalog`. Click
  * "Add" on a card to open the AddProviderDialog pre-scoped to that
  * provider kind. Click the card body to drill into the per-kind
  * details view at `/providers/:kind`.
@@ -17,6 +18,7 @@ import {SearchX} from "@lucide/vue";
 import {computed, onMounted, ref} from "vue";
 import {useI18n} from "vue-i18n";
 import AddProviderDialog from "@/components/AddProviderDialog.vue";
+import CompatibleConnectionsSection from "@/components/CompatibleConnectionsSection.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import ErrorBanner from "@/components/ErrorBanner.vue";
 import LoadingState from "@/components/LoadingState.vue";
@@ -33,7 +35,7 @@ import {CATEGORIES, type ProviderKind} from "@/config/providerCatalog";
 
 const {t} = useI18n();
 
-const {fetch, loading, error} = useProviders();
+const {providers, update, test, fetch, loading, error} = useProviders();
 const {fetch: fetchModels} = useAvailableModels();
 const {items, byCategory, fetch: fetchDescriptors, loading: descriptorsLoading, error: descriptorsError} = useProviderCatalog();
 
@@ -41,9 +43,9 @@ const searchQuery = ref("");
 const activeCategory = ref<CategoryFilter>("all");
 
 onMounted(() => {
-  fetch();
-  fetchModels();
-  fetchDescriptors();
+  void fetch();
+  void fetchModels();
+  void fetchDescriptors();
 });
 
 const filteredByCategory = computed(() => {
@@ -60,8 +62,22 @@ const filteredByCategory = computed(() => {
   }));
 });
 
+const compatibleConnections = computed(() => {
+  const query = searchQuery.value.trim().toLowerCase();
+  return providers.value.filter((connection) =>
+    ["openai-compatible", "anthropic-compatible"].includes(connection.providerKind) &&
+    (query === "" || connection.name.toLowerCase().includes(query) || connection.providerKind.includes(query)),
+  );
+});
+
+const showCompatible = computed(() =>
+  (activeCategory.value === "all" || activeCategory.value === "compatible") &&
+  (searchQuery.value.trim() === "" || compatibleConnections.value.length > 0),
+);
+
 const totalMatches = computed(() =>
-  filteredByCategory.value.reduce((sum, entry) => sum + entry.items.length, 0),
+  visibleSections.value.reduce((sum, entry) => sum + entry.items.length, 0) +
+  (showCompatible.value ? compatibleConnections.value.length : 0),
 );
 
 const isFiltering = computed(
@@ -70,10 +86,10 @@ const isFiltering = computed(
 
 const visibleSections = computed(() => {
   if (activeCategory.value === "all") {
-    return filteredByCategory.value;
+    return filteredByCategory.value.filter((entry) => entry.category.kind !== "compatible");
   }
   return filteredByCategory.value.filter(
-    (entry) => entry.category.kind === activeCategory.value,
+    (entry) => entry.category.kind === activeCategory.value && entry.category.kind !== "compatible",
   );
 });
 
@@ -88,10 +104,12 @@ function openAddDialog(kind: ProviderKind) {
 
 function onSaved() {
   addDialogOpen.value = false;
+  void fetch();
 }
 
 function onDeleted() {
   addDialogOpen.value = false;
+  void fetch();
 }
 </script>
 
@@ -112,6 +130,15 @@ function onDeleted() {
     <LoadingState v-if="(descriptorsLoading || loading) && items.length === 0" />
     <template v-else>
       <ErrorBanner v-if="descriptorsError" :message="descriptorsError" @retry="fetchDescriptors" />
+
+      <CompatibleConnectionsSection
+        v-if="showCompatible"
+        :providers="compatibleConnections"
+        :update="update"
+        :test="test"
+        :refresh="fetch"
+        @add="openAddDialog"
+      />
 
       <ProviderCategorySection
         v-for="entry in visibleSections"

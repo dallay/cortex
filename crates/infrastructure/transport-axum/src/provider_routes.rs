@@ -36,6 +36,7 @@ pub fn router(usecases: Usecases) -> Router {
 struct ProviderDescriptorResponse {
     id: &'static str,
     label: &'static str,
+    category: &'static str,
     protocol: &'static str,
     auth_kinds: Vec<&'static str>,
     capability_ceiling: CapabilityCeilingResponse,
@@ -80,6 +81,7 @@ async fn list_provider_descriptors() -> Json<Vec<ProviderDescriptorResponse>> {
             .map(|descriptor| ProviderDescriptorResponse {
                 id: descriptor.id,
                 label: descriptor.label,
+                category: descriptor.category.as_str(),
                 protocol: match descriptor.protocol {
                     rook_core::Protocol::OpenAiChat => "openAiChat",
                     rook_core::Protocol::AnthropicMessages => "anthropicMessages",

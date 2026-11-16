@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Plaintext credentials after decryption from [`super::Credentials`].
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum DecryptedCredentials {
     ApiKey {

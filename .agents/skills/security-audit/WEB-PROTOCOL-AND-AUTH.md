@@ -97,9 +97,16 @@ Expired, revoked, missing, or renewal-failed certificates cause silent fallback 
 
 ## Validation rules (apply before reporting ANY finding here)
 
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:0aa74d319511b493f569fdd3c6ea5b9f56d36f7374b93e356e411e82aee2414d -->
+
 1. Apply a source-visibility gate. Proxy chains, edge cache keys, IdP policy, certificate trust, browser cookie behavior, secrets, and deployed auth modes may be outside the repository. Record a precise `needs_validation` candidate instead of asserting missing infrastructure behavior.
 2. For framing and cache findings, name both components and the divergent parse/key. Confirm cross-request, cross-user, or private-response impact with bounded local fixtures.
-3. For token, MFA, passkey, account-link, recovery, API-key, and mTLS findings, cite the verification line and missing principal/session/resource/origin/audience/action/assurance binding. Prove the server accepts the invalid transition or credential.
+3. For token, MFA, passkey, account-link, recovery, API-key, and mTLS findings about authentication or state transitions, cite the verification line and missing principal/session/resource/origin/audience/action/assurance binding. Prove the server accepts the invalid transition or credential. For API-key disclosure, a verified source-to-response trace exposing the credential establishes exposure without an invalid credential or transition.
 4. For CSRF, name the ambient credential, state-changing route, accepted cross-site request shape, browser cookie policy, and missing effective check. Read-only actions and routes requiring a non-ambient bearer token do not qualify.
 5. Verify framework and library defaults. If version or configuration is unknown, use `needs_validation`; do not turn an unverified critical claim into a lower-severity confirmed finding.
 6. Return `confirmed` only with a complete source trace and observable unauthorized identity, state, or disclosure. For `needs_validation`, name the missing fact and safe local or owner-observed check that resolves it.
+
+
+<!-- /coderabbit-ai-generated:v1 -->

@@ -10,6 +10,7 @@ describe("useProviderDescriptors", () => {
 			{
 				id: "future-provider",
 				label: "Future Provider",
+				category: "other",
 				protocol: "openAiChat",
 				authKinds: ["apiKey"],
 				capabilityCeiling: {
@@ -38,6 +39,7 @@ describe("useProviderDescriptors", () => {
 			{
 				id: "openai-compatible",
 				label: "OpenAI Compatible",
+				category: "compatible",
 				protocol: "openAiChat",
 				authKinds: ["apiKey", "oauth"],
 				capabilityCeiling: {
@@ -69,6 +71,7 @@ describe("useProviderDescriptors", () => {
 				{
 					id: "future-provider",
 					label: "Future Provider",
+					category: "other",
 					protocol: "openAiChat",
 					authKinds,
 					supportsOAuth: true,
