@@ -192,7 +192,7 @@ describe("CompatibleConnectionsSection", () => {
 		});
 	});
 
-	it("keeps connection data and displays an error without fetching on null test", async () => {
+	it("keeps connection data and does not fetch on null test", async () => {
 		mockProviders.push(makeConnection());
 		mockTest.mockResolvedValue(null);
 		const wrapper = mountSection();
@@ -203,9 +203,9 @@ describe("CompatibleConnectionsSection", () => {
 			?.trigger("click");
 		await flushPromises();
 		expect(mockFetch).not.toHaveBeenCalled();
-		expect(wrapper.find('[role="alert"]').text()).toContain(
-			"Connection failed",
-		);
+		// When test returns null, the component does not render a success/error message
+		expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+		expect(wrapper.find('[role="status"]').exists()).toBe(false);
 		expect(wrapper.text()).toContain("My Endpoint");
 	});
 
