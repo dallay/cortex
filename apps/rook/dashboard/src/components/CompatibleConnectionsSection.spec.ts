@@ -1,16 +1,29 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createI18n } from "vue-i18n";
-import type { ProviderConnectionResponse } from "@/lib/api";
+import type {
+	ProviderConnectionResponse,
+	TestConnectionResponse,
+	UpdateProviderRequest,
+} from "@/lib/api";
 import en from "@/locales/en.json";
 import CompatibleConnectionsSection from "./CompatibleConnectionsSection.vue";
 
 const i18n = createI18n({ legacy: false, locale: "en", messages: { en } });
 
 let mockProviders: ProviderConnectionResponse[];
-let mockUpdate: ReturnType<typeof vi.fn>;
-let mockTest: ReturnType<typeof vi.fn>;
-let mockFetch: ReturnType<typeof vi.fn>;
+let mockUpdate: ReturnType<
+	typeof vi.fn<
+		(
+			id: string,
+			data: UpdateProviderRequest,
+		) => Promise<ProviderConnectionResponse | null>
+	>
+>;
+let mockTest: ReturnType<
+	typeof vi.fn<(id: string) => Promise<TestConnectionResponse | null>>
+>;
+let mockFetch: ReturnType<typeof vi.fn<() => Promise<void>>>;
 
 function mountSection() {
 	return mount(CompatibleConnectionsSection, {
