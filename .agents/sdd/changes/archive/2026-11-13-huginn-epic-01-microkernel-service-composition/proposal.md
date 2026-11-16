@@ -71,21 +71,21 @@ an auditable trail. **It introduces no new runtime behavior.**
 
 ## Affected Areas
 
-| Area | Impact | Description |
-|------|--------|-------------|
-| `.agents/sdd/changes/huginn-epic-01-microkernel-service-composition/` | Modified | Epic change folder: proposal, specs, design, tasks, verify and QA reports, `state.yaml`. |
-| `.agents/sdd/specs/huginn-microkernel/spec.md` | New | Epic acceptance contract for EPIC 01, created during archive sync. |
-| `.agents/sdd/changes/archive/2026-11-13-huginn-epic-01-microkernel-service-composition/` | New | Audit trail of the closed epic cycle. |
-| `crates/huginn/**` | None | The delivered slice is already on `main`; this change does not touch runtime code. |
+| Area                                                                                     | Impact   | Description                                                                              |
+|------------------------------------------------------------------------------------------|----------|------------------------------------------------------------------------------------------|
+| `.agents/sdd/changes/huginn-epic-01-microkernel-service-composition/`                    | Modified | Epic change folder: proposal, specs, design, tasks, verify and QA reports, `state.yaml`. |
+| `.agents/sdd/specs/huginn-microkernel/spec.md`                                           | New      | Epic acceptance contract for EPIC 01, created during archive sync.                       |
+| `.agents/sdd/changes/archive/2026-11-13-huginn-epic-01-microkernel-service-composition/` | New      | Audit trail of the closed epic cycle.                                                    |
+| `crates/huginn/**`                                                                       | None     | The delivered slice is already on `main`; this change does not touch runtime code.       |
 
 ## Risks
 
-| Risk | Likelihood | Mitigation |
-|------|------------|------------|
-| A second spec source duplicates the kernel spec and drifts | Med | The epic spec states only epic-level guarantees and cites the kernel requirement for every detail. The kernel spec remains the normative runtime contract. |
-| The close-out claims the epic outcome without runtime evidence | Low | Verification and QA execute the delivered slice suites and map each scenario to a covering test. Non-applicable scenarios are reported as untested with a reason. |
-| The deferred event stream is lost once the epic is archived | Med | The deferral and its rationale are recorded in the spec's deferred-scope section and in the archive report as a recommended follow-up. |
-| Archived evidence drifts from `main` | Low | The archive report records the baseline commits and the exact commands and results used as evidence. |
+| Risk                                                           | Likelihood | Mitigation                                                                                                                                                        |
+|----------------------------------------------------------------|------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| A second spec source duplicates the kernel spec and drifts     | Med        | The epic spec states only epic-level guarantees and cites the kernel requirement for every detail. The kernel spec remains the normative runtime contract.        |
+| The close-out claims the epic outcome without runtime evidence | Low        | Verification and QA execute the delivered slice suites and map each scenario to a covering test. Non-applicable scenarios are reported as untested with a reason. |
+| The deferred event stream is lost once the epic is archived    | Med        | The deferral and its rationale are recorded in the spec's deferred-scope section and in the archive report as a recommended follow-up.                            |
+| Archived evidence drifts from `main`                           | Low        | The archive report records the baseline commits and the exact commands and results used as evidence.                                                              |
 
 ## Rollback Plan
 
@@ -112,12 +112,12 @@ No database, API or user-facing behavior is affected by this change.
 ## Success Criteria
 
 - [ ] The four EPIC 01 capabilities and the epic acceptance outcome are recorded as a durable,
-      testable contract with explicit references to the normative kernel spec.
+  testable contract with explicit references to the normative kernel spec.
 - [ ] Every epic capability is traced to a kernel requirement, an implementation site, a covering
-      test and the delivery PR that shipped it.
+  test and the delivery PR that shipped it.
 - [ ] Verification runs the delivered slice suites and reports real results, with no uncovered
-      acceptance scenario left implicit.
+  acceptance scenario left implicit.
 - [ ] Acceptance QA reports an explicit verdict, a capability inventory and an untested scope.
 - [ ] `state.yaml` reaches `current_phase: archive` with `next: none`, and the change folder is
-      archived with its complete audit trail.
+  archived with its complete audit trail.
 - [ ] No production code changes are introduced by this change.

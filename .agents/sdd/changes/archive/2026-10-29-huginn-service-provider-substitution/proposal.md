@@ -34,21 +34,21 @@ Extend the kernel: keep ownership/generations, activate alternatives through `Pl
 
 ## Affected areas
 
-| Area                                           | Impact                                                                                                                                             |
-|------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------|
-| `crates/huginn/core/src/{kernel.rs,lib.rs}`    | Slots and substitution.                                                                                                                                |
-| `crates/huginn/application/src/composition.rs` | `huginn_application::composition::build` and leased adapter.                                                                                          |
+| Area                                           | Impact                                                                                                                                           |
+|------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------|
+| `crates/huginn/core/src/{kernel.rs,lib.rs}`    | Slots and substitution.                                                                                                                          |
+| `crates/huginn/application/src/composition.rs` | `huginn_application::composition::build` and leased adapter.                                                                                     |
 | `crates/huginn/runtime/src/composition.rs`     | Public builders `build`, `build_native`, `build_native_with_connections`, and `build_native_with_connections_and_guards`; shared private helper. |
-| `apps/huginn/src/main.rs`                      | Composition and readiness.                                                                                                                            |
-| Huginn tests; architecture/ADR-0003            | Rebind and limits.                                                                                                                                   |
+| `apps/huginn/src/main.rs`                      | Composition and readiness.                                                                                                                       |
+| Huginn tests; architecture/ADR-0003            | Rebind and limits.                                                                                                                               |
 
 ## Risks
 
-| Risk                               | Mitigation                                |
-|------------------------------------|-------------------------------------------|
-| Retained `Arc` values are not revoked | Guarantee only with leases.               |
-| Incorrect draining/rollback         | Define the order and test two services.   |
-| Conflict with PR #508               | Do not touch the catalog or component loading. |
+| Risk                                  | Mitigation                                     |
+|---------------------------------------|------------------------------------------------|
+| Retained `Arc` values are not revoked | Guarantee only with leases.                    |
+| Incorrect draining/rollback           | Define the order and test two services.        |
+| Conflict with PR #508                 | Do not touch the catalog or component loading. |
 
 ## Rollback plan
 

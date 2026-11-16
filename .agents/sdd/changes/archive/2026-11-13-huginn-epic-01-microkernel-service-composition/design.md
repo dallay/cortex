@@ -63,8 +63,7 @@ changes and would not express the epic acceptance outcome; (b) restate the kerne
 epic spec — it would create a second source of truth that drifts; (c) keep everything in the
 archive folder — the epic contract would be invisible to a reader of the spec store.
 
-**Rationale**: The spec store is the source of truth a maintainer reads. The epic outcome
-("an alternative service implementation can be substituted while consumers, authority checks and
+**Rationale**: The spec store is the source of truth a maintainer reads. The epic outcome ("an alternative service implementation can be substituted while consumers, authority checks and
 lifecycle guarantees continue to work") is a product contract that the kernel spec expresses only
 in pieces. A short spec that cites the kernel requirement per guarantee keeps one authoritative
 description of each mechanic and one place where the epic-level promise is written down.
@@ -129,19 +128,19 @@ EPIC ACCEPTANCE OUTCOME  ──►  capability-traceability.md ──►  verify
 
 ## File Changes
 
-| File | Action | Description |
-|------|--------|-------------|
-| `.agents/sdd/changes/huginn-epic-01-microkernel-service-composition/proposal.md` | Create | Close-out proposal: intent, scope, risks, rollback, success criteria. |
-| `.agents/sdd/changes/huginn-epic-01-microkernel-service-composition/specs/huginn-microkernel/spec.md` | Create | Epic acceptance contract with RFC 2119 requirements and Given/When/Then scenarios. |
-| `.agents/sdd/changes/huginn-epic-01-microkernel-service-composition/capability-traceability.md` | Create | Capability → kernel requirement → implementation site → covering test → delivery PR. |
-| `.agents/sdd/changes/huginn-epic-01-microkernel-service-composition/design.md` | Create | This document. |
-| `.agents/sdd/changes/huginn-epic-01-microkernel-service-composition/tasks.md` | Create | Documentation-only task checklist with review workload forecast. |
-| `.agents/sdd/changes/huginn-epic-01-microkernel-service-composition/verify-report.md` | Create | Executed verification evidence and spec compliance matrix. |
-| `.agents/sdd/changes/huginn-epic-01-microkernel-service-composition/qa-report.md` | Create | Acceptance QA verdict, capability inventory, scenario matrix, findings. |
-| `.agents/sdd/changes/huginn-epic-01-microkernel-service-composition/state.yaml` | Modify | DAG state to `archive` with `next: none`. |
-| `.agents/sdd/specs/huginn-microkernel/spec.md` | Create | Synced epic contract (created during archive). |
-| `.agents/sdd/changes/archive/2026-11-13-huginn-epic-01-microkernel-service-composition/` | Create | Archive folder with the complete audit trail. |
-| `crates/**`, `apps/**` | None | No runtime change in this change. |
+| File                                                                                                  | Action | Description                                                                          |
+|-------------------------------------------------------------------------------------------------------|--------|--------------------------------------------------------------------------------------|
+| `.agents/sdd/changes/huginn-epic-01-microkernel-service-composition/proposal.md`                      | Create | Close-out proposal: intent, scope, risks, rollback, success criteria.                |
+| `.agents/sdd/changes/huginn-epic-01-microkernel-service-composition/specs/huginn-microkernel/spec.md` | Create | Epic acceptance contract with RFC 2119 requirements and Given/When/Then scenarios.   |
+| `.agents/sdd/changes/huginn-epic-01-microkernel-service-composition/capability-traceability.md`       | Create | Capability → kernel requirement → implementation site → covering test → delivery PR. |
+| `.agents/sdd/changes/huginn-epic-01-microkernel-service-composition/design.md`                        | Create | This document.                                                                       |
+| `.agents/sdd/changes/huginn-epic-01-microkernel-service-composition/tasks.md`                         | Create | Documentation-only task checklist with review workload forecast.                     |
+| `.agents/sdd/changes/huginn-epic-01-microkernel-service-composition/verify-report.md`                 | Create | Executed verification evidence and spec compliance matrix.                           |
+| `.agents/sdd/changes/huginn-epic-01-microkernel-service-composition/qa-report.md`                     | Create | Acceptance QA verdict, capability inventory, scenario matrix, findings.              |
+| `.agents/sdd/changes/huginn-epic-01-microkernel-service-composition/state.yaml`                       | Modify | DAG state to `archive` with `next: none`.                                            |
+| `.agents/sdd/specs/huginn-microkernel/spec.md`                                                        | Create | Synced epic contract (created during archive).                                       |
+| `.agents/sdd/changes/archive/2026-11-13-huginn-epic-01-microkernel-service-composition/`              | Create | Archive folder with the complete audit trail.                                        |
+| `crates/**`, `apps/**`                                                                                | None   | No runtime change in this change.                                                    |
 
 ## Interfaces / Contracts
 
@@ -154,13 +153,13 @@ documentary:
 
 ## Testing Strategy
 
-| Layer | What to Test | Approach |
-|-------|-------------|----------|
-| Runtime (kernel) | Substitution, rollback, drain, leases, introspection | `cargo test -p huginn-core` (30 test functions in `service_lease.rs` plus the lifecycle, ownership and abort suites). |
-| Runtime (composition roots) | Retained `LoopService` rebinding on the next operation | `cargo test -p huginn-application` (`service_slot_rebinding.rs`). |
-| Runtime (runtime builders) | Productive builders rebind and stay generic | `cargo test -p huginn-runtime` (`tool_lifecycle.rs`, session and connection suites). |
-| Conformance | The same kernel mechanism over different capabilities | `cargo test -p huginn-conformance` (`substitution.rs`, `loops.rs`). |
-| Artifact | Markdown structure of the new documents | `pnpm exec markdownlint-cli2` over the new files. |
+| Layer                       | What to Test                                           | Approach                                                                                                              |
+|-----------------------------|--------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| Runtime (kernel)            | Substitution, rollback, drain, leases, introspection   | `cargo test -p huginn-core` (30 test functions in `service_lease.rs` plus the lifecycle, ownership and abort suites). |
+| Runtime (composition roots) | Retained `LoopService` rebinding on the next operation | `cargo test -p huginn-application` (`service_slot_rebinding.rs`).                                                     |
+| Runtime (runtime builders)  | Productive builders rebind and stay generic            | `cargo test -p huginn-runtime` (`tool_lifecycle.rs`, session and connection suites).                                  |
+| Conformance                 | The same kernel mechanism over different capabilities  | `cargo test -p huginn-conformance` (`substitution.rs`, `loops.rs`).                                                   |
+| Artifact                    | Markdown structure of the new documents                | `pnpm exec markdownlint-cli2` over the new files.                                                                     |
 
 TDD is **not applicable** to this change: it modifies no executable behavior. The behavioral
 contract it closes was implemented under the slice with its own RED → GREEN → REFACTOR evidence in
@@ -176,7 +175,7 @@ reversible as described in `proposal.md`.
 ## Open Questions
 
 - [ ] The Linear state of epic `DALLAY-718` cannot be verified from this environment: no Linear
-      connector is available in this session. GitHub epic #442 and slice #509 are confirmed
-      closed. The close-out records this as a P3 limitation.
+  connector is available in this session. GitHub epic #442 and slice #509 are confirmed
+  closed. The close-out records this as a P3 limitation.
 - [ ] The deferred kernel lifecycle event stream has no tracking issue. The archive report carries
-      it as a recommended follow-up; opening an issue is a separate operator decision.
+  it as a recommended follow-up; opening an issue is a separate operator decision.

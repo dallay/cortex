@@ -16,11 +16,11 @@ Batch approved here; worktree without branch metadata. No commit/push/publicatio
 
 ### Suggested units
 
-| Unit | Delivery              | Depends |
-|------|-----------------------|---------|
-| 1    | Slots in `core`       | —       |
-| 2    | Loop rebind/drain     | 1       |
-| 3    | Readiness/docs/gates  | 2       |
+| Unit | Delivery             | Depends |
+|------|----------------------|---------|
+| 1    | Slots in `core`      | —       |
+| 2    | Loop rebind/drain    | 1       |
+| 3    | Readiness/docs/gates | 2       |
 
 ## Phases 1–2: Kernel and substitution (completed)
 

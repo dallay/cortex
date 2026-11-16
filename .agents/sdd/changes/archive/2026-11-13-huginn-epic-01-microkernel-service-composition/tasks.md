@@ -2,13 +2,13 @@
 
 ## Review Workload Forecast
 
-| Field | Value |
-|-------|-------|
-| Review budget | 400 changed lines unless project config says otherwise |
-| Estimated workload | Low |
-| Chained PRs recommended | No |
-| Chain strategy | `single-pr` |
-| Work-unit balance | One deliverable unit: the epic close-out documentation set, written and archived in a single commit so the audit trail lands atomically. |
+| Field                   | Value                                                                                                                                    |
+|-------------------------|------------------------------------------------------------------------------------------------------------------------------------------|
+| Review budget           | 400 changed lines unless project config says otherwise                                                                                   |
+| Estimated workload      | Low                                                                                                                                      |
+| Chained PRs recommended | No                                                                                                                                       |
+| Chain strategy          | `single-pr`                                                                                                                              |
+| Work-unit balance       | One deliverable unit: the epic close-out documentation set, written and archived in a single commit so the audit trail lands atomically. |
 
 Decision needed before apply: No
 Chained PRs recommended: No

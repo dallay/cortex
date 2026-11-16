@@ -136,7 +136,7 @@ Combine with context for better messages:
 Decision guide:
 
 | Situation                          | Use                                  |
- |------------------------------------|--------------------------------------|
+|------------------------------------|--------------------------------------|
 | Provider unavailable               | `Result`                             |
 | Rate limited                       | `Result` (CortexError::rate_limited) |
 | Index out of bounds (user data)    | `Result`                             |

@@ -94,15 +94,8 @@ A device node, admin socket, helper, or management API validates shape but not t
 
 ## Validation rules (apply before reporting ANY finding here)
 
-<!-- coderabbit-ai-generated:v1 -->
-
-<!-- coderabbit-ai-generated-section:v1:1490b1808936b93fe3348dd1f5bd72d49950fe70a6c4a02fcbfaf329f7f8c44a -->
-
 1. Establish a realistic untrusted entry and exact operation that violates a bounds, type, lifetime, ABI, concurrency, loader, or authority invariant.
 2. Classify the observable effect: invalid read, invalid write, stale alias, wrong object, uninitialized output, unauthorized image load, deadlock, or safe process termination. Do not claim a stronger effect than observed.
 3. Run the narrowest local harness, existing test, sanitizer, or fuzzer needed to reproduce the effect. Verify sanitizer coverage of the faulting operation and record architecture/build conditions.
-4. For concurrency, use a deterministic schedule or sanitizer trace. For binary loading, name the lower-trust writer and prove an attacker-writable path reaches a privileged load. If the loader performs an identity check, also prove the checked identity differs from the mapped identity; no check-to-map comparison is required when no identity check exists.
+4. For concurrency, use a deterministic schedule or sanitizer trace. For binary loading, prove the checked identity differs from the mapped identity and name the lower-trust writer.
 5. Return `confirmed` findings only with exact input, source trace, and observed result. Return `needs_validation` for a specific unresolved reachability, ABI, build, deployment, or runtime fact and state the bounded check needed.
-
-
-<!-- /coderabbit-ai-generated:v1 -->

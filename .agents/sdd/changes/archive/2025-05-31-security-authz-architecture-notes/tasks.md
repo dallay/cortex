@@ -138,12 +138,12 @@ Chain strategy: pending
     1. Add `Login` struct with `user_repo: Arc<dyn UserRepositoryPort>`, `session_repo: Arc<dyn SessionRepositoryPort>`, `hasher: Arc<dyn PasswordHasher>`
     2. Add `LoginError` enum: `InvalidCredentials`, `PasswordNotSet`, `UserRepo`, `SessionRepo`
     3. `execute(username, password)` method:
-        - Find user by username → `PasswordNotSet` if `password_hash` is `NULL`
-        - `verify_password(password, hash)` → `InvalidCredentials` if false
-        - Generate 32 random bytes via `OsRng`
-        - Compute `token_hash = sha256_hex(token_bytes)`
-        - Call `session_repo.create(NewSession { user_id, token }, token_hash)` with `expires_at = now + 24h`
-        - Return raw token bytes (caller encodes to base64url)
+         - Find user by username → `PasswordNotSet` if `password_hash` is `NULL`
+         - `verify_password(password, hash)` → `InvalidCredentials` if false
+         - Generate 32 random bytes via `OsRng`
+         - Compute `token_hash = sha256_hex(token_bytes)`
+         - Call `session_repo.create(NewSession { user_id, token }, token_hash)` with `expires_at = now + 24h`
+         - Return raw token bytes (caller encodes to base64url)
     4. Add `Logout` struct and `execute(session_id)` method: call `session_repo.revoke(session_id)`
 
 ### [TASK-402] Add POST /login route handler
@@ -164,10 +164,10 @@ Chain strategy: pending
 - **Steps**:
     1. Add `ValidateSession` struct with `session_repo: Arc<dyn SessionRepositoryPort>`
     2. `execute(cookie_value: &str)` method:
-        - Base64url-decode cookie value to bytes
-        - Compute `sha256_hex(decoded_bytes)` → `token_hash`
-        - Call `session_repo.find_by_token_hash(token_hash)`
-        - Return `Option<Session>` (filters expired/revoked in repo)
+         - Base64url-decode cookie value to bytes
+         - Compute `sha256_hex(decoded_bytes)` → `token_hash`
+         - Call `session_repo.find_by_token_hash(token_hash)`
+         - Return `Option<Session>` (filters expired/revoked in repo)
     3. Add helper to look up username from session's `user_id` for header stamping
 
 ### [TASK-404] Add GET /login and POST /logout routes
@@ -208,12 +208,12 @@ Chain strategy: pending
 - **Steps**:
     1. Add `session_validator: Option<Arc<dyn ValidateSession>>` field to `AuthzConfig`
     2. Update `management_policy()`:
-        - Extract `auth_token` cookie via `extract_cookie(headers, "auth_token")`
-        - If missing: return `AuthOutcome::reject(401, "MISSING_AUTH_TOKEN")`
-        - Call `session_validator.execute(cookie_value).await`
-        - If `Ok(Some(session))`: build `Subject { kind: AuthKind::Session, id: session.user_id.to_string(), label: username, scopes: vec!["admin"] }`, return `AuthOutcome::allow(subject)`
-        - If `Ok(None)`: return `AuthOutcome::reject(401, "INVALID_TOKEN")`
-        - If `Err(_)`: return `AuthOutcome::reject(500, "AUTH_BACKEND_ERROR")`
+         - Extract `auth_token` cookie via `extract_cookie(headers, "auth_token")`
+         - If missing: return `AuthOutcome::reject(401, "MISSING_AUTH_TOKEN")`
+         - Call `session_validator.execute(cookie_value).await`
+         - If `Ok(Some(session))`: build `Subject { kind: AuthKind::Session, id: session.user_id.to_string(), label: username, scopes: vec!["admin"] }`, return `AuthOutcome::allow(subject)`
+         - If `Ok(None)`: return `AuthOutcome::reject(401, "INVALID_TOKEN")`
+         - If `Err(_)`: return `AuthOutcome::reject(500, "AUTH_BACKEND_ERROR")`
     3. Stamp trusted headers `X-Authz-Auth-ID` and `X-Authz-Auth-Label` on `AuthOutcome::allow`
 - [x] Completed: ValidateSession created, session_validator in AuthzConfig, management_policy async with session validation
 

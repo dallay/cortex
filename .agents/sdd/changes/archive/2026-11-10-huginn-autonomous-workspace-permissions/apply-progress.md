@@ -93,11 +93,11 @@ Partial. Tasks 2.1–2.4 remain unmarked. Next step: define a test seam that doe
 
 ### Results per protocol
 
-| Protocol  | Host control                                                    | Result of `run_shell`                                                                                                               | Status                                   |
-|------------|-----------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------|
-| TCP        | `/usr/bin/nc` connected and the listener accepted                         | Sentinel; normal exit 1; read error `/private/var/select/sh`; no `nc` message of its own; sandboxed acceptance could not be measured | Blocked/ambiguous; does not count as a denial |
-| UDP        | `/usr/bin/nc` sent `udp-probe`; the listener received the exact bytes | Sentinel; normal exit 1; same read error; no `nc` message of its own; sandboxed reception could not be measured                     | Blocked/ambiguous; does not count as a denial |
-| Unix/local | `/usr/bin/nc -U` connected and the listener accepted                      | Sentinel; normal exit 1; same read error; no `nc` message of its own; sandboxed acceptance could not be measured                    | Blocked/ambiguous; does not count as a denial |
+| Protocol   | Host control                                                          | Result of `run_shell`                                                                                                                | Status                                        |
+|------------|-----------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------|
+| TCP        | `/usr/bin/nc` connected and the listener accepted                     | Sentinel; normal exit 1; read error `/private/var/select/sh`; no `nc` message of its own; sandboxed acceptance could not be measured | Blocked/ambiguous; does not count as a denial |
+| UDP        | `/usr/bin/nc` sent `udp-probe`; the listener received the exact bytes | Sentinel; normal exit 1; same read error; no `nc` message of its own; sandboxed reception could not be measured                      | Blocked/ambiguous; does not count as a denial |
+| Unix/local | `/usr/bin/nc -U` connected and the listener accepted                  | Sentinel; normal exit 1; same read error; no `nc` message of its own; sandboxed acceptance could not be measured                     | Blocked/ambiguous; does not count as a denial |
 
 ### Commands and validation
 
@@ -285,7 +285,7 @@ Status: 3.1 is marked `[x]` only for these fixtures/cases/observed macOS. It doe
 
 - The available coverage includes the invalid profile observed by `run_shell` as status 65 without a marker, the absent/not executable launcher, the oversized profile, the creation failure via a non-directory root, the writer error propagation and the explicit cleanup in the normal/error case. The `status 65` is kept as an observable result because it can come both from the launcher and from a valid shell; its cause is not inferred from the code alone.
 - The safe API of `std::fs::File` does not offer `close() -> io::Result`; `Drop` does not report close errors. No `unsafe`, no configurable override nor a public seam was added, and no observed close error is claimed. Nor was an arbitrary unlink failure forced in the full launcher flow: `Drop` remains best-effort on abrupt termination, although explicit cleanup exists for controlled results. Due to these pending criteria, 2.1 and 2.2 remain unmarked. A decision/documentation of the verifiable close requirement and of the guarantee level demanded for the cleanup on an OS error is needed, or a different approved API/platform.
-  
+
 ### Validation of this continuation
 
 - macOS 27.3 / build 26C5035r, `/usr/bin/sandbox-exec` present: `cargo test -p huginn-runtime run_shell_seatbelt_tests -- --nocapture` exit 0, 26/26 in lib and 26/26 duplicates in `approval_resource`; it covers the existing macOS lifecycle, path, socket, profile rejection and spawn scenarios.
