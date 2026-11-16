@@ -745,6 +745,24 @@ impl ShortTermStore for Neo4jShortTermStore {
             .await
             .map(|_| ())
     }
+
+    async fn summary_entities(
+        &self,
+        session_id: &str,
+        _scope: &OwnerScope,
+    ) -> MemoryResult<Vec<String>> {
+        let rows = self
+            .client
+            .execute(
+                q::GET_SUMMARY_ENTITIES,
+                vec![("session_id", session_id.into())],
+            )
+            .await?;
+        Ok(rows
+            .iter()
+            .filter_map(|row| row.get::<String>("name").ok())
+            .collect())
+    }
 }
 
 fn observation_from_row(row: &Row) -> MemoryResult<Observation> {

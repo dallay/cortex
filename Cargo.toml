@@ -40,8 +40,10 @@ members = [
   "crates/muninn/providers",
   "crates/muninn/bridge",
   "crates/muninn/mcp",
+  "crates/muninn/ontology",
   "apps/muninn",
   "crates/muninn/c1-exporter",
+  "crates/muninn/observability",
 ]
 
 [patch.crates-io]

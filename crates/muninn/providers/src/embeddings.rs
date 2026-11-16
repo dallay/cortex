@@ -82,6 +82,18 @@ impl std::fmt::Debug for OpenAiEmbedder {
     }
 }
 
+impl OpenAiEmbedder {
+    /// Return the base URL string (for wrappers that need to display it).
+    pub fn base_url_as_str(&self) -> &str {
+        &self.base_url
+    }
+
+    /// Return the model name (for wrappers that need to display it).
+    pub fn model_as_str(&self) -> &str {
+        &self.model
+    }
+}
+
 #[derive(Deserialize)]
 struct EmbeddingResponse {
     data: Vec<EmbeddingItem>,

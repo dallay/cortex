@@ -41,6 +41,16 @@ struct ChoiceMessage {
 }
 
 impl OpenAiChat {
+    /// Return the base URL string (for wrappers that need to display it).
+    pub fn base_url_as_str(&self) -> &str {
+        &self.base_url
+    }
+
+    /// Return the model name (for wrappers that need to display it).
+    pub fn model_as_str(&self) -> &str {
+        &self.model
+    }
+
     pub fn new(
         base_url: impl Into<String>,
         api_key: Option<String>,

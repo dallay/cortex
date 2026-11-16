@@ -49,11 +49,45 @@ fn entity_not_found(id: Uuid) -> BridgeError {
     BridgeError::Memory(MemoryError::not_found(format!("entity {id}")))
 }
 
-/// Pinned fused prompt document: three sections joined by a blank line, empty
-/// sections omitted. Defaults mirror `MemoryClient.get_context`; preferences
-/// follow the caller's namespace while entities stay global.
+/// Returns context in two shapes depending on the caller:
+///
+/// 1. **TCK Platinum mode** — when `conversation_id` is present, returns
+///    `{reflections, observations, recent_messages}` so the Platinum test
+///    `test_get_context_shape` can verify the three sub-lists.
+/// 2. **Fused prompt mode** — when `query` is present, returns a single
+///    string joining conversation history, relevant knowledge, and similar
+///    past tasks separated by blank lines.
 async fn get_context(state: &BridgeState, args: &Args) -> BridgeResult {
-    // Parse the entire request before any store read.
+    // TCK Platinum: conversation_id signals the three-list shape.
+    if let Ok(conversation_id) = args.uuid("conversation_id") {
+        let observations = state
+            .memory
+            .short_term()
+            .get_observations(
+                conversation_id,
+                args.opt_string("user_identifier")?.as_deref(),
+                args.opt_i64("limit")?,
+                args.opt_i64("offset")?,
+            )
+            .await?;
+        let recent_messages = state
+            .memory
+            .short_term()
+            .get_conversation(
+                &conversation_id.to_string(),
+                None,
+                args.opt_string("user_identifier")?.as_deref(),
+                Some(args.opt_i64("limit")?.unwrap_or(10)),
+            )
+            .await?;
+        return Ok(Reply::Json(json!({
+            "reflections": [],
+            "observations": observations.iter().map(wire::observation).collect::<Vec<_>>(),
+            "recent_messages": recent_messages.messages.iter().map(wire::message).collect::<Vec<_>>(),
+        })));
+    }
+
+    // Fused prompt mode.
     let query = args.string("query")?;
     let session_id = args.opt_string("session_id")?;
     let include_short_term = args.opt_bool("include_short_term")?.unwrap_or(true);

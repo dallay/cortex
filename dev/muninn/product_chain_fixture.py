@@ -68,8 +68,12 @@ class ProductFixture:
         self.password = secrets.token_urlsafe(30)
         try:
             # Docker receives authentication through a private temporary env file, not argv/logs.
+            # Preference write lock requires server-side transaction/lock timeouts within bounds.
             with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as auth:
                 auth.write('NEO4J_AUTH=neo4j/' + self.password + '\n')
+                auth.write('NEO4J_db_transaction_timeout=5s\n')
+                auth.write('NEO4J_db_lock_acquisition_timeout=5s\n')
+                auth.write('NEO4J_db_transaction_monitor_check_interval=500ms\n')
                 auth.flush()
                 result = subprocess.run(['docker', 'run', '-d', '--rm', '--publish', '127.0.0.1::7687',
                                          '--env-file', auth.name, 'neo4j:5.26-community'],

@@ -22,12 +22,17 @@ from tck_runner import prepare_suite
 GOLD_CROSS_MEMORY_PROFILE = 'gold-cross-memory'
 GOLD_CROSS_MEMORY_FILE = 'v1/test_cross_memory.py'
 GOLD_CROSS_MEMORY_CASES = 18
+PLATINUM_PROFILE = 'platinum'
+PLATINUM_FILE = 'v1/test_platinum.py'
+PLATINUM_CASES = 11
 PROFILES = ('messages', 'chains', 'search', 'schema', 'bronze', *SILVER_SPLIT_PROFILES,
-            GOLD_CROSS_MEMORY_PROFILE)
+            GOLD_CROSS_MEMORY_PROFILE, PLATINUM_PROFILE)
 
 
 def profile_selector(profile, items, suite=None):
-    """Select the pinned cross-memory Gold marker cases without broadening scope."""
+    """Select the pinned cross-memory Gold or Platinum marker cases without broadening scope."""
+    if profile == PLATINUM_PROFILE:
+        return _select_platinum(items, suite)
     if profile != GOLD_CROSS_MEMORY_PROFILE:
         return rust_profile_selector(profile, items, suite)
     if suite is None:
@@ -39,6 +44,24 @@ def profile_selector(profile, items, suite=None):
         raise ValueError(f'El inventario Gold cross-memory debe contener exactamente {GOLD_CROSS_MEMORY_CASES} IDs')
     if any(not nodeid.startswith(GOLD_CROSS_MEMORY_FILE + '::') for nodeid in selected):
         raise ValueError('El inventario Gold cross-memory contiene IDs fuera del archivo fijado')
+    arguments = [str(Path(suite) / nodeid) for nodeid in sorted(selected)]
+    return selected, arguments
+
+
+def _select_platinum(items, suite=None):
+    """Select exactly the pinned Platinum marker cases from test_platinum.py."""
+    if suite is None:
+        raise ValueError('El perfil Platinum requiere el source suite fijado')
+    selected = {item['nodeid'] for item in items
+                if item['nodeid'].startswith(PLATINUM_FILE + '::')
+                and 'platinum' in item['markers']}
+    if len(selected) != PLATINUM_CASES:
+        raise ValueError(
+            f'El inventario Platinum debe contener exactamente {PLATINUM_CASES} IDs; '
+            f'se encontraron {len(selected)}'
+        )
+    if any(not nodeid.startswith(PLATINUM_FILE + '::') for nodeid in selected):
+        raise ValueError('El inventario Platinum contiene IDs fuera del archivo fijado')
     arguments = [str(Path(suite) / nodeid) for nodeid in sorted(selected)]
     return selected, arguments
 

@@ -245,6 +245,14 @@ impl ShortTermStore for Store {
         *self.last_scope.lock().unwrap() = Some(scope.clone());
         Ok(())
     }
+
+    async fn summary_entities(
+        &self,
+        _session_id: &str,
+        _scope: &OwnerScope,
+    ) -> MemoryResult<Vec<String>> {
+        Ok(Vec::new())
+    }
 }
 
 struct TestEmbedder {

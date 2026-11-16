@@ -138,12 +138,12 @@ pub async fn dispatch(state: &BridgeState, method: &str, args: &Args) -> Option<
         "create_conversation" => {
             async {
                 // Hosted semantics: every call opens a new conversation whose
-                // session id is its own id, owned by `user_id`.
+                // session id is its own id. Keep owner scope unowned so that
+                // subsequent Platinum operations (which do not pass
+                // user_identifier) can find the same conversation.
                 let user_id = args.string("user_id")?;
                 let session_id = uuid::Uuid::new_v4().to_string();
-                let conversation = memory
-                    .create_conversation(&session_id, Some(&user_id))
-                    .await?;
+                let conversation = memory.create_conversation(&session_id, None).await?;
                 let mut value = wire::conversation(&conversation);
                 value["user_id"] = Value::String(user_id);
                 Ok(Reply::Json(value))

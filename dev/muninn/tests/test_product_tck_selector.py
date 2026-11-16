@@ -8,7 +8,7 @@ sys.path.insert(0, str(BASE))
 from product_tck_selector import select_profiles
 
 PROFILES = ('messages', 'chains', 'search', 'schema', 'bronze', 'silver-long-term',
-            'silver-reasoning', 'gold-cross-memory')
+            'silver-reasoning', 'gold-cross-memory', 'platinum')
 
 
 class ProductTckProfileSelectionTests(unittest.TestCase):

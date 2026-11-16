@@ -396,6 +396,13 @@ impl ShortTermStore for UnreachableStore {
     async fn delete_conversation(&self, _: Uuid, _: &OwnerScope) -> MemoryResult<()> {
         unreachable!()
     }
+    async fn summary_entities(
+        &self,
+        _session_id: &str,
+        _scope: &OwnerScope,
+    ) -> MemoryResult<Vec<String>> {
+        unreachable!()
+    }
 }
 
 #[derive(Default)]

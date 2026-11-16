@@ -3,7 +3,8 @@
 use std::sync::Arc;
 
 use muninn_core::model::{
-    Conversation, Message, MessageRole, Metadata, NewMessage, Observation, SessionInfo,
+    Conversation, ConversationSummary, Message, MessageRole, Metadata, NewMessage, Observation,
+    SessionInfo,
 };
 use muninn_core::ports::{Embedder, MessageRecord, OwnerScope, SessionQuery, ShortTermStore};
 use muninn_core::{MemoryError, MemoryResult};
@@ -537,6 +538,109 @@ impl ShortTermMemory {
         }
         Ok(parts.join("\n"))
     }
+
+    /// Generate a summary of a conversation (`get_conversation_summary`, Silver tier).
+    ///
+    /// When `summarizer` is `None` and no LLM provider is configured, falls back
+    /// to a basic summary built from the first messages' content.
+    pub async fn get_conversation_summary(
+        &self,
+        session_id: &str,
+        user_identifier: Option<&str>,
+        max_tokens: usize,
+        include_entities: bool,
+        summarizer: Option<impl FnOnce(String) -> String>,
+    ) -> MemoryResult<ConversationSummary> {
+        let scope = self.enforce_multi_tenant(user_identifier)?;
+        let conversation = self
+            .get_conversation(session_id, None, user_identifier, None)
+            .await?;
+
+        if conversation.messages.is_empty() {
+            return Ok(ConversationSummary::empty(session_id));
+        }
+
+        // Build transcript
+        let transcript = conversation
+            .messages
+            .iter()
+            .map(|msg| format!("{}: {}", msg.role, msg.content))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // Time range
+        let first_time = conversation.messages.first().map(|m| m.created_at);
+        let last_time = conversation.messages.last().map(|m| m.created_at);
+        let time_range = match (first_time, last_time) {
+            (Some(f), Some(l)) => Some((f, l)),
+            _ => None,
+        };
+
+        // Key entities
+        let mut key_entities = Vec::new();
+        if include_entities {
+            key_entities = self.store.summary_entities(session_id, &scope).await?;
+        }
+
+        // Generate summary text
+        let summary_text = if let Some(sum_fn) = summarizer {
+            sum_fn(transcript)
+        } else {
+            self.build_basic_summary(&conversation.messages, max_tokens)
+        };
+
+        // Extract key topics from summary
+        let key_topics = extract_key_topics(&summary_text);
+
+        Ok(ConversationSummary {
+            session_id: session_id.to_owned(),
+            summary: summary_text,
+            message_count: conversation.messages.len() as i64,
+            time_range,
+            key_entities,
+            key_topics,
+            generated_at: chrono::Utc::now(),
+        })
+    }
+
+    /// Build a basic summary without an LLM — truncates the transcript.
+    fn build_basic_summary(&self, messages: &[Message], max_tokens: usize) -> String {
+        let max_chars = max_tokens.saturating_mul(4); // rough char-per-token estimate
+        let mut parts = Vec::new();
+        let mut total = 0usize;
+        for msg in messages.iter().rev().take(10) {
+            let line = format!("{}: {}", msg.role, msg.content);
+            if total + line.len() > max_chars && !parts.is_empty() {
+                break;
+            }
+            total += line.len();
+            parts.push(line);
+        }
+        parts.reverse();
+        if parts.is_empty() {
+            "Conversation contains messages.".to_owned()
+        } else {
+            parts.join("\n")
+        }
+    }
+}
+
+/// Simple keyword extraction from summary text.
+fn extract_key_topics(text: &str) -> Vec<String> {
+    let mut words = text
+        .split_whitespace()
+        .filter(|w| w.len() > 3)
+        .map(|w| {
+            w.chars()
+                .filter(|c| c.is_alphanumeric())
+                .collect::<String>()
+        })
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>();
+    words.sort();
+    words.dedup();
+    words.truncate(5);
+    words
 }
 
 fn checked_identity(

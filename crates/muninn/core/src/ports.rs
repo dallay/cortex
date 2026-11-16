@@ -308,6 +308,14 @@ pub trait ShortTermStore: Send + Sync {
         conversation_id: Uuid,
         scope: &OwnerScope,
     ) -> MemoryResult<()>;
+
+    /// Return the top entity names mentioned in a session's conversation,
+    /// ordered by mention count (for `get_conversation_summary`).
+    async fn summary_entities(
+        &self,
+        session_id: &str,
+        scope: &OwnerScope,
+    ) -> MemoryResult<Vec<String>>;
 }
 
 /// Destructive maintenance operations, reserved for disposable test graphs.
@@ -814,6 +822,92 @@ pub trait ReasoningStore: Send + Sync {
         entity_id: &str,
         scope: &OwnerScope,
     ) -> MemoryResult<Vec<ConversationStep>>;
+}
+
+/// A consolidation candidate returned by hygiene jobs.
+#[derive(Debug, Clone)]
+pub struct ConsolidationCandidate {
+    /// Unique identifier of the primary item (entity id, trace id, etc.).
+    pub id: String,
+    /// Type of consolidation: "merge", "summarize", "supersede", "archive".
+    pub kind: String,
+    /// Secondary identifier (target entity id, related trace id, etc.).
+    pub target_id: Option<String>,
+    /// Similarity score, confidence, or other metric.
+    pub score: Option<f64>,
+    /// Human-readable reason.
+    pub reason: String,
+}
+
+/// Report returned by a consolidation job.
+#[derive(Debug, Clone)]
+pub struct ConsolidationReport {
+    /// Job kind (e.g., "dedupe_entities", "summarize_long_traces").
+    pub kind: String,
+    /// Whether this was a dry run (no mutations).
+    pub dry_run: bool,
+    /// Number of candidates found.
+    pub candidates_found: usize,
+    /// Number of mutations applied (0 if dry_run).
+    pub mutations_applied: usize,
+    /// Detailed candidate list.
+    pub candidates: Vec<ConsolidationCandidate>,
+    /// Optional audit run ID written to the graph.
+    pub run_id: Option<String>,
+}
+
+impl Default for ConsolidationReport {
+    fn default() -> Self {
+        Self {
+            kind: String::new(),
+            dry_run: true,
+            candidates_found: 0,
+            mutations_applied: 0,
+            candidates: Vec::new(),
+            run_id: None,
+        }
+    }
+}
+
+/// Persistence port for memory consolidation — idempotent, dry-runnable
+/// hygiene jobs over the knowledge graph.
+///
+/// Equivalent to `neo4j_agent_memory.memory.consolidation.ConsolidationMemory`.
+#[async_trait]
+pub trait ConsolidationStore: Send + Sync {
+    /// Find pairs of entities with high embedding similarity and either
+    /// flag them with `:SAME_AS` or report them.
+    async fn dedupe_entities(
+        &self,
+        threshold: f64,
+        limit: i64,
+        dry_run: bool,
+    ) -> MemoryResult<ConsolidationReport>;
+
+    /// Find traces with many steps that haven't been summarized yet.
+    async fn summarize_long_traces(
+        &self,
+        min_steps: i64,
+        limit: i64,
+        dry_run: bool,
+    ) -> MemoryResult<ConsolidationReport>;
+
+    /// Find preferences with near-duplicate content suggesting one supersedes
+    /// the other.
+    async fn detect_superseded_preferences(
+        &self,
+        threshold: f64,
+        limit: i64,
+        dry_run: bool,
+    ) -> MemoryResult<ConsolidationReport>;
+
+    /// Archive conversations older than the given TTL.
+    async fn archive_expired_conversations(
+        &self,
+        ttl_days: i64,
+        limit: i64,
+        dry_run: bool,
+    ) -> MemoryResult<ConsolidationReport>;
 }
 
 #[cfg(test)]

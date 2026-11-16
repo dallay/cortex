@@ -595,6 +595,16 @@ RETURN m
 RETURN m
 ";
 
+/// Top entities mentioned in a conversation, ordered by mention count
+/// (`graph/queries.py: GET_SUMMARY_ENTITIES`).
+pub const GET_SUMMARY_ENTITIES: &str = "
+MATCH (c:Conversation {session_id: $session_id})-[:HAS_MESSAGE]->(m:Message)-[:MENTIONS]->(e:Entity)
+WITH e.name AS name, e.type AS `type`, count(*) AS mention_count
+ORDER BY mention_count DESC
+LIMIT 10
+RETURN name, `type`, mention_count
+";
+
 #[cfg(test)]
 mod identity_tests {
     use super::*;

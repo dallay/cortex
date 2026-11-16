@@ -1,4 +1,27 @@
 //! MCP protocol boundary, independent of storage and application services.
+//!
+//! Includes extensions equivalent to `neo4j_agent_memory.mcp`:
+//! - [`observer`] — Context compression and observation extraction
+//! - [`preference_detector`] — Pattern-based preference detection
+//! - [`prompts`] — MCP prompt definitions
+//! - [`resources`] — MCP resource definitions
+
+pub mod observer;
+pub mod preference_detector;
+pub mod prompts;
+pub mod resources;
+
+pub use observer::{MemoryObserver, Observation, ObserverConfig, SessionContext};
+pub use preference_detector::{DetectedPreference, PreferenceDetector};
+pub use prompts::{
+    get_prompt, list_prompts, memory_conversation, memory_reasoning, memory_review, PromptArgument,
+    PromptDefinition, PromptMessage, PromptProfile,
+};
+pub use resources::{
+    build_context_content, build_entities_content, build_error_content, build_graph_stats_content,
+    build_preferences_content, context_resource, entities_resource, get_resource,
+    graph_stats_resource, list_resources, preferences_resource, ResourceProfile, ResourceUri,
+};
 
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -322,5 +345,14 @@ mod tests {
 
         assert_eq!(written, MAX_RESULT_BYTES + 1);
         assert_eq!(buffer.0.len(), MAX_RESULT_BYTES + 1);
+    }
+
+    #[test]
+    fn extensions_are_re_exported() {
+        // Verify the re-exports compile
+        let _ = super::observer::MemoryObserver::with_defaults();
+        let _ = super::preference_detector::PreferenceDetector::new();
+        let _ = super::prompts::list_prompts(super::prompts::PromptProfile::Core);
+        let _ = super::resources::list_resources(super::resources::ResourceProfile::Core);
     }
 }

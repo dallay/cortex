@@ -218,6 +218,32 @@ enum Command {
         #[arg(long, env = "MUNINN_MCP_OWNER_SCOPE", hide_env_values = true)]
         owner_scope: String,
     },
+    /// Show graph statistics and memory metrics.
+    Stats {
+        /// Output as JSON instead of human-readable table.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// Health check and environment diagnostics.
+    Doctor,
+    /// Ontology management commands.
+    Ontology {
+        #[command(subcommand)]
+        command: OntologyCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum OntologyCommand {
+    /// List available built-in ontologies.
+    List,
+    /// Show the default POLE+O ontology document as JSON.
+    Show,
+    /// Validate an ontology document from a file.
+    Validate {
+        /// Path to the ontology JSON or YAML file.
+        path: String,
+    },
 }
 
 fn embedder(args: &EmbeddingArgs) -> Result<Option<Arc<dyn Embedder>>> {
@@ -443,7 +469,10 @@ enum SchemaAction {
 
 const fn schema_actions(command: &Command) -> &'static [SchemaAction] {
     match command {
-        Command::Mcp { .. } => &[SchemaAction::ValidateVectorDimensions],
+        Command::Mcp { .. }
+        | Command::Stats { .. }
+        | Command::Doctor
+        | Command::Ontology { .. } => &[SchemaAction::ValidateVectorDimensions],
         Command::Bridge { .. } | Command::Schema => &[
             SchemaAction::SetupAll,
             SchemaAction::ValidateVectorDimensions,
@@ -571,6 +600,123 @@ async fn main() -> Result<()> {
                 &mut server,
             )
             .await?;
+            Ok(())
+        }
+        Command::Stats { json } => run_stats(json),
+        Command::Doctor => run_doctor(&cli),
+        Command::Ontology { command } => run_ontology(command),
+    }
+}
+
+/// Show memory metrics summary (no DB required).
+fn run_stats(json: bool) -> Result<()> {
+    let metrics = muninn_observability::metrics::get_metrics();
+    let snapshot = metrics.snapshot();
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&snapshot).unwrap_or_default()
+        );
+    } else {
+        println!("=== Muninn Memory Metrics ===\n");
+        println!("  Messages added:     {}", snapshot.messages_added);
+        println!("  Messages searched:  {}", snapshot.messages_searched);
+        println!("  Entities created:   {}", snapshot.entities_created);
+        println!("  Entities searched:  {}", snapshot.entities_searched);
+        println!("  Relationships:      {}", snapshot.relationships_created);
+        println!("  Preferences:        {}", snapshot.preferences_stored);
+        println!("  Facts:              {}", snapshot.facts_stored);
+        println!("  Enrichment calls:   {}", snapshot.enrichment_calls);
+        println!("  Extraction calls:   {}", snapshot.extraction_calls);
+        println!("  Resolution calls:   {}", snapshot.resolution_calls);
+        println!("  Errors:             {}", snapshot.errors);
+        println!("  Traces created:     {}", snapshot.traces_created);
+        println!("  Reasoning steps:    {}", snapshot.reasoning_steps);
+        println!("  Last updated:       {}", snapshot.last_updated);
+        println!();
+    }
+    Ok(())
+}
+
+/// Health check and environment diagnostics (no DB required).
+fn run_doctor(cli: &Cli) -> Result<()> {
+    println!("=== Muninn Doctor ===\n");
+
+    println!("Neo4j:");
+    println!("  URI: {}", cli.neo4j.neo4j_uri);
+    println!("  User: {}", cli.neo4j.neo4j_user);
+    println!(
+        "  Password: {}",
+        if cli.neo4j.neo4j_password.is_empty() {
+            "(not set)"
+        } else {
+            "(set)"
+        }
+    );
+    println!();
+
+    println!("Embeddings:");
+    println!(
+        "  Provider: {}",
+        match cli.embedding.embedding_provider {
+            EmbeddingProvider::Openai => "openai",
+            EmbeddingProvider::Hash => "hash",
+            EmbeddingProvider::Minilm => "minilm",
+            EmbeddingProvider::None => "none",
+        }
+    );
+    println!("  Model: {}", cli.embedding.embedding_model);
+    println!("  Dimensions: {}", cli.embedding.embedding_dimensions);
+    println!();
+
+    println!("Extraction:");
+    println!(
+        "  Provider: {}",
+        match cli.extraction.extraction_provider {
+            ExtractionProvider::None => "none",
+            ExtractionProvider::Spacy => "spacy",
+        }
+    );
+    println!();
+
+    println!("Version:");
+    println!("  Muninn: {}", env!("CARGO_PKG_VERSION"));
+    println!();
+
+    Ok(())
+}
+
+/// Ontology management commands (no DB required).
+fn run_ontology(command: OntologyCommand) -> Result<()> {
+    match command {
+        OntologyCommand::List => {
+            println!("=== Built-in Ontologies ===\n");
+            println!(
+                "  pole-o  — Default POLE+O ontology (PERSON, ORGANIZATION, LOCATION, EVENT, OBJECT)"
+            );
+            println!("  general — General-purpose entity types");
+            println!();
+            Ok(())
+        }
+        OntologyCommand::Show => {
+            let doc = muninn_ontology::builtin::poleo_ontology();
+            let json =
+                serde_json::to_string_pretty(&doc).context("failed to serialize ontology")?;
+            println!("{json}");
+            Ok(())
+        }
+        OntologyCommand::Validate { path } => {
+            let doc = muninn_ontology::convert::load_ontology(&path)
+                .map_err(anyhow::Error::msg)
+                .context("failed to parse ontology document")?;
+            let problems = doc.validate_structure();
+            if !problems.is_empty() {
+                bail!("ontology validation failed:\n  {}", problems.join("\n  "));
+            }
+            println!("✅ {} is valid", path);
+            println!("  Domain: {:?}", doc.domain.name);
+            println!("  Entities: {}", doc.entity_types.len());
+            println!("  Relationships: {}", doc.relationships.len());
             Ok(())
         }
     }

@@ -2,6 +2,7 @@
 //! `MemoryClient` and its `short_term`, `long_term` and `reasoning` tiers.
 
 pub mod client;
+pub mod consolidation;
 pub mod enrichment;
 pub mod extraction;
 pub mod long_term;
@@ -12,6 +13,11 @@ pub mod resolution;
 pub mod short_term;
 
 pub use client::{MemoryClient, MemoryOptions, MemoryPorts};
+pub use consolidation::{
+    ConsolidationMemory, ConsolidationOptions, DEFAULT_CONSOLIDATION_LIMIT,
+    DEFAULT_CONVERSATION_TTL_DAYS, DEFAULT_DEDUPE_THRESHOLD, DEFAULT_MIN_TRACE_STEPS,
+    DEFAULT_SUPERSEDE_THRESHOLD,
+};
 pub use long_term::{
     AddEntityOptions, AddFactOptions, AddPreferenceOptions, AddRelationshipOptions, LongTermMemory,
     SearchEntitiesOptions, SearchPreferencesOptions,
