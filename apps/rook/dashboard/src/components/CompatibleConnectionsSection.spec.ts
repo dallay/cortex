@@ -216,6 +216,7 @@ describe("CompatibleConnectionsSection", () => {
 	});
 
 	it("tests connections sequentially and displays each result before continuing", async () => {
+		mockFetch.mockClear();
 		mockProviders.push(makeConnection(), makeConnection({ id: "conn-2" }));
 		let finishFirst!: (value: { valid: boolean }) => void;
 		mockTest.mockImplementationOnce(
