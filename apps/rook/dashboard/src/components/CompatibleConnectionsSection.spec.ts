@@ -5,12 +5,12 @@ import type { ProviderConnectionResponse } from "@/lib/api";
 import en from "@/locales/en.json";
 import CompatibleConnectionsSection from "./CompatibleConnectionsSection.vue";
 
-const mockProviders = vi.hoisted(() => [] as ProviderConnectionResponse[]);
-const mockUpdate = vi.hoisted(() => vi.fn());
-const mockTest = vi.hoisted(() => vi.fn());
-const mockFetch = vi.hoisted(() => vi.fn());
-
 const i18n = createI18n({ legacy: false, locale: "en", messages: { en } });
+
+let mockProviders: ProviderConnectionResponse[];
+let mockUpdate: ReturnType<typeof vi.fn>;
+let mockTest: ReturnType<typeof vi.fn>;
+let mockFetch: ReturnType<typeof vi.fn>;
 
 function mountSection() {
 	return mount(CompatibleConnectionsSection, {
@@ -37,13 +37,10 @@ function makeConnection(overrides = {}): ProviderConnectionResponse {
 
 describe("CompatibleConnectionsSection", () => {
 	beforeEach(() => {
-		mockUpdate.mockReset();
-		mockTest.mockReset();
-		mockFetch.mockReset();
-		mockProviders.length = 0;
-		mockUpdate.mockResolvedValue(undefined);
-		mockTest.mockResolvedValue({ valid: true });
-		mockFetch.mockResolvedValue(undefined);
+		mockProviders = [];
+		mockUpdate = vi.fn().mockResolvedValue(undefined);
+		mockTest = vi.fn().mockResolvedValue({ valid: true });
+		mockFetch = vi.fn().mockResolvedValue(undefined);
 	});
 
 	it("shows empty state when there are no compatible connections", () => {
