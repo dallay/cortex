@@ -244,7 +244,7 @@ describe("CompatibleConnectionsSection", () => {
 		expect(mockTest.mock.calls).toEqual([["conn-1"]]);
 		finishFirst({
 			valid: true,
-			status: "healthy",
+			status: "ok",
 			latencyMs: 100,
 			error: null,
 			warning: null,
