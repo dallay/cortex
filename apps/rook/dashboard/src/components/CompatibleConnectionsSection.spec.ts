@@ -195,13 +195,15 @@ describe("CompatibleConnectionsSection", () => {
 		mockProviders.push(makeConnection());
 		mockTest.mockResolvedValue(null);
 		const wrapper = mountSection();
+		const initialFetchCalls = mockFetch.mock.calls.length;
 		await wrapper
 			.find('[data-testid="compatible-connection-card"]')
 			.findAll("button")
 			.at(-1)
 			?.trigger("click");
 		await flushPromises();
-		expect(mockFetch).not.toHaveBeenCalled();
+		// When test returns null, refresh should not be called
+		expect(mockFetch.mock.calls.length).toBe(initialFetchCalls);
 		// When test returns null, the component should show a failure message
 		expect(wrapper.get('[role="alert"]').text()).toBe("Connection failed");
 		expect(
