@@ -581,7 +581,7 @@ jobs:
         # the runner image must not decide which Python reaches the CLI.
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: '3.11'
+          python-version: '3.15'
       - name: Install Semgrep CLI
         # setuptools<81 keeps pkg_resources, which the pinned semgrep requires when
         # importing. It must match the pin of the just ci-semgrep recipe.
@@ -625,10 +625,10 @@ jobs:
     name: Coverage (Rust)
     runs-on: ubuntu-latest
     container:
-      image: node:24-bookworm
+      image: node:24-bookworm@sha256:9d266751ca3d7fdbe651c878ffd5ad0a42fed49a18c283509267c97f025b7496
     services:
       neo4j:
-        image: neo4j:5.26-community@sha256:414adfe41c6ff32abb752be37f265c77607c166cab298f65a917fc4f05776218
+        image: neo4j:5.26-community@sha256:577eb43120e8688e62e753e962c47d30044ecaa95147ee5386c29f226b878008
         env:
           NEO4J_AUTH: neo4j/${{ github.run_id }}-${{ github.run_attempt }}-coverage
         options: >-
@@ -808,7 +808,7 @@ jobs:
           cargo llvm-cov -p muninn-providers -p muninn --no-report
           cargo llvm-cov report --lcov --output-path coverage/rust-lcov.info
       - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@e805d875275f728fac1885b413934be6d7c63f65 # v8.4.1
+        uses: SonarSource/sonarqube-scan-action@59202af334b4ba7b5db01b701b8e79f8b3bef0f4 # v8.5.0
         # Note: sonar.qualitygate.wait removed because the SonarCloud project-level
         # quality gate (New Code Coverage >= 80%) fails for large PRs that add
         # new crates (Muninn ontology, observability, MCP extensions) which are
