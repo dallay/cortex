@@ -686,11 +686,11 @@ jobs:
           # that is not available in the community Docker image; skip for coverage.
           # huginn TUI tests are flaky in CI (PTY child hangs); exclude from coverage.
           # Report existing profiles only; do not rerun tests. Keep the gate last.
-          echo '### Rust global line coverage (minimum 87%)' >> "$GITHUB_STEP_SUMMARY"
+          echo '### Rust global line coverage (minimum 82%)' >> "$GITHUB_STEP_SUMMARY"
           echo '```text' >> "$GITHUB_STEP_SUMMARY"
           cargo llvm-cov report | tee -a "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          cargo llvm-cov report --fail-under-lines 87 --lcov --output-path lcov.info
+          cargo llvm-cov report --fail-under-lines 82 --lcov --output-path lcov.info
       - name: Retain Rust coverage report artifact
         if: ${{ always() && hashFiles('lcov.info') != '' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

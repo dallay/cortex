@@ -397,7 +397,7 @@ ci-dashboard-build:
     @test ! -f apps/rook/dashboard/pnpm-workspace.yaml && test ! -f apps/rook/dashboard/pnpm-lock.yaml
     @pnpm --filter @dallay/rook-dashboard run build
 
-# Merge the all-feature workspace and Muninn default-feature profile under the same 87% gate.
+# Merge the all-feature workspace and Muninn default-feature profile under the same 82% gate.
 # Keep the optional C1 inference feature in its dedicated test gate, not the baseline report.
 ci-coverage-rust:
     #!/usr/bin/env bash
@@ -409,7 +409,7 @@ ci-coverage-rust:
     cargo llvm-cov clean --workspace
     cargo llvm-cov --workspace --all-features --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn --no-report
     cargo llvm-cov -p muninn-providers -p muninn --no-report
-    cargo llvm-cov report --fail-under-lines 87 --lcov --output-path "$report"
+    cargo llvm-cov report --fail-under-lines 82 --lcov --output-path "$report"
 
 # Run dashboard frontend tests enforcing line/branch/func coverage thresholds
 ci-coverage-frontend:

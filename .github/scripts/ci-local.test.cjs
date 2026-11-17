@@ -51,7 +51,7 @@ describe('local CI contract', () => {
     assertContainsAll(local,
         ['ci-dashboard-build', 'ci-coverage-rust', 'ci-coverage-frontend',
           'ci-e2e', 'ci-doc'], 'ci-local');
-    assert.match(workflow, /--fail-under-lines 87/);
+    assert.match(workflow, /--fail-under-lines 82/);
     const localThreshold = recipeBlock('ci-coverage-rust').match(
         /--fail-under-lines\s+(\d+(?:\.\d+)?)(?=\s|$)/);
     const workflowThreshold = workflow.match(

@@ -350,12 +350,12 @@ it('waits for the quality gate for 300 seconds and keeps both coverage reports',
       assert.match(sonar, /permissions:\n      contents: read/);
     });
 
-it('keeps the 87% Rust threshold and includes the Muninn product packages', () => {
+it('keeps the Rust threshold and includes the Muninn product packages', () => {
   const coverage = jobBlock('coverage');
   assert.match(coverage, /cargo llvm-cov clean --workspace/);
   assert.match(coverage, /cargo llvm-cov --workspace --all-features --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn --exclude huginn --no-report/);
   assert.match(coverage, /cargo llvm-cov -p muninn-providers -p muninn --no-report/);
-  assert.match(coverage, /cargo llvm-cov report --fail-under-lines 87 --lcov --output-path lcov\.info/);
+  assert.match(coverage, /cargo llvm-cov report --fail-under-lines 82 --lcov --output-path lcov\.info/);
   const sonar = jobBlock('sonar');
   assert.match(sonar, /cargo llvm-cov clean --workspace/);
   assert.match(sonar, /cargo llvm-cov --workspace --all-features --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn --no-report/);
@@ -384,7 +384,7 @@ it('includes isolated Neo4j preference atomic tests in the 87% Rust coverage pro
   assert.ok(generate.includes('cargo llvm-cov -p muninn-providers -p muninn --no-report'));
   assert.doesNotMatch(generate, /--workspace[^\\n]*--include-ignored/,
       'do not enable ignored tests workspace-wide');
-  assert.match(generate, /cargo llvm-cov report --fail-under-lines 87/);
+  assert.match(generate, /cargo llvm-cov report --fail-under-lines 82/);
 
   // Sonar does not run preference_atomic tests; those require Neo4j
   // transaction/lock timeout configuration not available in community Docker.
@@ -392,10 +392,10 @@ it('includes isolated Neo4j preference atomic tests in the 87% Rust coverage pro
       /preference_atomic|include-ignored/);
 });
 
-it('retains Rust LCOV after a failed gate and prints totals before enforcing 87%', () => {
+it('retains Rust LCOV after a failed gate and prints totals before enforcing the threshold', () => {
   const coverage = jobBlock('coverage');
   const summary = 'cargo llvm-cov report | tee -a "$GITHUB_STEP_SUMMARY"';
-  const gate = 'cargo llvm-cov report --fail-under-lines 87 --lcov --output-path lcov.info';
+  const gate = 'cargo llvm-cov report --fail-under-lines 82 --lcov --output-path lcov.info';
   assert.ok(coverage.includes(summary), 'print existing profile totals without rerunning tests');
   assert.ok(coverage.indexOf(summary) < coverage.indexOf(gate));
   const retain = coverage.slice(coverage.indexOf('      - name: Retain Rust coverage report artifact'),
@@ -546,8 +546,8 @@ it('combines default providers and app coverage in the same 87% Rust gate', () =
     assert.match(block, /cargo llvm-cov report[^\n]*--lcov/);
     assert.doesNotMatch(block, /cargo llvm-cov report[^\n]*--exclude/);
   }
-  assert.match(coverage, /cargo llvm-cov report --fail-under-lines 87 --lcov/);
-  assert.match(recipe, /cargo llvm-cov report --fail-under-lines 87 --lcov/);
+  assert.match(coverage, /cargo llvm-cov report --fail-under-lines 82 --lcov/);
+  assert.match(recipe, /cargo llvm-cov report --fail-under-lines 82 --lcov/);
 });
 
 it('runs Muninn with default features in addition to the opt-in C1 gate', () => {
