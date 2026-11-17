@@ -631,9 +631,6 @@ jobs:
         image: neo4j:5.26-community@sha256:414adfe41c6ff32abb752be37f265c77607c166cab298f65a917fc4f05776218
         env:
           NEO4J_AUTH: neo4j/${{ github.run_id }}-${{ github.run_attempt }}-coverage
-          NEO4J_dbms_transaction_timeout: "5s"
-          NEO4J_dbms_lock_acquisition_timeout: "5s"
-          NEO4J_dbms_transaction_monitor_check_interval: "1s"
         options: >-
           --tmpfs /data:rw,noexec,nosuid,size=1g
           --tmpfs /logs:rw,noexec,nosuid,size=256m
