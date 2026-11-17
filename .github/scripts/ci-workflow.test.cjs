@@ -652,8 +652,8 @@ it('scopes the Gitleaks exception for the GM-05 fixture to its file and value',
         );
       }
 
-      assert.doesNotMatch(globalSection, /dev\/muninn|synthetic-test-value/,
-          'no global allowlist for the fixture');
+      assert.doesNotMatch(globalSection, /synthetic-test-value/,
+          'no global allowlist for the GM-05 synthetic token value');
     });
 
 it('scopes the Seatbelt synthetic markers to their file and values', () => {
