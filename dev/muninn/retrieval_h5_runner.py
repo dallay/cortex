@@ -525,7 +525,6 @@ def run_protocol_evaluation(*, protocol: object, corpus: object, operator_record
 
     preflight_report = {"status": "eligible", "findings": []}
     measurement_started = True
-    ann_exact_gate = {"status": "not_evaluated", "results": {}}
     absolute_relevance_gate = {"status": "not_evaluated", "results": {}}
 
     try:

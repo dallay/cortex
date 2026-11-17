@@ -14,7 +14,6 @@ a numeric pass; the evaluator deliberately does not call that acceptance.
 import argparse
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
 import stat

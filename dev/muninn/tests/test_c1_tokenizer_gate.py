@@ -55,7 +55,7 @@ def synthetic_receipt(corpus, labels):
             'padded': {'input_ids': [ids + [0] * (width - len(ids)) for ids in truncated],
                        'attention_mask': [[1] * len(ids) + [0] * (width - len(ids))
                                           for ids in truncated],
-                       'token_type_ids': [[0] * width for ids in truncated]},
+                       'token_type_ids': [[0] * width for _ in truncated]},
             'full_lengths_including_specials': [len(ids) for ids in rows],
             'truncated_lengths_including_specials': [len(ids) for ids in truncated],
             'was_truncated': [len(a) > len(b) for a, b in zip(rows, truncated)],
