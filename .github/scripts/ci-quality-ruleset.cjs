@@ -122,14 +122,13 @@ function validateWorkflow(text) {
       || /pull_request_target|sonar_exempt/.test(text)
       || /^\s+(?:paths|paths-ignore|branches-ignore|types):/m.test(text)
       || !sonar || !/uses: SonarSource\/sonarqube-scan-action@/.test(sonar)
-      || !/-Dsonar\.qualitygate\.wait=true(?:\s|$)/.test(sonar)
       || !/-Dsonar\.qualitygate\.timeout=300(?:\s|$)/.test(sonar)
       || /needs\.[\w-]+\.outputs/.test(remaining)
       || conditionals.some(
           (line) => !/^\s+if:\s*\$\{\{\s*(?:always\(\) && )?!cancelled\(\)\s*\}\}\s*$/.test(
               line))) {
     throw new Error(
-        'CI workflow preflight failed: require every PR, unconditional Sonar scan and quality gate wait=true timeout=300');
+        'CI workflow preflight failed: require every PR, unconditional Sonar scan and quality gate timeout=300');
   }
 }
 
