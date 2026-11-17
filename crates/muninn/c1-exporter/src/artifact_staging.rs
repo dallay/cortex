@@ -102,6 +102,8 @@ impl ExclusiveStage {
             let _ = error;
             FsError::Io
         })?;
+        #[cfg(test)]
+        super::diagnostics::probe_pre_rename();
         rustix::fs::renameat_with(
             &self.parent,
             &self.source_name,

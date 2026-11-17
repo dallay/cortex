@@ -254,12 +254,16 @@ impl ModelArtifactStage {
                 })?;
             sync_file(&file).map_err(CacheError::Filesystem)?;
         }
-        let child = self
-            .stage
-            .directory
-            .open_subdir("1_Pooling")
-            .map_err(CacheError::Filesystem)?;
-        freeze_directory(&child)?;
+        {
+            // macOS refuses to rename a directory that still holds an open
+            // descriptor below it, so the frozen child closes before publication.
+            let child = self
+                .stage
+                .directory
+                .open_subdir("1_Pooling")
+                .map_err(CacheError::Filesystem)?;
+            freeze_directory(&child)?;
+        }
         freeze_directory(&self.stage.directory)?;
         let directory = self
             .stage
@@ -450,7 +454,16 @@ fn sync_file(file: &File) -> Result<(), FsError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, io::Cursor, os::unix::fs::PermissionsExt, path::Path};
+    use std::{
+        fs,
+        io::Cursor,
+        os::unix::fs::{MetadataExt, PermissionsExt},
+        path::Path,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
+    };
 
     struct Fixture(tempfile::TempDir);
 
@@ -564,6 +577,39 @@ mod tests {
                 0o400
             );
         }
+    }
+
+    /// macOS denies renaming a directory that still holds an open descriptor inside
+    /// it, so publication must close every descriptor below the staged directory
+    /// before the rename runs.
+    #[test]
+    fn publication_keeps_no_descriptor_open_inside_the_renamed_directory() {
+        let root = Fixture::new();
+        let stage = complete_stage(&root);
+        let staged = fs::read_dir(root.0.path())
+            .expect("fixture entries")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(".stage-"))
+            })
+            .expect("staged directory");
+        let pooling = fs::metadata(staged.join("1_Pooling")).expect("pooling metadata");
+        let (device, inode) = (pooling.dev(), pooling.ino());
+        let open_during_rename = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&open_during_rename);
+        let _guard = super::super::super::diagnostics::set_pre_rename_probe(move || {
+            if super::super::super::diagnostics::descriptor_open_for(device, inode) {
+                observed.store(true, Ordering::SeqCst);
+            }
+        });
+        stage.publish().expect("publication");
+        assert!(
+            !open_during_rename.load(Ordering::SeqCst),
+            "publication must not rename a directory that keeps descriptors open inside it"
+        );
     }
 
     fn complete_stage(root: &Fixture) -> ModelArtifactStage {
