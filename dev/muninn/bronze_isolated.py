@@ -4,11 +4,59 @@ import hashlib
 import json
 from pathlib import Path
 import secrets
-import shutil
 import subprocess
 import tempfile
 
 import schema_runner as fixtures
+
+
+class MountPathError(ValueError):
+    """Una ruta con coma no se puede interpolar en un `--mount` de Docker."""
+
+
+def resolve_mount_path(path: Path, label: str) -> Path:
+    """Resuelve la ruta y rechaza las comas que rompen el parseo de `--mount`.
+
+    Docker separa el valor de `--mount` por comas, así que una ruta con coma
+    inyectaría opciones adicionales en la invocación. El runner falla aquí,
+    antes de invocar Docker.
+    """
+    resolved = Path(path).resolve()
+    if ',' in str(resolved):
+        raise MountPathError(
+            f'La ruta de {label} contiene una coma y no puede interpolarse en un '
+            f'--mount de Docker: {resolved}')
+    return resolved
+
+
+def mount_option(source: Path, target: str, *, readonly: bool = True) -> list[str]:
+    """Construye la opción `--mount` de Docker desde una ruta ya validada."""
+    value = f'type=bind,source={source},target={target}'
+    if readonly:
+        value += ',readonly'
+    return ['--mount', value]
+
+
+def build_run_command(*, image: str, network: str, base: Path, sources: Path,
+                      auth: Path, evidence: Path) -> list[str]:
+    """Arma la lista de argumentos de `docker run` para el harness Bronze.
+
+    Toda ruta interpolada se valida aquí: ninguna ruta ambigua llega a Docker.
+    """
+    mounts = [
+        (resolve_mount_path(base, 'el harness'), '/harness', True),
+        (resolve_mount_path(sources, 'las fuentes TCK'), '/sources/tck', True),
+        (resolve_mount_path(auth, 'el secreto de autenticación'),
+         '/run/secrets/neo4j_auth', True),
+        (resolve_mount_path(evidence, 'la evidencia'), '/evidence', False),
+    ]
+    command = ['docker', 'run', '--rm', '--network', network, '--user', '1000:1000',
+               '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true']
+    for source, target, readonly in mounts:
+        command += mount_option(source, target, readonly=readonly)
+    command += ['--env', 'PYTHONPATH=/harness', '--env', 'PYTHONDONTWRITEBYTECODE=1',
+                image, '--sources', '/sources/tck', '--output', '/evidence/results']
+    return command
 
 
 def main():
@@ -20,9 +68,10 @@ def main():
     args = parser.parse_args()
     if args.evidence.exists():
         raise ValueError('La evidencia debe ser nueva')
+    evidence = resolve_mount_path(args.evidence, 'la evidencia')
+    sources = resolve_mount_path(args.sources, 'las fuentes TCK')
+    base = resolve_mount_path(Path(__file__).resolve().parent, 'el harness')
     args.evidence.mkdir(parents=True)
-    evidence = args.evidence.resolve()
-    base = Path(__file__).resolve().parent
     manifest = json.loads((args.gm01_evidence / 'manifest.json').read_text())
     receipt = {'status': 'blocked', 'gm01_manifest_sha256': hashlib.sha256(
         (args.gm01_evidence / 'manifest.json').read_bytes()).hexdigest(),
@@ -38,6 +87,7 @@ def main():
             private = Path(directory)
             password = secrets.token_urlsafe(24)
             auth = fixtures.write_auth_file(private, password, 'bronze')
+            auth = resolve_mount_path(auth, 'el secreto de autenticación')
             fixture = fixtures.start_fixture('bronze', network, auth, password)
             if not fixture.ready:
                 raise RuntimeError('Neo4j efímera no estuvo disponible')
@@ -46,14 +96,8 @@ def main():
             result = fixtures.docker('network', 'connect', '--alias', 'neo4j', network, fixture.container)
             if result.returncode:
                 raise RuntimeError('No se configuró el alias privado')
-            command = ['docker', 'run', '--rm', '--network', network, '--user', '1000:1000',
-                       '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true',
-                       '--mount', f'type=bind,source={base},target=/harness,readonly',
-                       '--mount', f'type=bind,source={args.sources.resolve()},target=/sources/tck,readonly',
-                       '--mount', f'type=bind,source={auth.resolve()},target=/run/secrets/neo4j_auth,readonly',
-                       '--mount', f'type=bind,source={evidence},target=/evidence',
-                       '--env', 'PYTHONPATH=/harness', '--env', 'PYTHONDONTWRITEBYTECODE=1',
-                       args.image, '--sources', '/sources/tck', '--output', '/evidence/results']
+            command = build_run_command(image=args.image, network=network, base=base,
+                                        sources=sources, auth=auth, evidence=evidence)
             with (evidence / 'container.log').open('w') as out:
                 code = subprocess.run(command, stdout=out, stderr=out).returncode
             receipt['image_id'] = fixtures.docker('image', 'inspect', args.image, '--format', '{{.Id}}').stdout.strip()
