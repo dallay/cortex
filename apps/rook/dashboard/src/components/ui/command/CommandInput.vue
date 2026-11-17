@@ -17,7 +17,7 @@ const props = defineProps<
 }
 >();
 
-const delegatedProps = reactiveOmit(props, "class");
+const delegatedProps = reactiveOmit(props, "class", "modelValue");
 
 const forwardedProps = useForwardProps(delegatedProps);
 

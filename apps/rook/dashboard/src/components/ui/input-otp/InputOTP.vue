@@ -12,7 +12,7 @@ const props = defineProps<
 
 const emits = defineEmits<OTPInputEmits>();
 
-const delegatedProps = reactiveOmit(props, "class");
+const delegatedProps = reactiveOmit(props, "class", "containerClass");
 
 const forwarded = useForwardPropsEmits(delegatedProps, emits);
 </script>

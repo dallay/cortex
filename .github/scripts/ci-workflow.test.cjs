@@ -609,7 +609,7 @@ it('filters the C1 job by its own materials, uses cache and cancels stale runs',
     () => {
       const c1 = jobBlock('test-muninn-c1');
       assert.match(c1, /^    runs-on: macos-15$/m);
-      assert.match(c1, /needs: \[changes\]/);
+      assert.match(c1, /needs: \[\s*changes\s*\]/);
       assert.match(c1, /needs\.changes\.outputs\.muninn_c1 == 'true'/);
       assert.match(c1, /timeout-minutes: 45/);
       assert.match(c1, /concurrency:/);
@@ -627,7 +627,7 @@ it('filters the C1 job by its own materials, uses cache and cancels stale runs',
 it('attests only on protected main after the C1 test and limits permissions to the privileged job',
     () => {
       const attest = jobBlock('attest-muninn-c1');
-      assert.match(attest, /needs: \[changes, test-muninn-c1\]/);
+      assert.match(attest, /needs: \[\s*changes,\s*test-muninn-c1\s*\]/);
       assert.match(attest, /github\.event_name == 'push'/);
       assert.match(attest, /github\.ref == 'refs\/heads\/main'/);
       assert.match(attest, /github\.ref_protected == true/);
