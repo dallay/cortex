@@ -1,0 +1,56 @@
+{
+  "facade": {"path": "src/neo4j_agent_memory/__init__.py", "class": "MemoryClient"},
+  "factory": {"path": "src/neo4j_agent_memory/__init__.py", "name": "connect"},
+  "unsupported": {"path": "src/neo4j_agent_memory/core/_unsupported.py", "class": "_NamsUnsupported"},
+  "accessors": {
+    "short_term": {
+      "contract": {"path": "src/neo4j_agent_memory/core/protocols.py", "class": "ShortTermProtocol"},
+      "bolt": {"path": "src/neo4j_agent_memory/memory/short_term.py", "class": "ShortTermMemory", "base": {"path": "src/neo4j_agent_memory/core/memory.py", "class": "BaseMemory"}},
+      "nams": {"path": "src/neo4j_agent_memory/nams/short_term.py", "class": "NamsShortTermMemory"}
+    },
+    "long_term": {
+      "contract": {"path": "src/neo4j_agent_memory/core/protocols.py", "class": "LongTermProtocol"},
+      "bolt": {"path": "src/neo4j_agent_memory/memory/long_term.py", "class": "LongTermMemory", "base": {"path": "src/neo4j_agent_memory/core/memory.py", "class": "BaseMemory"}},
+      "nams": {"path": "src/neo4j_agent_memory/nams/long_term.py", "class": "NamsLongTermMemory"}
+    },
+    "reasoning": {
+      "contract": {"path": "src/neo4j_agent_memory/core/protocols.py", "class": "ReasoningProtocol"},
+      "bolt": {"path": "src/neo4j_agent_memory/memory/reasoning.py", "class": "ReasoningMemory", "base": {"path": "src/neo4j_agent_memory/core/memory.py", "class": "BaseMemory"}},
+      "nams": {"path": "src/neo4j_agent_memory/nams/reasoning.py", "class": "NamsReasoningMemory"}
+    },
+    "query": {
+      "contract": {"path": "src/neo4j_agent_memory/core/protocols.py", "class": "CypherQueryProtocol"},
+      "bolt": {"path": "src/neo4j_agent_memory/core/query.py", "class": "BoltCypherQuery"},
+      "nams": {"path": "src/neo4j_agent_memory/nams/query.py", "class": "NamsCypherQuery"}
+    },
+    "ontology": {
+      "contract": {"path": "src/neo4j_agent_memory/ontology/protocol.py", "class": "OntologyAPI"},
+      "bolt": {"path": "src/neo4j_agent_memory/ontology/store.py", "class": "BoltOntology"},
+      "nams": {"path": "src/neo4j_agent_memory/nams/ontology.py", "class": "NamsOntology", "conditional": true, "method_note": "Las operaciones de ontología requieren REST; bridge se rechaza."}
+    },
+    "schema": {
+      "bolt": {"path": "src/neo4j_agent_memory/graph/schema.py", "class": "SchemaManager"},
+      "nams": {"sentinel": true}
+    },
+    "users": {
+      "bolt": {"path": "src/neo4j_agent_memory/memory/users.py", "class": "UserMemory"},
+      "nams": {"sentinel": true}
+    },
+    "buffered": {
+      "bolt": {"path": "src/neo4j_agent_memory/memory/buffered.py", "class": "BufferedWriter"},
+      "nams": {"sentinel": true}
+    },
+    "consolidation": {
+      "bolt": {"path": "src/neo4j_agent_memory/memory/consolidation.py", "class": "ConsolidationMemory"},
+      "nams": {"sentinel": true}
+    },
+    "eval": {
+      "bolt": {"path": "src/neo4j_agent_memory/memory/eval.py", "class": "EvalMemory"},
+      "nams": {"path": "src/neo4j_agent_memory/memory/eval.py", "class": "EvalMemory"}
+    },
+    "auth": {
+      "bolt": {"sentinel": true},
+      "nams": {"path": "src/neo4j_agent_memory/nams/auth_keys.py", "class": "NamsAuth"}
+    }
+  }
+}

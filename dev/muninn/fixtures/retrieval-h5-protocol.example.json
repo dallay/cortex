@@ -1,0 +1,25 @@
+{
+  "schema_version": "h5-acceptance/v1",
+  "protocol_id": "PENDING",
+  "protocol_version": "PENDING",
+  "repository_review": {
+    "commit": "PENDING",
+    "review_reference": "PENDING",
+    "approved_at": "PENDING",
+    "approved_gates": []
+  },
+  "run_inputs": {
+    "metrics_and_k": {"status": "pending", "value": null, "rationale": "K values require explicit product approval."},
+    "acceptance_rules_and_tolerances": {"status": "pending", "value": null, "rationale": "Acceptance criteria and tolerances require explicit product approval."},
+    "run_count_and_aggregation": {"status": "pending", "value": null, "rationale": "Run count, aggregation, tie, and undefined handling require explicit product approval."},
+    "corpus_and_query_candidate_scope": {"status": "pending", "value": null, "rationale": "Corpus, queries, and candidate scope require explicit product approval."},
+    "labels_rubric_and_adjudication": {"status": "pending", "value": null, "rationale": "Labels, rubric, and adjudication require explicit product approval."},
+    "ann_exact_comparison_scope": {"status": "pending", "value": null, "rationale": "ANN-exact comparison scope requires explicit product approval."},
+    "encoder_identity": {"status": "pending", "value": null, "rationale": "Expected encoder identity requires explicit operational approval."},
+    "provenance": {"status": "pending", "value": null, "rationale": "Operational provenance evidence requires explicit approval."}
+  },
+  "gates": {
+    "ann_exact": false,
+    "absolute_relevance": false
+  }
+}

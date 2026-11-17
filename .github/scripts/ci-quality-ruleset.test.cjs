@@ -178,7 +178,6 @@ jobs:
       - uses: SonarSource/sonarqube-scan-action@pinned
         with:
           args: >
-            -Dsonar.qualitygate.wait=true
             -Dsonar.qualitygate.timeout=300
 `;
 
@@ -415,20 +414,19 @@ test(
     });
 
 test(
-    'workflow preflight rejects exemption, missing wait/timeout, PR filters and conditional Sonar',
+    'workflow preflight rejects exemption, missing timeout, PR filters and conditional Sonar',
     () => {
       assert.doesNotThrow(() => validateWorkflow(workflow));
       for (const invalid of [
         workflow + '# sonar_exempt',
-        workflow.replace('wait=true', 'wait=false'),
         workflow.replace('timeout=300', 'timeout=600'),
         workflow.replace('  pull_request:', '  pull_request_target:'),
         workflow.replace('  pull_request:',
             '  pull_request:\n    paths: ["src/**"]'),
         workflow.replace('  pull_request:',
             '  pull_request:\n    branches: [release]'),
-        workflow.replace('-Dsonar.qualitygate.wait=true',
-            '# -Dsonar.qualitygate.wait=true'),
+        workflow.replace('-Dsonar.qualitygate.timeout=300',
+            '# -Dsonar.qualitygate.timeout=300'),
         workflow.replace('    runs-on:',
             '    if: needs.changes.outputs.backend == \'true\'\n    runs-on:'),
         workflow.replace('      - uses:',
@@ -449,7 +447,7 @@ test('backup failure or invalid local policy stops apply before any PUT',
         } else {
           const readLocalFile = h.deps.readLocalFile;
           h.deps.readLocalFile = (file) => file === '.github/workflows/ci.yml'
-              ? Buffer.from(workflow.replace('wait=true', 'wait=false'))
+              ? Buffer.from(workflow.replace('timeout=300', 'timeout=600'))
               : readLocalFile(file);
         }
         assert.throws(() => run(['--apply'], h.deps));

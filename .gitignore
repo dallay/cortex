@@ -47,6 +47,9 @@ Thumbs.db
 .gemini/skills/
 .opencode/skills/
 /odd/
+
+# Added by ggshield
+.cache_ggshield
 # START AI Agent Symlinks
 .agent/commands
 .agent/commands.bak

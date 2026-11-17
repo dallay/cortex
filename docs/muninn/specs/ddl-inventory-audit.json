@@ -1,0 +1,203 @@
+{
+  "entries": [
+    {
+      "behavior_status": "not_tested",
+      "disposition_status": "candidate_not_independently_reviewed",
+      "inventory_id": "ddl:src/neo4j_agent_memory/graph/queries.py:1703:848223e9a3fe03f3",
+      "kind": "statement_literal",
+      "limits": "Clasificación de literal AST; no demuestra introspección, ejecución ni lifecycle Neo4j.",
+      "line": 1703,
+      "literal": "CREATE INDEX schema_name_idx IF NOT EXISTS\nFOR (s:Schema)\nON (s.name)",
+      "literal_sha256": "848223e9a3fe03f3e039f758a0d972897057f803243b35508559103ae4435b72",
+      "owner": "<module>",
+      "source_ref": "https://github.com/neo4j-labs/agent-memory/blob/9d45af5529ecb5f2fe352013468a11087f3163d4/src/neo4j_agent_memory/graph/queries.py#L1703"
+    },
+    {
+      "behavior_status": "not_tested",
+      "disposition_status": "candidate_not_independently_reviewed",
+      "inventory_id": "ddl:src/neo4j_agent_memory/graph/queries.py:1709:3d1f37a41f2b8393",
+      "kind": "statement_literal",
+      "limits": "Clasificación de literal AST; no demuestra introspección, ejecución ni lifecycle Neo4j.",
+      "line": 1709,
+      "literal": "CREATE INDEX schema_id_idx IF NOT EXISTS\nFOR (s:Schema)\nON (s.id)",
+      "literal_sha256": "3d1f37a41f2b8393d65ef9117399d27bcc2736bdeee4909711f768349d9bcc25",
+      "owner": "<module>",
+      "source_ref": "https://github.com/neo4j-labs/agent-memory/blob/9d45af5529ecb5f2fe352013468a11087f3163d4/src/neo4j_agent_memory/graph/queries.py#L1709"
+    },
+    {
+      "behavior_status": "not_tested",
+      "disposition_status": "candidate_not_independently_reviewed",
+      "inventory_id": "ddl:src/neo4j_agent_memory/graph/queries.py:1724:291051d58169ed68",
+      "kind": "documentation_literal",
+      "limits": "Clasificación de literal AST; no demuestra introspección, ejecución ni lifecycle Neo4j.",
+      "line": 1724,
+      "literal": "Generate CREATE CONSTRAINT query for unique property constraint.\n\n    Args:\n        constraint_name: Name of the constraint\n        label: Node label to apply constraint to\n        property_name: Property that must be unique\n\n    Returns:\n        Cypher query string",
+      "literal_sha256": "291051d58169ed689ffc7a7fb0e47dfa6af589b48a8ae1a9ad34c4dbc72208c4",
+      "owner": "create_constraint_query",
+      "source_ref": "https://github.com/neo4j-labs/agent-memory/blob/9d45af5529ecb5f2fe352013468a11087f3163d4/src/neo4j_agent_memory/graph/queries.py#L1724"
+    },
+    {
+      "behavior_status": "not_tested",
+      "disposition_status": "candidate_not_independently_reviewed",
+      "inventory_id": "ddl:src/neo4j_agent_memory/graph/queries.py:1734:3311d014434bf961",
+      "kind": "template_fragment",
+      "limits": "Clasificación de literal AST; no demuestra introspección, ejecución ni lifecycle Neo4j.",
+      "line": 1734,
+      "literal": "CREATE CONSTRAINT",
+      "literal_sha256": "3311d014434bf961759267126ea366153b277586d4fefc184df7b2cf58cf7672",
+      "owner": "create_constraint_query",
+      "source_ref": "https://github.com/neo4j-labs/agent-memory/blob/9d45af5529ecb5f2fe352013468a11087f3163d4/src/neo4j_agent_memory/graph/queries.py#L1734"
+    },
+    {
+      "behavior_status": "not_tested",
+      "disposition_status": "candidate_not_independently_reviewed",
+      "inventory_id": "ddl:src/neo4j_agent_memory/graph/queries.py:1742:47a6907cc2bc2e4a",
+      "kind": "documentation_literal",
+      "limits": "Clasificación de literal AST; no demuestra introspección, ejecución ni lifecycle Neo4j.",
+      "line": 1742,
+      "literal": "Generate CREATE INDEX query for regular property index.\n\n    Args:\n        index_name: Name of the index\n        label: Node label to index\n        property_name: Property to index\n\n    Returns:\n        Cypher query string",
+      "literal_sha256": "47a6907cc2bc2e4a6213c6c2d291a6668e338241b74ff5e7808e8a5910e1e416",
+      "owner": "create_index_query",
+      "source_ref": "https://github.com/neo4j-labs/agent-memory/blob/9d45af5529ecb5f2fe352013468a11087f3163d4/src/neo4j_agent_memory/graph/queries.py#L1742"
+    },
+    {
+      "behavior_status": "not_tested",
+      "disposition_status": "candidate_not_independently_reviewed",
+      "inventory_id": "ddl:src/neo4j_agent_memory/graph/queries.py:1752:2923dd0a466d1d20",
+      "kind": "template_fragment",
+      "limits": "Clasificación de literal AST; no demuestra introspección, ejecución ni lifecycle Neo4j.",
+      "line": 1752,
+      "literal": "CREATE INDEX",
+      "literal_sha256": "2923dd0a466d1d20e641e1b01c84299e0cc3ba8c4d005e42e8a71413291f6de0",
+      "owner": "create_index_query",
+      "source_ref": "https://github.com/neo4j-labs/agent-memory/blob/9d45af5529ecb5f2fe352013468a11087f3163d4/src/neo4j_agent_memory/graph/queries.py#L1752"
+    },
+    {
+      "behavior_status": "not_tested",
+      "disposition_status": "candidate_not_independently_reviewed",
+      "inventory_id": "ddl:src/neo4j_agent_memory/graph/queries.py:1780:c7d71ec6586c528c",
+      "kind": "documentation_literal",
+      "limits": "Clasificación de literal AST; no demuestra introspección, ejecución ni lifecycle Neo4j.",
+      "line": 1780,
+      "literal": "Generate CREATE VECTOR INDEX query for vector similarity search.\n\n    Args:\n        index_name: Name of the vector index\n        label: Node label to index\n        property_name: Property containing the vector embedding\n        dimensions: Number of dimensions in the vector\n\n    Returns:\n        Cypher query string",
+      "literal_sha256": "c7d71ec6586c528cc4db65536efc4bdc75775bcb5ccea4e63597afae64471f05",
+      "owner": "create_vector_index_query",
+      "source_ref": "https://github.com/neo4j-labs/agent-memory/blob/9d45af5529ecb5f2fe352013468a11087f3163d4/src/neo4j_agent_memory/graph/queries.py#L1780"
+    },
+    {
+      "behavior_status": "not_tested",
+      "disposition_status": "candidate_not_independently_reviewed",
+      "inventory_id": "ddl:src/neo4j_agent_memory/graph/queries.py:1791:c3d7ce8ffe673a28",
+      "kind": "template_fragment",
+      "limits": "Clasificación de literal AST; no demuestra introspección, ejecución ni lifecycle Neo4j.",
+      "line": 1791,
+      "literal": "CREATE VECTOR INDEX",
+      "literal_sha256": "c3d7ce8ffe673a2861ec1c39247b154c0e1c6724c68f864b3033ac33c674106b",
+      "owner": "create_vector_index_query",
+      "source_ref": "https://github.com/neo4j-labs/agent-memory/blob/9d45af5529ecb5f2fe352013468a11087f3163d4/src/neo4j_agent_memory/graph/queries.py#L1791"
+    },
+    {
+      "behavior_status": "not_tested",
+      "disposition_status": "candidate_not_independently_reviewed",
+      "inventory_id": "ddl:src/neo4j_agent_memory/graph/schema.py:375:3698c8356518ff8f",
+      "kind": "exception_literal",
+      "limits": "Clasificación de literal AST; no demuestra introspección, ejecución ni lifecycle Neo4j.",
+      "line": 375,
+      "literal": "Failed to create constraint",
+      "literal_sha256": "3698c8356518ff8f2b75755d26c84239ec98b4fd1ce4b8cd730bc41b4c39fc67",
+      "owner": "_create_constraint",
+      "source_ref": "https://github.com/neo4j-labs/agent-memory/blob/9d45af5529ecb5f2fe352013468a11087f3163d4/src/neo4j_agent_memory/graph/schema.py#L375"
+    },
+    {
+      "behavior_status": "not_tested",
+      "disposition_status": "candidate_not_independently_reviewed",
+      "inventory_id": "ddl:src/neo4j_agent_memory/graph/schema.py:395:12c998da99dbd63a",
+      "kind": "exception_literal",
+      "limits": "Clasificación de literal AST; no demuestra introspección, ejecución ni lifecycle Neo4j.",
+      "line": 395,
+      "literal": "Failed to create index",
+      "literal_sha256": "12c998da99dbd63ae164da7b76f6ce8c8f376b70fe85f6cf32ff60c3d8ad733a",
+      "owner": "_create_index",
+      "source_ref": "https://github.com/neo4j-labs/agent-memory/blob/9d45af5529ecb5f2fe352013468a11087f3163d4/src/neo4j_agent_memory/graph/schema.py#L395"
+    },
+    {
+      "behavior_status": "not_tested",
+      "disposition_status": "candidate_not_independently_reviewed",
+      "inventory_id": "ddl:src/neo4j_agent_memory/schema/persistence.py:378:b700e8f8424876d8",
+      "kind": "documentation_literal",
+      "limits": "Clasificación de literal AST; no demuestra introspección, ejecución ni lifecycle Neo4j.",
+      "line": 378,
+      "literal": "Create index on Schema nodes for efficient lookups.",
+      "literal_sha256": "b700e8f8424876d8dd419605c07b0e4ac145878839d1d48c1eba6f6d33f3367e",
+      "owner": "ensure_schema_index",
+      "source_ref": "https://github.com/neo4j-labs/agent-memory/blob/9d45af5529ecb5f2fe352013468a11087f3163d4/src/neo4j_agent_memory/schema/persistence.py#L378"
+    }
+  ],
+  "inputs": {
+    "dev/muninn/.cache/sources/agent-memory/src/neo4j_agent_memory/graph/queries.py": "f7a3f561bed88b7b66b70109a3f7c088723bfe32d97b83dba68e0d4d1ad06d68",
+    "dev/muninn/.cache/sources/agent-memory/src/neo4j_agent_memory/graph/schema.py": "9be00a0cea5685804dae344a3c029432995ced0382a47c64cd34a07245507d68",
+    "dev/muninn/.cache/sources/agent-memory/src/neo4j_agent_memory/schema/persistence.py": "4b9a54b4b470a8462bd78539f31898743f2ff61fecf4b38ffa18ade41a039554",
+    "dev/muninn/references.json": "5c2233ff5430555741fd19e93bde37b1845b272567eace0bad4a673066ee8199",
+    "dev/muninn/source-integrity.json": "c38560fed02865db1106c4ba05393b55e5f01a733006f9a2375f86b4f9e029b1",
+    "docs/muninn/specs/parity-matrix.csv": "6e611985e0993b6727abb7394bf64f4ed47cb7a537d3fbf4dfea5e6e1f899e07"
+  },
+  "parity_claim": false,
+  "reference_commit": "9d45af5529ecb5f2fe352013468a11087f3163d4",
+  "schema_version": 2,
+  "scope": "static_ddl_literal_classification_not_behavior",
+  "supplementary_candidates": [
+    {
+      "behavior_status": "not_tested",
+      "disposition_status": "candidate_not_independently_reviewed",
+      "inventory_status": "absent_from_frozen_inventory",
+      "kind": "documentation_literal",
+      "line": 1760,
+      "literal": "Generate CREATE TEXT INDEX query (``CONTAINS`` / ``ENDS WITH`` lookups).\n\n    Args:\n        index_name: Name of the index\n        label: Node label to index\n        property_name: String property to index\n\n    Returns:\n        Cypher query string",
+      "literal_sha256": "5451ea4893d49888b7e436ac66cbbba7c2c6948ce8676e487a04cee491ce796d",
+      "owner": "create_text_index_query",
+      "repository_path": "src/neo4j_agent_memory/graph/queries.py",
+      "source_ref": "https://github.com/neo4j-labs/agent-memory/blob/9d45af5529ecb5f2fe352013468a11087f3163d4/src/neo4j_agent_memory/graph/queries.py#L1760",
+      "source_sha256": "f7a3f561bed88b7b66b70109a3f7c088723bfe32d97b83dba68e0d4d1ad06d68"
+    },
+    {
+      "behavior_status": "not_tested",
+      "disposition_status": "candidate_not_independently_reviewed",
+      "inventory_status": "absent_from_frozen_inventory",
+      "kind": "template_fragment",
+      "line": 1770,
+      "literal": "CREATE TEXT INDEX",
+      "literal_sha256": "7a394cd4ca2bdb5edc9a01eb1e699ac4eeae862738d2fc517d085daff37fd994",
+      "owner": "create_text_index_query",
+      "repository_path": "src/neo4j_agent_memory/graph/queries.py",
+      "source_ref": "https://github.com/neo4j-labs/agent-memory/blob/9d45af5529ecb5f2fe352013468a11087f3163d4/src/neo4j_agent_memory/graph/queries.py#L1770",
+      "source_sha256": "f7a3f561bed88b7b66b70109a3f7c088723bfe32d97b83dba68e0d4d1ad06d68"
+    },
+    {
+      "behavior_status": "not_tested",
+      "disposition_status": "candidate_not_independently_reviewed",
+      "inventory_status": "absent_from_frozen_inventory",
+      "kind": "documentation_literal",
+      "line": 1805,
+      "literal": "Generate CREATE POINT INDEX query for geospatial queries.\n\n    Args:\n        index_name: Name of the point index\n        label: Node label to index\n        property_name: Property containing the point\n\n    Returns:\n        Cypher query string",
+      "literal_sha256": "355a0f86fa9d66b452881fc4a5c27279b067da447a44ea7b0a16066fe116e382",
+      "owner": "create_point_index_query",
+      "repository_path": "src/neo4j_agent_memory/graph/queries.py",
+      "source_ref": "https://github.com/neo4j-labs/agent-memory/blob/9d45af5529ecb5f2fe352013468a11087f3163d4/src/neo4j_agent_memory/graph/queries.py#L1805",
+      "source_sha256": "f7a3f561bed88b7b66b70109a3f7c088723bfe32d97b83dba68e0d4d1ad06d68"
+    },
+    {
+      "behavior_status": "not_tested",
+      "disposition_status": "candidate_not_independently_reviewed",
+      "inventory_status": "absent_from_frozen_inventory",
+      "kind": "template_fragment",
+      "line": 1815,
+      "literal": "CREATE POINT INDEX",
+      "literal_sha256": "3a32f686210e1133efc549a3d0ff4cb916f78715f670acb7622dc7ddb5aecf5b",
+      "owner": "create_point_index_query",
+      "repository_path": "src/neo4j_agent_memory/graph/queries.py",
+      "source_ref": "https://github.com/neo4j-labs/agent-memory/blob/9d45af5529ecb5f2fe352013468a11087f3163d4/src/neo4j_agent_memory/graph/queries.py#L1815",
+      "source_sha256": "f7a3f561bed88b7b66b70109a3f7c088723bfe32d97b83dba68e0d4d1ad06d68"
+    }
+  ],
+  "supplementary_scope": "extended_pattern_same_three_pinned_files_only"
+}

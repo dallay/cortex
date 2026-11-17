@@ -12,6 +12,7 @@ const resultKeys = {
   check: 'CHECK',
   test: 'TEST',
   'test-huginn-seatbelt': 'TEST_HUGINN_SEATBELT',
+  'test-muninn-c1': 'TEST_MUNINN_C1',
   'test-frontend': 'TEST_FRONTEND',
   coverage: 'COVERAGE',
   'coverage-frontend': 'COVERAGE_FRONTEND',
@@ -31,6 +32,7 @@ const outputKeys = {
   github: 'CHANGES_GITHUB',
   docs: 'CHANGES_DOCS',
   labeler: 'CHANGES_LABELER',
+  muninn_c1: 'CHANGES_MUNINN_C1',
 };
 
 const results = Object.fromEntries(Object.entries(resultKeys).map(

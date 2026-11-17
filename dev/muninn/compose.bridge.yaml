@@ -1,0 +1,87 @@
+name: muninn-rust-spike
+
+services:
+  neo4j:
+    extends:
+      file: compose.yaml
+      service: neo4j
+  model_cache:
+    image: muninn-bridge-spike:local
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        set -e;
+        mkdir -p /artifacts/ee963db150ae720729aebee53794830f1d0e60960c9253e575a049b799758ac1;
+        cp -a /source/. /artifacts/ee963db150ae720729aebee53794830f1d0e60960c9253e575a049b799758ac1/;
+        chown -R ${MUNINN_ORACLE_UID}:${MUNINN_ORACLE_GID} /artifacts || true;
+        find /artifacts -type d -exec chmod 0500 {} +;
+        find /artifacts -type f -exec chmod 0400 {} +
+    user: "0:0"
+    volumes:
+      - "./.cache/minilm-artifacts/ee963db150ae720729aebee53794830f1d0e60960c9253e575a049b799758ac1:/source:ro"
+      - model_cache:/artifacts
+
+  bridge:
+    image: ${MUNINN_BRIDGE_IMAGE_REF:?Set immutable isolated bridge image reference}
+    build:
+      context: ../..
+      dockerfile: dev/muninn/Dockerfile.bridge
+    user: "${MUNINN_ORACLE_UID:-7474}:${MUNINN_ORACLE_GID:-7474}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1536m
+    cpus: 2
+    environment:
+      MUNINN_ARTIFACT_ROOT: /artifacts
+      MUNINN_ARTIFACT_BUNDLE: ee963db150ae720729aebee53794830f1d0e60960c9253e575a049b799758ac1
+    volumes:
+      - model_cache:/artifacts:ro
+    secrets: [neo4j_auth, bridge_token]
+    networks: [oracle]
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      model_cache:
+        condition: service_completed_successfully
+  tck:
+    image: ${MUNINN_TCK_IMAGE_REF:?Set immutable isolated TCK image reference}
+    build:
+      context: .
+      dockerfile: Dockerfile.bridge-tck
+    user: "${MUNINN_ORACLE_UID:-7474}:${MUNINN_ORACLE_GID:-7474}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 768m
+    cpus: 1
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+      MUNINN_BRIDGE_IMAGE_ID: "${MUNINN_BRIDGE_IMAGE_ID:?Set the isolated bridge image ID}"
+      MUNINN_TCK_IMAGE_ID: "${MUNINN_TCK_IMAGE_ID:?Set the isolated TCK image ID}"
+      MUNINN_BRIDGE_IMAGE_REF: "${MUNINN_BRIDGE_IMAGE_REF:?Set immutable isolated bridge image reference}"
+      MUNINN_TCK_IMAGE_REF: "${MUNINN_TCK_IMAGE_REF:?Set immutable isolated TCK image reference}"
+    tmpfs:
+      - /tmp:mode=1777,size=128m
+    secrets: [neo4j_auth, bridge_token]
+    volumes:
+      - "${MUNINN_REFERENCE_ROOT:?Define el directorio de referencias}:/references:ro"
+      - ./:/harness:ro
+      - ./artifacts:/artifacts
+    networks: [oracle]
+    depends_on:
+      bridge:
+        condition: service_started
+    command: [/harness/rust_tck_spike.py, --sources, /references, --output, /artifacts/rust-spike]
+
+secrets:
+  neo4j_auth:
+    file: .cache/neo4j.auth
+  bridge_token:
+    file: .cache/bridge.token
+volumes:
+  model_cache:
+networks:
+  oracle:
+    internal: true

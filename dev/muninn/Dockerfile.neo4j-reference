@@ -1,0 +1,4 @@
+FROM neo4j:5.26-community@sha256:414adfe41c6ff32abb752be37f265c77607c166cab298f65a917fc4f05776218
+USER 7474:7474
+RUN --network=none echo 'ea6f46b541c473ab79fff4359524027a462d031f21048b8a8acbceb4fa46a92f  /var/lib/neo4j/labs/apoc-5.26.32-core.jar' | sha256sum -c - \
+    && cp /var/lib/neo4j/labs/apoc-5.26.32-core.jar /var/lib/neo4j/plugins/apoc-core.jar

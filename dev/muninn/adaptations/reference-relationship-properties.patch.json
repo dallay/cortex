@@ -1,0 +1,8 @@
+{
+  "replacements": [
+    {
+      "old": "            relationship_type,\n        )\n        return TCKRelationship(\n            id=rel.id,\n            source_id=rel.source_id,\n            target_id=rel.target_id,\n            relationship_type=rel.type,\n            properties=rel.properties or {},\n        )",
+      "new": "            relationship_type,\n            attributes=properties,\n        )\n        return TCKRelationship(\n            id=rel.id,\n            source_id=rel.source_id,\n            target_id=rel.target_id,\n            relationship_type=rel.type,\n            properties=rel.attributes or {},\n        )"
+    }
+  ]
+}

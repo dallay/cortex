@@ -1,0 +1,15 @@
+*
+!Dockerfile.oracle
+!requirements-oracle.txt
+!Dockerfile.tck
+!requirements-tck.txt
+!Dockerfile.mcp
+!requirements-mcp.txt
+!mcp_probe.py
+!mcp_contract.py
+!reference.py
+!references.json
+!source-integrity.json
+!compose.mcp.yaml
+!Dockerfile.bridge-tck
+!requirements-bridge.txt

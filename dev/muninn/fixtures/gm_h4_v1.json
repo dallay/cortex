@@ -1,0 +1,446 @@
+{
+  "schema": "gm_h4-fixture-v1",
+  "seed": 404,
+  "numeric_epsilon": 1e-09,
+  "thresholds": {
+    "auto_merge": 0.9,
+    "review": 0.85,
+    "fuzzy": 0.85,
+    "semantic": 0.8,
+    "candidate_limit": 12
+  },
+  "gm02": {
+    "session_id": "gm-h4-synthetic-session",
+    "role": "user",
+    "seeded": [
+      {
+        "name": "Dana Reyes",
+        "type": "PERSON"
+      }
+    ],
+    "scenarios": [
+      {
+        "key": "auto",
+        "mode": "auto",
+        "text": "Alice met Acme Corporation in Paris on 4 May 2024.",
+        "min_mentions": 1
+      },
+      {
+        "key": "auto-replay",
+        "mode": "auto",
+        "text": "Alice met Acme Corporation in Paris on 4 May 2024.",
+        "min_mentions": 1
+      },
+      {
+        "key": "skip",
+        "mode": "skip",
+        "text": "Alice met Acme Corporation in Paris on 4 May 2024.",
+        "explicit_mentions": [
+          {
+            "name": "Skip Probe",
+            "type": "ORGANIZATION"
+          }
+        ],
+        "expected_mentions": [],
+        "absent_entities": [
+          "Skip Probe|ORGANIZATION"
+        ]
+      },
+      {
+        "key": "explicit",
+        "mode": "explicit",
+        "text": "Approved synthetic entity references.",
+        "explicit_mentions": [
+          {
+            "id_of": "Dana Reyes|PERSON"
+          },
+          {
+            "name": "Olive Turner",
+            "type": "PERSON"
+          },
+          {
+            "name": "Unlinked Unknown Name"
+          }
+        ],
+        "expected_mentions": [
+          "Dana Reyes|PERSON",
+          "Olive Turner|PERSON"
+        ]
+      }
+    ],
+    "relation_extra_columns": [
+      "created_at",
+      "derived",
+      "evidence",
+      "id",
+      "relation_type",
+      "source_message_ids",
+      "support"
+    ]
+  },
+  "gm03": {
+    "texts": [
+      {
+        "key": "auto",
+        "text": "Alice met Acme Corporation in Paris on 4 May 2024."
+      },
+      {
+        "key": "unicode",
+        "text": "Zoe Q. Moritz visited Cafe Lumiere in Zurich."
+      },
+      {
+        "key": "mixed",
+        "text": "The Quarterly Report was filed in Tokyo by the Norlund Institute on 12 March 2025."
+      },
+      {
+        "key": "empty",
+        "text": ""
+      },
+      {
+        "key": "whitespace",
+        "text": "   "
+      }
+    ]
+  },
+  "gm04": {
+    "seeds": [
+      {
+        "name": "Gm H4 Candidate Alpine",
+        "type": "PERSON"
+      },
+      {
+        "name": "Gm H4 Candidate Alpine",
+        "type": "OBJECT"
+      },
+      {
+        "name": "Gm H4 Candidate Boreal",
+        "type": "OBJECT"
+      },
+      {
+        "name": "Gm H4 Candidate Alpine",
+        "type": "LOCATION"
+      },
+      {
+        "name": "Gm H4 Candidate Boreal",
+        "type": "LOCATION"
+      },
+      {
+        "name": "Gm H4 Candidate Cypress",
+        "type": "LOCATION"
+      }
+    ],
+    "attempts": [
+      {
+        "key": "prefix-1",
+        "name": "Gm H4 Cypress Candidate",
+        "entity_type": "PERSON",
+        "pool": [
+          "Gm H4 Candidate Alpine|PERSON"
+        ]
+      },
+      {
+        "key": "prefix-2",
+        "name": "Gm H4 Cypress Candidate",
+        "entity_type": "OBJECT",
+        "pool": [
+          "Gm H4 Candidate Alpine|OBJECT",
+          "Gm H4 Candidate Boreal|OBJECT"
+        ]
+      },
+      {
+        "key": "prefix-3",
+        "name": "Gm H4 Cypress Candidate",
+        "entity_type": "LOCATION",
+        "pool": [
+          "Gm H4 Candidate Alpine|LOCATION",
+          "Gm H4 Candidate Boreal|LOCATION",
+          "Gm H4 Candidate Cypress|LOCATION"
+        ]
+      },
+      {
+        "key": "exact",
+        "name": "Gm H4 Candidate Alpine",
+        "entity_type": "OBJECT",
+        "pool": [
+          "Gm H4 Candidate Alpine|OBJECT"
+        ],
+        "expect_band": "merged",
+        "expect_score": {
+          "reference": 0.999994158744812,
+          "product": 1.0
+        }
+      },
+      {
+        "key": "exact-repeat",
+        "name": "Gm H4 Candidate Alpine",
+        "entity_type": "OBJECT",
+        "pool": [
+          "Gm H4 Candidate Alpine|OBJECT"
+        ],
+        "expect_band": "merged",
+        "expect_score": {
+          "reference": 0.999994158744812,
+          "product": 1.0
+        }
+      },
+      {
+        "key": "no-candidate",
+        "name": "Gm H4 Distant Sigma",
+        "entity_type": "ORGANIZATION",
+        "pool": [],
+        "expect_band": "none",
+        "expect_score": 0.0
+      }
+    ],
+    "config": {
+      "use_fuzzy_matching": false
+    }
+  },
+  "gm06": {
+    "clock_slack_seconds": 0.05,
+    "compared_properties": [
+      "enriched_description",
+      "enrichment_provider",
+      "wikipedia_url",
+      "wikidata_id",
+      "image_url"
+    ],
+    "reference_only_properties": [
+      "enrichment_data"
+    ],
+    "product_only_properties": [
+      "enriched_summary",
+      "diffbot_uri"
+    ],
+    "uncompared_properties": [
+      "enriched_at"
+    ],
+    "spacing": {
+      "wikimedia": {
+        "rate_limit_seconds": 0.5
+      },
+      "nominatim": {
+        "rate_limit_seconds": 1.0
+      }
+    },
+    "providers": {
+      "wikimedia-success": {
+        "provider": "wikimedia",
+        "path": "/api/rest_v1/page/summary/Gm_H6_Atlas_Institute",
+        "status": 200,
+        "body": {
+          "title": "Gm H6 Atlas Institute",
+          "description": "synthetic research institute",
+          "extract": "The Gm H6 Atlas Institute is a synthetic fixture institute.",
+          "type": "standard",
+          "pageid": 6106,
+          "wikibase_item": "Q6106",
+          "thumbnail": {
+            "source": "https://upload.example.invalid/gm-h6-atlas.png"
+          },
+          "content_urls": {
+            "desktop": {
+              "page": "https://en.wikipedia.org/wiki/Gm_H6_Atlas_Institute"
+            }
+          }
+        }
+      },
+      "wikimedia-absent": {
+        "provider": "wikimedia",
+        "path": "/api/rest_v1/page/summary/Gm_H6_Absent_Figure",
+        "status": 404,
+        "body": {
+          "title": "Not found"
+        }
+      },
+      "wikimedia-search-empty": {
+        "provider": "wikimedia",
+        "path": "/w/api.php",
+        "status": 200,
+        "body": {
+          "query": {
+            "search": []
+          }
+        }
+      },
+      "wikimedia-failure": {
+        "provider": "wikimedia",
+        "path": "/api/rest_v1/page/summary/Gm_H6_Unstable_Company",
+        "status": 503,
+        "body": {
+          "title": "Unavailable"
+        }
+      },
+      "nominatim-success": {
+        "provider": "nominatim",
+        "path": "/search",
+        "status": 200,
+        "body": [
+          {
+            "lat": "51.5074",
+            "lon": "-0.1278",
+            "display_name": "Gm H6 Harbour Place, Fixture",
+            "type": "harbour",
+            "importance": 0.75
+          }
+        ]
+      }
+    },
+    "attempts": [
+      {
+        "provider": "wikimedia",
+        "key": "enrich-success",
+        "operation": "enrich",
+        "name": "Gm H6 Atlas Institute",
+        "type": "ORGANIZATION",
+        "expect_status": "success",
+        "requests": {
+          "reference": 1,
+          "product": 1
+        },
+        "expect_properties": {
+          "enriched_description": "synthetic research institute",
+          "enrichment_provider": "wikimedia",
+          "wikipedia_url": "https://en.wikipedia.org/wiki/Gm_H6_Atlas_Institute",
+          "wikidata_id": "Q6106",
+          "image_url": "https://upload.example.invalid/gm-h6-atlas.png"
+        }
+      },
+      {
+        "provider": "wikimedia",
+        "key": "enrich-replay",
+        "operation": "enrich",
+        "name": "Gm H6 Atlas Institute",
+        "type": "ORGANIZATION",
+        "expect_status": "success",
+        "replay_of": "enrich-success",
+        "requests": {
+          "reference": 0,
+          "product": 0
+        }
+      },
+      {
+        "provider": "wikimedia",
+        "key": "enrich-not-found",
+        "operation": "enrich",
+        "name": "Gm H6 Absent Figure",
+        "type": "PERSON",
+        "expect_status": "not_found",
+        "requests": {
+          "reference": 2,
+          "product": 1
+        }
+      },
+      {
+        "provider": "wikimedia",
+        "key": "enrich-failure",
+        "operation": "enrich",
+        "name": "Gm H6 Unstable Company",
+        "type": "ORGANIZATION",
+        "expect_status": "error",
+        "requests": {
+          "reference": 1,
+          "product": 1
+        }
+      },
+      {
+        "provider": "nominatim",
+        "key": "geocode-success",
+        "operation": "geocode",
+        "name": "Gm H6 Harbour Place",
+        "type": "LOCATION",
+        "expect_status": "success",
+        "requests": {
+          "reference": 1,
+          "product": 1
+        },
+        "expect_location": {
+          "latitude": 51.5074,
+          "longitude": -0.1278
+        }
+      }
+    ]
+  },
+  "gm07": {
+    "session": "gm-h4-search-session",
+    "scope": {
+      "owner": "gm-h7-owner-a",
+      "other": "gm-h7-owner-b"
+    },
+    "entities": [
+      {
+        "name": "Gm H7 Northern Depot",
+        "type": "LOCATION"
+      },
+      {
+        "name": "Gm H7 Southern Depot",
+        "type": "LOCATION"
+      }
+    ],
+    "edges": [
+      {
+        "source": "Gm H7 Northern Depot|LOCATION",
+        "target": "Gm H7 Southern Depot|LOCATION",
+        "type": "CONNECTS_TO",
+        "confidence": 1.0
+      }
+    ],
+    "messages": [
+      {
+        "key": "gm07-alpha",
+        "owner": "gm-h7-owner-a",
+        "role": "user",
+        "text": "The northern depot handles every inbound parcel."
+      },
+      {
+        "key": "gm07-beta",
+        "owner": "gm-h7-owner-a",
+        "role": "assistant",
+        "text": "Every inbound parcel leaves the northern depot at dawn."
+      },
+      {
+        "key": "gm07-owner-b",
+        "owner": "gm-h7-owner-b",
+        "role": "user",
+        "text": "Owner B keeps its own northern depot ledger."
+      }
+    ],
+    "vector": {
+      "query": "depot network",
+      "limit": 3
+    },
+    "text": {
+      "query": "inbound parcel",
+      "limit": 2
+    },
+    "graph": {
+      "source": "Gm H7 Northern Depot|LOCATION"
+    },
+    "isolation": {
+      "query": "northern depot",
+      "limit": 3,
+      "reference_included": [
+        "gm07-owner-b"
+      ],
+      "product_included": []
+    },
+    "context": {
+      "query": "inbound parcel",
+      "max_items": 3,
+      "sections": [
+        "## Conversation History",
+        "## Relevant Knowledge"
+      ]
+    },
+    "relation_extra_columns": [
+      "created_at",
+      "derived",
+      "evidence",
+      "id",
+      "relation_type",
+      "source_message_ids",
+      "support"
+    ]
+  },
+  "similarity_epsilon": 1e-05
+}

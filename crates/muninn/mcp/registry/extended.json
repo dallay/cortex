@@ -1,0 +1,1179 @@
+{
+  "tools": [
+    {
+      "name": "memory_search",
+      "title": "Memory Search",
+      "description": "Search across all memory types using hybrid vector + graph search.\n\nFinds relevant messages, entities, preferences, and reasoning traces.\nUse this to recall stored information or find related context.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Natural language search query."
+          },
+          "limit": {
+            "default": 10,
+            "type": "integer",
+            "description": "Maximum results per memory type (default: 10)."
+          },
+          "memory_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Types to search. Options: 'messages', 'entities',\n'preferences', 'traces'. Defaults to messages, entities, preferences."
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Filter message search to a specific session."
+          },
+          "threshold": {
+            "default": 0.7,
+            "type": "number",
+            "description": "Similarity threshold 0.0-1.0 (default: 0.7)."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "x-fastmcp-wrap-result": true
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      }
+    },
+    {
+      "name": "memory_get_context",
+      "title": "Memory Get Context",
+      "description": "Get assembled context from all memory types for the current session.\n\nReturns conversation history, relevant entities/preferences, and similar\npast reasoning traces, formatted for LLM consumption. Call this at the\nstart of each conversation to load relevant memories.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Session to get context for (uses current session if not set)."
+          },
+          "query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional search query to focus context retrieval."
+          },
+          "max_items": {
+            "default": 10,
+            "type": "integer",
+            "description": "Maximum items per memory type (default: 10)."
+          },
+          "include_short_term": {
+            "default": true,
+            "type": "boolean",
+            "description": "Include conversation history (default: true)."
+          },
+          "include_long_term": {
+            "default": true,
+            "type": "boolean",
+            "description": "Include entities and preferences (default: true)."
+          },
+          "include_reasoning": {
+            "default": true,
+            "type": "boolean",
+            "description": "Include similar reasoning traces (default: true)."
+          }
+        },
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "x-fastmcp-wrap-result": true
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      }
+    },
+    {
+      "name": "memory_store_message",
+      "title": "Memory Store Message",
+      "description": "Store a message in conversation memory.\n\nAutomatically triggers entity extraction, preference detection,\nand fact extraction from the message content. Use this to persist\nimportant user messages, assistant responses, or system events.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "The message text content."
+          },
+          "role": {
+            "default": "user",
+            "type": "string",
+            "description": "Message role - 'user', 'assistant', or 'system' (default: 'user')."
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Session ID (uses current session if not set)."
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional metadata to attach (e.g., model, source)."
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "x-fastmcp-wrap-result": true
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false
+      },
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      }
+    },
+    {
+      "name": "memory_add_entity",
+      "title": "Memory Add Entity",
+      "description": "Create or update an entity in the knowledge graph.\n\nRuns entity resolution against existing entities to avoid duplicates.\nIf a close match is found, the entity may be merged or flagged.\n\nEntity types follow POLE+O: PERSON, OBJECT, LOCATION, EVENT, ORGANIZATION.\nEach supports optional subtypes (e.g., OBJECT:VEHICLE, LOCATION:ADDRESS).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Entity name (e.g., 'John Smith', 'Acme Corp')."
+          },
+          "entity_type": {
+            "type": "string",
+            "description": "POLE+O type in UPPER_CASE."
+          },
+          "subtype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional subtype (e.g., 'VEHICLE', 'COMPANY')."
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Entity description."
+          },
+          "aliases": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Alternative names for the entity."
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Additional metadata."
+          }
+        },
+        "required": [
+          "name",
+          "entity_type"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "x-fastmcp-wrap-result": true
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false
+      },
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      }
+    },
+    {
+      "name": "memory_add_preference",
+      "title": "Memory Add Preference",
+      "description": "Record a user preference for personalization.\n\nStore explicit or inferred user preferences with categorization.\nThese are used to personalize future interactions.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "Preference category (e.g., 'food', 'music', 'communication_style')."
+          },
+          "preference": {
+            "type": "string",
+            "description": "The preference text (e.g., 'Prefers dark mode')."
+          },
+          "context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional context about when/why the preference was expressed."
+          },
+          "confidence": {
+            "default": 1.0,
+            "type": "number",
+            "description": "Confidence score 0.0-1.0 (default: 1.0)."
+          }
+        },
+        "required": [
+          "category",
+          "preference"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "x-fastmcp-wrap-result": true
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false
+      },
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      }
+    },
+    {
+      "name": "memory_add_fact",
+      "title": "Memory Add Fact",
+      "description": "Store a subject-predicate-object fact triple.\n\nRecords declarative knowledge as a structured triple with optional\ntemporal validity bounds and arbitrary metadata.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "subject": {
+            "type": "string",
+            "description": "The subject of the fact (e.g., 'Earth')."
+          },
+          "predicate": {
+            "type": "string",
+            "description": "The relationship (e.g., 'has_radius_km')."
+          },
+          "object_value": {
+            "type": "string",
+            "description": "The object/value (e.g., '6371')."
+          },
+          "confidence": {
+            "default": 1.0,
+            "type": "number",
+            "description": "Confidence score 0.0-1.0 (default: 1.0)."
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "ISO date string for when this fact becomes valid."
+          },
+          "valid_until": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "ISO date string for when this fact expires."
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Additional metadata (e.g., scope, stack_tags, temporality)."
+          }
+        },
+        "required": [
+          "subject",
+          "predicate",
+          "object_value"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "x-fastmcp-wrap-result": true
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false
+      },
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      }
+    },
+    {
+      "name": "memory_get_conversation",
+      "title": "Memory Get Conversation",
+      "description": "Retrieve full conversation history for a session.\n\nReturns messages in chronological order with role, content, and timestamps.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "description": "The session ID to retrieve."
+          },
+          "limit": {
+            "default": 50,
+            "type": "integer",
+            "description": "Maximum number of messages to return (default: 50)."
+          },
+          "include_metadata": {
+            "default": true,
+            "type": "boolean",
+            "description": "Include message metadata (default: true)."
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "x-fastmcp-wrap-result": true
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      }
+    },
+    {
+      "name": "memory_list_sessions",
+      "title": "Memory List Sessions",
+      "description": "List available conversation sessions with previews.\n\nReturns session IDs, message counts, and first/last message previews.\nUseful for browsing stored conversations.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 20,
+            "type": "integer",
+            "description": "Maximum sessions to return (default: 20)."
+          },
+          "offset": {
+            "default": 0,
+            "type": "integer",
+            "description": "Offset for pagination (default: 0)."
+          }
+        },
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "x-fastmcp-wrap-result": true
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      }
+    },
+    {
+      "name": "memory_get_entity",
+      "title": "Memory Get Entity",
+      "description": "Get detailed entity information with graph relationships.\n\nSearches the knowledge graph for an entity by name and optionally\ntraverses relationships to find connected entities.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Entity name to look up."
+          },
+          "entity_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Filter by POLE+O type (optional)."
+          },
+          "include_neighbors": {
+            "default": true,
+            "type": "boolean",
+            "description": "Traverse graph for related entities (default: true)."
+          },
+          "max_hops": {
+            "default": 1,
+            "type": "integer",
+            "description": "Relationship traversal depth, 1-3 (default: 1)."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "x-fastmcp-wrap-result": true
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      }
+    },
+    {
+      "name": "memory_export_graph",
+      "title": "Memory Export Graph",
+      "description": "Export a subgraph as JSON for visualization or debugging.\n\nReturns nodes and relationships from the memory graph, formatted\nfor visualization libraries.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Filter to a specific session (optional)."
+          },
+          "memory_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Types to include: 'short_term', 'long_term', 'reasoning'.\nDefaults to all types."
+          },
+          "limit": {
+            "default": 500,
+            "type": "integer",
+            "description": "Maximum nodes per memory type (default: 500)."
+          }
+        },
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "x-fastmcp-wrap-result": true
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      }
+    },
+    {
+      "name": "memory_create_relationship",
+      "title": "Memory Create Relationship",
+      "description": "Create a typed relationship between two entities.\n\nBoth entities are looked up by name. If either is not found,\nan error is returned.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "source_name": {
+            "type": "string",
+            "description": "Name of the source entity."
+          },
+          "target_name": {
+            "type": "string",
+            "description": "Name of the target entity."
+          },
+          "relationship_type": {
+            "type": "string",
+            "description": "Relationship type in UPPER_SNAKE_CASE\n(e.g., 'WORKS_AT', 'LIVES_IN', 'FOUNDED')."
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional description of the relationship."
+          },
+          "confidence": {
+            "default": 1.0,
+            "type": "number",
+            "description": "Confidence score 0.0-1.0 (default: 1.0)."
+          }
+        },
+        "required": [
+          "source_name",
+          "target_name",
+          "relationship_type"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "x-fastmcp-wrap-result": true
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false
+      },
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      }
+    },
+    {
+      "name": "memory_start_trace",
+      "title": "Memory Start Trace",
+      "description": "Begin recording a reasoning trace for a complex task.\n\nCreates a new trace that captures the step-by-step reasoning\nprocess. Use memory_record_step to add steps and\nmemory_complete_trace when finished.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "description": "Session ID for the trace."
+          },
+          "task": {
+            "type": "string",
+            "description": "Description of the task being solved."
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional metadata (e.g., model name, complexity)."
+          }
+        },
+        "required": [
+          "session_id",
+          "task"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "x-fastmcp-wrap-result": true
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false
+      },
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      }
+    },
+    {
+      "name": "memory_record_step",
+      "title": "Memory Record Step",
+      "description": "Record a reasoning step within a trace.\n\nCaptures a thought-action-observation cycle. Optionally records\nan associated tool call.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "trace_id": {
+            "type": "string",
+            "description": "ID of the trace to add the step to."
+          },
+          "thought": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The reasoning/thinking for this step."
+          },
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The action taken or decided upon."
+          },
+          "observation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The result or observation after the action."
+          },
+          "tool_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Name of tool called in this step (optional)."
+          },
+          "tool_args": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Arguments passed to the tool (optional)."
+          },
+          "tool_result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Result from the tool call (optional)."
+          }
+        },
+        "required": [
+          "trace_id"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "x-fastmcp-wrap-result": true
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false
+      },
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      }
+    },
+    {
+      "name": "memory_complete_trace",
+      "title": "Memory Complete Trace",
+      "description": "Complete a reasoning trace with the final outcome.\n\nMarks the trace as finished and records whether the task\nwas completed successfully.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "trace_id": {
+            "type": "string",
+            "description": "ID of the trace to complete."
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Final outcome or result description."
+          },
+          "success": {
+            "default": true,
+            "type": "boolean",
+            "description": "Whether the task was completed successfully (default: true)."
+          }
+        },
+        "required": [
+          "trace_id"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "x-fastmcp-wrap-result": true
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false
+      },
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      }
+    },
+    {
+      "name": "memory_get_observations",
+      "title": "Memory Get Observations",
+      "description": "Get observations and extracted insights for a session.\n\nReturns the three-tier context hierarchy:\n- Reflections: high-level session summaries (generated when token\n  threshold is exceeded)\n- Observations: extracted facts, decisions, and preferences\n  accumulated during the conversation\n- Session stats: message count, approximate token usage",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "description": "Session ID to get observations for."
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "x-fastmcp-wrap-result": true
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      }
+    },
+    {
+      "name": "graph_query",
+      "title": "Graph Query",
+      "description": "Execute a read-only Cypher query against the knowledge graph.\n\nMATCH/RETURN queries and read-only CALL procedures (e.g., CALL db.*,\nCALL apoc.*) are allowed. Write operations (CREATE, MERGE, DELETE,\nSET, REMOVE) are blocked for safety.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Cypher query string (read-only)."
+          },
+          "parameters": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Query parameters as key-value pairs."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "x-fastmcp-wrap-result": true
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      }
+    }
+  ],
+  "resources": [
+    {
+      "name": "get_entities_catalog",
+      "uri": "memory://entities",
+      "description": "Catalog of all entities in the knowledge graph.\n\nReturns entity names, types, descriptions, and relationship counts.\nUseful for understanding what the memory system knows about.",
+      "mimeType": "text/plain",
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      }
+    },
+    {
+      "name": "get_all_preferences",
+      "uri": "memory://preferences",
+      "description": "All stored user preferences organized by category.\n\nReturns preferences for personalization. Auto-included\nwhen the LLM needs to personalize responses.",
+      "mimeType": "text/plain",
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      }
+    },
+    {
+      "name": "get_graph_stats",
+      "uri": "memory://graph/stats",
+      "description": "Knowledge graph statistics.\n\nReturns node/relationship counts and entity type distribution.\nUseful for understanding the size and composition of the memory graph.",
+      "mimeType": "text/plain",
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      }
+    }
+  ],
+  "resourceTemplates": [
+    {
+      "name": "get_context",
+      "uriTemplate": "memory://context/{session_id}",
+      "description": "Assembled context for a session.\n\nReturns conversation history, relevant entities, preferences,\nand similar reasoning traces for the given session. Suitable\nfor embedding in the system prompt at conversation start.",
+      "mimeType": "text/plain",
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "name": "memory-conversation",
+      "description": "Initialize a memory-aware conversation.\n\nLoads context from memory and instructs Claude on how to use\nmemory tools throughout the conversation. Use at the start\nof any conversation that should leverage stored memories.",
+      "arguments": [
+        {
+          "name": "session_id",
+          "description": "Provide a value matching the following JSON schema: {\"type\":\"string\"}. Encode non-string values as JSON.",
+          "required": false
+        }
+      ],
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      }
+    },
+    {
+      "name": "memory-reasoning",
+      "description": "Record a reasoning trace for a complex task.\n\nGuides Claude through structured reasoning with step-by-step\ntrace recording. Useful for debugging and learning from\nsuccessful problem-solving approaches.",
+      "arguments": [
+        {
+          "name": "task",
+          "description": "Provide a value matching the following JSON schema: {\"type\":\"string\"}. Encode non-string values as JSON.",
+          "required": true
+        }
+      ],
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      }
+    },
+    {
+      "name": "memory-review",
+      "description": "Review stored knowledge and flag contradictions.\n\nSummarizes everything stored in memory: entities, preferences,\nfacts, and recent conversations. Identifies potential\ncontradictions or outdated information.",
+      "arguments": [],
+      "_meta": {
+        "fastmcp": {
+          "tags": []
+        }
+      }
+    }
+  ]
+}

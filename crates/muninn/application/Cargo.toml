@@ -1,0 +1,22 @@
+[package]
+name = "muninn-application"
+version.workspace = true
+edition.workspace = true
+publish = false
+license = "Apache-2.0"
+description = "Muninn memory use cases (MemoryClient, short-term, long-term, reasoning)"
+
+[dependencies]
+muninn-core = { path = "../core" }
+async-trait.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+
+[lints]
+workspace = true

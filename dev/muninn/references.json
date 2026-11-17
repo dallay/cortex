@@ -1,0 +1,29 @@
+{
+  "agent-memory": {
+    "commit": "9d45af5529ecb5f2fe352013468a11087f3163d4",
+    "package_root": "src/neo4j_agent_memory",
+    "sources": [
+      "src/neo4j_agent_memory/__init__.py",
+      "src/neo4j_agent_memory/core",
+      "src/neo4j_agent_memory/config",
+      "src/neo4j_agent_memory/memory",
+      "src/neo4j_agent_memory/graph",
+      "src/neo4j_agent_memory/schema",
+      "src/neo4j_agent_memory/ontology",
+      "src/neo4j_agent_memory/extraction",
+      "src/neo4j_agent_memory/resolution",
+      "src/neo4j_agent_memory/enrichment",
+      "src/neo4j_agent_memory/embeddings",
+      "src/neo4j_agent_memory/llm",
+      "src/neo4j_agent_memory/mcp",
+      "src/neo4j_agent_memory/services",
+      "src/neo4j_agent_memory/observability",
+      "src/neo4j_agent_memory/nams"
+    ]
+  },
+  "agent-memory-tck": {
+    "commit": "e60b410f1046dc21db50f9aba48e171dc8a9b5a1",
+    "package_root": "tck",
+    "sources": ["SPEC.md"]
+  }
+}

@@ -1,0 +1,9 @@
+# The caller supplies immutable image IDs from the current GM-01 receipt.
+ARG PRODUCT_IMAGE
+ARG TCK_IMAGE
+FROM ${PRODUCT_IMAGE} AS product
+FROM ${TCK_IMAGE}
+USER root
+COPY --from=product /usr/local/bin/muninn /usr/local/bin/muninn
+USER 1000:1000
+ENTRYPOINT ["/opt/venv/bin/python", "/harness/bronze_container.py"]

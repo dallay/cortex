@@ -1,0 +1,33 @@
+FROM rust:1.99.1-slim@sha256:b8e062b1c3a80183df83d9ba187cadd2b5ab84bc78d453dbfeb2fccd5f982247 AS builder
+ENV CARGO_HOME=/tmp/cargo CARGO_TARGET_DIR=/tmp/target
+USER 1000:1000
+WORKDIR /tmp/build
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY .cargo/ .cargo/
+COPY apps/ apps/
+COPY crates/ crates/
+COPY third_party/ third_party/
+RUN cargo +1.99.1 build --locked --release -p muninn --bin muninn
+
+FROM python:3.13.18-slim@sha256:76baad6037690d6e8c4397fbcaef17bca6f19eecef822b708fe8fa3417d30bb5 AS dependencies
+USER 7474:7474
+WORKDIR /tmp
+COPY requirements-oracle.txt /tmp/requirements-oracle.txt
+RUN python -m venv /tmp/venv \
+    && /tmp/venv/bin/pip install --no-cache-dir --require-hashes -r /tmp/requirements-oracle.txt
+
+FROM python:3.13.18-slim@sha256:76baad6037690d6e8c4397fbcaef17bca6f19eecef822b708fe8fa3417d30bb5 AS runtime
+COPY --from=dependencies /tmp/venv /opt/venv
+COPY --from=builder /tmp/target/release/muninn /usr/local/bin/muninn
+COPY build-provenance.json /opt/harness/build-provenance.json
+COPY reference/LICENSE /usr/share/licenses/muninn/agent-memory-LICENSE.txt
+COPY harness/ /opt/harness/
+COPY reference/src/ /opt/reference/src/
+ENV PATH=/opt/venv/bin:$PATH \
+    PYTHONPATH=/opt/harness:/opt/reference/src \
+    PYTHONDONTWRITEBYTECODE=1 \
+    HOME=/home/capture
+USER 1000:1000
+WORKDIR /opt/harness
+ENTRYPOINT ["/opt/venv/bin/python", "/opt/harness/gm01_runner.py"]
+CMD ["--container", "--evidence", "/evidence"]

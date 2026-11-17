@@ -1,0 +1,242 @@
+{
+  "schema_version": 1,
+  "profile_name": "local-cpu-candidate-v1",
+  "reference_commit": "9d45af5529ecb5f2fe352013468a11087f3163d4",
+  "upstream_lock_sha256": "30a0c40d5bba6ceecf9cfd6a280a066ad055bb091bbb2d6ac540c845ec943553",
+  "framework_packages": {
+    "gliner2": "2.1.0",
+    "huggingface-hub": "2.2.0",
+    "safetensors": "0.8.0",
+    "sentence-transformers": "6.2.0",
+    "spacy": "3.8.16",
+    "tokenizers": "0.23.3",
+    "torch": "2.14.1",
+    "transformers": "5.20.2"
+  },
+  "models": [
+    {
+      "id": "fastino/gliner2.5-base-v1",
+      "revision": "54785d51df8d86a0d8f2eb212fec15871aad2c4d",
+      "source": "huggingface",
+      "metadata_url": "https://huggingface.co/api/models/fastino/gliner2.5-base-v1/revision/54785d51df8d86a0d8f2eb212fec15871aad2c4d?blobs=true",
+      "metadata_payload_sha256": "262dde8d9257a5626ec07bfb408472abf14e322b571650caf40afd2f5a1fa504",
+      "license_declared": "apache-2.0",
+      "runtime_validation": "not_run",
+      "loader_network_resolution_verified": false,
+      "metadata": {
+        "model_type": "gliner2",
+        "architectures": [
+          "Gliner2ForSchemaExtraction"
+        ],
+        "model_name": "microsoft/deberta-v3-base"
+      },
+      "files": [
+        {
+          "path": "config.json",
+          "size": 4103,
+          "sha256": "d6b515c21ae2100c12267fb42a3f02c1e99ad87580366aebedb161efd74441c7",
+          "verification": "bytes_at_capture",
+          "cache_file": "fastino--gliner2.5-base-v1--config.json",
+          "source_url": "https://huggingface.co/fastino/gliner2.5-base-v1/resolve/54785d51df8d86a0d8f2eb212fec15871aad2c4d/config.json"
+        },
+        {
+          "path": "encoder_config/config.json",
+          "size": 857,
+          "sha256": "d36a845b9f25dcaf1ec45a1c4bdf65ea4ac20596537e14530ec9f660a63aeca4",
+          "verification": "bytes_at_capture",
+          "cache_file": "fastino--gliner2.5-base-v1--encoder_config--config.json",
+          "source_url": "https://huggingface.co/fastino/gliner2.5-base-v1/resolve/54785d51df8d86a0d8f2eb212fec15871aad2c4d/encoder_config/config.json"
+        },
+        {
+          "path": "tokenizer.json",
+          "size": 8341713,
+          "sha256": "cbc8ae6037812709c9c26f2a160f8dc48b0440bcb79c8141804259ae2d6adac3",
+          "verification": "bytes_at_capture",
+          "cache_file": "fastino--gliner2.5-base-v1--tokenizer.json",
+          "source_url": "https://huggingface.co/fastino/gliner2.5-base-v1/resolve/54785d51df8d86a0d8f2eb212fec15871aad2c4d/tokenizer.json"
+        },
+        {
+          "path": "tokenizer_config.json",
+          "size": 645,
+          "sha256": "0bf3ea0873234bd9bfdd3853c440395009ac6365a925b91654daed5396d655e1",
+          "verification": "bytes_at_capture",
+          "cache_file": "fastino--gliner2.5-base-v1--tokenizer_config.json",
+          "source_url": "https://huggingface.co/fastino/gliner2.5-base-v1/resolve/54785d51df8d86a0d8f2eb212fec15871aad2c4d/tokenizer_config.json"
+        },
+        {
+          "path": "README.md",
+          "size": 21918,
+          "sha256": "1b023a4786371699477e0b635d2a148f10fe5c23ab1e9d36211ff58754289bbe",
+          "verification": "bytes_at_capture",
+          "cache_file": "fastino--gliner2.5-base-v1--README.md",
+          "source_url": "https://huggingface.co/fastino/gliner2.5-base-v1/resolve/54785d51df8d86a0d8f2eb212fec15871aad2c4d/README.md"
+        },
+        {
+          "path": "model.safetensors",
+          "size": 774366564,
+          "sha256": "7274094de2e0c2a37a386f55fc4e23061a954da5bd7a335e7dfe56f2743c277a",
+          "verification": "metadata_lfs_no_bytes",
+          "source_url": "https://huggingface.co/fastino/gliner2.5-base-v1/resolve/54785d51df8d86a0d8f2eb212fec15871aad2c4d/model.safetensors"
+        }
+      ]
+    },
+    {
+      "id": "sentence-transformers/all-MiniLM-L6-v2",
+      "revision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+      "source": "huggingface",
+      "metadata_url": "https://huggingface.co/api/models/sentence-transformers/all-MiniLM-L6-v2/revision/1110a243fdf4706b3f48f1d95db1a4f5529b4d41?blobs=true",
+      "metadata_payload_sha256": "c44d3e5cc03a9b8b6318888339810b7c2524054800aea038b4a27a0fe25b4a4c",
+      "license_declared": "apache-2.0",
+      "runtime_validation": "not_run",
+      "loader_network_resolution_verified": false,
+      "metadata": {
+        "model_type": "bert",
+        "architectures": [
+          "BertModel"
+        ],
+        "_name_or_path": "nreimers/MiniLM-L6-H384-uncased",
+        "hidden_size": 384
+      },
+      "files": [
+        {
+          "path": "config.json",
+          "size": 612,
+          "sha256": "953f9c0d463486b10a6871cc2fd59f223b2c70184f49815e7efbcab5d8908b41",
+          "verification": "bytes_at_capture",
+          "cache_file": "sentence-transformers--all-MiniLM-L6-v2--config.json",
+          "source_url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/config.json"
+        },
+        {
+          "path": "config_sentence_transformers.json",
+          "size": 116,
+          "sha256": "061ca9d39661d6c6d6de5ba27f79a1cd5770ea247f8d46412a68a498dc5ac9f3",
+          "verification": "bytes_at_capture",
+          "cache_file": "sentence-transformers--all-MiniLM-L6-v2--config_sentence_transformers.json",
+          "source_url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/config_sentence_transformers.json"
+        },
+        {
+          "path": "modules.json",
+          "size": 349,
+          "sha256": "84e40c8e006c9b1d6c122e02cba9b02458120b5fb0c87b746c41e0207cf642cf",
+          "verification": "bytes_at_capture",
+          "cache_file": "sentence-transformers--all-MiniLM-L6-v2--modules.json",
+          "source_url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/modules.json"
+        },
+        {
+          "path": "1_Pooling/config.json",
+          "size": 190,
+          "sha256": "4be450dde3b0273bb9787637cfbd28fe04a7ba6ab9d36ac48e92b11e350ffc23",
+          "verification": "bytes_at_capture",
+          "cache_file": "sentence-transformers--all-MiniLM-L6-v2--1_Pooling--config.json",
+          "source_url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/1_Pooling/config.json"
+        },
+        {
+          "path": "sentence_bert_config.json",
+          "size": 53,
+          "sha256": "fc1993fde0a95c24ec6c022539d41cf6e2f7c9721e5415d6fb6897472a9cd4b7",
+          "verification": "bytes_at_capture",
+          "cache_file": "sentence-transformers--all-MiniLM-L6-v2--sentence_bert_config.json",
+          "source_url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/sentence_bert_config.json"
+        },
+        {
+          "path": "tokenizer.json",
+          "size": 466247,
+          "sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037",
+          "verification": "bytes_at_capture",
+          "cache_file": "sentence-transformers--all-MiniLM-L6-v2--tokenizer.json",
+          "source_url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/tokenizer.json"
+        },
+        {
+          "path": "tokenizer_config.json",
+          "size": 350,
+          "sha256": "acb92769e8195aabd29b7b2137a9e6d6e25c476a4f15aa4355c233426c61576b",
+          "verification": "bytes_at_capture",
+          "cache_file": "sentence-transformers--all-MiniLM-L6-v2--tokenizer_config.json",
+          "source_url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/tokenizer_config.json"
+        },
+        {
+          "path": "special_tokens_map.json",
+          "size": 112,
+          "sha256": "303df45a03609e4ead04bc3dc1536d0ab19b5358db685b6f3da123d05ec200e3",
+          "verification": "bytes_at_capture",
+          "cache_file": "sentence-transformers--all-MiniLM-L6-v2--special_tokens_map.json",
+          "source_url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/special_tokens_map.json"
+        },
+        {
+          "path": "vocab.txt",
+          "size": 231508,
+          "sha256": "07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3",
+          "verification": "bytes_at_capture",
+          "cache_file": "sentence-transformers--all-MiniLM-L6-v2--vocab.txt",
+          "source_url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/vocab.txt"
+        },
+        {
+          "path": "README.md",
+          "size": 10502,
+          "sha256": "dcd602d2fd35c203a247304a06fec6654a12f7941b739f9221a064fe8dc3b7f0",
+          "verification": "bytes_at_capture",
+          "cache_file": "sentence-transformers--all-MiniLM-L6-v2--README.md",
+          "source_url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/README.md"
+        },
+        {
+          "path": "model.safetensors",
+          "size": 90868376,
+          "sha256": "53aa51172d142c89d9012cce15ae4d6cc0ca6895895114379cacb4fab128d9db",
+          "verification": "metadata_lfs_no_bytes",
+          "source_url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/model.safetensors"
+        }
+      ]
+    },
+    {
+      "id": "explosion/en_core_web_sm",
+      "revision": "374ece89b2099818244f5a65ef466b89c0c392ae",
+      "source": "github_release",
+      "release_id": 177486822,
+      "release_asset_id": 195734380,
+      "tag": "en_core_web_sm-3.8.0",
+      "license_declared": "MIT",
+      "runtime_validation": "not_run",
+      "framework": "spacy",
+      "framework_requirement": ">=3.8.0,<3.9.0",
+      "metadata": {
+        "model_version": "3.8.0"
+      },
+      "files": [
+        {
+          "path": "en_core_web_sm-3.8.0-py3-none-any.whl",
+          "size": 12806118,
+          "sha256": "1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85",
+          "verification": "bytes_at_capture",
+          "cache_file": "en_core_web_sm-3.8.0-py3-none-any.whl",
+          "source_url": "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
+        }
+      ]
+    }
+  ],
+  "rejected_candidates": [
+    {
+      "id": "spacy/en_core_web_sm",
+      "revision": "8fb6f8155286360bf5486fe399e2738d1df7ded2",
+      "model_version": "3.7.1",
+      "framework_requirement": ">=3.7.2,<3.8.0",
+      "metadata_url": "https://huggingface.co/spacy/en_core_web_sm/resolve/8fb6f8155286360bf5486fe399e2738d1df7ded2/meta.json",
+      "metadata_sha256": "5fc475fbe5bb0317249fd7e51c22d53052345bb23f13eaf149ff590223964d1c",
+      "reason": "Rango declarado incompatible con spaCy 3.8.16 fijado en upstream"
+    }
+  ],
+  "plugins": [
+    {
+      "name": "apoc-core",
+      "image": "neo4j:5.26-community@sha256:414adfe41c6ff32abb752be37f265c77607c166cab298f65a917fc4f05776218",
+      "path": "/var/lib/neo4j/labs/apoc-5.26.32-core.jar",
+      "version_from_filename": "5.26.32",
+      "size": 3077005,
+      "sha256": "ea6f46b541c473ab79fff4359524027a462d031f21048b8a8acbceb4fa46a92f",
+      "verification": "bytes_in_image",
+      "runtime_validation": "not_run",
+      "activation_verified": false
+    }
+  ],
+  "scope": "Referencias y bytes de archivos pequeños; no inferencia, equivalencia de extracción ni plugin activado",
+  "hosted_providers": "Aliases remotos no congelan pesos; requieren respuestas controladas y fixtures separadas"
+}

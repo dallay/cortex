@@ -1,0 +1,164 @@
+{
+  "schema_version": 1,
+  "corpus_id": "c0-v1",
+  "status": "preparation_config_not_runtime_evidence",
+  "model": {
+    "id": "sentence-transformers/all-MiniLM-L6-v2",
+    "revision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+    "bundle_id": "ee963db150ae720729aebee53794830f1d0e60960c9253e575a049b799758ac1",
+    "bundle_derivation": "SHA256 del recibo JSON compacto, campos schema_version/model_id/revision/files; archivos ordenados por path; algoritmo en artifact_model_stage.rs::receipt_bytes. Calculado sin abrir caché.",
+    "files": [
+      {
+        "path": "1_Pooling/config.json",
+        "size": 190,
+        "sha256": "4be450dde3b0273bb9787637cfbd28fe04a7ba6ab9d36ac48e92b11e350ffc23"
+      },
+      {
+        "path": "README.md",
+        "size": 10502,
+        "sha256": "dcd602d2fd35c203a247304a06fec6654a12f7941b739f9221a064fe8dc3b7f0"
+      },
+      {
+        "path": "config.json",
+        "size": 612,
+        "sha256": "953f9c0d463486b10a6871cc2fd59f223b2c70184f49815e7efbcab5d8908b41"
+      },
+      {
+        "path": "config_sentence_transformers.json",
+        "size": 116,
+        "sha256": "061ca9d39661d6c6d6de5ba27f79a1cd5770ea247f8d46412a68a498dc5ac9f3"
+      },
+      {
+        "path": "model.safetensors",
+        "size": 90868376,
+        "sha256": "53aa51172d142c89d9012cce15ae4d6cc0ca6895895114379cacb4fab128d9db"
+      },
+      {
+        "path": "modules.json",
+        "size": 349,
+        "sha256": "84e40c8e006c9b1d6c122e02cba9b02458120b5fb0c87b746c41e0207cf642cf"
+      },
+      {
+        "path": "sentence_bert_config.json",
+        "size": 53,
+        "sha256": "fc1993fde0a95c24ec6c022539d41cf6e2f7c9721e5415d6fb6897472a9cd4b7"
+      },
+      {
+        "path": "special_tokens_map.json",
+        "size": 112,
+        "sha256": "303df45a03609e4ead04bc3dc1536d0ab19b5358db685b6f3da123d05ec200e3"
+      },
+      {
+        "path": "tokenizer.json",
+        "size": 466247,
+        "sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037"
+      },
+      {
+        "path": "tokenizer_config.json",
+        "size": 350,
+        "sha256": "acb92769e8195aabd29b7b2137a9e6d6e25c476a4f15aa4355c233426c61576b"
+      },
+      {
+        "path": "vocab.txt",
+        "size": 231508,
+        "sha256": "07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3"
+      }
+    ]
+  },
+  "planned_execution": {
+    "device": "cpu",
+    "dtype": "float32",
+    "candidate": "dev/muninn/bridge/examples/export_minilm_c0.rs / CandidateCpuSentenceEncoder (Candle)",
+    "reference": "dev/muninn/minilm_cpu_oracle.py (SentenceTransformer / PyTorch)",
+    "token_reference": "dev/muninn/minilm_tokenizer_reference.py (Transformers)",
+    "dimensions": 384,
+    "maximum_sequence_length": 256,
+    "pooling": "attention-mask mean",
+    "normalization": "L2",
+    "actual_runtime": null,
+    "runtime_note_es": "Configuración prevista y versiones declaradas; no acredita paquetes instalados, hardware, compilación, ejecución, consumo del manifiesto ni identidad de un bundle presente en caché."
+  },
+  "versions": [
+    {
+      "component": "candle-core",
+      "version": "0.11.0",
+      "source": "dev/muninn/bridge/Cargo.toml",
+      "source_fragment": "candle-core = { version = \"=0.11.0\", default-features = false }"
+    },
+    {
+      "component": "candle-nn",
+      "version": "0.11.0",
+      "source": "dev/muninn/bridge/Cargo.toml",
+      "source_fragment": "candle-nn = { version = \"=0.11.0\", default-features = false }"
+    },
+    {
+      "component": "candle-transformers",
+      "version": "0.11.0",
+      "source": "dev/muninn/bridge/Cargo.toml",
+      "source_fragment": "candle-transformers = { version = \"=0.11.0\", default-features = false }"
+    },
+    {
+      "component": "safetensors",
+      "version": "0.8.0",
+      "source": "dev/muninn/bridge/Cargo.toml",
+      "source_fragment": "safetensors = \"=0.8.0\""
+    },
+    {
+      "component": "tokenizers",
+      "version": "0.22.2",
+      "source": "dev/muninn/bridge/Cargo.toml",
+      "source_fragment": "tokenizers = { version = \"=0.22.2\", default-features = false, features = [\"onig\"] }"
+    },
+    {
+      "component": "rust_toolchain_declared",
+      "version": "1.99",
+      "source": "rust-toolchain.toml",
+      "source_fragment": "channel = \"1.99\""
+    },
+    {
+      "component": "python_reference_declared",
+      "version": "3.13.18",
+      "source": "dev/muninn/requirements-minilm-cpu.txt",
+      "source_fragment": "# Sentence-reference tooling only: CPython 3.13.18, macOS ARM64 (macOS >=14)."
+    }
+  ],
+  "frozen_files": [
+    {
+      "path": "dev/muninn/fixtures/artifact-lock.json",
+      "sha256": "c0a09354337251cd7e35b81e0f505a46bf4086edb6c5506bd34b4df9259a9794"
+    },
+    {
+      "path": "rust-toolchain.toml",
+      "sha256": "cc66cf7626c19823b94b8eadc0a7cf3eb5719e028c628baf149b396b7c75ee05"
+    },
+    {
+      "path": "dev/muninn/bridge/Cargo.toml",
+      "sha256": "1428fef4d74c87c100bebd5fa1267e224e5265f919236426e97737d8e4a0265e"
+    },
+    {
+      "path": "dev/muninn/requirements-minilm-cpu.txt",
+      "sha256": "986126c428f32b7ef1a75d493cbd0f802dbc48eb245ff239f91e124c406e51ed"
+    },
+    {
+      "path": "dev/muninn/bridge/src/artifact_model_stage.rs",
+      "sha256": "bdc16634d3ed398b33ac275ed17d34a3474d5b50651d25162146b0eb228eb06d"
+    },
+    {
+      "path": "dev/muninn/bridge/examples/export_minilm_c0.rs",
+      "sha256": "b7a981eaa33acbb43ee58a18865af2caf55639741d3ecfa7e5c9dbfe6f6e4761"
+    },
+    {
+      "path": "dev/muninn/minilm_cpu_oracle.py",
+      "sha256": "f394bc0f9d1de7948daa5c1850b6cc616b5dce05892cfe1efb705a4a0c1a99c2"
+    },
+    {
+      "path": "dev/muninn/fixtures/minilm-c0-v1.json",
+      "sha256": "3a9d4a2fbc1d197d319ea538d51466b3837185e80c8d54e8fafd3081dcbe8d11"
+    },
+    {
+      "path": "dev/muninn/fixtures/minilm-c0-v1-labels.json",
+      "sha256": "8fa061bb6f4084ad975467e3e82d356a8ae2c3c5b4ac1238a1a59dea06569af1"
+    }
+  ],
+  "freeze_policy_es": "Congelar antes de medir. No modificar c0-v1 tras observar salidas. Si se necesita corregir, crear nueva versión con nuevos hashes y explicar el motivo; conservar esta versión y sus resultados separados."
+}

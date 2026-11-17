@@ -1,0 +1,115 @@
+{
+  "corpus_id": "c1-v1-draft",
+  "batches": [
+    {
+      "id": "semantic_es",
+      "texts": [
+        "¿Cómo impedir que dos solicitudes cobren la misma compra?",
+        "Asigna una clave idempotente y conserva el resultado de la primera transacción.",
+        "Para impedir cobros repetidos, procesa cada reintento como una compra nueva."
+      ]
+    },
+    {
+      "id": "semantic_en",
+      "texts": [
+        "What protects a document from an interrupted disk write?",
+        "Write a temporary file, flush it, then atomically rename it into place.",
+        "Protect a document by truncating the original before preparing its replacement."
+      ]
+    },
+    {
+      "id": "lexical_es",
+      "texts": [
+        "La cuenta debe quedar bloqueada tras varios intentos inválidos.",
+        "Suspende temporalmente el acceso después de fallos de autenticación consecutivos.",
+        "La cuenta nunca debe quedar bloqueada tras intentos inválidos."
+      ]
+    },
+    {
+      "id": "rust",
+      "texts": [
+        "Return a missing record without panicking.",
+        "fn lookup() -> Option<Record> { records.get(&key).cloned() }",
+        "fn lookup() -> Record { records.get(&key).unwrap().clone() }"
+      ]
+    },
+    {
+      "id": "cypher",
+      "texts": [
+        "Busca solo eventos del propietario solicitado.",
+        "MATCH (e:Event) WHERE e.owner_id = $owner RETURN e",
+        "MATCH (e:Event) RETURN e"
+      ]
+    },
+    {
+      "id": "decision",
+      "texts": [
+        "Why put a deadline on a remote dependency?",
+        "A timeout bounds waiting and allows a controlled fallback.",
+        "Remove every deadline so a remote dependency can block forever."
+      ]
+    },
+    {
+      "id": "unicode",
+      "texts": [
+        "La cigüeña sobrevoló Córdoba.",
+        "La ciguëña sobrevoló Córdoba.",
+        "Łódź · résumé · Ελληνικά · 🧭"
+      ]
+    },
+    {
+      "id": "empty_control",
+      "texts": [
+        "",
+        "\t \t",
+        "\n\n "
+      ]
+    },
+    {
+      "id": "boundary_candidates",
+      "texts": [
+        "planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet",
+        "planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet",
+        "planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet",
+        "planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet",
+        "planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet",
+        "planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet"
+      ]
+    },
+    {
+      "id": "prefix_tail",
+      "texts": [
+        "planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet Grant temporary permission.",
+        "planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet Reject temporary permission.",
+        "Grant temporary permission. planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet",
+        "Reject temporary permission. planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet",
+        "Grant temporary permission.",
+        "Reject temporary permission."
+      ]
+    },
+    {
+      "id": "single",
+      "texts": [
+        "A bounded mailbox rejects excess work instead of exhausting memory."
+      ]
+    },
+    {
+      "id": "mixed",
+      "texts": [
+        "A bounded mailbox rejects excess work instead of exhausting memory.",
+        "planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet",
+        "",
+        "¿Cómo impedir que dos solicitudes cobren la misma compra?"
+      ]
+    },
+    {
+      "id": "reordered",
+      "texts": [
+        "¿Cómo impedir que dos solicitudes cobren la misma compra?",
+        "",
+        "planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet planet",
+        "A bounded mailbox rejects excess work instead of exhausting memory."
+      ]
+    }
+  ]
+}

@@ -34,8 +34,26 @@ members = [
   "crates/huginn/reference-extension",
   "crates/huginn/rust-outline-component",
   "crates/huginn/outline-bindings",
+  "crates/muninn/core",
+  "crates/muninn/application",
+  "crates/muninn/neo4j",
+  "crates/muninn/providers",
+  "crates/muninn/bridge",
+  "crates/muninn/mcp",
+  "crates/muninn/ontology",
+  "apps/muninn",
+  "crates/muninn/c1-exporter",
+  "crates/muninn/observability",
 ]
 
+[patch.crates-io]
+candle-core = { path = "third_party/candle-core" }
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+authors = ["cortex team"]
+rust-version = "1.81"
 [workspace.lints.rust]
 # Treat unsafe code as a lint violation
 unsafe_code = "deny"

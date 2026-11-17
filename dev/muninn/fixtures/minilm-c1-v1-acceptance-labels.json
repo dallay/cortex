@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "corpus_id": "c1-v1-draft",
+  "reference_format": "batch_id/zero_based_index",
+  "status": "agent_hypotheses_not_results",
+  "label_origin_es": "Hipótesis generadas por agente, no humanas ni resultados medidos. La ausencia literal de palabras comunes se comprueba con regex Unicode y casefold en lexical_es 0/1; no demuestra suficiencia semántica.",
+  "triplets": [
+    {
+      "id": "hypothesis_1",
+      "rationale_es": "Relación propuesta como hipótesis del agente; no resultados ni validación humana.",
+      "query": "semantic_es/0",
+      "positive": "semantic_es/1",
+      "negative": "semantic_es/2"
+    },
+    {
+      "id": "hypothesis_2",
+      "rationale_es": "Relación propuesta como hipótesis del agente; no resultados ni validación humana.",
+      "query": "semantic_en/0",
+      "positive": "semantic_en/1",
+      "negative": "semantic_en/2"
+    },
+    {
+      "id": "hypothesis_3",
+      "rationale_es": "Relación propuesta como hipótesis del agente; no resultados ni validación humana.",
+      "query": "lexical_es/0",
+      "positive": "lexical_es/1",
+      "negative": "lexical_es/2"
+    },
+    {
+      "id": "hypothesis_4",
+      "rationale_es": "Relación propuesta como hipótesis del agente; no resultados ni validación humana.",
+      "query": "rust/0",
+      "positive": "rust/1",
+      "negative": "rust/2"
+    },
+    {
+      "id": "hypothesis_5",
+      "rationale_es": "Relación propuesta como hipótesis del agente; no resultados ni validación humana.",
+      "query": "cypher/0",
+      "positive": "cypher/1",
+      "negative": "cypher/2"
+    },
+    {
+      "id": "hypothesis_6",
+      "rationale_es": "Relación propuesta como hipótesis del agente; no resultados ni validación humana.",
+      "query": "decision/0",
+      "positive": "decision/1",
+      "negative": "decision/2"
+    }
+  ],
+  "coverage": {
+    "spanish": [
+      "semantic_es/0",
+      "semantic_es/1",
+      "semantic_es/2",
+      "lexical_es/0",
+      "lexical_es/1",
+      "lexical_es/2"
+    ],
+    "english": [
+      "semantic_en/0",
+      "semantic_en/1",
+      "semantic_en/2"
+    ],
+    "paraphrase_candidates": [
+      "semantic_es/0",
+      "semantic_es/1",
+      "semantic_en/0",
+      "semantic_en/1",
+      "lexical_es/0",
+      "lexical_es/1",
+      "rust/0",
+      "rust/1",
+      "cypher/0",
+      "cypher/1",
+      "decision/0",
+      "decision/1"
+    ],
+    "lexical_negatives": [
+      "semantic_es/2",
+      "semantic_en/2",
+      "lexical_es/2",
+      "rust/2",
+      "cypher/2",
+      "decision/2"
+    ],
+    "paraphrases_no_shared_words": [
+      "lexical_es/0",
+      "lexical_es/1"
+    ],
+    "unicode": [
+      "unicode/0",
+      "unicode/1",
+      "unicode/2"
+    ],
+    "empty": [
+      "empty_control/0",
+      "mixed/2",
+      "reordered/1"
+    ],
+    "rust": [
+      "rust/0",
+      "rust/1",
+      "rust/2"
+    ],
+    "cypher": [
+      "cypher/0",
+      "cypher/1",
+      "cypher/2"
+    ],
+    "technical_decisions": [
+      "decision/0",
+      "decision/1",
+      "decision/2"
+    ],
+    "boundary_candidates": [
+      "boundary_candidates/0",
+      "boundary_candidates/1",
+      "boundary_candidates/2",
+      "boundary_candidates/3",
+      "boundary_candidates/4",
+      "boundary_candidates/5"
+    ],
+    "prefix_tail": [
+      "prefix_tail/0",
+      "prefix_tail/1",
+      "prefix_tail/2",
+      "prefix_tail/3",
+      "prefix_tail/4",
+      "prefix_tail/5"
+    ],
+    "batch_reordering": [
+      "mixed/0",
+      "mixed/1",
+      "mixed/2",
+      "mixed/3",
+      "reordered/0",
+      "reordered/1",
+      "reordered/2",
+      "reordered/3"
+    ]
+  },
+  "equal_text_groups": [
+    [
+      "semantic_es/0",
+      "mixed/3",
+      "reordered/0"
+    ],
+    [
+      "empty_control/0",
+      "mixed/2",
+      "reordered/1"
+    ],
+    [
+      "single/0",
+      "mixed/0",
+      "reordered/3"
+    ],
+    [
+      "mixed/1",
+      "reordered/2"
+    ]
+  ],
+  "length_hypotheses": [],
+  "length_note_es": "Sin afirmaciones de longitud: el campo legacy hello_repetitions no describe planet. Las fronteras verificadas deben documentarse en un receipt de tokenizer separado cuando exista; esta conversión no tokeniza ni prueba truncamiento."
+}

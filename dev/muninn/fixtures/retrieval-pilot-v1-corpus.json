@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.0",
+  "corpus_id": "retrieval-pilot-v1-draft",
+  "queries": [
+    {
+      "id": "query-01",
+      "text": "¿Cómo impedir que dos solicitudes cobren la misma compra?",
+      "candidates": [
+        {"id": "candidate-01", "text": "Para impedir cobros repetidos, procesa cada reintento como una compra nueva."},
+        {"id": "candidate-02", "text": "Asigna una clave idempotente y conserva el resultado de la primera transacción."}
+      ]
+    },
+    {
+      "id": "query-02",
+      "text": "What protects a document from an interrupted disk write?",
+      "candidates": [
+        {"id": "candidate-03", "text": "Write a temporary file, flush it, then atomically rename it into place."},
+        {"id": "candidate-04", "text": "Protect a document by truncating the original before preparing its replacement."}
+      ]
+    },
+    {
+      "id": "query-03",
+      "text": "La cuenta debe quedar bloqueada tras varios intentos inválidos.",
+      "candidates": [
+        {"id": "candidate-05", "text": "Suspende temporalmente el acceso después de fallos de autenticación consecutivos."},
+        {"id": "candidate-06", "text": "La cuenta nunca debe quedar bloqueada tras intentos inválidos."}
+      ]
+    },
+    {
+      "id": "query-04",
+      "text": "Return a missing record without panicking.",
+      "candidates": [
+        {"id": "candidate-07", "text": "fn lookup() -> Option<Record> { records.get(&key).cloned() }"},
+        {"id": "candidate-08", "text": "fn lookup() -> Record { records.get(&key).unwrap().clone() }"}
+      ]
+    },
+    {
+      "id": "query-05",
+      "text": "Busca solo eventos del propietario solicitado.",
+      "candidates": [
+        {"id": "candidate-09", "text": "MATCH (e:Event) RETURN e"},
+        {"id": "candidate-10", "text": "MATCH (e:Event) WHERE e.owner_id = $owner RETURN e"}
+      ]
+    },
+    {
+      "id": "query-06",
+      "text": "Why put a deadline on a remote dependency?",
+      "candidates": [
+        {"id": "candidate-11", "text": "Remove every deadline so a remote dependency can block forever."},
+        {"id": "candidate-12", "text": "A timeout bounds waiting and allows a controlled fallback."}
+      ]
+    }
+  ]
+}
