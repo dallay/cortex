@@ -6,6 +6,7 @@ import tempfile
 from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import Mock, call, patch
+from urllib.error import URLError
 
 BASE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BASE))
@@ -72,6 +73,43 @@ class ProductFixtureLifecycleTests(unittest.TestCase):
         driver.close.assert_called_once_with()
         self.assertIsNone(fixture.container)
         self.assertIsNone(fixture.driver)
+
+
+class Gm08PeerBridgeLifecycleTests(unittest.TestCase):
+    """The GM08 peer bridge must not leak its log handle nor its child process."""
+
+    def _start_bridge(self, process, log):
+        import gm08_peer
+
+        with (
+            patch.object(gm08_peer.subprocess, 'Popen', return_value=process),
+            patch.object(gm08_peer, 'open', create=True, return_value=log),
+            patch.object(gm08_peer.time, 'sleep'),
+            patch.object(gm08_peer.urllib.request, 'urlopen', side_effect=URLError('synthetic')),
+        ):
+            return gm08_peer.start_bridge('/synthetic/muninn', 'bolt://synthetic', 'synthetic')
+
+    def test_readiness_exhaustion_terminates_the_child_and_closes_the_log(self):
+        process = Mock()
+        process.poll.return_value = None
+        log = Mock()
+
+        with self.assertRaisesRegex(RuntimeError, 'readiness exhausted'):
+            self._start_bridge(process, log)
+
+        process.terminate.assert_called_once_with()
+        process.wait.assert_called_once_with(timeout=10)
+        log.close.assert_called_once_with()
+
+    def test_bridge_exit_before_readiness_closes_the_log(self):
+        process = Mock()
+        process.poll.return_value = 1
+        log = Mock()
+
+        with self.assertRaisesRegex(RuntimeError, 'exited before readiness'):
+            self._start_bridge(process, log)
+
+        log.close.assert_called_once_with()
 
 
 if __name__ == '__main__':

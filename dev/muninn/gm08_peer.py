@@ -47,18 +47,27 @@ def start_bridge(binary, uri, password):
     env = {**os.environ, 'NAM_NEO4J__URI': uri, 'NAM_NEO4J__PASSWORD': password,
            'NAM_EMBEDDING__PROVIDER': 'hash', 'NAM_EMBEDDING__DIMENSIONS': '1536'}
     log = open('/out/product-bridge.log', 'w')
-    process = subprocess.Popen(
-        [str(binary), 'bridge', '--host', '127.0.0.1', '--port', str(port),
-         '--allow-destructive-clear'], env=env, stdout=log, stderr=log)
-    for _ in range(120):
-        if process.poll() is not None:
-            raise RuntimeError('source-bound bridge exited before readiness')
-        try:
-            _post(url + '/setup', {})
-            return process, url
-        except (urllib.error.URLError, OSError, RuntimeError):
-            time.sleep(.5)
-    raise RuntimeError('source-bound bridge readiness exhausted')
+    try:
+        process = subprocess.Popen(
+            [str(binary), 'bridge', '--host', '127.0.0.1', '--port', str(port),
+             '--allow-destructive-clear'], env=env, stdout=log, stderr=log)
+    finally:
+        # The child owns its own descriptor; the parent must not keep the handle open.
+        log.close()
+    try:
+        for _ in range(120):
+            if process.poll() is not None:
+                raise RuntimeError('source-bound bridge exited before readiness')
+            try:
+                _post(url + '/setup', {})
+                return process, url
+            except (urllib.error.URLError, OSError, RuntimeError):
+                time.sleep(.5)
+        raise RuntimeError('source-bound bridge readiness exhausted')
+    except BaseException:
+        # A bridge that never became ready must not survive this call as an orphan.
+        stop_bridge(process)
+        raise
 
 
 def stop_bridge(process):
