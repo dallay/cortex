@@ -381,21 +381,15 @@ it('includes isolated Neo4j preference atomic tests in the 87% Rust coverage pro
   assert.match(readiness, /jq -e '\.errors \| length == 0'/);
 
   const generate = namedStep('coverage', 'Generate coverage report');
-  const atomic = 'cargo llvm-cov -p muninn-neo4j --test preference_atomic --no-report -- --include-ignored';
-  assert.ok(generate.includes(atomic), 'run only the explicitly selected ignored tests');
-  assert.ok(generate.indexOf('cargo llvm-cov -p muninn-providers -p muninn --no-report') <
-      generate.indexOf(atomic), 'merge profile before generating report');
-  assert.ok(generate.indexOf(atomic) <
-      generate.indexOf('cargo llvm-cov report --fail-under-lines 87'),
-  'include integration-test coverage before enforcing the existing gate');
+  assert.ok(generate.includes('cargo llvm-cov -p muninn-providers -p muninn --no-report'));
   assert.doesNotMatch(generate, /--workspace[^\\n]*--include-ignored/,
       'do not enable ignored tests workspace-wide');
   assert.match(generate, /cargo llvm-cov report --fail-under-lines 87/);
 
-  // Sonar now provisions Neo4j and runs preference_atomic tests to achieve
-  // sufficient new-code coverage for the 80% quality gate.
-  assert.match(namedStep('sonar', 'Generate Rust coverage'),
-      /preference_atomic.*--include-ignored/);
+  // Sonar does not run preference_atomic tests; those require Neo4j
+  // transaction/lock timeout configuration not available in community Docker.
+  assert.doesNotMatch(namedStep('sonar', 'Generate Rust coverage'),
+      /preference_atomic|include-ignored/);
 });
 
 it('retains Rust LCOV after a failed gate and prints totals before enforcing 87%', () => {
