@@ -26,17 +26,17 @@ parity acceptance.
 
 Authority: agent-memory `9d45af5529ecb5f2fe352013468a11087f3163d4`.
 
-| Question | Pinned answer |
-|----------|---------------|
-| Nodes connected | `Preference` → `Entity` (`graph/queries.py:677–682`) |
-| Direction | written `(p)-[:ABOUT]->(e)`, preference first |
-| Properties | none; `MERGE` sets nothing and no `SET` clause exists |
-| Which operation creates it | `LINK_PREFERENCE_TO_ENTITY`, which **no pinned caller invokes** |
-| Additive, idempotent or derived | idempotent `MERGE`; repeating adds no edge and rewrites nothing |
-| `MENTIONS` | `(Message)-[:MENTIONS]->(Entity)`; `MERGE` plus `ON CREATE SET` confidence/positions; the one writer today is `LINK_MESSAGE_TO_ENTITY` |
-| `INITIATED_BY` | `(ReasoningTrace)-[:INITIATED_BY]->(Message)` |
-| `TRIGGERED_BY` | `(ToolCall)-[:TRIGGERED_BY]->(Message)` |
-| `TOUCHED` | `(ReasoningStep)-[:TOUCHED]->(Entity)`, three reference-resolution variants |
+| Question                        | Pinned answer                                                                                                                          |
+|---------------------------------|----------------------------------------------------------------------------------------------------------------------------------------|
+| Nodes connected                 | `Preference` → `Entity` (`graph/queries.py:677–682`)                                                                                   |
+| Direction                       | written `(p)-[:ABOUT]->(e)`, preference first                                                                                          |
+| Properties                      | none; `MERGE` sets nothing and no `SET` clause exists                                                                                  |
+| Which operation creates it      | `LINK_PREFERENCE_TO_ENTITY`, which **no pinned caller invokes**                                                                        |
+| Additive, idempotent or derived | idempotent `MERGE`; repeating adds no edge and rewrites nothing                                                                        |
+| `MENTIONS`                      | `(Message)-[:MENTIONS]->(Entity)`; `MERGE` plus `ON CREATE SET` confidence/positions; the one writer today is `LINK_MESSAGE_TO_ENTITY` |
+| `INITIATED_BY`                  | `(ReasoningTrace)-[:INITIATED_BY]->(Message)`                                                                                          |
+| `TRIGGERED_BY`                  | `(ToolCall)-[:TRIGGERED_BY]->(Message)`                                                                                                |
+| `TOUCHED`                       | `(ReasoningStep)-[:TOUCHED]->(Entity)`, three reference-resolution variants                                                            |
 
 Two conflicts are recorded instead of resolved silently:
 
@@ -61,13 +61,13 @@ Two conflicts are recorded instead of resolved silently:
 `add_preference` accepts optional `about_entities` (list of UUID strings).
 Absent, `null` and `[]` are equivalent and produce no edge.
 
-| Input | Result |
-|-------|--------|
-| no `about_entities` | previous behavior byte for byte: no `ABOUT`, no new writes |
-| `about_entities:[uuid]` | one property-free `ABOUT` edge from the caller's preference |
-| repeated identical request | no second edge, no property change |
-| id not an existing entity | `not found: entity <uuid>` (HTTP 404) with zero writes |
-| non-list, or an entry that is not a UUID | HTTP 400 `'about_entities' must be a list of UUIDs` |
+| Input                                    | Result                                                      |
+|------------------------------------------|-------------------------------------------------------------|
+| no `about_entities`                      | previous behavior byte for byte: no `ABOUT`, no new writes  |
+| `about_entities:[uuid]`                  | one property-free `ABOUT` edge from the caller's preference |
+| repeated identical request               | no second edge, no property change                          |
+| id not an existing entity                | `not found: entity <uuid>` (HTTP 404) with zero writes      |
+| non-list, or an entry that is not a UUID | HTTP 400 `'about_entities' must be a list of UUIDs`         |
 
 Unknown targets are preflighted with the existing `get_entity` lookup for the
 whole `applies_to` + `about_entities` set before embedding, preference creation

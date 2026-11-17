@@ -9,7 +9,7 @@ mod minilm_c1_identity;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod supported {
     use muninn_bridge_spike::{
-        artifact_fs::{ArtifactDir, staging::model::VerifiedArtifactCache},
+        artifact_fs::{staging::model::VerifiedArtifactCache, ArtifactDir},
         minilm_encoder::CandidateCpuSentenceEncoder,
         minilm_tokenizer::MiniLmTokenizer,
         model_manifest::PinnedMiniLmManifest,
@@ -273,15 +273,13 @@ mod supported {
         #[test]
         fn cli_requires_absolute_root_and_exact_arguments() {
             let args = |s: &[&str]| s.iter().map(OsString::from).collect::<Vec<_>>().into_iter();
-            assert!(
-                parse(args(&[
-                    "/private/cache",
-                    &"a".repeat(64),
-                    "input.json",
-                    "test-unapproved-v1"
-                ]))
-                .is_ok()
-            );
+            assert!(parse(args(&[
+                "/private/cache",
+                &"a".repeat(64),
+                "input.json",
+                "test-unapproved-v1"
+            ]))
+            .is_ok());
             for values in [
                 vec![],
                 vec!["relative", "bundle", "input"],

@@ -8,8 +8,8 @@ services:
     user: "${MUNINN_ORACLE_UID:-7474}:${MUNINN_ORACLE_GID:-7474}"
     network_mode: none
     read_only: true
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
+    cap_drop: [ ALL ]
+    security_opt: [ no-new-privileges:true ]
     cpus: 1
     mem_limit: 768m
     environment:
@@ -19,4 +19,4 @@ services:
     volumes:
       - "${MUNINN_REFERENCE_ROOT:?Define el directorio de referencias verificadas}:/references:ro"
       - ./artifacts:/artifacts
-    command: [--sources, /references, --output, /artifacts/mcp-discovery]
+    command: [ --sources, /references, --output, /artifacts/mcp-discovery ]

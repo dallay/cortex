@@ -1,14 +1,14 @@
 //! Persistencia del spike: consultas fijas, scope del host y transacciones reales.
 
 use chrono::{DateTime, Utc};
-use neo4rs::{Graph, Query, Row, query};
+use neo4rs::{query, Graph, Query, Row};
 use uuid::Uuid;
 
 use crate::domain::{Conversation, Message, NewMessage, SessionInfo};
 use crate::memory_search::{
-    EMBEDDING_DIMENSIONS, EXACT_CANDIDATE_PROBE_LIMIT, MAX_EXACT_CANDIDATES,
-    MESSAGE_EMBEDDING_INDEX, SEARCH_MESSAGES_BY_EMBEDDING, SEARCH_MESSAGES_EXACT,
-    create_vector_index_query,
+    create_vector_index_query, EMBEDDING_DIMENSIONS, EXACT_CANDIDATE_PROBE_LIMIT,
+    MAX_EXACT_CANDIDATES, MESSAGE_EMBEDDING_INDEX, SEARCH_MESSAGES_BY_EMBEDDING,
+    SEARCH_MESSAGES_EXACT,
 };
 
 pub const FIXTURE_SCOPE: &str = "muninn-rust-spike";
@@ -457,7 +457,10 @@ impl Store {
             .param("limit", i64::from(limit))
             .param("threshold", threshold)
             .param("max_candidates", i64::from(MAX_EXACT_CANDIDATES))
-            .param("candidate_probe_limit", i64::from(EXACT_CANDIDATE_PROBE_LIMIT));
+            .param(
+                "candidate_probe_limit",
+                i64::from(EXACT_CANDIDATE_PROBE_LIMIT),
+            );
         let row = self.read_one(statement).await?;
         let over_limit: bool = row
             .get("over_limit")
@@ -475,9 +478,7 @@ impl Store {
             embedding: Vec<f64>,
             score: f64,
         }
-        let records: Vec<Record> = row
-            .get("results")
-            .map_err(|_| StorageError::InvalidData)?;
+        let records: Vec<Record> = row.get("results").map_err(|_| StorageError::InvalidData)?;
         records
             .into_iter()
             .map(|record| {
@@ -609,10 +610,10 @@ mod tests {
             validate_space_id(&"a".repeat(129)),
             Err(StorageError::InvalidData)
         ));
-        assert!(
-            validate_space_id("48ae48b9951e502c6abdd5c29b63141f0d4fe49e701ef9a7393e978ab68caa6c")
-                .is_ok()
-        );
+        assert!(validate_space_id(
+            "48ae48b9951e502c6abdd5c29b63141f0d4fe49e701ef9a7393e978ab68caa6c"
+        )
+        .is_ok());
     }
 
     #[test]
@@ -622,11 +623,8 @@ mod tests {
             statement.starts_with("MATCH (guard:MuninnBridgeGuard {scope:$scope,owner:$owner})")
         );
         assert!(statement.contains(SEARCH_MESSAGES_BY_EMBEDDING));
-        assert!(
-            statement.contains(
-                "db.index.vector.queryNodes('message_embedding_idx', $limit, $embedding)"
-            )
-        );
+        assert!(statement
+            .contains("db.index.vector.queryNodes('message_embedding_idx', $limit, $embedding)"));
     }
 
     #[test]
@@ -814,10 +812,7 @@ mod tests {
     }
 
     #[cfg(test)]
-    fn store_message_content_contains_axis_prefix(
-        hits: &[(Message, f64)],
-        id: Uuid,
-    ) -> bool {
+    fn store_message_content_contains_axis_prefix(hits: &[(Message, f64)], id: Uuid) -> bool {
         hits.iter()
             .find(|(message, _)| message.id == id)
             .is_some_and(|(message, _)| message.content.starts_with("axis-"))

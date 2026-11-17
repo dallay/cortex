@@ -53,10 +53,17 @@ impl SearchInput {
         if self.limit.is_some_and(|limit| limit > MAX_SEARCH_LIMIT) {
             return Err(SearchError::InvalidLimit);
         }
-        if self.threshold.is_some_and(|threshold| !(0.0..=1.0).contains(&threshold)) {
+        if self
+            .threshold
+            .is_some_and(|threshold| !(0.0..=1.0).contains(&threshold))
+        {
             return Err(SearchError::InvalidThreshold);
         }
-        if self.session_id.as_ref().is_some_and(|session| session.len() > 512) {
+        if self
+            .session_id
+            .as_ref()
+            .is_some_and(|session| session.len() > 512)
+        {
             return Err(SearchError::InvalidSession);
         }
         Ok(SearchRequest {
@@ -232,7 +239,8 @@ mod tests {
 
     #[test]
     fn search_query_applies_the_threshold_after_the_index_candidates() {
-        assert!(SEARCH_MESSAGES_BY_EMBEDDING.contains("db.index.vector.queryNodes('message_embedding_idx', $limit, $embedding)"));
+        assert!(SEARCH_MESSAGES_BY_EMBEDDING
+            .contains("db.index.vector.queryNodes('message_embedding_idx', $limit, $embedding)"));
         assert!(SEARCH_MESSAGES_BY_EMBEDDING.contains("score >= $threshold"));
         assert!(SEARCH_MESSAGES_BY_EMBEDDING.contains("node.scope = $scope"));
         assert!(SEARCH_MESSAGES_BY_EMBEDDING.contains("ORDER BY score DESC"));

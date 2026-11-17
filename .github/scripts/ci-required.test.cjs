@@ -90,24 +90,29 @@ describe('required coverage checks', () => {
 
 describe('required Muninn C1 check', () => {
   it('requires the C1 macOS gate when a C1 input changes', () => {
-    const result = evaluateRequiredChecks(input({ muninn_c1: 'true' }));
+    const result = evaluateRequiredChecks(input({muninn_c1: 'true'}));
     assert.equal(result.ok, true);
   });
 
-  it('fails the required gate when the applicable C1 job fails or skips', () => {
-    for (const status of ['failure', 'skipped', undefined]) {
-      const results = { ...successResults, 'test-muninn-c1': status };
-      if (status === undefined) delete results['test-muninn-c1'];
-      const result = evaluateRequiredChecks(input({ muninn_c1: 'true' }, results));
-      assert.equal(result.ok, false);
-      assert.ok(result.errors.includes(`test-muninn-c1: expected success, got ${status || 'missing'}`));
-    }
-  });
+  it('fails the required gate when the applicable C1 job fails or skips',
+      () => {
+        for (const status of ['failure', 'skipped', undefined]) {
+          const results = {...successResults, 'test-muninn-c1': status};
+          if (status === undefined) {
+            delete results['test-muninn-c1'];
+          }
+          const result = evaluateRequiredChecks(
+              input({muninn_c1: 'true'}, results));
+          assert.equal(result.ok, false);
+          assert.ok(result.errors.includes(
+              `test-muninn-c1: expected success, got ${status || 'missing'}`));
+        }
+      });
 
   it('accepts a skipped C1 job only when the C1 path filter is false', () => {
     const result = evaluateRequiredChecks(input(
-      { muninn_c1: 'false' },
-      { ...successResults, 'test-muninn-c1': 'skipped' },
+        {muninn_c1: 'false'},
+        {...successResults, 'test-muninn-c1': 'skipped'},
     ));
     assert.equal(result.ok, true);
   });

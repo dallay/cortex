@@ -76,10 +76,10 @@ The policy covers vulnerabilities in the cortex monorepo, including:
 ### Input Validation
 
 - Validate and sanitize ALL user input at trust boundaries, especially in:
-  - CLI argument parsing (`rook` package)
-  - File path handling (path traversal attacks)
-  - HTTP API handlers (`apps/*/api`)
-  - AI model prompt injection surfaces
+    - CLI argument parsing (`rook` package)
+    - File path handling (path traversal attacks)
+    - HTTP API handlers (`apps/*/api`)
+    - AI model prompt injection surfaces
 
 ### Authentication / Authorization
 
@@ -106,15 +106,15 @@ The following packages/configs receive elevated security scrutiny:
 
 The project uses multiple layers of automated vulnerability scanning:
 
-| Tool                         | Scope                                    | PR Gate (`ci.yml`)                                                                 | Nightly (`security-deep.yml`)   | SonarCloud                       |
-|------------------------------|------------------------------------------|------------------------------------------------------------------------------------|---------------------------------|----------------------------------|
-| **cargo audit**              | Rust dependencies                        | :white_check_mark: Blocks on vulnerable deps                                       | N/A                             | —                                |
+| Tool                         | Scope                                    | PR Gate (`ci.yml`)                                                                     | Nightly (`security-deep.yml`)   | SonarCloud                       |
+|------------------------------|------------------------------------------|----------------------------------------------------------------------------------------|---------------------------------|----------------------------------|
+| **cargo audit**              | Rust dependencies                        | :white_check_mark: Blocks on vulnerable deps                                           | N/A                             | —                                |
 | **Renovate**                 | `Cargo.lock`, `pnpm-lock.yaml`           | :white_check_mark: Opens patch/security and lock-file maintenance PRs for manual merge | N/A                             | —                                |
-| **Gitleaks** (`gitleaks-pr`) | Secrets in commits                       | :white_check_mark: Blocks on any secret found                                      | Reporting only (full history)   | —                                |
-| **GitGuardian** (`ggshield`) | Secret detection in commits & pre-push   | :white_check_mark: Scans on push/PR (`gitguardian-scan.yml`) & local pre-push hook | —                               | —                                |
-| **Semgrep** (`semgrep-pr`)   | SAST (rust, docker, GH actions, secrets) | :white_check_mark: Blocks on ERROR-severity findings                               | Reporting only (all severities) | —                                |
-| **Trivy** (`trivy-fs`)       | Filesystem, dependencies, IaC            | :white_check_mark: Blocks on HIGH/CRITICAL vulns                                   | Reporting only (all severities) | —                                |
-| **SonarCloud**               | Code quality + security hotspots         | Conditional (token required)                                                       | —                               | :white_check_mark: If configured |
+| **Gitleaks** (`gitleaks-pr`) | Secrets in commits                       | :white_check_mark: Blocks on any secret found                                          | Reporting only (full history)   | —                                |
+| **GitGuardian** (`ggshield`) | Secret detection in commits & pre-push   | :white_check_mark: Scans on push/PR (`gitguardian-scan.yml`) & local pre-push hook     | —                               | —                                |
+| **Semgrep** (`semgrep-pr`)   | SAST (rust, docker, GH actions, secrets) | :white_check_mark: Blocks on ERROR-severity findings                                   | Reporting only (all severities) | —                                |
+| **Trivy** (`trivy-fs`)       | Filesystem, dependencies, IaC            | :white_check_mark: Blocks on HIGH/CRITICAL vulns                                       | Reporting only (all severities) | —                                |
+| **SonarCloud**               | Code quality + security hotspots         | Conditional (token required)                                                           | —                               | :white_check_mark: If configured |
 
 ### Keeping Dependencies Updated
 
@@ -164,7 +164,7 @@ No formal certifications currently (SOC2, ISO 27001, etc.).
 |----------------------------|------------------------------------------------------------------------------------|
 | Report a vulnerability     | [GitHub Security Advisories](https://github.com/dallay/cortex/security/advisories) |
 | Code scanning results      | [GitHub Code Scanning](https://github.com/dallay/cortex/security/code-scanning)    |
-| Renovate configuration     | [`renovate.json`](renovate.json)                                                |
+| Renovate configuration     | [`renovate.json`](renovate.json)                                                   |
 | Secret scanning alerts     | [GitHub Secret Scanning](https://github.com/dallay/cortex/security/secrets)        |
 | CI/CD workflow             | [`.github/workflows/ci.yml`](.github/workflows/ci.yml)                             |
 | Nightly security deep scan | [`.github/workflows/security-deep.yml`](.github/workflows/security-deep.yml)       |

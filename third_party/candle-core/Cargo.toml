@@ -22,9 +22,9 @@ autobenches = false
 description = "Minimalist ML framework."
 readme = "README.md"
 keywords = [
-    "blas",
-    "tensor",
-    "machine-learning",
+  "blas",
+  "tensor",
+  "machine-learning",
 ]
 categories = ["science"]
 license = "MIT OR Apache-2.0"
@@ -33,29 +33,29 @@ repository = "https://github.com/huggingface/candle"
 [features]
 accelerate = ["dep:accelerate-src"]
 cuda = [
-    "cudarc",
-    "dep:candle-kernels",
-    "candle-ug?/cuda",
+  "cudarc",
+  "dep:candle-kernels",
+  "candle-ug?/cuda",
 ]
 cudnn = [
-    "cuda",
-    "cudarc/cudnn",
+  "cuda",
+  "cudarc/cudnn",
 ]
 default = []
 metal = [
-    "dep:objc2-metal",
-    "dep:objc2-foundation",
-    "dep:candle-metal-kernels",
-    "candle-ug?/metal",
+  "dep:objc2-metal",
+  "dep:objc2-foundation",
+  "dep:candle-metal-kernels",
+  "candle-ug?/metal",
 ]
 metal-debug-labels = [
-    "metal",
-    "candle-metal-kernels/debug-labels",
+  "metal",
+  "candle-metal-kernels/debug-labels",
 ]
 mkl = ["dep:intel-mkl-src"]
 nccl = [
-    "cuda",
-    "cudarc/nccl",
+  "cuda",
+  "cudarc/nccl",
 ]
 ug = ["dep:candle-ug"]
 
@@ -164,16 +164,16 @@ optional = true
 [dependencies.cudarc]
 version = "0.19.8"
 features = [
-    "std",
-    "cublas",
-    "cublaslt",
-    "curand",
-    "driver",
-    "nvrtc",
-    "f16",
-    "f8",
-    "cuda-version-from-build-system",
-    "dynamic-linking",
+  "std",
+  "cublas",
+  "cublaslt",
+  "curand",
+  "driver",
+  "nvrtc",
+  "f16",
+  "f8",
+  "cuda-version-from-build-system",
+  "dynamic-linking",
 ]
 optional = true
 default-features = false
@@ -181,8 +181,8 @@ default-features = false
 [dependencies.float8]
 version = "0.7.0"
 features = [
-    "num-traits",
-    "rand_distr",
+  "num-traits",
+  "rand_distr",
 ]
 
 [dependencies.gemm]
@@ -193,11 +193,11 @@ default-features = false
 [dependencies.half]
 version = "2.5.0"
 features = [
-    "num-traits",
-    "use-intrinsics",
-    "rand_distr",
-    "zerocopy",
-    "zerocopy",
+  "num-traits",
+  "use-intrinsics",
+  "rand_distr",
+  "zerocopy",
+  "zerocopy",
 ]
 
 [dependencies.intel-mkl-src]

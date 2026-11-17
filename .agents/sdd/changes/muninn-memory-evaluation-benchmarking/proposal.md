@@ -44,13 +44,13 @@ Reference `/Users/acosta/Dev/dallay/cortex/tmp/plans/muninn-feature-parity-spec.
 
 ## Affected Areas
 
-| Area | Impact | Description |
-|------|--------|-------------|
-| `.agents/sdd/changes/muninn-memory-evaluation-benchmarking/` | Modified | Proposal/specification/design/tasks define the evaluation boundaries and authorized milestone; this proposal does not update the other artifacts. |
-| Huginn runtime MCP integration and Muninn MCP server | Modified | Implement only the narrow read-only retrieval connector and focused tests, subject to protocol, async, scope, and security checks. |
-| `.agents/rpi/plan/tasks/muninn-memory-evaluation-benchmarking/evidence/<unique-run-id>/` | New, gated | Store secret-safe run manifest, per-case outcomes, and report only after execution gates pass. |
-| `docs/muninn/reference-tck.md`, `docs/muninn/h4-measurement.md`, `.agents/rpi/plan/tasks/muninn-h5-retrieval-context.md` | Reference only | Preserve existing evidence and its stated limitations; no modification proposed. |
-| External Feature Parity draft | Linked reference only | Proposed, not approved; do not duplicate or promote its conformance requirements. |
+| Area                                                                                                                     | Impact                | Description                                                                                                                                       |
+|--------------------------------------------------------------------------------------------------------------------------|-----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------|
+| `.agents/sdd/changes/muninn-memory-evaluation-benchmarking/`                                                             | Modified              | Proposal/specification/design/tasks define the evaluation boundaries and authorized milestone; this proposal does not update the other artifacts. |
+| Huginn runtime MCP integration and Muninn MCP server                                                                     | Modified              | Implement only the narrow read-only retrieval connector and focused tests, subject to protocol, async, scope, and security checks.                |
+| `.agents/rpi/plan/tasks/muninn-memory-evaluation-benchmarking/evidence/<unique-run-id>/`                                 | New, gated            | Store secret-safe run manifest, per-case outcomes, and report only after execution gates pass.                                                    |
+| `docs/muninn/reference-tck.md`, `docs/muninn/h4-measurement.md`, `.agents/rpi/plan/tasks/muninn-h5-retrieval-context.md` | Reference only        | Preserve existing evidence and its stated limitations; no modification proposed.                                                                  |
+| External Feature Parity draft                                                                                            | Linked reference only | Proposed, not approved; do not duplicate or promote its conformance requirements.                                                                 |
 
 ## Dependencies
 
@@ -70,15 +70,15 @@ Reference `/Users/acosta/Dev/dallay/cortex/tmp/plans/muninn-feature-parity-spec.
 
 ## Risks
 
-| Risk | Likelihood | Mitigation |
-|------|------------|------------|
-| Oracle-adapted TCK evidence or H5 pilot results are presented as Muninn conformance or accepted benchmark evidence. | High | Preserve the recorded execution target, adapter mediation, and `measured_not_accepted` status in traceability and reports. |
-| A draft Feature Parity requirement is treated as approved or duplicated in the evaluation contract. | Medium | Link the draft with its Proposed status and intended target; coordinate §10.3/G5/G6 and keep conformance ownership separate. |
-| MCP protocol, async handling, or scope binding is assumed safe without end-to-end verification. | High | Gate connector and evaluation execution on focused compatibility, async, authorization, scope-isolation, and failure-path tests; fail closed on uncertainty. |
-| Local model, baseline, or scenario differences make the comparison invalid or overstate utility. | Medium | Require explicit readiness and scenario/assertion/baseline choices; keep conditions matched, disclose deviations, and limit claims to the observed synthetic case. |
-| Shared or persistent database, session, workspace, or output state is damaged or exposed. | High | Prove run-specific disposability and unique outputs before startup; prohibit resets/reuse; stop if isolation cannot be established. |
-| MCP approvals or untrusted memory protections are bypassed, or retrieval discloses cross-scope data. | High | Preserve startup and per-call approval, host-bound immutable scope, read-only capability, untrusted-output handling, and independent non-averaged security gates. |
-| Probabilistic metrics or LLM-as-judge outputs are over-interpreted as objective truth. | Medium | Require method, limitations, uncertainty, and provenance disclosures; prohibit judge-only task outcomes and defer acceptance rules until separately approved. |
+| Risk                                                                                                                | Likelihood | Mitigation                                                                                                                                                         |
+|---------------------------------------------------------------------------------------------------------------------|------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Oracle-adapted TCK evidence or H5 pilot results are presented as Muninn conformance or accepted benchmark evidence. | High       | Preserve the recorded execution target, adapter mediation, and `measured_not_accepted` status in traceability and reports.                                         |
+| A draft Feature Parity requirement is treated as approved or duplicated in the evaluation contract.                 | Medium     | Link the draft with its Proposed status and intended target; coordinate §10.3/G5/G6 and keep conformance ownership separate.                                       |
+| MCP protocol, async handling, or scope binding is assumed safe without end-to-end verification.                     | High       | Gate connector and evaluation execution on focused compatibility, async, authorization, scope-isolation, and failure-path tests; fail closed on uncertainty.       |
+| Local model, baseline, or scenario differences make the comparison invalid or overstate utility.                    | Medium     | Require explicit readiness and scenario/assertion/baseline choices; keep conditions matched, disclose deviations, and limit claims to the observed synthetic case. |
+| Shared or persistent database, session, workspace, or output state is damaged or exposed.                           | High       | Prove run-specific disposability and unique outputs before startup; prohibit resets/reuse; stop if isolation cannot be established.                                |
+| MCP approvals or untrusted memory protections are bypassed, or retrieval discloses cross-scope data.                | High       | Preserve startup and per-call approval, host-bound immutable scope, read-only capability, untrusted-output handling, and independent non-averaged security gates.  |
+| Probabilistic metrics or LLM-as-judge outputs are over-interpreted as objective truth.                              | Medium     | Require method, limitations, uncertainty, and provenance disclosures; prohibit judge-only task outcomes and defer acceptance rules until separately approved.      |
 
 ## Rollback Plan
 

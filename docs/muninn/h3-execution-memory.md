@@ -72,8 +72,7 @@ H6 operations and actual Huginn integration (H7) are not added to H3.
   tool call `INSTANCE_OF` tool. Do not substitute diagram-only edge names.
 - `neo4j/src/queries/reasoning.rs:10–132,203–267` contains these writes.
 - No Silver29 case proves these cross-tier edges. FIX-CROSS-01 and GM-08 are NOT_RUN.
-  T2 structured completion must reuse existing touched-edge identity precedence
-  (`id` before name+type before name), not create a parallel graph writer.
+  T2 structured completion must reuse existing touched-edge identity precedence (`id` before name+type before name), not create a parallel graph writer.
 
 **RM-04 — Instrumentation and statistics (MUN-RS-003).**
 
@@ -161,8 +160,7 @@ must remain a failure and does not erase individual case/phase outcomes.
 ## GM-08 fixed-fixture requirements (implemented; live run pending T5)
 
 The normative fixed inputs are FIX-TRACE-01 (one successful and one failing task;
-three ordered steps; tool success, failure and timeout) and FIX-CROSS-01
-(conversation mentions an entity; trace triggered by a message; tool references entity).
+three ordered steps; tool success, failure and timeout) and FIX-CROSS-01 (conversation mentions an entity; trace triggered by a message; tool references entity).
 The approved T4 allocation is three ordered steps **per task** (six total), frozen in
 `dev/muninn/fixtures/gm08-v1.json` before any live GM08 measurement.
 
@@ -521,8 +519,7 @@ absence re-verification apply only to identities this invocation created, cleanu
 a failed stage keeps the journal intact for the `finally` cleanup, a non-hex identifier is never
 adopted, and a credential echoed by a command aborts before any stream artifact is published.
 Peer guards reject unknown capture sides, a consumed binary hash mismatch (removing the copy),
-and a non-empty starting database. These simulate the production paths; the lifecycle has
-**not yet been exercised live**.
+and a non-empty starting database. These simulate the production paths; the lifecycle has **not yet been exercised live**.
 
 The ignored native target exercises current recorder/observer/structured-completion APIs,
 ordered persisted steps/tools, graph edges, counters, controlled 3D step ranking/filters and
@@ -576,18 +573,15 @@ fail-closed attempts and harness fixes):
   no external model call.
 - Verdict: `pass`, **0 field diffs**, `api`/`graph`/`reconnect` all `pass`, zero numeric
   tolerance, no authorized deviation. Both sides persisted 18 execution-memory nodes and 34
-  directed edges; both returned 2 traces, identical list control results
-  (ordered 2, completed 2, successful 1, failed 1, page 1, supplied_dates 2), similar-trace
-  results (all 2, successful 1, limit 1, threshold 1.1 → 0), and identical tool statistics
-  (6 calls, 2 successes, 4 reported failures, rate 1/3, average 20 ms).
+  directed edges; both returned 2 traces, identical list control results (ordered 2, completed 2, successful 1, failed 1, page 1, supplied_dates 2), similar-trace
+  results (all 2, successful 1, limit 1, threshold 1.1 → 0), and identical tool statistics (6 calls, 2 successes, 4 reported failures, rate 1/3, average 20 ms).
 - Raw `reference.json`/`product.json`, per-field diffs, per-item verdicts and 216 artifact
   hashes are retained; cleanup removed all 6 owned identities (builder, two databases, two
   peers, network) with absence checks, and workspace/snapshot hashes were unchanged.
 
 #### Post-change Silver29: 29/29 PASS
 
-`evidence/t5-live/silver29-02/` builds the same 744-file source inventory
-(`source-manifest.json` SHA-256 `b591c502…`) to binary
+`evidence/t5-live/silver29-02/` builds the same 744-file source inventory (`source-manifest.json` SHA-256 `b591c502…`) to binary
 `8b56846a3e718565bcb45f0c791663ea834ff4157a460ad8fe92310a82d8c35f`, identical to the GM08
 build and to the consumed `/target/muninn`. The unchanged T1 in-container runner executed the
 `silver-reasoning` profile on a fresh authenticated empty Neo4j: expected = collected =

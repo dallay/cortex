@@ -8,26 +8,26 @@ TCK evidence, static integration source, coverage state, and reason.
 `covered_by_integration` records a statically available test; it does not mean
 that test ran in this unit.
 
-| Row category | Count |
-| --- | ---: |
-| `tck_section` | 13 |
-| `tck_normative_requirement` | 24 |
-| `tck_test` | 189 |
-| `tck_fixture` | 7 |
-| `python_signature` | 338 |
-| `python_model` | 4 |
-| `python_protocol` | 4 |
-| `mcp_tool` | 10 |
-| `mcp_registration` | 3 |
-| `backend_exception` | 38 |
-| `cypher_ddl` | 88 |
-| `provider_declaration` | 14 |
+| Row category                | Count |
+|-----------------------------|------:|
+| `tck_section`               |    13 |
+| `tck_normative_requirement` |    24 |
+| `tck_test`                  |   189 |
+| `tck_fixture`               |     7 |
+| `python_signature`          |   338 |
+| `python_model`              |     4 |
+| `python_protocol`           |     4 |
+| `mcp_tool`                  |    10 |
+| `mcp_registration`          |     3 |
+| `backend_exception`         |    38 |
+| `cypher_ddl`                |    88 |
+| `provider_declaration`      |    14 |
 
-| Coverage state | Count |
-| --- | ---: |
-| `covered_by_integration` | 103 |
-| `covered_by_tck` | 224 |
-| `coverage_gap` | 405 |
+| Coverage state           | Count |
+|--------------------------|------:|
+| `covered_by_integration` |   103 |
+| `covered_by_tck`         |   224 |
+| `coverage_gap`           |   405 |
 
 ## Limits
 

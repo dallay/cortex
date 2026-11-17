@@ -17,7 +17,12 @@
       ],
       "prompt": "For the campaign status report I need the exact report title and the ordered list of column names. What are they?",
       "oracle_context": "For the campaign status report, use the title Juniper Harbor and the columns Task, Owner, Status in that order.",
-      "expected_contains": ["Juniper Harbor", "Task", "Owner", "Status"],
+      "expected_contains": [
+        "Juniper Harbor",
+        "Task",
+        "Owner",
+        "Status"
+      ],
       "expected_absent": [],
       "direct": {
         "tool": "muninn_search_preferences",
@@ -43,7 +48,12 @@
       ],
       "prompt": "I am writing the weekly status report. Which title and which column names do I use?",
       "oracle_context": "When the weekly status report is produced, its title is Juniper Harbor and its columns are Task, Owner, Status in that order.",
-      "expected_contains": ["Juniper Harbor", "Task", "Owner", "Status"],
+      "expected_contains": [
+        "Juniper Harbor",
+        "Task",
+        "Owner",
+        "Status"
+      ],
       "expected_absent": [],
       "direct": {
         "tool": "muninn_search_preferences",
@@ -69,7 +79,9 @@
       "oracle_context": "No stored preference answers this request. The only stored preference belongs to a different subject.",
       "abstain": true,
       "expected_contains": [],
-      "expected_absent": ["Orion-Vault"],
+      "expected_absent": [
+        "Orion-Vault"
+      ],
       "direct": {
         "tool": "muninn_search_preferences",
         "arguments": {
@@ -98,8 +110,12 @@
       ],
       "prompt": "What is the default indentation of the project?",
       "oracle_context": "The default indentation of the project is 4 spaces.",
-      "expected_contains": ["4 spaces"],
-      "expected_absent": ["2 spaces"],
+      "expected_contains": [
+        "4 spaces"
+      ],
+      "expected_absent": [
+        "2 spaces"
+      ],
       "direct": {
         "tool": "muninn_search_preferences",
         "arguments": {
@@ -125,7 +141,9 @@
       "oracle_context": "No stored preference answers this request.",
       "abstain": true,
       "expected_contains": [],
-      "expected_absent": ["18:00"],
+      "expected_absent": [
+        "18:00"
+      ],
       "direct": {
         "tool": "muninn_search_preferences",
         "arguments": {
@@ -151,7 +169,9 @@
       "oracle_context": "No stored preference answers this request in the configured scope.",
       "abstain": true,
       "expected_contains": [],
-      "expected_absent": ["555-0143"],
+      "expected_absent": [
+        "555-0143"
+      ],
       "direct": {
         "tool": "muninn_search_preferences",
         "arguments": {
@@ -173,7 +193,9 @@
       ],
       "prompt": "What is the release workspace identifier?",
       "oracle_context": "The release workspace identifier is Vesper-Delta-704.",
-      "expected_contains": ["Vesper-Delta-704"],
+      "expected_contains": [
+        "Vesper-Delta-704"
+      ],
       "expected_absent": [],
       "direct": {
         "tool": "muninn_search_messages",

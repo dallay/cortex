@@ -73,8 +73,7 @@ socket. A missing endpoint fails with `spaCy extraction requires
 --extraction-endpoint naming the trusted local sidecar`. An unparsable or
 credential-bearing endpoint, a non-`http(s)` scheme or a zero timeout fails with
 `spaCy extraction configuration rejected: use an http(s) endpoint without
-credentials and a nonzero timeout`, followed by the adapter's redacted cause
-(`spaCy extraction invalid endpoint` or `spaCy extraction invalid configuration`).
+credentials and a nonzero timeout`, followed by the adapter's redacted cause (`spaCy extraction invalid endpoint` or `spaCy extraction invalid configuration`).
 Neither message repeats the configured value, the URL or its credentials, and
 the process exits with status `1`. A syntactically valid but unreachable endpoint
 is not probed at startup: the request that opts into `auto` fails with HTTP 500

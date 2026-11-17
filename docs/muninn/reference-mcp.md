@@ -13,11 +13,11 @@ it does not change upstream.
 
 ## Observed profiles
 
-| Profile | Backend | Tools | Transports | Limitation |
-| --- | --- | ---: | --- | --- |
-| `core` | disabled | 6 | stdio + HTTP | Registry; no backend call |
-| `extended-no-backend` | disabled | 16 | stdio + HTTP | Conditional tools absent |
-| `extended-nams-offline` | NAMS offline | 20 | stdio + HTTP | Real NAMS client construction without I/O |
+| Profile                 | Backend      | Tools | Transports   | Limitation                                |
+|-------------------------|--------------|------:|--------------|-------------------------------------------|
+| `core`                  | disabled     |     6 | stdio + HTTP | Registry; no backend call                 |
+| `extended-no-backend`   | disabled     |    16 | stdio + HTTP | Conditional tools absent                  |
+| `extended-nams-offline` | NAMS offline |    20 | stdio + HTTP | Real NAMS client construction without I/O |
 
 An additional capture constructs the reference default configuration:
 **6 tools**, backend `neo4j`, with **2 driver-creation attempts blocked before

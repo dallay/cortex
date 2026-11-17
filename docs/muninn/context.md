@@ -1,8 +1,7 @@
 # Fused prompt context
 
 `get_context` is the pinned fused prompt document. The bridge method
-`get_context` reproduces `MemoryClient.get_context` from the pinned reference
-(`src/neo4j_agent_memory/__init__.py`, revision `9d45af5529ecb5f2fe352013468a11087f3163d4`).
+`get_context` reproduces `MemoryClient.get_context` from the pinned reference (`src/neo4j_agent_memory/__init__.py`, revision `9d45af5529ecb5f2fe352013468a11087f3163d4`).
 
 ## Request
 

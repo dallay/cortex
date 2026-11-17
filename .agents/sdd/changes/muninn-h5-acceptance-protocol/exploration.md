@@ -39,17 +39,17 @@ La implementación compara dos preguntas distintas que el contrato debe mantener
 ### Enfoques
 
 1. **Contrato de dos gates con aprobación antes de medir (recomendado)** — especificar por separado equivalencia ANN–exact y calidad con juicios; registrar decisiones aún abiertas y presentar valores candidatos al usuario sin asignar defaults. Aprobado el protocolo y sus identidades, otra tarea prepara corpus/adjudicación si hace falta y vuelve a medir.
-   - Ventajas: evita confundir exactitud del índice con calidad semántica; mantiene la evidencia existente como diagnóstico; habilita gates con criterios distintos.
-   - Costos: requiere decisiones de producto explícitas y posiblemente más anotación o instrumentación.
-   - Esfuerzo: medio.
+    - Ventajas: evita confundir exactitud del índice con calidad semántica; mantiene la evidencia existente como diagnóstico; habilita gates con criterios distintos.
+    - Costos: requiere decisiones de producto explícitas y posiblemente más anotación o instrumentación.
+    - Esfuerzo: medio.
 2. **Un único gate agregado de calidad/equivalencia** — combinar métricas de relevancia, igualdad de ranking y tolerancia numérica en un solo veredicto.
-   - Ventajas: un resultado de aceptación simple.
-   - Costos: mezcla propiedades independientes, dificulta interpretar fallos y puede ocultar calidad baja si ANN replica exactamente a exhaustive.
-   - Esfuerzo: medio; no recomendado sin una justificación de producto.
+    - Ventajas: un resultado de aceptación simple.
+    - Costos: mezcla propiedades independientes, dificulta interpretar fallos y puede ocultar calidad baja si ANN replica exactamente a exhaustive.
+    - Esfuerzo: medio; no recomendado sin una justificación de producto.
 3. **Adoptar los resultados ya medidos como aceptación** — no recomendado y no compatible con el requisito de preinscripción. La corrida precede a una regla aprobada; juicios/procedencia tienen límites conocidos.
-   - Ventajas: ninguna más allá de evitar trabajo posterior.
-   - Costos: aceptación retrospectiva, criterios no aprobados y riesgo de sobreafirmar evidencia de seis consultas.
-   - Esfuerzo: bajo, pero inválido como protocolo verificable.
+    - Ventajas: ninguna más allá de evitar trabajo posterior.
+    - Costos: aceptación retrospectiva, criterios no aprobados y riesgo de sobreafirmar evidencia de seis consultas.
+    - Esfuerzo: bajo, pero inválido como protocolo verificable.
 
 ### Recomendación
 

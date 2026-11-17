@@ -43,8 +43,7 @@ Output roles, exactly once each: `rust_export`, `python_export`, `comparison`,
 `bundle_verify`. No additional output roles are allowed.
 
 Each manifest is nonempty and has unique paths. Outputs cannot overlap the input
-manifest. The combined number of entries in all three lists is at most 256
-(before and after entries both count). Before and after must contain identical
+manifest. The combined number of entries in all three lists is at most 256 (before and after entries both count). Before and after must contain identical
 path/size/hash mappings; list order does not matter. Integers cannot be booleans.
 File sizes range from zero to 256 MiB. Hashing uses chunks of at most 1 MiB and
 stops at the file limit. The current local Rust export binary is approximately

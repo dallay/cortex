@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 /**
  * CompatibleConnectionsSection — special section for compatible providers
  * that displays individual connections with custom names.
@@ -8,7 +8,7 @@
  * - List of connections with display name, protocol badge, status, toggle, and test button
  * - Empty state when no connections exist
  */
-import {Code, ExternalLink, Loader2, Play, Plus } from "@lucide/vue";
+import {Code, ExternalLink, Loader2, Play, Plus} from "@lucide/vue";
 import {computed, ref} from "vue";
 import {useI18n} from "vue-i18n";
 import {useRouter} from "vue-router";
@@ -90,7 +90,7 @@ async function handleTestAll() {
   }
 }
 
-async function handleToggle({id, enabled}: {id: string; enabled: boolean}) {
+async function handleToggle({id, enabled}: { id: string; enabled: boolean }) {
   const conn = props.providers.find((p) => p.id === id);
   if (!conn) return;
   busyIds.value = new Set([...busyIds.value, id]);
@@ -118,31 +118,31 @@ async function handleToggle({id, enabled}: {id: string; enabled: boolean}) {
       </div>
       <div class="flex items-center gap-2 shrink-0">
         <Button
-          variant="outline"
-          size="sm"
           :data-testid="'test-all-compatible'"
           :disabled="testingAll || testingIds.size > 0 || compatibleConnections.length === 0"
+          size="sm"
+          variant="outline"
           @click="handleTestAll"
         >
-          <Play class="h-4 w-4 mr-1" />
+          <Play class="h-4 w-4 mr-1"/>
           {{ t('providers.compatible.testAll') }}
         </Button>
         <Button
-          variant="default"
-          size="sm"
           :data-testid="'add-anthropic-compatible'"
+          size="sm"
+          variant="default"
           @click="emit('add', 'anthropic-compatible')"
         >
-          <Plus class="h-4 w-4 mr-1" />
+          <Plus class="h-4 w-4 mr-1"/>
           {{ t('providers.compatible.addAnthropic') }}
         </Button>
         <Button
-          variant="default"
-          size="sm"
           :data-testid="'add-openai-compatible'"
+          size="sm"
+          variant="default"
           @click="emit('add', 'openai-compatible')"
         >
-          <Plus class="h-4 w-4 mr-1" />
+          <Plus class="h-4 w-4 mr-1"/>
           {{ t('providers.compatible.addOpenAi') }}
         </Button>
       </div>
@@ -158,19 +158,20 @@ async function handleToggle({id, enabled}: {id: string; enabled: boolean}) {
         <div class="flex items-start justify-between">
           <div class="flex items-start gap-3 min-w-0">
             <div class="rounded-lg bg-primary/10 p-2 shrink-0">
-              <Code class="h-5 w-5 text-primary" />
+              <Code class="h-5 w-5 text-primary"/>
             </div>
             <div class="min-w-0">
               <button
-                type="button"
                 class="text-sm font-semibold truncate text-left hover:underline cursor-pointer inline-flex items-center gap-1"
+                type="button"
                 @click="router.push(`/providers/${conn.providerKind}`)"
               >
                 {{ conn.name || t('providers.compatible.untitled') }}
-                <ExternalLink class="h-3 w-3 text-muted-foreground" />
+                <ExternalLink class="h-3 w-3 text-muted-foreground"/>
               </button>
               <div class="flex items-center gap-2 mt-1">
-                <span class="inline-flex items-center rounded-md bg-secondary px-2 py-0.5 text-xs font-medium">
+                <span
+                  class="inline-flex items-center rounded-md bg-secondary px-2 py-0.5 text-xs font-medium">
                   {{ getProtocolLabel(conn.providerKind) }}
                 </span>
               </div>
@@ -178,37 +179,46 @@ async function handleToggle({id, enabled}: {id: string; enabled: boolean}) {
           </div>
           <div
             v-if="conn.isActive"
-            class="h-2 w-2 rounded-full bg-green-500 shrink-0 mt-1"
             :title="t('providers.catalog.active')"
+            class="h-2 w-2 rounded-full bg-green-500 shrink-0 mt-1"
           />
         </div>
 
-        <p v-if="conn.id in testResults && testResults[conn.id]" :role="testResults[conn.id]?.valid ? 'status' : 'alert'" class="text-xs" :class="testResults[conn.id]?.valid ? 'text-green-600' : 'text-destructive'">
-          {{ testResults[conn.id]?.valid ? t('providers.testSuccess') : (testResults[conn.id]?.error || t('providers.testFailed')) }}
+        <p v-if="conn.id in testResults && testResults[conn.id]"
+           :class="testResults[conn.id]?.valid ? 'text-green-600' : 'text-destructive'"
+           :role="testResults[conn.id]?.valid ? 'status' : 'alert'"
+           class="text-xs">
+          {{
+            testResults[conn.id]?.valid ? t('providers.testSuccess') : (testResults[conn.id]?.error || t('providers.testFailed'))
+          }}
         </p>
-        <p v-if="conn.id in testResults && testResults[conn.id]?.valid && testResults[conn.id]?.warning" class="text-xs text-amber-600">
+        <p
+          v-if="conn.id in testResults && testResults[conn.id]?.valid && testResults[conn.id]?.warning"
+          class="text-xs text-amber-600">
           {{ testResults[conn.id]?.warning }}
         </p>
 
         <div class="flex items-center justify-between">
           <span class="text-xs text-muted-foreground">
-            {{ conn.isActive ? t('providers.compatible.connected') : t('providers.compatible.disabled') }}
+            {{
+              conn.isActive ? t('providers.compatible.connected') : t('providers.compatible.disabled')
+            }}
           </span>
           <div class="flex items-center gap-2">
             <Switch
-              :model-value="conn.isActive"
-              :disabled="isBusy(conn.id) || isTesting(conn.id)"
               :aria-label="t('providers.compatible.toggleAriaLabel', { name: conn.name || t('providers.compatible.untitled') })"
+              :disabled="isBusy(conn.id) || isTesting(conn.id)"
+              :model-value="conn.isActive"
               @update:model-value="(val: boolean) => handleToggle({ id: conn.id, enabled: val })"
             />
             <Button
-              variant="outline"
-              size="sm"
               :disabled="testingAll || isTesting(conn.id)"
+              size="sm"
+              variant="outline"
               @click="handleTest(conn.id)"
             >
-              <Loader2 v-if="isTesting(conn.id)" class="h-3 w-3 animate-spin" />
-              <Play v-else class="h-3 w-3" />
+              <Loader2 v-if="isTesting(conn.id)" class="h-3 w-3 animate-spin"/>
+              <Play v-else class="h-3 w-3"/>
               {{ t('providers.compatible.test') }}
             </Button>
           </div>
@@ -216,7 +226,8 @@ async function handleToggle({id, enabled}: {id: string; enabled: boolean}) {
       </div>
     </div>
 
-    <div v-else class="rounded-lg border-2 border-dashed border-muted-foreground/25 p-8 text-center">
+    <div v-else
+         class="rounded-lg border-2 border-dashed border-muted-foreground/25 p-8 text-center">
       <p class="text-sm text-muted-foreground">
         {{ t('providers.compatible.noConnections') }}
       </p>

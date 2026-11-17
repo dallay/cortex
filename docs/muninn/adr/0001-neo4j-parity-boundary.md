@@ -18,8 +18,7 @@ projections, or Cypher errors. The test reference uses Neo4j Community 5.26.
   query or a mutable `Session` as a domain port.
 - Declare capabilities by backend and profile. Preserve distinctions between
   `NotSupportedError`, native not-implemented paths, and operational failures.
-- Start a functional port with Neo4j 5.26 and an observable native driver.
-  **Do not replace the oracle with HashEmbedder** to claim semantic parity.
+- Start a functional port with Neo4j 5.26 and an observable native driver. **Do not replace the oracle with HashEmbedder** to claim semantic parity.
 - Validate bounded units against the frozen oracle before expanding scope.
 
 ## Alternatives not accepted in G0

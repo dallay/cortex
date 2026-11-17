@@ -41,16 +41,16 @@ image never rewrites, retags or replaces `muninn-gm05-oracle:20261104`.
 
 ## Exact image identity
 
-| Item | Observed value |
-| --- | --- |
-| Tag | `muninn-h4-oracle-spacy:20261105` |
-| Image id / repo digest | `sha256:0f54322068ba6bebf27718c6b0d44ea85391e79a4801e2995c8adf9941645678` |
-| Created | `2026-11-05T18:20:55.889115995Z` |
-| Platform | `linux/arm64` |
-| Size | 634 MB (BuildKit reports it as a manifest list with provenance attestation) |
-| Base image | `python:3.13.18-slim@sha256:76baad6037690d6e8c4397fbcaef17bca6f19eecef822b708fe8fa3417d30bb5` (same digest as `Dockerfile.oracle`; Debian trixie, glibc 2.41, CPython 3.13.18, pip 26.2.2) |
-| Runtime user | `7474:7474`, `WORKDIR /harness`, `ENTRYPOINT ["/opt/venv/bin/python"]` |
-| Unchanged witness | `muninn-gm05-oracle:20261104` `sha256:0f4d85e328e4…`, inspect JSON SHA-256 `01698419c1dc…` before and after this build |
+| Item                   | Observed value                                                                                                                                                                             |
+|------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Tag                    | `muninn-h4-oracle-spacy:20261105`                                                                                                                                                          |
+| Image id / repo digest | `sha256:0f54322068ba6bebf27718c6b0d44ea85391e79a4801e2995c8adf9941645678`                                                                                                                  |
+| Created                | `2026-11-05T18:20:55.889115995Z`                                                                                                                                                           |
+| Platform               | `linux/arm64`                                                                                                                                                                              |
+| Size                   | 634 MB (BuildKit reports it as a manifest list with provenance attestation)                                                                                                                |
+| Base image             | `python:3.13.18-slim@sha256:76baad6037690d6e8c4397fbcaef17bca6f19eecef822b708fe8fa3417d30bb5` (same digest as `Dockerfile.oracle`; Debian trixie, glibc 2.41, CPython 3.13.18, pip 26.2.2) |
+| Runtime user           | `7474:7474`, `WORKDIR /harness`, `ENTRYPOINT ["/opt/venv/bin/python"]`                                                                                                                     |
+| Unchanged witness      | `muninn-gm05-oracle:20261104` `sha256:0f4d85e328e4…`, inspect JSON SHA-256 `01698419c1dc…` before and after this build                                                                     |
 
 Installed inventory (50 distributions): the 48 hash-pinned requirements in
 `requirements-oracle-spacy.txt`, plus `en_core_web_sm==3.8.0` and the venv's
@@ -65,13 +65,13 @@ lemmatizer, ner`, 18 NER labels, 50 tagger labels.
 
 ## How it is pinned
 
-| Input | Source of truth |
-| --- | --- |
-| Base image | digest `76baad60…`, identical to the accepted oracle base |
-| Python packages | `dev/muninn/requirements-oracle-spacy.txt`, 48 exact pins, every line carries `--hash=sha256`, wanted by `--require-hashes` |
-| Package provenance | exported from the pinned reference `uv.lock` (SHA-256 `30a0c40d5bba…`), `spacy` extra closure; not a fresh latest resolution |
-| Model wheel | `en_core_web_sm-3.8.0-py3-none-any.whl`, SHA-256 `1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85`, copied from the build context, checked with `sha256sum -c` and installed `--no-deps --no-index` |
-| Build context | the Dockerfile-specific ignore file exposes only the requirements file and that wheel (12.89 MB transferred) |
+| Input              | Source of truth                                                                                                                                                                                                      |
+|--------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Base image         | digest `76baad60…`, identical to the accepted oracle base                                                                                                                                                            |
+| Python packages    | `dev/muninn/requirements-oracle-spacy.txt`, 48 exact pins, every line carries `--hash=sha256`, wanted by `--require-hashes`                                                                                          |
+| Package provenance | exported from the pinned reference `uv.lock` (SHA-256 `30a0c40d5bba…`), `spacy` extra closure; not a fresh latest resolution                                                                                         |
+| Model wheel        | `en_core_web_sm-3.8.0-py3-none-any.whl`, SHA-256 `1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85`, copied from the build context, checked with `sha256sum -c` and installed `--no-deps --no-index` |
+| Build context      | the Dockerfile-specific ignore file exposes only the requirements file and that wheel (12.89 MB transferred)                                                                                                         |
 
 The requirements file also carries the reference project's own base dependency
 pins (`neo4j`, `pydantic`, `pydantic-settings`, `python-dotenv`, `pytz`,
@@ -105,26 +105,26 @@ The pinned `DEFAULT_TYPE_MAPPING` / `DEFAULT_SUBTYPE_MAPPING` of
 `extraction/spacy_extractor.py` at `9d45af55` maps exactly the 18 labels this
 image reports:
 
-| spaCy label | POLE+O type | Subtype |
-| --- | --- | --- |
-| `PERSON` | `PERSON` | — |
-| `ORG` | `ORGANIZATION` | — |
-| `NORP` | `ORGANIZATION` | `GROUP` |
-| `GPE` | `LOCATION` | `GEOPOLITICAL` |
-| `LOC` | `LOCATION` | `GEOGRAPHIC` |
-| `FAC` | `LOCATION` | `FACILITY` |
-| `EVENT` | `EVENT` | — |
-| `PRODUCT` | `OBJECT` | `PRODUCT` |
-| `WORK_OF_ART` | `OBJECT` | `CREATIVE_WORK` |
-| `LAW` | `OBJECT` | `LEGAL_DOCUMENT` |
-| `LANGUAGE` | `OBJECT` | `LANGUAGE` |
-| `DATE` | `EVENT` | `DATE` |
-| `TIME` | `EVENT` | `TIME` |
-| `MONEY` | `OBJECT` | `CURRENCY` |
-| `QUANTITY` | `OBJECT` | `QUANTITY` |
-| `ORDINAL` | `OBJECT` | — |
-| `CARDINAL` | `OBJECT` | — |
-| `PERCENT` | `OBJECT` | — |
+| spaCy label   | POLE+O type    | Subtype          |
+|---------------|----------------|------------------|
+| `PERSON`      | `PERSON`       | —                |
+| `ORG`         | `ORGANIZATION` | —                |
+| `NORP`        | `ORGANIZATION` | `GROUP`          |
+| `GPE`         | `LOCATION`     | `GEOPOLITICAL`   |
+| `LOC`         | `LOCATION`     | `GEOGRAPHIC`     |
+| `FAC`         | `LOCATION`     | `FACILITY`       |
+| `EVENT`       | `EVENT`        | —                |
+| `PRODUCT`     | `OBJECT`       | `PRODUCT`        |
+| `WORK_OF_ART` | `OBJECT`       | `CREATIVE_WORK`  |
+| `LAW`         | `OBJECT`       | `LEGAL_DOCUMENT` |
+| `LANGUAGE`    | `OBJECT`       | `LANGUAGE`       |
+| `DATE`        | `EVENT`        | `DATE`           |
+| `TIME`        | `EVENT`        | `TIME`           |
+| `MONEY`       | `OBJECT`       | `CURRENCY`       |
+| `QUANTITY`    | `OBJECT`       | `QUANTITY`       |
+| `ORDINAL`     | `OBJECT`       | —                |
+| `CARDINAL`    | `OBJECT`       | —                |
+| `PERCENT`     | `OBJECT`       | —                |
 
 Observed on a synthetic sentence (recorded stream in the evidence path):
 `Alice/PERSON 0–5`, `Acme Corporation/ORG 15–31`, `Paris/GPE 35–40`,
@@ -157,8 +157,7 @@ model, not an accuracy measurement and not a Gold or differential result.
 - The U2 HTTP sidecar is not wired into this image; extraction throughput,
   timeouts and the `0.85` filter are unverified against reference spans beyond
   the four-entity smoke observation.
-- Gold cross-memory, GM-02/03/04/06/07 and Silver38 differentials are
-  **NOT_RUN**; the GM harness that composes the existing gm01/gm05/gm08
+- Gold cross-memory, GM-02/03/04/06/07 and Silver38 differentials are **NOT_RUN**; the GM harness that composes the existing gm01/gm05/gm08
   components on top of this image is the next unit.
 - Live authenticated Neo4j ingestion of these spaCy entities is **NOT_RUN**.
 
@@ -205,13 +204,13 @@ Exit 0 is an offline comparison pass, exit 2 is invalid input or a difference.
 
 ## What each differential compares
 
-| Item | Cross-side values | Per-side invariants (an equal-but-corrupt pair fails) |
-| --- | --- | --- |
-| GM-02 | scenario order, entity inventory, `MENTIONS` edges with `confidence`/`start_pos`/`end_pos`, `RELATED_TO` inventory | auto spans reproduce their entity name at 0.85, skip creates no mention and no entity, explicit links only the supplied references, replay does not duplicate nodes |
-| GM-03 | `name`, POLE+O `type`, `subtype`, `start_pos`, `end_pos`, constant `0.85`, `spacy` extractor, in document order | offsets in range and in character order, span reproduces the name, frozen texts verbatim, empty/whitespace text yields no entity, the stage stream is never shorter than the GM-02 mentions of the same text |
-| GM-04 | attempt order, observed band/action, matched candidate, score, match type, canonical identity, `SAME_AS` inventory | band derived from the observed score with the declared 0.90/0.85 thresholds, matched candidate inside the declared pool, merge returns the matched identity, a flagged mention keeps its own node with exactly one pending `SAME_AS` edge, a null match reports 0.0 |
-| GM-06 | the five shared enrichment properties, the stored geocode point, the observed enrichment status and the recorded provider request totals | the property document carries exactly the declared names, the recorded provider answer reproduces each value, a warm replay repeats them with zero requests, the geocode point is the recorded coordinate, spacing between recorded requests respects the declared rate limit, the closed failure vocabulary is product-only |
-| GM-07 | entity and message ids with their scores in the returned order, the `get_context` document, the `RELATED_TO` inventory and the declared graph neighbours | every id is a declared token, scores are finite and non-increasing along each ranked list, the declared edge exists, the context document reproduces the declared section order, and the scoped search returns no foreign-owner message |
+| Item  | Cross-side values                                                                                                                                        | Per-side invariants (an equal-but-corrupt pair fails)                                                                                                                                                                                                                                                                        |
+|-------|----------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| GM-02 | scenario order, entity inventory, `MENTIONS` edges with `confidence`/`start_pos`/`end_pos`, `RELATED_TO` inventory                                       | auto spans reproduce their entity name at 0.85, skip creates no mention and no entity, explicit links only the supplied references, replay does not duplicate nodes                                                                                                                                                          |
+| GM-03 | `name`, POLE+O `type`, `subtype`, `start_pos`, `end_pos`, constant `0.85`, `spacy` extractor, in document order                                          | offsets in range and in character order, span reproduces the name, frozen texts verbatim, empty/whitespace text yields no entity, the stage stream is never shorter than the GM-02 mentions of the same text                                                                                                                 |
+| GM-04 | attempt order, observed band/action, matched candidate, score, match type, canonical identity, `SAME_AS` inventory                                       | band derived from the observed score with the declared 0.90/0.85 thresholds, matched candidate inside the declared pool, merge returns the matched identity, a flagged mention keeps its own node with exactly one pending `SAME_AS` edge, a null match reports 0.0                                                          |
+| GM-06 | the five shared enrichment properties, the stored geocode point, the observed enrichment status and the recorded provider request totals                 | the property document carries exactly the declared names, the recorded provider answer reproduces each value, a warm replay repeats them with zero requests, the geocode point is the recorded coordinate, spacing between recorded requests respects the declared rate limit, the closed failure vocabulary is product-only |
+| GM-07 | entity and message ids with their scores in the returned order, the `get_context` document, the `RELATED_TO` inventory and the declared graph neighbours | every id is a declared token, scores are finite and non-increasing along each ranked list, the declared edge exists, the context document reproduces the declared section order, and the scoped search returns no foreign-owner message                                                                                      |
 
 ## Declared tolerances and rules (disclosed by hash)
 
@@ -282,8 +281,7 @@ and, for GM-06/GM-07, under `.../evidence/u5c-harness/`.
 ## U5c GM-06 and GM-07 harness
 
 GM-06 (enrichment and geocoding) and GM-07 (text, vector and graph search plus
-`get_context`) are implemented in the same harness discipline and are
-**deterministic-tested only**. No live differential ran in U5c: the H4
+`get_context`) are implemented in the same harness discipline and are **deterministic-tested only**. No live differential ran in U5c: the H4
 measurement belongs to U6. No live Wikipedia, Diffbot or Nominatim call, no
 network access and no model download exists in any test here.
 
@@ -297,13 +295,13 @@ path against the fixture, recorded with a timestamp, and an unmatched request
 fails closed before any write. The product side drives the bridge
 `enrich_entity` / `geocode_entity` controls. Recorded attempts:
 
-| Attempt | Operation | Reference answer | Product answer |
-| --- | --- | --- | --- |
-| `enrich-success` | enrich | `200` summary | same recorded payload |
-| `enrich-replay` | enrich | warm cache, zero requests | warm cache, zero requests |
-| `enrich-not-found` | enrich | `404` then the pinned fuzzy search (2 requests) | `404`, no fuzzy fallback (1 request) |
-| `enrich-failure` | enrich | `503`, `error` | `503`, `error` + `service` |
-| `geocode-success` | geocode | Nominatim `200`, point written | same recorded payload |
+| Attempt            | Operation | Reference answer                                | Product answer                       |
+|--------------------|-----------|-------------------------------------------------|--------------------------------------|
+| `enrich-success`   | enrich    | `200` summary                                   | same recorded payload                |
+| `enrich-replay`    | enrich    | warm cache, zero requests                       | warm cache, zero requests            |
+| `enrich-not-found` | enrich    | `404` then the pinned fuzzy search (2 requests) | `404`, no fuzzy fallback (1 request) |
+| `enrich-failure`   | enrich    | `503`, `error`                                  | `503`, `error` + `service`           |
+| `geocode-success`  | geocode   | Nominatim `200`, point written                  | same recorded payload                |
 
 Declared, hashed GM-06 divergences (product side only, never compared across
 servers): `gm06-closed-failure-vocabulary`, `gm06-geocode-requires-point-index`,

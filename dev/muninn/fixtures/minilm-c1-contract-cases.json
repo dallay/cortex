@@ -1,4 +1,20 @@
 {
-  "valid": ["a", "0", "a.b_c-1", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
-  "invalid": ["X", "contract/v1", ".v1", "_v1", "-v1", "", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "é", "aé", "a\n"]
+  "valid": [
+    "a",
+    "0",
+    "a.b_c-1",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  ],
+  "invalid": [
+    "X",
+    "contract/v1",
+    ".v1",
+    "_v1",
+    "-v1",
+    "",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "é",
+    "aé",
+    "a\n"
+  ]
 }

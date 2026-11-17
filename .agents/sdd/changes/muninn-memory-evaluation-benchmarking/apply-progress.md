@@ -138,16 +138,16 @@ async stdio API; no Huginn product contract was changed.
   evidence. It does not exercise Huginn's `McpClients`, startup approval, or per-invocation
   `HostPolicy` approval, so the explicitly scoped Huginn runtime task remains open.
 - Current-turn command evidence:
-  - RED: `cargo test -p muninn --bin muninn mcp_command::tests::both_retrieval_handlers_use_only_the_fixed_host_owner` failed to compile because the planned test seam (`ScopedRetriever`, `test_server`) was not implemented yet.
-  - GREEN: same filtered command passed after adding the seam (4 MCP composition tests passed).
-  - RED: `cargo test -p muninn --bin muninn mcp_command_does_not_initialize_optional_bridge_services` failed to compile because `optional_stages` was not implemented yet.
-  - GREEN: same filtered command passed after adding command-sensitive optional-stage setup.
-  - Characterization: `cargo test -p muninn-mcp --test async_dispatch dispatch_times_out` passed (1 test); `cargo test -p muninn-mcp --test stdio response_envelope_over_limit` passed (1 test).
-  - `cargo test -p muninn-mcp`: passed, 18 tests, 0 failed; no unit/doc tests.
-  - `cargo test -p muninn`: passed, 22 tests, 0 failed.
-  - `cargo test -p muninn-application owner`: passed, 6 tests, 0 failed; `cargo test -p muninn-application scoped`: passed, 1 test, 0 failed; `cargo test -p muninn-application long_term::tests::preference_scope_separates_same_category_and_vectors_and_preserves_global_reads`: passed, 1 test, 0 failed.
-  - One malformed invocation, `cargo test -p muninn-application short_term::tests::scoped_message_search_rejects_foreign_owner long_term::tests::scoped_preference_search`, failed because Cargo accepts only one test-name filter. The valid filter invocations above then passed.
-  - `cargo fmt --all -- --check`, `cargo clippy -p muninn-mcp --all-targets -- -D warnings`, `cargo clippy -p muninn --bin muninn -- -D warnings`, and `git diff --check`: passed.
+    - RED: `cargo test -p muninn --bin muninn mcp_command::tests::both_retrieval_handlers_use_only_the_fixed_host_owner` failed to compile because the planned test seam (`ScopedRetriever`, `test_server`) was not implemented yet.
+    - GREEN: same filtered command passed after adding the seam (4 MCP composition tests passed).
+    - RED: `cargo test -p muninn --bin muninn mcp_command_does_not_initialize_optional_bridge_services` failed to compile because `optional_stages` was not implemented yet.
+    - GREEN: same filtered command passed after adding command-sensitive optional-stage setup.
+    - Characterization: `cargo test -p muninn-mcp --test async_dispatch dispatch_times_out` passed (1 test); `cargo test -p muninn-mcp --test stdio response_envelope_over_limit` passed (1 test).
+    - `cargo test -p muninn-mcp`: passed, 18 tests, 0 failed; no unit/doc tests.
+    - `cargo test -p muninn`: passed, 22 tests, 0 failed.
+    - `cargo test -p muninn-application owner`: passed, 6 tests, 0 failed; `cargo test -p muninn-application scoped`: passed, 1 test, 0 failed; `cargo test -p muninn-application long_term::tests::preference_scope_separates_same_category_and_vectors_and_preserves_global_reads`: passed, 1 test, 0 failed.
+    - One malformed invocation, `cargo test -p muninn-application short_term::tests::scoped_message_search_rejects_foreign_owner long_term::tests::scoped_preference_search`, failed because Cargo accepts only one test-name filter. The valid filter invocations above then passed.
+    - `cargo fmt --all -- --check`, `cargo clippy -p muninn-mcp --all-targets -- -D warnings`, `cargo clippy -p muninn --bin muninn -- -D warnings`, and `git diff --check`: passed.
 - No Huginn runtime source or core/application contract changed. The actual protocol-integration gate remains open; do not claim runtime compatibility. Phase 2.4–2.6 and Phase 3.1 are marked complete. Phase 3.3–3.5 remain incomplete.
 - No E2E inference, local model readiness inspection, evaluation service startup, credentials,
   external/cloud resources, downloads, persistent data, or production resources were accessed.
@@ -241,13 +241,13 @@ async stdio API; no Huginn product contract was changed.
 ## Orchestrator Verification (2026-11-10)
 
 - Fresh checks passed after the runtime integration change:
-  - `cargo test -p huginn-runtime --lib actual_muninn_server_uses_huginn_startup_and_invocation_approvals`: 1 passed.
-  - `cargo test -p huginn-runtime --test mcp_lifecycle`: 2 passed.
-  - `cargo test -p huginn-runtime --test transports mcp_denied_launch_and_approved_discovery_call_and_shutdown`: 1 passed.
-  - `cargo test -p huginn-runtime --test transports mcp_crash_and_timeout_are_reported_and_shutdown_is_bounded`: 1 passed.
-  - `cargo test -p muninn`: 25 passed; `cargo test -p muninn-mcp`: 19 total passed.
-  - `cargo test -p muninn-application owner`: 6 matching tests passed across targets; `cargo test -p muninn-application scoped`: 1 passed.
-  - `just huginn-architecture`, `cargo fmt --all -- --check`, Clippy with `-D warnings` for `huginn-runtime`, `muninn-mcp`, and `muninn`, and `git diff --check`: passed.
+    - `cargo test -p huginn-runtime --lib actual_muninn_server_uses_huginn_startup_and_invocation_approvals`: 1 passed.
+    - `cargo test -p huginn-runtime --test mcp_lifecycle`: 2 passed.
+    - `cargo test -p huginn-runtime --test transports mcp_denied_launch_and_approved_discovery_call_and_shutdown`: 1 passed.
+    - `cargo test -p huginn-runtime --test transports mcp_crash_and_timeout_are_reported_and_shutdown_is_bounded`: 1 passed.
+    - `cargo test -p muninn`: 25 passed; `cargo test -p muninn-mcp`: 19 total passed.
+    - `cargo test -p muninn-application owner`: 6 matching tests passed across targets; `cargo test -p muninn-application scoped`: 1 passed.
+    - `just huginn-architecture`, `cargo fmt --all -- --check`, Clippy with `-D warnings` for `huginn-runtime`, `muninn-mcp`, and `muninn`, and `git diff --check`: passed.
 - The integration test exercises the production-shared `McpClients::connect_with` discovery/registration path and real `HostPolicy`, with actual rmcp 3.8.0 and `muninn_mcp::serve` over duplex IO. It does not start `apps/muninn`, Neo4j, or a model. Existing Huginn transport tests independently exercise the child-process stdio path, denial/approval, crash, timeout, and shutdown.
 - The fake server does not exercise Neo4j adapter wiring. The `apps/muninn` composition test and existing owner-scope application tests cover fixed owner propagation/isolation at their respective boundaries. A live database retrieval check remains intentionally unperformed.
 - Encoded MCP output is capped, and Huginn applies its existing `bounded_text` output cap. The handler's already-materialized result `Value` is not subject to a strict total-memory bound.

@@ -41,11 +41,11 @@ forwarding is not invented as a list of explicit methods.
 [The artifact lock](../../dev/muninn/fixtures/artifact-lock.json)
 contains three distinct Hugging Face identities:
 
-| Use | Repository | Revision | License |
-| --- | --- | --- | --- |
-| Candidate parity profile | `sentence-transformers/all-MiniLM-L6-v2` | `1110a243fdf4706b3f48f1d95db1a4f5529b4d41` | Apache-2.0 |
+| Use                                | Repository                                      | Revision                                    | License    |
+|------------------------------------|-------------------------------------------------|---------------------------------------------|------------|
+| Candidate parity profile           | `sentence-transformers/all-MiniLM-L6-v2`        | `1110a243fdf4706b3f48f1d95db1a4f5529b4d41`  | Apache-2.0 |
 | Independent smoke test, not parity | `sentence-transformers/paraphrase-MiniLM-L3-v2` | `4ca70771034acceecb2e72475f72050fcdde4dd8c` | Apache-2.0 |
-| External Huginn reference | `Qwen/Qwen3.5-9B` | `c22eb327c15f5424a6658d85fd8e3380327dc9c3` | Apache-2.0 |
+| External Huginn reference          | `Qwen/Qwen3.5-9B`                               | `c22eb327c15f5424a6658d85fd8e3380327dc9c3`  | Apache-2.0 |
 
 Each record has a repository receipt with SHA-256, checkpoint/tokenizer filenames,
 sizes and hashes, local license SHA-256, configuration, architecture, and source.

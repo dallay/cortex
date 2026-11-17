@@ -37,22 +37,22 @@ The user must review the draft and explicitly approve its frozen version before 
 
 ## Affected Areas
 
-| Area | Impact | Description |
-|---|---|---|
-| `.agents/sdd/changes/muninn-h5-acceptance-protocol/proposal.md` | Modified | Record the candidate protocol decisions, corpus-review boundary, exclusions, and non-readiness conditions. |
-| Future protocol and corpus artifacts for this change | Proposed, not created here | Define a versioned protocol candidate and a draft unlabelled corpus artifact with query/candidate text, source-path provenance, and corpus hash. |
-| `docs/muninn/` | Read-only source material | Candidate corpus preparation may use eligible versioned Markdown; exclude the modified runner guide. No source document is changed by this proposal. |
-| Existing H5 pilot/results and runner | No change | Preserve them as descriptive evidence only; they are not the candidate corpus or acceptance evidence. |
+| Area                                                            | Impact                     | Description                                                                                                                                          |
+|-----------------------------------------------------------------|----------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `.agents/sdd/changes/muninn-h5-acceptance-protocol/proposal.md` | Modified                   | Record the candidate protocol decisions, corpus-review boundary, exclusions, and non-readiness conditions.                                           |
+| Future protocol and corpus artifacts for this change            | Proposed, not created here | Define a versioned protocol candidate and a draft unlabelled corpus artifact with query/candidate text, source-path provenance, and corpus hash.     |
+| `docs/muninn/`                                                  | Read-only source material  | Candidate corpus preparation may use eligible versioned Markdown; exclude the modified runner guide. No source document is changed by this proposal. |
+| Existing H5 pilot/results and runner                            | No change                  | Preserve them as descriptive evidence only; they are not the candidate corpus or acceptance evidence.                                                |
 
 ## Risks
 
-| Risk | Mitigation |
-|---|---|
-| A small or unrepresentative corpus is mistaken for adequate K=10 coverage. | Keep the corpus unapproved and draft until user review; make no sufficiency or representativeness claim. |
-| Existing pilot content or hypothetical cases leak into the independent corpus. | Explicitly exclude the six-query/twelve-candidate pilot and C0/C1 cases. |
-| Descriptive aggregation obscures per-query failures. | Require both ANN–exact metrics to equal 1.0 for every query; label macro-averages descriptive only. |
+| Risk                                                                           | Mitigation                                                                                                              |
+|--------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------|
+| A small or unrepresentative corpus is mistaken for adequate K=10 coverage.     | Keep the corpus unapproved and draft until user review; make no sufficiency or representativeness claim.                |
+| Existing pilot content or hypothetical cases leak into the independent corpus. | Explicitly exclude the six-query/twelve-candidate pilot and C0/C1 cases.                                                |
+| Descriptive aggregation obscures per-query failures.                           | Require both ANN–exact metrics to equal 1.0 for every query; label macro-averages descriptive only.                     |
 | Missing values, unresolved ties, or missing provenance are treated as success. | Do not break ties retrospectively; block `PASS` on undefined required metrics or incomplete applicable protocol inputs. |
-| A relevance gate is enabled without an approved product utility threshold. | Keep absolute relevance disabled until a threshold, labels, and adjudication are separately approved. |
+| A relevance gate is enabled without an approved product utility threshold.     | Keep absolute relevance disabled until a threshold, labels, and adjudication are separately approved.                   |
 
 ## Rollback Plan
 

@@ -226,17 +226,17 @@ The first selection stage returns an `EligibilityResult` with eligible targets a
 `Rejection` for each rejected target. The public `RejectionReason` enum is closed and
 serializes with stable `snake_case` values:
 
-| Reason | Condition |
-|---|---|
-| `auth_missing` | The provider adapter reports that required authentication is unavailable. |
-| `auth_expired` | The persisted connection has `TestStatus::Expired` and its adapter is unavailable. |
-| `model_unsupported` | The provider does not support the requested model. |
-| `capability_missing` | The provider cannot satisfy a required request capability. |
-| `circuit_open` | The provider circuit is open or its half-open trial is already reserved. |
-| `quota_exhausted` | Fresh, applicable connection quota evidence proves exhaustion. |
-| `key_model_not_allowed` | The request model is outside the API key's model allowlist. |
-| `key_provider_not_allowed` | The target is outside the API key's provider allowlist. |
-| `connection_disabled` | The persisted provider connection is inactive. |
+| Reason                     | Condition                                                                          |
+|----------------------------|------------------------------------------------------------------------------------|
+| `auth_missing`             | The provider adapter reports that required authentication is unavailable.          |
+| `auth_expired`             | The persisted connection has `TestStatus::Expired` and its adapter is unavailable. |
+| `model_unsupported`        | The provider does not support the requested model.                                 |
+| `capability_missing`       | The provider cannot satisfy a required request capability.                         |
+| `circuit_open`             | The provider circuit is open or its half-open trial is already reserved.           |
+| `quota_exhausted`          | Fresh, applicable connection quota evidence proves exhaustion.                     |
+| `key_model_not_allowed`    | The request model is outside the API key's model allowlist.                        |
+| `key_provider_not_allowed` | The target is outside the API key's provider allowlist.                            |
+| `connection_disabled`      | The persisted provider connection is inactive.                                     |
 
 When a candidate fails more than one check, the evaluator returns one reason in this order:
 key model, key provider, connection disabled, missing authentication, expired

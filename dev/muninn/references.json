@@ -24,6 +24,8 @@
   "agent-memory-tck": {
     "commit": "e60b410f1046dc21db50f9aba48e171dc8a9b5a1",
     "package_root": "tck",
-    "sources": ["SPEC.md"]
+    "sources": [
+      "SPEC.md"
+    ]
   }
 }

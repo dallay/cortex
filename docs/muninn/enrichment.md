@@ -29,28 +29,28 @@ documented properties on the entity node and successful geocoding stores
 Authority: agent-memory `9d45af5529ecb5f2fe352013468a11087f3163d4`,
 `config/settings.py:613–726`, `enrichment/*.py`, `services/geocoder.py`.
 
-| Setting | Default | Note |
-|---------|---------|------|
-| `enabled` | `false` | Nothing is called while false |
-| `providers` | `["wikimedia"]` | Priority order; `"none"` selects nothing |
-| `diffbot_api_key` | absent | Required only when Diffbot is selected |
-| `wikimedia_rate_limit` | `0.5` | **Seconds between requests**, not requests/second |
-| `diffbot_rate_limit` | `0.2` | Same unit quirk as above |
-| `cache_results` | `true` | Successful and absent answers only |
-| `cache_ttl_hours` | `168` | Minimum `1` |
-| `background_enabled` | `true` | Retained as a configuration value; see limitations |
-| `queue_max_size` | `1000` | Minimum `1` |
-| `max_retries` | `3` | Non-negative |
-| `retry_delay_seconds` | `60.0` | Minimum `1` |
-| `entity_types` | `PERSON, ORGANIZATION, LOCATION, EVENT` | Empty means every type |
-| `min_confidence` | `0.7` | Within `[0,1]` |
-| `language` | `en` | Also picks the Wikipedia subdomain |
-| `user_agent` | `neo4j-agent-memory/1.0` | Required by the providers' terms |
-| `geocoding.enabled` | `false` | `LOCATION` entities only |
-| `geocoding.provider` | `nominatim` | `google` requires `api_key` |
-| `geocoding.cache_results` | `true` | Caches found answers only |
-| `geocoding.rate_limit_per_second` | `1.0` | Applied as seconds between requests |
-| `geocoding.user_agent` | `neo4j-agent-memory` | Required by the Nominatim ToS |
+| Setting                           | Default                                 | Note                                               |
+|-----------------------------------|-----------------------------------------|----------------------------------------------------|
+| `enabled`                         | `false`                                 | Nothing is called while false                      |
+| `providers`                       | `["wikimedia"]`                         | Priority order; `"none"` selects nothing           |
+| `diffbot_api_key`                 | absent                                  | Required only when Diffbot is selected             |
+| `wikimedia_rate_limit`            | `0.5`                                   | **Seconds between requests**, not requests/second  |
+| `diffbot_rate_limit`              | `0.2`                                   | Same unit quirk as above                           |
+| `cache_results`                   | `true`                                  | Successful and absent answers only                 |
+| `cache_ttl_hours`                 | `168`                                   | Minimum `1`                                        |
+| `background_enabled`              | `true`                                  | Retained as a configuration value; see limitations |
+| `queue_max_size`                  | `1000`                                  | Minimum `1`                                        |
+| `max_retries`                     | `3`                                     | Non-negative                                       |
+| `retry_delay_seconds`             | `60.0`                                  | Minimum `1`                                        |
+| `entity_types`                    | `PERSON, ORGANIZATION, LOCATION, EVENT` | Empty means every type                             |
+| `min_confidence`                  | `0.7`                                   | Within `[0,1]`                                     |
+| `language`                        | `en`                                    | Also picks the Wikipedia subdomain                 |
+| `user_agent`                      | `neo4j-agent-memory/1.0`                | Required by the providers' terms                   |
+| `geocoding.enabled`               | `false`                                 | `LOCATION` entities only                           |
+| `geocoding.provider`              | `nominatim`                             | `google` requires `api_key`                        |
+| `geocoding.cache_results`         | `true`                                  | Caches found answers only                          |
+| `geocoding.rate_limit_per_second` | `1.0`                                   | Applied as seconds between requests                |
+| `geocoding.user_agent`            | `neo4j-agent-memory`                    | Required by the Nominatim ToS                      |
 
 Unknown fields and unknown provider names are rejected, never ignored.
 `validate()` runs before any provider call, cache insert or property write:
@@ -78,11 +78,11 @@ never prints a credential.
 
 ## Adapters and failure handling
 
-| Adapter | Endpoint | Answer |
-|---------|----------|--------|
-| `WikimediaEnrichment` | `GET /page/summary/{title}` | description, summary, `wikipedia_url`, `wikidata_id`, `image_url` |
-| `DiffbotEnrichment` | `GET /dql?type=query&token=…&query=…&size=1` | description (or summary), summary, `diffbot_uri`, image |
-| `NominatimGeocoder` | `GET /search?q=…&format=json&limit=1&addressdetails=1` | coordinates, display name, place type, importance |
+| Adapter               | Endpoint                                               | Answer                                                            |
+|-----------------------|--------------------------------------------------------|-------------------------------------------------------------------|
+| `WikimediaEnrichment` | `GET /page/summary/{title}`                            | description, summary, `wikipedia_url`, `wikidata_id`, `image_url` |
+| `DiffbotEnrichment`   | `GET /dql?type=query&token=…&query=…&size=1`           | description (or summary), summary, `diffbot_uri`, image           |
+| `NominatimGeocoder`   | `GET /search?q=…&format=json&limit=1&addressdetails=1` | coordinates, display name, place type, importance                 |
 
 Every adapter enforces the configured spacing between requests (concurrent
 callers are serialized), sends its declared `User-Agent`, follows at most three
@@ -94,15 +94,15 @@ wiremock replays recorded payloads.
 Failures are in-band and non-fatal, with a closed vocabulary rather than raw
 error text, so a message can never carry a URL, key or payload:
 
-| `failure` | `status` | Meaning |
-|-----------|----------|---------|
-| `timeout` | `error` | The request exceeded the configured timeout |
-| `transport` | `error` | No response (connection, TLS, redirect cap) |
-| `service` | `error` | Non-success status other than 401/403/429 |
-| `credential` | `error` | `401`/`403`: the provider rejected the credential |
-| `response` | `error` | Malformed, oversized or out-of-range payload |
-| `rate_limited` | `rate_limited` | `429`; the provider stops the chain |
-| `unsupported_type` | `skipped` | No configured provider serves this entity type |
+| `failure`          | `status`       | Meaning                                           |
+|--------------------|----------------|---------------------------------------------------|
+| `timeout`          | `error`        | The request exceeded the configured timeout       |
+| `transport`        | `error`        | No response (connection, TLS, redirect cap)       |
+| `service`          | `error`        | Non-success status other than 401/403/429         |
+| `credential`       | `error`        | `401`/`403`: the provider rejected the credential |
+| `response`         | `error`        | Malformed, oversized or out-of-range payload      |
+| `rate_limited`     | `rate_limited` | `429`; the provider stops the chain               |
+| `unsupported_type` | `skipped`      | No configured provider serves this entity type    |
 
 Absence is not a failure: `404`, a disambiguation page and an empty result set
 produce `status: "not_found"` with `failure: null`. A `skipped` status with a
@@ -130,16 +130,16 @@ failures are not cached, so a transient timeout is retried on the next call.
 Only the upstream `to_entity_attributes` surface, persisted on the `(:Entity)`
 node by `Neo4jLongTermStore`'s `EntityEnrichmentStore` implementation:
 
-| Attribute | Node property | Write rule |
-|-----------|---------------|------------|
-| `enriched_description` | `enriched_description` | Replaced on every success |
-| `enriched_summary` | `enriched_summary` | Replaced on every success |
-| `enrichment_provider` | `enrichment_provider` | Replaced on every success |
-| `enrichment_timestamp` | `enriched_at` | Replaced; written with `datetime($enriched_at)`, not `datetime()`, so a cached replay stores the same instant |
-| `wikipedia_url` | `wikipedia_url` | `coalesce`, keeps a stored value when the new answer has none |
-| `wikidata_id` | `wikidata_id` | `coalesce` |
-| `diffbot_uri` | `diffbot_uri` | `coalesce` |
-| `image_url` | `image_url` | `coalesce` |
+| Attribute              | Node property          | Write rule                                                                                                    |
+|------------------------|------------------------|---------------------------------------------------------------------------------------------------------------|
+| `enriched_description` | `enriched_description` | Replaced on every success                                                                                     |
+| `enriched_summary`     | `enriched_summary`     | Replaced on every success                                                                                     |
+| `enrichment_provider`  | `enrichment_provider`  | Replaced on every success                                                                                     |
+| `enrichment_timestamp` | `enriched_at`          | Replaced; written with `datetime($enriched_at)`, not `datetime()`, so a cached replay stores the same instant |
+| `wikipedia_url`        | `wikipedia_url`        | `coalesce`, keeps a stored value when the new answer has none                                                 |
+| `wikidata_id`          | `wikidata_id`          | `coalesce`                                                                                                    |
+| `diffbot_uri`          | `diffbot_uri`          | `coalesce`                                                                                                    |
+| `image_url`            | `image_url`            | `coalesce`                                                                                                    |
 
 `diffbot_uri` and `image_url` appear only when a provider returned them. The
 write is one `MATCH … SET … RETURN` statement on entity identity, using the
@@ -168,8 +168,7 @@ coordinate is supplied.
   on (:Entity {location}); run schema setup; no schema was changed
   ```
 
-  `SchemaManager::setup_all` is the product schema path that creates the index
-  (for example `just`-style setup or the app's schema step); the enrichment and
+  `SchemaManager::setup_all` is the product schema path that creates the index (for example `just`-style setup or the app's schema step); the enrichment and
   geocoding services never do. The bridge maps this to HTTP `500`, while a
   missing **writer** configuration stays HTTP `501`.
 - **Rejections change nothing.** A refused write leaves every property, the node
@@ -206,20 +205,20 @@ The `muninn` binary builds both stages from the same conventions as the other
 providers. Disabled by default: with no flag the binary behaves exactly as
 before and contacts nothing.
 
-| Flag | Environment | Default | Meaning |
-| --- | --- | --- | --- |
-| `--enrichment-enabled` | `NAM_ENRICHMENT__ENABLED` | `false` | Opt in to enrichment |
-| `--enrichment-providers` | `NAM_ENRICHMENT__PROVIDERS` | `wikimedia` | Comma-separated priority order |
-| `--enrichment-wikimedia-base-url` | `NAM_ENRICHMENT__WIKIMEDIA_BASE_URL` | pinned upstream root | REST root override |
-| `--enrichment-diffbot-base-url` | `NAM_ENRICHMENT__DIFFBOT_BASE_URL` | pinned upstream root | REST root override |
-| `--enrichment-diffbot-api-key` | `NAM_ENRICHMENT__DIFFBOT_API_KEY` | none | Required only for `diffbot`; never logged |
-| `--enrichment-timeout-secs` | `NAM_ENRICHMENT__TIMEOUT_SECS` | `10` | Per-request deadline; zero rejected |
-| `--geocoding-enabled` | `NAM_GEOCODING__ENABLED` | `false` | Opt in to geocoding |
-| `--geocoding-provider` | `NAM_GEOCODING__PROVIDER` | `nominatim` | `google` validates but is not implemented |
-| `--geocoding-base-url` | `NAM_GEOCODING__BASE_URL` | pinned upstream root | Search root override |
-| `--geocoding-api-key` | `NAM_GEOCODING__API_KEY` | none | Never logged |
-| `--geocoding-rate-limit-per-second` | `NAM_GEOCODING__RATE_LIMIT_PER_SECOND` | upstream default | Config value is authoritative |
-| `--geocoding-timeout-secs` | `NAM_GEOCODING__TIMEOUT_SECS` | `10` | Per-request deadline; zero rejected |
+| Flag                                | Environment                            | Default              | Meaning                                   |
+|-------------------------------------|----------------------------------------|----------------------|-------------------------------------------|
+| `--enrichment-enabled`              | `NAM_ENRICHMENT__ENABLED`              | `false`              | Opt in to enrichment                      |
+| `--enrichment-providers`            | `NAM_ENRICHMENT__PROVIDERS`            | `wikimedia`          | Comma-separated priority order            |
+| `--enrichment-wikimedia-base-url`   | `NAM_ENRICHMENT__WIKIMEDIA_BASE_URL`   | pinned upstream root | REST root override                        |
+| `--enrichment-diffbot-base-url`     | `NAM_ENRICHMENT__DIFFBOT_BASE_URL`     | pinned upstream root | REST root override                        |
+| `--enrichment-diffbot-api-key`      | `NAM_ENRICHMENT__DIFFBOT_API_KEY`      | none                 | Required only for `diffbot`; never logged |
+| `--enrichment-timeout-secs`         | `NAM_ENRICHMENT__TIMEOUT_SECS`         | `10`                 | Per-request deadline; zero rejected       |
+| `--geocoding-enabled`               | `NAM_GEOCODING__ENABLED`               | `false`              | Opt in to geocoding                       |
+| `--geocoding-provider`              | `NAM_GEOCODING__PROVIDER`              | `nominatim`          | `google` validates but is not implemented |
+| `--geocoding-base-url`              | `NAM_GEOCODING__BASE_URL`              | pinned upstream root | Search root override                      |
+| `--geocoding-api-key`               | `NAM_GEOCODING__API_KEY`               | none                 | Never logged                              |
+| `--geocoding-rate-limit-per-second` | `NAM_GEOCODING__RATE_LIMIT_PER_SECOND` | upstream default     | Config value is authoritative             |
+| `--geocoding-timeout-secs`          | `NAM_GEOCODING__TIMEOUT_SECS`          | `10`                 | Per-request deadline; zero rejected       |
 
 An invalid or credential-bearing endpoint fails fast at startup with a redacted
 message (exit 1) before Neo4j is contacted. An unreachable endpoint surfaces at
@@ -241,8 +240,7 @@ Regression tests: `crates/muninn/core/src/enrichment.rs`,
 `crates/muninn/bridge/tests/enrichment.rs` and the query-shape tests in
 `crates/muninn/neo4j/src/queries/long_term.rs`.
 
-The live graph target is `crates/muninn/neo4j/tests/entity_enrichment.rs`. It is
-**ignored** unless a caller provides a NEW authenticated empty synthetic
+The live graph target is `crates/muninn/neo4j/tests/entity_enrichment.rs`. It is **ignored** unless a caller provides a NEW authenticated empty synthetic
 database and sets `MUNINN_ENRICHMENT_FRESH_SYNTHETIC=1`,
 `MUNINN_FIXTURE_URI` and `MUNINN_FIXTURE_PASSWORD`; the caller owns teardown. It
 asserts the persisted documented properties, the `location` point, warm-cache

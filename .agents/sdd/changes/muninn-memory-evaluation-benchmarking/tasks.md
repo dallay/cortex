@@ -2,13 +2,13 @@
 
 ## Review Workload Forecast
 
-| Field | Value |
-|-------|-------|
-| Review budget | 400 changed lines |
-| Estimated workload | High; async MCP changes, app composition, Huginn runtime integration, security tests, and separately gated evaluation span multiple surfaces. |
-| Chained PRs recommended | No |
-| Delivery strategy | One local feature branch from `muninn@09bb21d5`; no push or PR now. The user deferred any PR until Muninn exceeds 90% parity with Agent Memory. |
-| Work-unit balance | Keep the dependency-ordered implementation and verification units below reviewable within the single local branch. These units do not authorize separate PRs. |
+| Field                   | Value                                                                                                                                                         |
+|-------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Review budget           | 400 changed lines                                                                                                                                             |
+| Estimated workload      | High; async MCP changes, app composition, Huginn runtime integration, security tests, and separately gated evaluation span multiple surfaces.                 |
+| Chained PRs recommended | No                                                                                                                                                            |
+| Delivery strategy       | One local feature branch from `muninn@09bb21d5`; no push or PR now. The user deferred any PR until Muninn exceeds 90% parity with Agent Memory.               |
+| Work-unit balance       | Keep the dependency-ordered implementation and verification units below reviewable within the single local branch. These units do not authorize separate PRs. |
 
 Decision needed before apply: No
 Chained PRs recommended: No

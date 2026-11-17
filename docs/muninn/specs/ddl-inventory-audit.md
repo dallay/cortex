@@ -17,13 +17,13 @@ The Rust source preserves the identities, labels, properties, and types of
 Neo4j 5.26 DDL declared in the oracle. Dimensions are injected by the provider;
 cosine similarity remains unchanged. FULLTEXT is not added: v1 uses TEXT.
 
-| Family | Contract source | Product source |
-| --- | --- | --- |
-| Uniqueness | `schema.py:CONSTRAINTS` | `schema.rs:CONSTRAINTS` |
-| RANGE | `schema.py:INDEXES` | `schema.rs:INDEXES` |
-| TEXT | `schema.py:TEXT_INDEXES` | `schema.rs:TEXT_INDEXES` |
-| VECTOR | `schema.py:VECTOR_INDEXES` | `schema.rs:VECTOR_INDEXES` |
-| POINT | `schema.py:POINT_INDEXES` | `schema.rs:POINT_INDEXES` |
+| Family     | Contract source            | Product source             |
+|------------|----------------------------|----------------------------|
+| Uniqueness | `schema.py:CONSTRAINTS`    | `schema.rs:CONSTRAINTS`    |
+| RANGE      | `schema.py:INDEXES`        | `schema.rs:INDEXES`        |
+| TEXT       | `schema.py:TEXT_INDEXES`   | `schema.rs:TEXT_INDEXES`   |
+| VECTOR     | `schema.py:VECTOR_INDEXES` | `schema.rs:VECTOR_INDEXES` |
+| POINT      | `schema.py:POINT_INDEXES`  | `schema.rs:POINT_INDEXES`  |
 
 ## Corrected residual parity mismatch
 

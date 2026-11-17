@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 /**
  * ProvidersView — catalog of all supported providers.
  *
@@ -23,9 +23,7 @@ import EmptyState from "@/components/EmptyState.vue";
 import ErrorBanner from "@/components/ErrorBanner.vue";
 import LoadingState from "@/components/LoadingState.vue";
 import PageHeader from "@/components/PageHeader.vue";
-import ProviderCatalogFilter, {
-  type CategoryFilter,
-} from "@/components/ProviderCatalogFilter.vue";
+import ProviderCatalogFilter, {type CategoryFilter,} from "@/components/ProviderCatalogFilter.vue";
 import ProviderCategorySection from "@/components/ProviderCategorySection.vue";
 import {Button} from "@/components/ui/button";
 import {useAvailableModels} from "@/composables/useAvailableModels";
@@ -37,7 +35,13 @@ const {t} = useI18n();
 
 const {providers, update, test, fetch, loading, error} = useProviders();
 const {fetch: fetchModels} = useAvailableModels();
-const {items, byCategory, fetch: fetchDescriptors, loading: descriptorsLoading, error: descriptorsError} = useProviderCatalog();
+const {
+  items,
+  byCategory,
+  fetch: fetchDescriptors,
+  loading: descriptorsLoading,
+  error: descriptorsError
+} = useProviderCatalog();
 
 const searchQuery = ref("");
 const activeCategory = ref<CategoryFilter>("all");
@@ -116,27 +120,27 @@ function onDeleted() {
 <template>
   <div class="space-y-6">
     <PageHeader
-      :title="t('providers.catalog.title')"
       :description="t('providers.catalog.subtitle')"
+      :title="t('providers.catalog.title')"
     />
 
-    <ErrorBanner v-if="error" :message="error" @retry="fetch" />
+    <ErrorBanner v-if="error" :message="error" @retry="fetch"/>
 
     <ProviderCatalogFilter
-      v-model:search-query="searchQuery"
       v-model:active-category="activeCategory"
+      v-model:search-query="searchQuery"
     />
 
-    <LoadingState v-if="(descriptorsLoading || loading) && items.length === 0" />
+    <LoadingState v-if="(descriptorsLoading || loading) && items.length === 0"/>
     <template v-else>
-      <ErrorBanner v-if="descriptorsError" :message="descriptorsError" @retry="fetchDescriptors" />
+      <ErrorBanner v-if="descriptorsError" :message="descriptorsError" @retry="fetchDescriptors"/>
 
       <CompatibleConnectionsSection
         v-if="showCompatible"
         :providers="compatibleConnections"
-        :update="update"
-        :test="test"
         :refresh="fetch"
+        :test="test"
+        :update="update"
         @add="openAddDialog"
       />
 
@@ -150,15 +154,15 @@ function onDeleted() {
 
       <EmptyState
         v-if="totalMatches === 0 && !descriptorsError"
-        :title="t('common.noResults')"
         :description="t('providers.catalog.noResults')"
         :icon="SearchX"
+        :title="t('common.noResults')"
       >
         <template #actions>
           <Button
             v-if="isFiltering"
-            variant="outline"
             size="sm"
+            variant="outline"
             @click="searchQuery = ''; activeCategory = 'all'"
           >
             {{ t('providers.catalog.filterAll') }}
@@ -171,8 +175,8 @@ function onDeleted() {
       v-model:open="addDialogOpen"
       :provider-kind="addDialogKind"
       mode="create"
-      @saved="onSaved"
       @deleted="onDeleted"
+      @saved="onSaved"
     />
   </div>
 </template>

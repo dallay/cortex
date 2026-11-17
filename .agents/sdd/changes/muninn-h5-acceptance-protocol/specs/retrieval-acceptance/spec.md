@@ -160,20 +160,20 @@ La plantilla MUST describir una estructura y un tipo explícitos para cada campo
 
 La plantilla MUST declarar, como mínimo, el siguiente mapa de tipos y aplicabilidad; las propiedades internas de objetos y elementos MUST estar declaradas por el esquema, no aceptarse como JSON arbitrario:
 
-| Campo | Tipo estructural | Aplicabilidad |
-|---|---|---|
-| Objetivo | Texto no vacío | Siempre |
-| Corpus y versiones | Objeto no vacío | Siempre |
-| Consultas y candidatos | Lista no vacía de elementos estructurados | Siempre |
-| Etiquetas, rúbrica y adjudicación | Objeto(s) no vacío(s) con estructura declarada | Solo con calidad absoluta |
-| K por métrica aprobada | Objeto no vacío con valores enteros cuando estén definidos y estado explícito de decisión | Para cada gate habilitado |
-| Regla de aceptación y tolerancias aplicables | Objeto no vacío con estado explícito de decisión | Para cada gate habilitado |
-| Número de corridas | Objeto de decisión con valor entero cuando esté definido | Siempre |
-| Agregación entre consultas y corridas | Objeto de decisión | Siempre |
-| Tratamiento de valores indefinidos | Objeto de decisión | Siempre |
-| Política de empates | Objeto de decisión | Siempre |
-| Alcance y configuración de ruta | Objeto no vacío con estructura declarada | Solo para la ruta/gate habilitado |
-| Procedencia verificable | Objeto no vacío con componentes de procedencia estructurados | Siempre |
+| Campo                                        | Tipo estructural                                                                          | Aplicabilidad                     |
+|----------------------------------------------|-------------------------------------------------------------------------------------------|-----------------------------------|
+| Objetivo                                     | Texto no vacío                                                                            | Siempre                           |
+| Corpus y versiones                           | Objeto no vacío                                                                           | Siempre                           |
+| Consultas y candidatos                       | Lista no vacía de elementos estructurados                                                 | Siempre                           |
+| Etiquetas, rúbrica y adjudicación            | Objeto(s) no vacío(s) con estructura declarada                                            | Solo con calidad absoluta         |
+| K por métrica aprobada                       | Objeto no vacío con valores enteros cuando estén definidos y estado explícito de decisión | Para cada gate habilitado         |
+| Regla de aceptación y tolerancias aplicables | Objeto no vacío con estado explícito de decisión                                          | Para cada gate habilitado         |
+| Número de corridas                           | Objeto de decisión con valor entero cuando esté definido                                  | Siempre                           |
+| Agregación entre consultas y corridas        | Objeto de decisión                                                                        | Siempre                           |
+| Tratamiento de valores indefinidos           | Objeto de decisión                                                                        | Siempre                           |
+| Política de empates                          | Objeto de decisión                                                                        | Siempre                           |
+| Alcance y configuración de ruta              | Objeto no vacío con estructura declarada                                                  | Solo para la ruta/gate habilitado |
+| Procedencia verificable                      | Objeto no vacío con componentes de procedencia estructurados                              | Siempre                           |
 
 Cada lista MUST declarar el tipo y los campos permitidos de sus elementos. Cada objeto MUST declarar sus propiedades permitidas en todos los niveles. Los campos de decisión MUST distinguir estructuralmente `pending` de contenido presente, sin que contenido presente implique aprobación.
 

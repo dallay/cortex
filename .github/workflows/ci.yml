@@ -266,7 +266,7 @@ jobs:
     name: Test (Muninn C1 opt-in)
     runs-on: macos-15
     timeout-minutes: 45
-    needs: [changes]
+    needs: [ changes ]
     if: needs.changes.outputs.muninn_c1 == 'true'
     concurrency:
       group: muninn-c1-test-${{ github.event.pull_request.number || github.ref }}
@@ -307,7 +307,7 @@ jobs:
     name: Attest (Muninn C1)
     runs-on: macos-15
     timeout-minutes: 30
-    needs: [changes, test-muninn-c1]
+    needs: [ changes, test-muninn-c1 ]
     if: >-
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&

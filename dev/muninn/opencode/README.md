@@ -30,39 +30,39 @@ personal data.
 
 ## Layout
 
-| Path | Purpose |
-| --- | --- |
-| `membench/scenario.py` | Scenario schema, validation, owner scopes |
-| `membench/compose.py` | Container topology, isolation rules, Compose rendering |
-| `membench/config.py` | Rendered OpenCode configuration and agent definition |
-| `membench/events.py` | Parser for the OpenCode JSON event stream |
-| `membench/metrics.py` | Assertions, verdicts, cross-mode diagnosis |
-| `membench/mcpclient.py` | Minimal MCP client over stdio |
-| `membench/preflight.py` | Environment checks that run no inference |
-| `membench/runner.py` | Orchestration of one run |
-| `membench/sanitize.py` | Redaction of stored evidence |
-| `scenarios/synthetic-memory-recall-v2.json` | The fixture and the expectations |
-| `bin/seed.sh` | Seeds the disposable database from inside the container |
-| `Dockerfile.runner` | Runner image: pinned OpenCode + Muninn |
+| Path                                        | Purpose                                                 |
+|---------------------------------------------|---------------------------------------------------------|
+| `membench/scenario.py`                      | Scenario schema, validation, owner scopes               |
+| `membench/compose.py`                       | Container topology, isolation rules, Compose rendering  |
+| `membench/config.py`                        | Rendered OpenCode configuration and agent definition    |
+| `membench/events.py`                        | Parser for the OpenCode JSON event stream               |
+| `membench/metrics.py`                       | Assertions, verdicts, cross-mode diagnosis              |
+| `membench/mcpclient.py`                     | Minimal MCP client over stdio                           |
+| `membench/preflight.py`                     | Environment checks that run no inference                |
+| `membench/runner.py`                        | Orchestration of one run                                |
+| `membench/sanitize.py`                      | Redaction of stored evidence                            |
+| `scenarios/synthetic-memory-recall-v2.json` | The fixture and the expectations                        |
+| `bin/seed.sh`                               | Seeds the disposable database from inside the container |
+| `Dockerfile.runner`                         | Runner image: pinned OpenCode + Muninn                  |
 
 ## Evaluation protocol
 
 ### Modes
 
-| Mode | What it isolates |
-| --- | --- |
-| A | The retrieval contract itself: the harness queries the MCP server directly |
-| B | Tool use: the agent is told which tool to call |
-| C | The agent decision: the agent decides whether to call a tool |
-| D | The model: the answer is given in the prompt and no tool is available |
+| Mode | What it isolates                                                           |
+|------|----------------------------------------------------------------------------|
+| A    | The retrieval contract itself: the harness queries the MCP server directly |
+| B    | Tool use: the agent is told which tool to call                             |
+| C    | The agent decision: the agent decides whether to call a tool               |
+| D    | The model: the answer is given in the prompt and no tool is available      |
 
 ### Conditions
 
-| Condition | Memory state |
-| --- | --- |
-| C0 | The owner scope of the case is empty |
-| C1 | The owner scope of the case holds the seeded records |
-| C2 | Oracle: the stored information is part of the prompt |
+| Condition | Memory state                                         |
+|-----------|------------------------------------------------------|
+| C0        | The owner scope of the case is empty                 |
+| C1        | The owner scope of the case holds the seeded records |
+| C2        | Oracle: the stored information is part of the prompt |
 
 Every case owns a distinct owner scope, so cases never observe each other.
 The empty scope of a case holds no record at all.
@@ -71,36 +71,36 @@ The empty scope of a case holds no record at all.
 
 The harness locates the first broken link:
 
-| Observation | Diagnosis |
-| --- | --- |
-| A fails | `RETRIEVAL_FAILURE` |
-| A passes, B fails | `TOOL_USE_FAILURE` |
-| B passes, C fails | `AUTONOMY_FAILURE` |
+| Observation       | Diagnosis                   |
+|-------------------|-----------------------------|
+| A fails           | `RETRIEVAL_FAILURE`         |
+| A passes, B fails | `TOOL_USE_FAILURE`          |
+| B passes, C fails | `AUTONOMY_FAILURE`          |
 | C fails, D passes | `MODEL_UTILIZATION_FAILURE` |
-| D fails | `MODEL_ANSWER_FAILURE` |
+| D fails           | `MODEL_ANSWER_FAILURE`      |
 
 ### Cases
 
-| Case | Question |
-| --- | --- |
-| `category-exact` | The exact category returns the preference |
-| `category-equivalent` | Equivalent wording finds the preference (needs a semantic embedder) |
-| `category-incompatible` | An unrelated preference is not presented as the answer |
-| `preference-updated` | The current version is returned and the superseded one is not |
-| `preference-missing` | The agent reports that nothing is stored |
-| `other-owner` | Records of another owner scope stay invisible |
-| `message-identifier` | The message retrieval path returns the stored identifier |
+| Case                    | Question                                                            |
+|-------------------------|---------------------------------------------------------------------|
+| `category-exact`        | The exact category returns the preference                           |
+| `category-equivalent`   | Equivalent wording finds the preference (needs a semantic embedder) |
+| `category-incompatible` | An unrelated preference is not presented as the answer              |
+| `preference-updated`    | The current version is returned and the superseded one is not       |
+| `preference-missing`    | The agent reports that nothing is stored                            |
+| `other-owner`           | Records of another owner scope stay invisible                       |
+| `message-identifier`    | The message retrieval path returns the stored identifier            |
 
 ## Isolation model
 
-| Item | Isolation |
-| --- | --- |
-| Database | New Neo4j container per repetition |
-| Fixture | Seeded per repetition from the scenario file |
-| Agent state | Fresh `HOME` and `OPENCODE_DB` per run, on tmpfs |
-| Configuration | Rendered per run and mounted read-only |
-| Credentials | Docker volume `membench-opencode-auth`, imported by the operator, copied into the ephemeral home of each run and never copied into the evidence |
-| Provider | The model identifier is given per run; the harness stops if the catalog does not list it |
+| Item          | Isolation                                                                                                                                       |
+|---------------|-------------------------------------------------------------------------------------------------------------------------------------------------|
+| Database      | New Neo4j container per repetition                                                                                                              |
+| Fixture       | Seeded per repetition from the scenario file                                                                                                    |
+| Agent state   | Fresh `HOME` and `OPENCODE_DB` per run, on tmpfs                                                                                                |
+| Configuration | Rendered per run and mounted read-only                                                                                                          |
+| Credentials   | Docker volume `membench-opencode-auth`, imported by the operator, copied into the ephemeral home of each run and never copied into the evidence |
+| Provider      | The model identifier is given per run; the harness stops if the catalog does not list it                                                        |
 
 ## Running it
 
@@ -200,11 +200,11 @@ just ci-muninn-opencode
 The harness renders two configuration files, and both details are required by
 OpenCode 2.2.7:
 
-| File | Content | Reason |
-| --- | --- | --- |
-| `.opencode/opencode.jsonc` | Model, permissions | The project configuration |
-| `.opencode/agents/evaluation.md` | The agent and its permission rules | The agent definition |
-| `global/opencode.json` | The MCP server | OpenCode registers the MCP servers of the global configuration only; a project configuration with an `mcp` block is loaded for the model, but its servers never connect |
+| File                             | Content                            | Reason                                                                                                                                                                  |
+|----------------------------------|------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `.opencode/opencode.jsonc`       | Model, permissions                 | The project configuration                                                                                                                                               |
+| `.opencode/agents/evaluation.md` | The agent and its permission rules | The agent definition                                                                                                                                                    |
+| `global/opencode.json`           | The MCP server                     | OpenCode registers the MCP servers of the global configuration only; a project configuration with an `mcp` block is loaded for the model, but its servers never connect |
 
 The global configuration carries no `$schema` key: OpenCode 2.2.7 discards the
 whole global configuration when the schema reference is present. The MCP server
@@ -221,11 +221,11 @@ definition without them.
 
 Every run writes to `.agents/rpi/plan/tasks/opencode-docker-muninn-evaluation/evidence/<run-id>/`:
 
-| File | Content |
-| --- | --- |
-| `run-manifest.json` | Scenario, model, images, preflight states, verdicts, diagnosis |
-| `report.md` | Human readable report |
-| `runs/*-events.json` | Sanitized event stream of each agent run |
+| File                 | Content                                                        |
+|----------------------|----------------------------------------------------------------|
+| `run-manifest.json`  | Scenario, model, images, preflight states, verdicts, diagnosis |
+| `report.md`          | Human readable report                                          |
+| `runs/*-events.json` | Sanitized event stream of each agent run                       |
 
 The stored evidence contains no credentials, no tokens, and no embedding
 vectors. The report states the scope of the result in every run.
@@ -234,13 +234,13 @@ vectors. The report states the scope of the result in every run.
 
 The preflight reports what it actually proved:
 
-| State | Meaning |
-| --- | --- |
-| `PASS` | The check succeeded |
+| State              | Meaning                                                               |
+|--------------------|-----------------------------------------------------------------------|
+| `PASS`             | The check succeeded                                                   |
 | `CATALOG_VERIFIED` | The model identifier is listed; quota and availability are not proven |
-| `AUTH_CONFIGURED` | A credential exists; a real request is not proven |
-| `NOT_TESTED` | The check did not run, for example because it would cost an inference |
-| `FAIL` | The check failed and the run stops |
+| `AUTH_CONFIGURED`  | A credential exists; a real request is not proven                     |
+| `NOT_TESTED`       | The check did not run, for example because it would cost an inference |
+| `FAIL`             | The check failed and the run stops                                    |
 
 A model that appears in the catalog is not a model that will answer. The
 harness never switches to another model, and it never reports a run that did

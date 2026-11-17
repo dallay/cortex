@@ -11,12 +11,12 @@ or labels.
 
 Assign one integer grade to each query-candidate pair:
 
-| Grade | Operational definition |
-| --- | --- |
-| 0 | Irrelevant or contradictory. The document does not address the query, or it recommends an outcome that conflicts with the query's stated need. |
-| 1 | Topical but not useful. The document concerns the same subject but does not provide actionable information for the query. |
-| 2 | Partially useful. The document provides applicable information, but it is incomplete, indirect, or needs substantial additional context. |
-| 3 | Directly and sufficiently useful. The document addresses the query and provides enough information to satisfy it without substantial additional context. |
+| Grade | Operational definition                                                                                                                                   |
+|-------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 0     | Irrelevant or contradictory. The document does not address the query, or it recommends an outcome that conflicts with the query's stated need.           |
+| 1     | Topical but not useful. The document concerns the same subject but does not provide actionable information for the query.                                |
+| 2     | Partially useful. The document provides applicable information, but it is incomplete, indirect, or needs substantial additional context.                 |
+| 3     | Directly and sufficiently useful. The document addresses the query and provides enough information to satisfy it without substantial additional context. |
 
 Grades 2 and 3 count as relevant for Recall and MRR. The existing metric
 implementation continues to use `grade >= 2` for relevance.

@@ -18,39 +18,39 @@ La revisión directa de `retrieval_h5_protocol.py`, JSON Schema, fixture, prueba
 
 ### Completitud y validación ejecutada
 
-| Métrica | Resultado |
-|---|---|
-| Tareas de implementación Fase 10 | 10.1–10.13 marcadas completas en `tasks.md`; tareas bloqueantes B.1/B.2 siguen pendientes por falta de protocolo aprobado y autorización de medición, fuera de esta unidad |
-| Pruebas H5 | `PYTHONPATH=dev/muninn python3 -m unittest discover -s dev/muninn/tests -p 'test_retrieval_h5_*.py' -v` — exit 0; 62 tests, `OK` |
-| Compilación Python | `python3 -m py_compile dev/muninn/retrieval_h5_protocol.py dev/muninn/retrieval_h5_provenance.py dev/muninn/retrieval_h5_runner.py dev/muninn/tests/test_retrieval_h5_protocol.py dev/muninn/tests/test_retrieval_h5_provenance.py dev/muninn/tests/test_retrieval_h5_runner.py` — exit 0 |
-| JSON Schema / fixture | `jsonschema -i dev/muninn/fixtures/retrieval-h5-protocol.example.json dev/muninn/fixtures/retrieval-h5-protocol.schema.json` — exit 0; solo advertencia de deprecación de CLI |
-| Markdownlint | Proposal, spec, design, tasks y apply-progress — exit 0; 0 issues |
-| `git diff --check` | Exit 0 |
-| Runner SDD / cobertura | `.agents/sdd/quality-runner.json` no está configurado: fallback, no enforcement determinista. Umbral de cobertura no configurado. |
-| Clippy | No se ejecutó. Sigue el bloqueo conocido previo: `-D warnings` falló con 93 errores en lib y 120 en tests `all-targets`; no se presume resuelto. |
+| Métrica                          | Resultado                                                                                                                                                                                                                                                                                 |
+|----------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Tareas de implementación Fase 10 | 10.1–10.13 marcadas completas en `tasks.md`; tareas bloqueantes B.1/B.2 siguen pendientes por falta de protocolo aprobado y autorización de medición, fuera de esta unidad                                                                                                                |
+| Pruebas H5                       | `PYTHONPATH=dev/muninn python3 -m unittest discover -s dev/muninn/tests -p 'test_retrieval_h5_*.py' -v` — exit 0; 62 tests, `OK`                                                                                                                                                          |
+| Compilación Python               | `python3 -m py_compile dev/muninn/retrieval_h5_protocol.py dev/muninn/retrieval_h5_provenance.py dev/muninn/retrieval_h5_runner.py dev/muninn/tests/test_retrieval_h5_protocol.py dev/muninn/tests/test_retrieval_h5_provenance.py dev/muninn/tests/test_retrieval_h5_runner.py` — exit 0 |
+| JSON Schema / fixture            | `jsonschema -i dev/muninn/fixtures/retrieval-h5-protocol.example.json dev/muninn/fixtures/retrieval-h5-protocol.schema.json` — exit 0; solo advertencia de deprecación de CLI                                                                                                             |
+| Markdownlint                     | Proposal, spec, design, tasks y apply-progress — exit 0; 0 issues                                                                                                                                                                                                                         |
+| `git diff --check`               | Exit 0                                                                                                                                                                                                                                                                                    |
+| Runner SDD / cobertura           | `.agents/sdd/quality-runner.json` no está configurado: fallback, no enforcement determinista. Umbral de cobertura no configurado.                                                                                                                                                         |
+| Clippy                           | No se ejecutó. Sigue el bloqueo conocido previo: `-D warnings` falló con 93 errores en lib y 120 en tests `all-targets`; no se presume resuelto.                                                                                                                                          |
 
 ### Matriz de cumplimiento — Fase 10
 
-| Requisito / escenario | Evidencia | Resultado |
-|---|---|---|
-| Envoltura cerrada `pending`/`approved`, `value` y `rationale` explícitos | `test_decision_envelopes_require_explicit_status_value_and_rationale`; `test_decision_envelope_rejects_empty_placeholder_wrong_type_and_unknown_keys`; suite H5 62/62. | ✅ Conforme |
-| Esquemas estrictos por ruta: tipos, propiedades allowlisted, no objetos/listas vacíos, placeholders ni claves desconocidas | Inspección de `_VALUE_SCHEMAS`/`_validate_value` y `$defs/values`; cobertura de decisiones malformadas y fixture/schema cruzado. | ✅ Conforme |
-| Hallazgos `missing`/`pending`/`malformed` ordenados por JSON path y bloqueo de readiness | `test_missing_pending_and_malformed_paths_are_separate_and_sorted` y `test_finding_report_is_deterministic_and_blocks_operator_corroboration`; implementación ordena cada colección y `confirmatory_ready` requiere las tres vacías. | ✅ Conforme |
-| Aplicabilidad de campos por gate | Pruebas de campos K, labels/rubric y alcance ANN–exact según gate; `test_acceptance_rules_match_enabled_gates_in_python_and_schema` ejecuta las cuatro combinaciones y valida Python + schema. | ✅ Conforme; regla exigida solo para gate enabled y regla extra de gate disabled rechazada |
-| Ambos gates deshabilitados | Prueba 10.12–10.13 confirma `pending`/`null` aceptado estructuralmente pero no-ready, sin exigir habilitar gate; `approved` con `{}` rechazado por el validador y `minProperties: 1` del schema. | ✅ Conforme; no se agrega requisito de gate habilitado |
-| Fixture pendiente e incompleta, sin decisiones por defecto | Fixture contiene metadata `PENDING` y decisiones `pending` con `value: null`; `test_incomplete_example_is_not_confirmatory_or_hash_approved`; schema acepta el fixture. | ✅ Conforme; no confirmatory-ready |
-| Declaración `approved` no sustituye aprobación; hash completo y corroboración operador | Inspección de `corroborate_approval`; tests de hash/corroboración y timestamps. La función requiere readiness y registro coincidente del operador. | ✅ Conforme estructuralmente; ningún protocolo concreto aprobado |
-| Sin defaults, inferencias, decisión automática ni `PASS` estructural | `validate_protocol` acumula findings, no completa valores; `confirmatory_ready` se deriva solo de ausencia de findings. El runner conserva estados de bloqueo. | ✅ Conforme para el validador; no implica aceptación |
-| TDD de la corrección condicional | `apply-progress.md` registra RED (fallan ambos casos de un gate por exigir regla disabled), GREEN y REFACTOR; prueba enfocada y suite completa repetidas y verdes. | ✅ Evidencia registrada y corroborada por la suite fresca |
+| Requisito / escenario                                                                                                      | Evidencia                                                                                                                                                                                                                            | Resultado                                                                                  |
+|----------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------|
+| Envoltura cerrada `pending`/`approved`, `value` y `rationale` explícitos                                                   | `test_decision_envelopes_require_explicit_status_value_and_rationale`; `test_decision_envelope_rejects_empty_placeholder_wrong_type_and_unknown_keys`; suite H5 62/62.                                                               | ✅ Conforme                                                                                |
+| Esquemas estrictos por ruta: tipos, propiedades allowlisted, no objetos/listas vacíos, placeholders ni claves desconocidas | Inspección de `_VALUE_SCHEMAS`/`_validate_value` y `$defs/values`; cobertura de decisiones malformadas y fixture/schema cruzado.                                                                                                     | ✅ Conforme                                                                                |
+| Hallazgos `missing`/`pending`/`malformed` ordenados por JSON path y bloqueo de readiness                                   | `test_missing_pending_and_malformed_paths_are_separate_and_sorted` y `test_finding_report_is_deterministic_and_blocks_operator_corroboration`; implementación ordena cada colección y `confirmatory_ready` requiere las tres vacías. | ✅ Conforme                                                                                |
+| Aplicabilidad de campos por gate                                                                                           | Pruebas de campos K, labels/rubric y alcance ANN–exact según gate; `test_acceptance_rules_match_enabled_gates_in_python_and_schema` ejecuta las cuatro combinaciones y valida Python + schema.                                       | ✅ Conforme; regla exigida solo para gate enabled y regla extra de gate disabled rechazada |
+| Ambos gates deshabilitados                                                                                                 | Prueba 10.12–10.13 confirma `pending`/`null` aceptado estructuralmente pero no-ready, sin exigir habilitar gate; `approved` con `{}` rechazado por el validador y `minProperties: 1` del schema.                                     | ✅ Conforme; no se agrega requisito de gate habilitado                                     |
+| Fixture pendiente e incompleta, sin decisiones por defecto                                                                 | Fixture contiene metadata `PENDING` y decisiones `pending` con `value: null`; `test_incomplete_example_is_not_confirmatory_or_hash_approved`; schema acepta el fixture.                                                              | ✅ Conforme; no confirmatory-ready                                                         |
+| Declaración `approved` no sustituye aprobación; hash completo y corroboración operador                                     | Inspección de `corroborate_approval`; tests de hash/corroboración y timestamps. La función requiere readiness y registro coincidente del operador.                                                                                   | ✅ Conforme estructuralmente; ningún protocolo concreto aprobado                           |
+| Sin defaults, inferencias, decisión automática ni `PASS` estructural                                                       | `validate_protocol` acumula findings, no completa valores; `confirmatory_ready` se deriva solo de ausencia de findings. El runner conserva estados de bloqueo.                                                                       | ✅ Conforme para el validador; no implica aceptación                                       |
+| TDD de la corrección condicional                                                                                           | `apply-progress.md` registra RED (fallan ambos casos de un gate por exigir regla disabled), GREEN y REFACTOR; prueba enfocada y suite completa repetidas y verdes.                                                                   | ✅ Evidencia registrada y corroborada por la suite fresca                                  |
 
 ### Coherencia con diseño y corrección del hallazgo anterior
 
-| Decisión de diseño | Resultado | Evidencia |
-|---|---|---|
-| Aplicabilidad de reglas definida por la combinación de gates, con propiedades cerradas | ✅ Seguida | Python construye el esquema de reglas solo desde gates enabled; JSON Schema exige las reglas enabled y prohíbe reglas disabled. |
-| Ambos gates deshabilitados no fuerzan habilitación ni fabrican una regla | ✅ Seguida | La envoltura pending conserva `value: null` y reporta pending; el esquema no obliga un gate enabled. El objeto aprobado vacío falla cerrado. |
-| Validación estructural no decide los gates ni constituye aprobación | ✅ Seguida | No cambió la lógica de corroboración humana ni se añadieron criterios de aceptación. |
-| Fixture incompleta y decisiones de producto pendientes | ✅ Seguida | Fixture permanece pending; valores estructurales de prueba no se incorporan al fixture. |
+| Decisión de diseño                                                                     | Resultado  | Evidencia                                                                                                                                    |
+|----------------------------------------------------------------------------------------|------------|----------------------------------------------------------------------------------------------------------------------------------------------|
+| Aplicabilidad de reglas definida por la combinación de gates, con propiedades cerradas | ✅ Seguida | Python construye el esquema de reglas solo desde gates enabled; JSON Schema exige las reglas enabled y prohíbe reglas disabled.              |
+| Ambos gates deshabilitados no fuerzan habilitación ni fabrican una regla               | ✅ Seguida | La envoltura pending conserva `value: null` y reporta pending; el esquema no obliga un gate enabled. El objeto aprobado vacío falla cerrado. |
+| Validación estructural no decide los gates ni constituye aprobación                    | ✅ Seguida | No cambió la lógica de corroboración humana ni se añadieron criterios de aceptación.                                                         |
+| Fixture incompleta y decisiones de producto pendientes                                 | ✅ Seguida | Fixture permanece pending; valores estructurales de prueba no se incorporan al fixture.                                                      |
 
 El hallazgo anterior — exigir reglas para gates deshabilitados — queda **cerrado** con evidencia concordante de implementación, schema y test para ambas combinaciones de gate único y para los dos gates deshabilitados. No se detectaron discrepancias residuales de Fase 10.
 
@@ -85,11 +85,11 @@ La implementación ejecutable de la Fase 9 coincide en lo principal con la propu
 
 ## Completitud
 
-| Métrica | Valor |
-|---|---:|
-| Tareas ejecutables marcadas completas | 28 grupos de tareas |
-| Tareas ejecutables marcadas incompletas | 0 |
-| Bloqueos previstos de medición | 2 (B.1 y B.2; intencionalmente pendientes) |
+| Métrica                                 |                                      Valor |
+|-----------------------------------------|-------------------------------------------:|
+| Tareas ejecutables marcadas completas   |                        28 grupos de tareas |
+| Tareas ejecutables marcadas incompletas |                                          0 |
+| Bloqueos previstos de medición          | 2 (B.1 y B.2; intencionalmente pendientes) |
 
 Las fases 1–9 y sus tareas ejecutables están marcadas completas en `tasks.md`. B.1 y B.2 no son tareas de implementación pendientes: bloquean un protocolo-run concreto, la aceptación y cualquier medición confirmatoria hasta completar y aprobar sus campos y verificar procedencia.
 
@@ -118,39 +118,39 @@ No se ejecutó aceptación QA. No se inició Docker, un bridge, una inspección 
 
 ## Matriz de cumplimiento de especificación
 
-| Requisito / escenarios | Evidencia ejecutada o inspeccionada | Resultado |
-|---|---|---|
-| Gates independientes; métricas ANN–exact y calidad absoluta, sin inferir aceptación ni PASS | Suites H5 y pruebas de calidad incluidas en la ejecución de 50; inspección de `retrieval_quality.py` y `retrieval_h5_runner.py`. K permanece argumento; MRR es descriptiva. | ✅ Conforme para framework; sin protocolo-run ni aceptación |
-| ANN–exact: IDs/orden, salida exacta vacía, underfill y scores no comparados | Pruebas de métricas en suite H5; implementación usa resultados disponibles y no compara score para estas métricas. Ambas métricas son indefinidas si `Exact_topK` está vacío. | ✅ Conforme |
-| Recall/nDCG y MRR | Suite H5 y funciones de calidad; fórmulas de Recall/nDCG según juicios y grados; MRR descriptiva. | ✅ Conforme; no se aprobaron etiquetas del piloto |
-| Campos y aprobación previa; indefinidos, empates y valores de protocolo abiertos | Pruebas de protocolo/preflight en suite H5; `validate_protocol` mantiene campos requeridos y no introduce valores estadísticos por defecto. | ✅ Conforme; B.1/B.2 siguen bloqueadas |
-| Self-report de identidad: allowlist, campos separados, hash de config cargada | Tests Rust de lib/bin y tests de sanitizer; `CandidateCpuSentenceEncoder::load` deriva perfil/hash de los buffers ya leídos y validados; no se presenta como hash de pesos/memoria. | ✅ Conforme estructural y en tests |
-| Identidad de la misma instancia de encoder y respuesta autenticada | Test bin de identidad de instancia más test HTTP sin auth; el handler obtiene identidad desde `app.encoder` y une identidad con ANN/exact. | ✅ Evidencia de handler/test; ⚠️ router productivo completo no inspeccionado en proceso |
-| Sanitización y correlación respuesta/protocolo/ejecución/query | Tests de sanitizer/correlación y mismatch/faltantes pasan. `run_evaluation` requiere la identidad en la misma respuesta, pero asigna explícitamente `partial` porque no recibe identidad esperada ni observaciones Docker/run independientes. | ⚠️ Parcial deliberadamente: no hay correlación operativa ni `verified` en flujo descriptivo |
-| Feature gate y compatibilidad de ruta | Código registra `/h5/diagnostic/search` directamente bajo `#[cfg(feature = "h5-diagnostic")]` en `run()`; tests lib/bin pasan con y sin feature. | ✅ Contrato de compilación; ⚠️ no hubo inspección in-process de la tabla del router productivo ni runtime |
-| No PASS con identidad/procedencia/protocolo incompletos; histórica no reclasificada | Tests de preflight y runner; los resultados del flujo descriptivo declaran `partial` y `measured_not_accepted`; no se modificó ni evaluó la corrida histórica. | ✅ Conforme para el bloqueo; no es una autorización de medición |
+| Requisito / escenarios                                                                      | Evidencia ejecutada o inspeccionada                                                                                                                                                                                                           | Resultado                                                                                                 |
+|---------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------|
+| Gates independientes; métricas ANN–exact y calidad absoluta, sin inferir aceptación ni PASS | Suites H5 y pruebas de calidad incluidas en la ejecución de 50; inspección de `retrieval_quality.py` y `retrieval_h5_runner.py`. K permanece argumento; MRR es descriptiva.                                                                   | ✅ Conforme para framework; sin protocolo-run ni aceptación                                               |
+| ANN–exact: IDs/orden, salida exacta vacía, underfill y scores no comparados                 | Pruebas de métricas en suite H5; implementación usa resultados disponibles y no compara score para estas métricas. Ambas métricas son indefinidas si `Exact_topK` está vacío.                                                                 | ✅ Conforme                                                                                               |
+| Recall/nDCG y MRR                                                                           | Suite H5 y funciones de calidad; fórmulas de Recall/nDCG según juicios y grados; MRR descriptiva.                                                                                                                                             | ✅ Conforme; no se aprobaron etiquetas del piloto                                                         |
+| Campos y aprobación previa; indefinidos, empates y valores de protocolo abiertos            | Pruebas de protocolo/preflight en suite H5; `validate_protocol` mantiene campos requeridos y no introduce valores estadísticos por defecto.                                                                                                   | ✅ Conforme; B.1/B.2 siguen bloqueadas                                                                    |
+| Self-report de identidad: allowlist, campos separados, hash de config cargada               | Tests Rust de lib/bin y tests de sanitizer; `CandidateCpuSentenceEncoder::load` deriva perfil/hash de los buffers ya leídos y validados; no se presenta como hash de pesos/memoria.                                                           | ✅ Conforme estructural y en tests                                                                        |
+| Identidad de la misma instancia de encoder y respuesta autenticada                          | Test bin de identidad de instancia más test HTTP sin auth; el handler obtiene identidad desde `app.encoder` y une identidad con ANN/exact.                                                                                                    | ✅ Evidencia de handler/test; ⚠️ router productivo completo no inspeccionado en proceso                   |
+| Sanitización y correlación respuesta/protocolo/ejecución/query                              | Tests de sanitizer/correlación y mismatch/faltantes pasan. `run_evaluation` requiere la identidad en la misma respuesta, pero asigna explícitamente `partial` porque no recibe identidad esperada ni observaciones Docker/run independientes. | ⚠️ Parcial deliberadamente: no hay correlación operativa ni `verified` en flujo descriptivo               |
+| Feature gate y compatibilidad de ruta                                                       | Código registra `/h5/diagnostic/search` directamente bajo `#[cfg(feature = "h5-diagnostic")]` en `run()`; tests lib/bin pasan con y sin feature.                                                                                              | ✅ Contrato de compilación; ⚠️ no hubo inspección in-process de la tabla del router productivo ni runtime |
+| No PASS con identidad/procedencia/protocolo incompletos; histórica no reclasificada         | Tests de preflight y runner; los resultados del flujo descriptivo declaran `partial` y `measured_not_accepted`; no se modificó ni evaluó la corrida histórica.                                                                                | ✅ Conforme para el bloqueo; no es una autorización de medición                                           |
 
 **Resumen**: comportamiento unitario y de handler cubierto por las suites repetidas; escenarios que requieren corroboración de una ejecución Docker real y el router productivo en runtime permanecen sin verificación operativa. La evidencia actual no prueba que la procedencia completa alcance `verified`.
 
 ## Correctitud estática y coherencia de diseño
 
-| Requisito / decisión | Estado | Evidencia / límite |
-|---|---|---|
-| Identidad deriva del encoder que codifica la consulta | ✅ Conforme | Trait `EmbeddingPort` ofrece identidad opcional; el encoder de aplicación deriva identidad del encoder retenido y el handler consulta esa instancia. Test con encoder diferenciable. |
-| Fingerprint de config y perfil | ✅ Conforme | Carga calcula SHA-256 con framing a partir de los buffers validados, retiene valores y no reabre archivos al reportar. No acredita pesos ni memoria. |
-| Allowlist y separación `declared` / `loaded` | ✅ Conforme | Tipos Rust serializables y sanitizer Python exigen claves exactas, strings no vacíos y formatos/valores esperados. |
-| Autenticación y feature gate | ✅ Parcialmente verificado | Registro productivo condicional visible en `run()`; tests de bin cubren build con/sin feature y rechazo sin auth. No inspección de router productivo en proceso. |
-| Correlación con Docker/build/run/query externo | ⚠️ Límite funcional | Helper verifica igualdad de identidad y binding run/query si se le entregan observaciones. El flujo `run_evaluation` no tiene esas observaciones y marca self-report `partial`; no se verificó correlación operativa en una ejecución real. |
-| No cambiar retrieval normal, Store ni criterios de aceptación | ✅ Conforme en alcance inspeccionado | Cambio acotado al endpoint feature-gated y framework; no se fijan K, thresholds/PASS, agregación, desempates ni política final de undefined. |
+| Requisito / decisión                                          | Estado                               | Evidencia / límite                                                                                                                                                                                                                          |
+|---------------------------------------------------------------|--------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Identidad deriva del encoder que codifica la consulta         | ✅ Conforme                          | Trait `EmbeddingPort` ofrece identidad opcional; el encoder de aplicación deriva identidad del encoder retenido y el handler consulta esa instancia. Test con encoder diferenciable.                                                        |
+| Fingerprint de config y perfil                                | ✅ Conforme                          | Carga calcula SHA-256 con framing a partir de los buffers validados, retiene valores y no reabre archivos al reportar. No acredita pesos ni memoria.                                                                                        |
+| Allowlist y separación `declared` / `loaded`                  | ✅ Conforme                          | Tipos Rust serializables y sanitizer Python exigen claves exactas, strings no vacíos y formatos/valores esperados.                                                                                                                          |
+| Autenticación y feature gate                                  | ✅ Parcialmente verificado           | Registro productivo condicional visible en `run()`; tests de bin cubren build con/sin feature y rechazo sin auth. No inspección de router productivo en proceso.                                                                            |
+| Correlación con Docker/build/run/query externo                | ⚠️ Límite funcional                  | Helper verifica igualdad de identidad y binding run/query si se le entregan observaciones. El flujo `run_evaluation` no tiene esas observaciones y marca self-report `partial`; no se verificó correlación operativa en una ejecución real. |
+| No cambiar retrieval normal, Store ni criterios de aceptación | ✅ Conforme en alcance inspeccionado | Cambio acotado al endpoint feature-gated y framework; no se fijan K, thresholds/PASS, agregación, desempates ni política final de undefined.                                                                                                |
 
 ## Auditoría TDD
 
-| Métrica | Estado |
-|---|---|
-| Aplicabilidad | Sí para identidad, ruta diagnóstica, parser y correlación; no aplicable a documentación por sí sola. |
+| Métrica                      | Estado                                                                                                                                       |
+|------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------|
+| Aplicabilidad                | Sí para identidad, ruta diagnóstica, parser y correlación; no aplicable a documentación por sí sola.                                         |
 | Evidencia RED→GREEN→REFACTOR | ✅ Evidencia registrada para loader, handler y sanitizer/correlación en `apply-progress.md`; esta verificación repitió las suites indicadas. |
-| Limitación de atribución | La verificación valida los registros existentes de RED/GREEN/REFACTOR; no reconstruye una secuencia histórica distinta. |
-| Orden de implementación | ⚠️ No se infiere solo de las pruebas verdes; el apply-progress conserva evidencia de RED explícita para los slices principales. |
+| Limitación de atribución     | La verificación valida los registros existentes de RED/GREEN/REFACTOR; no reconstruye una secuencia histórica distinta.                      |
+| Orden de implementación      | ⚠️ No se infiere solo de las pruebas verdes; el apply-progress conserva evidencia de RED explícita para los slices principales.              |
 
 ## Hallazgos
 
@@ -197,11 +197,11 @@ One query is a minimal review sample, not a product-ready or representative eval
 
 ## Completeness
 
-| Metric | Result |
-|---|---:|
-| Phase 11 tasks marked complete | 7 (11.1–11.7) |
-| Phase 11 tasks marked incomplete | 0 |
-| Separate measurement blockers | B.1 and B.2 remain blocked; not Phase 11 artifact tasks |
+| Metric                           |                                                  Result |
+|----------------------------------|--------------------------------------------------------:|
+| Phase 11 tasks marked complete   |                                           7 (11.1–11.7) |
+| Phase 11 tasks marked incomplete |                                                       0 |
+| Separate measurement blockers    | B.1 and B.2 remain blocked; not Phase 11 artifact tasks |
 
 The corpus candidate was constructed because the single proposed query has the required minimum of ten eligible candidates. This satisfies only the minimum structural check for that query. It does not establish corpus sufficiency, relevance, adequacy, or representativeness. User review, sensitivity classification/review, and freeze are outstanding.
 
@@ -226,39 +226,39 @@ These checks validate artifact structure and source-byte consistency. They do no
 
 ## Spec compliance matrix — Phase 11
 
-| Requirement / scenario | Evidence / validation | Result |
-|---|---|---|
-| Approved ANN–exact decision fields represented exactly | Candidate JSON inspection and `validate_protocol`; K=10, both metrics exactly 1.0 per query, one run, per-query results, descriptive-only macro-average, observed ties, undefined blocks PASS | ✅ COMPLIANT — candidate decisions only |
-| Absolute relevance remains disabled; no threshold or labels are inferred | Candidate JSON has `absolute_relevance=false`; labels/rubric decision remains pending | ✅ COMPLIANT |
-| Protocol remains non-ready and does not authorize a run | `validate_protocol`: `confirmatory_ready=false`; approval metadata, corpus scope, ANN scope, encoder identity, and provenance remain pending | ✅ COMPLIANT |
-| Independent, unlabelled corpus and required minimum | Corpus validator passed; one query, ten candidates; inspected corpus has no labels, grades, scores, rankings, relevance judgments, or retrieval outputs | ✅ COMPLIANT for artifact constraints; ⚠️ PARTIAL for evaluation scope (one query only) |
-| Baseline source allowlist and immutable source hashes | Orchestrator independently recomputed all 11 mappings and source hashes from baseline Git objects; all paths allowed and hashes matched | ✅ COMPLIANT for declared source provenance |
-| Pilot, C0/C1, modified runner guide, and generated/untracked material excluded | Inventory/exclusion checks reported passed; no such material is included in the candidate artifacts | ✅ COMPLIANT for exclusion checks |
-| Corpus remains draft/unlabelled/unfrozen and not represented as adequate or representative | Provenance status is `draft/not frozen`; owner review and freeze are pending; one query is explicitly a minimal review sample | ✅ COMPLIANT |
-| Sensitivity and owner review before freeze | Project sensitivity classification is absent; source-path and text review remains required | ⚠️ PARTIAL — review remains pending by design |
-| No retrieval, inference, Docker/bridge/DB, measurement, or product acceptance | Orchestrator evidence records none performed; protocol remains not-ready | ✅ COMPLIANT |
+| Requirement / scenario                                                                     | Evidence / validation                                                                                                                                                                         | Result                                                                                  |
+|--------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------|
+| Approved ANN–exact decision fields represented exactly                                     | Candidate JSON inspection and `validate_protocol`; K=10, both metrics exactly 1.0 per query, one run, per-query results, descriptive-only macro-average, observed ties, undefined blocks PASS | ✅ COMPLIANT — candidate decisions only                                                 |
+| Absolute relevance remains disabled; no threshold or labels are inferred                   | Candidate JSON has `absolute_relevance=false`; labels/rubric decision remains pending                                                                                                         | ✅ COMPLIANT                                                                            |
+| Protocol remains non-ready and does not authorize a run                                    | `validate_protocol`: `confirmatory_ready=false`; approval metadata, corpus scope, ANN scope, encoder identity, and provenance remain pending                                                  | ✅ COMPLIANT                                                                            |
+| Independent, unlabelled corpus and required minimum                                        | Corpus validator passed; one query, ten candidates; inspected corpus has no labels, grades, scores, rankings, relevance judgments, or retrieval outputs                                       | ✅ COMPLIANT for artifact constraints; ⚠️ PARTIAL for evaluation scope (one query only) |
+| Baseline source allowlist and immutable source hashes                                      | Orchestrator independently recomputed all 11 mappings and source hashes from baseline Git objects; all paths allowed and hashes matched                                                       | ✅ COMPLIANT for declared source provenance                                             |
+| Pilot, C0/C1, modified runner guide, and generated/untracked material excluded             | Inventory/exclusion checks reported passed; no such material is included in the candidate artifacts                                                                                           | ✅ COMPLIANT for exclusion checks                                                       |
+| Corpus remains draft/unlabelled/unfrozen and not represented as adequate or representative | Provenance status is `draft/not frozen`; owner review and freeze are pending; one query is explicitly a minimal review sample                                                                 | ✅ COMPLIANT                                                                            |
+| Sensitivity and owner review before freeze                                                 | Project sensitivity classification is absent; source-path and text review remains required                                                                                                    | ⚠️ PARTIAL — review remains pending by design                                           |
+| No retrieval, inference, Docker/bridge/DB, measurement, or product acceptance              | Orchestrator evidence records none performed; protocol remains not-ready                                                                                                                      | ✅ COMPLIANT                                                                            |
 
 **Compliance summary**: Artifact-only requirements pass within the stated boundaries. The corpus is not a representative or product-ready evaluation corpus. No product acceptance scenario was exercised; acceptance QA remains the separate, blocked gate.
 
 ## Correctness and design coherence
 
-| Requirement / design decision | Status | Evidence / limitation |
-|---|---|---|
-| Preserve exact approved ANN–exact decision values and keep absolute relevance disabled | ✅ Implemented | Candidate JSON fields match the Phase 11 contract. |
-| Keep run-specific approvals and operational inputs unresolved | ✅ Implemented | Protocol validator reports not-ready; relevant decisions and metadata remain pending. |
-| Use strict corpus shape and companion provenance manifest | ✅ Implemented | `validate_corpus`, JSON parsing, hash comparison, closure and unique mapping checks passed. |
-| Use only eligible immutable-baseline sources and preserve exclusions | ✅ Verified | All 11 mappings and hashes checked against baseline Git objects and allowlist. |
-| Do not pad below ten candidates; do not overclaim from the minimum | ✅ Followed | One query has ten candidates; this is a minimal review sample only, not corpus adequacy evidence. |
-| Keep the corpus draft, unlabelled, and not frozen pending owner review | ✅ Followed | Manifest says `draft/not frozen`; no labels or review/freeze approval asserted. |
-| Do not authorize measurements or claim acceptance | ✅ Followed | `confirmatory_ready=false`; no measurement or runtime operation occurred. |
+| Requirement / design decision                                                          | Status         | Evidence / limitation                                                                             |
+|----------------------------------------------------------------------------------------|----------------|---------------------------------------------------------------------------------------------------|
+| Preserve exact approved ANN–exact decision values and keep absolute relevance disabled | ✅ Implemented | Candidate JSON fields match the Phase 11 contract.                                                |
+| Keep run-specific approvals and operational inputs unresolved                          | ✅ Implemented | Protocol validator reports not-ready; relevant decisions and metadata remain pending.             |
+| Use strict corpus shape and companion provenance manifest                              | ✅ Implemented | `validate_corpus`, JSON parsing, hash comparison, closure and unique mapping checks passed.       |
+| Use only eligible immutable-baseline sources and preserve exclusions                   | ✅ Verified    | All 11 mappings and hashes checked against baseline Git objects and allowlist.                    |
+| Do not pad below ten candidates; do not overclaim from the minimum                     | ✅ Followed    | One query has ten candidates; this is a minimal review sample only, not corpus adequacy evidence. |
+| Keep the corpus draft, unlabelled, and not frozen pending owner review                 | ✅ Followed    | Manifest says `draft/not frozen`; no labels or review/freeze approval asserted.                   |
+| Do not authorize measurements or claim acceptance                                      | ✅ Followed    | `confirmatory_ready=false`; no measurement or runtime operation occurred.                         |
 
 ## TDD applicability
 
-| Metric | Status |
-|---|---|
-| Task type | Data/document artifact work; no business/product behavior changed |
-| TDD applicability | Not applicable; no artificial TDD was introduced |
-| Relevant artifact validation | Passed as listed above |
+| Metric                       | Status                                                            |
+|------------------------------|-------------------------------------------------------------------|
+| Task type                    | Data/document artifact work; no business/product behavior changed |
+| TDD applicability            | Not applicable; no artificial TDD was introduced                  |
+| Relevant artifact validation | Passed as listed above                                            |
 
 ## Issues and risks
 
@@ -302,11 +302,11 @@ Las tareas 17.1–17.3 tienen evidencia registrada: caracterización de CLI/anot
 
 ### Completitud
 
-| Métrica | Resultado |
-|---|---:|
-| Tareas de implementación 12–17 (U7–U11 y cierre) | 18/18 marcadas completas |
-| Tareas de implementación incompletas en este slice | 0 |
-| Bloqueos de ejecución/aceptación | B.1 y B.2 continúan `[ ]`, fuera del slice técnico |
+| Métrica                                            |                                          Resultado |
+|----------------------------------------------------|---------------------------------------------------:|
+| Tareas de implementación 12–17 (U7–U11 y cierre)   |                           18/18 marcadas completas |
+| Tareas de implementación incompletas en este slice |                                                  0 |
+| Bloqueos de ejecución/aceptación                   | B.1 y B.2 continúan `[ ]`, fuera del slice técnico |
 
 Las tareas 17.1, 17.2 y 17.3 están marcadas completas. B.1/B.2 siguen bloqueadas por protocolo-run, aprobaciones y procedencia operativa pendientes; no son omisiones de implementación de Fase 17.
 
@@ -332,40 +332,40 @@ Las tareas 17.1, 17.2 y 17.3 están marcadas completas. B.1/B.2 siguen bloqueada
 
 ### Matriz de conformidad — Fase 17/U11
 
-| Requisito / escenario | Evidencia ejecutada o inspeccionada | Resultado |
-|---|---|---|
-| 17.1: CLI/piloto mantiene annotations requeridas e informe descriptivo | `PilotCompatibilityTests.test_cli_preserves_annotation_requirement_and_descriptive_pilot_report`; confirma que `run_evaluation` recibe CSV y su informe descriptivo se escribe como salida. | ✅ Conforme |
-| 17.1: error al escribir informe | `PilotCompatibilityTests.test_cli_write_oserror_returns_two_without_claiming_persistence`; `Path.write_text` simula `OSError`, `main` retorna 2 y emite error. No se afirma persistencia ni atomicidad. | ✅ Conforme |
-| 17.1: `protocol_preflight` sigue diagnóstico sin efectos/PASS | `PilotCompatibilityTests.test_protocol_preflight_remains_diagnostic_without_pass`; el bridge espía rechaza llamadas, `measurement_started=false`, no hay `PASS`. | ✅ Conforme |
-| U11: PASS solo con criterios por consulta y procedencia completa; relevancia no evaluada, sin aceptación global | `ProtocolVerdictAndProvenanceTests.test_positive_synthetic_pass_both_metrics_perfect_and_provenance_verified`; suite completa 148/148. Los valores positivos son fixtures/dobles sintéticos. | ✅ Conforme técnicamente; no es evidencia de producto |
-| U11: orden distinto falla con recall completo; exact vacío bloquea y métricas quedan null | `test_different_order_full_recall_produces_fail`; `test_empty_exact_ranking_produces_null_metrics_and_blocked_gate`. | ✅ Conforme |
-| U11: underfill, scores empatados y macros descriptivos | `test_underfill_and_scores_do_not_override_sequential_ranks`; `test_macro_descriptive_averages_without_rounding_and_requires_all_defined`. | ✅ Conforme |
-| U11: evidencia final adversa, identidad/run/query no correlacionados o cobertura incompleta bloquean | `test_adverse_final_provenance_blocks_gate_even_with_perfect_metrics`; `test_incomplete_per_query_evidence_coverage_blocks_with_perfect_metrics`; bloqueo con métricas perfectas. | ✅ Conforme |
-| U11: hashes de protocolo/corpus se revalidan antes del veredicto | `test_protocol_or_corpus_hash_mutation_before_verdict_blocks_gate`. | ✅ Conforme |
-| 17.2: discovery, contrato Python/schema, lint y diff | Discovery 148 tests; ambos JSON validados contra schema; `py_compile`, Markdownlint y `git diff --check`, todos exit 0. | ✅ Conforme |
-| 17.2: superficies prohibidas sin delta nuevo de Fase 17 | `apply-progress.md` registra revisión focalizada. El status actual contiene WIP previo en Rust, fixtures, state e informes; no se atribuye el diff total a esta fase. El cierre Fase 17 está acotado a `PilotCompatibilityTests` y su registro en `apply-progress.md`; no hay evidencia de cambios nuevos de Fase 17 en Rust, Docker, C0, corpus/candidatos, plantilla o resultados. | ✅ Conforme según evidencia focalizada; la atribución histórica se limita al registro de apply |
-| 17.3: evidencia nueva sin alterar reportes históricos ni estado | Se inspeccionaron las secciones nuevas de `apply-progress.md`; este informe se actualizó por append. `qa-report.md` conserva QA11 BLOCKED y `state.yaml` no se alteró en esta verificación. | ✅ Conforme; reportes históricos preservados |
+| Requisito / escenario                                                                                           | Evidencia ejecutada o inspeccionada                                                                                                                                                                                                                                                                                                                                                  | Resultado                                                                                      |
+|-----------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|
+| 17.1: CLI/piloto mantiene annotations requeridas e informe descriptivo                                          | `PilotCompatibilityTests.test_cli_preserves_annotation_requirement_and_descriptive_pilot_report`; confirma que `run_evaluation` recibe CSV y su informe descriptivo se escribe como salida.                                                                                                                                                                                          | ✅ Conforme                                                                                    |
+| 17.1: error al escribir informe                                                                                 | `PilotCompatibilityTests.test_cli_write_oserror_returns_two_without_claiming_persistence`; `Path.write_text` simula `OSError`, `main` retorna 2 y emite error. No se afirma persistencia ni atomicidad.                                                                                                                                                                              | ✅ Conforme                                                                                    |
+| 17.1: `protocol_preflight` sigue diagnóstico sin efectos/PASS                                                   | `PilotCompatibilityTests.test_protocol_preflight_remains_diagnostic_without_pass`; el bridge espía rechaza llamadas, `measurement_started=false`, no hay `PASS`.                                                                                                                                                                                                                     | ✅ Conforme                                                                                    |
+| U11: PASS solo con criterios por consulta y procedencia completa; relevancia no evaluada, sin aceptación global | `ProtocolVerdictAndProvenanceTests.test_positive_synthetic_pass_both_metrics_perfect_and_provenance_verified`; suite completa 148/148. Los valores positivos son fixtures/dobles sintéticos.                                                                                                                                                                                         | ✅ Conforme técnicamente; no es evidencia de producto                                          |
+| U11: orden distinto falla con recall completo; exact vacío bloquea y métricas quedan null                       | `test_different_order_full_recall_produces_fail`; `test_empty_exact_ranking_produces_null_metrics_and_blocked_gate`.                                                                                                                                                                                                                                                                 | ✅ Conforme                                                                                    |
+| U11: underfill, scores empatados y macros descriptivos                                                          | `test_underfill_and_scores_do_not_override_sequential_ranks`; `test_macro_descriptive_averages_without_rounding_and_requires_all_defined`.                                                                                                                                                                                                                                           | ✅ Conforme                                                                                    |
+| U11: evidencia final adversa, identidad/run/query no correlacionados o cobertura incompleta bloquean            | `test_adverse_final_provenance_blocks_gate_even_with_perfect_metrics`; `test_incomplete_per_query_evidence_coverage_blocks_with_perfect_metrics`; bloqueo con métricas perfectas.                                                                                                                                                                                                    | ✅ Conforme                                                                                    |
+| U11: hashes de protocolo/corpus se revalidan antes del veredicto                                                | `test_protocol_or_corpus_hash_mutation_before_verdict_blocks_gate`.                                                                                                                                                                                                                                                                                                                  | ✅ Conforme                                                                                    |
+| 17.2: discovery, contrato Python/schema, lint y diff                                                            | Discovery 148 tests; ambos JSON validados contra schema; `py_compile`, Markdownlint y `git diff --check`, todos exit 0.                                                                                                                                                                                                                                                              | ✅ Conforme                                                                                    |
+| 17.2: superficies prohibidas sin delta nuevo de Fase 17                                                         | `apply-progress.md` registra revisión focalizada. El status actual contiene WIP previo en Rust, fixtures, state e informes; no se atribuye el diff total a esta fase. El cierre Fase 17 está acotado a `PilotCompatibilityTests` y su registro en `apply-progress.md`; no hay evidencia de cambios nuevos de Fase 17 en Rust, Docker, C0, corpus/candidatos, plantilla o resultados. | ✅ Conforme según evidencia focalizada; la atribución histórica se limita al registro de apply |
+| 17.3: evidencia nueva sin alterar reportes históricos ni estado                                                 | Se inspeccionaron las secciones nuevas de `apply-progress.md`; este informe se actualizó por append. `qa-report.md` conserva QA11 BLOCKED y `state.yaml` no se alteró en esta verificación.                                                                                                                                                                                          | ✅ Conforme; reportes históricos preservados                                                   |
 
 **Resumen de conformidad**: las tareas 17.1–17.3 y los escenarios U11 revisados tienen evidencia runtime o checks de artefacto aprobados. Los resultados sintéticos no son medición ni aceptación real.
 
 ### Coherencia con diseño
 
-| Decisión | Resultado | Evidencia / límite |
-|---|---|---|
-| API protocol-aware separada del piloto | ✅ Seguida | La caracterización confirma que CLI y `run_evaluation` conservan annotations y el informe descriptivo; `protocol_preflight` no activa ejecución. |
-| Preflight fail-closed y evidencia final separada | ✅ Seguida en tests | Dobles cubren rechazo previo y requisitos posteriores; no se usó bridge operacional. |
-| Reutilizar métricas, sin reimplementar fórmulas | ✅ Seguida | Casos U11 ejercitan serialización por API runner; suite completa pasó. |
-| Relevancia absoluta y aceptación global fuera del slice | ✅ Seguida | Tests exigen `not_evaluated` y ausencia de aceptación global. |
-| Límites operativos e historial | ✅ Seguidos | No se corrieron operaciones prohibidas. QA/verify anteriores permanecen y este informe se añadió al final. |
+| Decisión                                                | Resultado           | Evidencia / límite                                                                                                                               |
+|---------------------------------------------------------|---------------------|--------------------------------------------------------------------------------------------------------------------------------------------------|
+| API protocol-aware separada del piloto                  | ✅ Seguida          | La caracterización confirma que CLI y `run_evaluation` conservan annotations y el informe descriptivo; `protocol_preflight` no activa ejecución. |
+| Preflight fail-closed y evidencia final separada        | ✅ Seguida en tests | Dobles cubren rechazo previo y requisitos posteriores; no se usó bridge operacional.                                                             |
+| Reutilizar métricas, sin reimplementar fórmulas         | ✅ Seguida          | Casos U11 ejercitan serialización por API runner; suite completa pasó.                                                                           |
+| Relevancia absoluta y aceptación global fuera del slice | ✅ Seguida          | Tests exigen `not_evaluated` y ausencia de aceptación global.                                                                                    |
+| Límites operativos e historial                          | ✅ Seguidos         | No se corrieron operaciones prohibidas. QA/verify anteriores permanecen y este informe se añadió al final.                                       |
 
 ### Auditoría TDD
 
-| Métrica | Estado |
-|---|---|
-| Aplicabilidad | Sí para regresiones/comportamiento 17.1 y escenarios U11; checks de schema/documentación se validan como artefactos. |
+| Métrica                       | Estado                                                                                                                                                                                                            |
+|-------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Aplicabilidad                 | Sí para regresiones/comportamiento 17.1 y escenarios U11; checks de schema/documentación se validan como artefactos.                                                                                              |
 | RED→GREEN→REFACTOR de Fase 17 | ✅ Registro en `apply-progress.md`: RED inicial por `SystemExit: 2` no manejado por el test; test ajustado para capturar la interfaz argparse; después 3 pruebas `OK`. No cambió código de producto en esta fase. |
-| Evidencia TDD U11 | ✅ Registro de RED (8 fallas antes de integrar veredicto), GREEN (9 tests) y suites posteriores en evidencia de Fase 16; pruebas actuales pasan en discovery fresco. |
-| Limitación | El orden TDD se apoya en el registro de apply; la ejecución fresca prueba el estado actual, no reconstruye el orden histórico de escritura. |
+| Evidencia TDD U11             | ✅ Registro de RED (8 fallas antes de integrar veredicto), GREEN (9 tests) y suites posteriores en evidencia de Fase 16; pruebas actuales pasan en discovery fresco.                                              |
+| Limitación                    | El orden TDD se apoya en el registro de apply; la ejecución fresca prueba el estado actual, no reconstruye el orden histórico de escritura.                                                                       |
 
 ### Hallazgos y riesgos
 

@@ -193,10 +193,10 @@ test("schema is an actual top-level array with exactly three branches", () => {
 
 test("accepts a producer-shaped findings document through the CLI",
     {skip: !HAS_SAFE_INPUT_OPEN}, () => {
-  const result = runCli(JSON.stringify(producerShapedFindings()));
-  assert.equal(result.status, 0, cliOutput(result));
-  assert.match(result.stdout, /PASS: 3 findings valid/);
-});
+      const result = runCli(JSON.stringify(producerShapedFindings()));
+      assert.equal(result.status, 0, cliOutput(result));
+      assert.match(result.stdout, /PASS: 3 findings valid/);
+    });
 
 test("accepts empty output and each complete branch", () => {
   assert.deepEqual(errorsFor([]), []);
@@ -652,14 +652,14 @@ test(
 
 test("CLI rejects an oversized array without an exception trace",
     {skip: !HAS_SAFE_INPUT_OPEN}, () => {
-  const result = runCli(
-      JSON.stringify(Array(LIMITS.arrayItems + 1).fill(null)));
-  const output = cliOutput(result);
-  assert.equal(result.status, 1, output);
-  assert.match(output, new RegExp(`${LIMITS.arrayItems} item array limit`));
-  assert.doesNotMatch(output,
-      /RangeError|Maximum call stack|heap out of memory/i);
-});
+      const result = runCli(
+          JSON.stringify(Array(LIMITS.arrayItems + 1).fill(null)));
+      const output = cliOutput(result);
+      assert.equal(result.status, 1, output);
+      assert.match(output, new RegExp(`${LIMITS.arrayItems} item array limit`));
+      assert.doesNotMatch(output,
+          /RangeError|Maximum call stack|heap out of memory/i);
+    });
 
 test("checks pattern and branch invariants", () => {
   rejectMutation(rejected, (finding) => {

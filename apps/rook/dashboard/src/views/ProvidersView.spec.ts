@@ -88,6 +88,7 @@ function mountView(options = {}) {
 		...options,
 	});
 }
+
 describe("ProvidersView descriptor requests", () => {
 	beforeEach(() => {
 		mockProviders.value = [];

@@ -4,8 +4,8 @@ services:
     image: neo4j:5.26-community@sha256:414adfe41c6ff32abb752be37f265c77607c166cab298f65a917fc4f05776218
     pull_policy: never
     user: "7474:7474"
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
+    cap_drop: [ ALL ]
+    security_opt: [ no-new-privileges:true ]
     cpus: 2
     mem_limit: 2g
     environment:
@@ -18,12 +18,12 @@ services:
     tmpfs:
       - /data:uid=7474,gid=7474,mode=0700
       - /logs:uid=7474,gid=7474,mode=0700
-    networks: [h5]
+    networks: [ h5 ]
     depends_on:
       credentials:
         condition: service_completed_successfully
     healthcheck:
-      test: [CMD, wget, --quiet, --spider, http://localhost:7474]
+      test: [ CMD, wget, --quiet, --spider, http://localhost:7474 ]
       interval: 5s
       timeout: 5s
       retries: 24
@@ -33,8 +33,8 @@ services:
     pull_policy: never
     user: "7474:7474"
     read_only: true
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
+    cap_drop: [ ALL ]
+    security_opt: [ no-new-privileges:true ]
     mem_limit: 1536m
     cpus: 2
     environment:
@@ -45,7 +45,7 @@ services:
     volumes:
       - artifacts:/artifacts:ro
       - credentials:/run/secrets:ro
-    networks: [h5]
+    networks: [ h5 ]
     depends_on:
       neo4j:
         condition: service_healthy
@@ -57,7 +57,7 @@ services:
     image: ${MUNINN_H5_BRIDGE_IMAGE:?Set locally available immutable bridge image digest}
     pull_policy: never
     user: "0:0"
-    entrypoint: ["/bin/sh", "-c"]
+    entrypoint: [ "/bin/sh", "-c" ]
     command:
       - >-
         set -eu;
@@ -67,9 +67,9 @@ services:
         find /artifacts -type f -exec chmod 0400 {} +;
         chown -R 7474:7474 /artifacts
     network_mode: none
-    cap_drop: [ALL]
-    cap_add: [CHOWN, FOWNER]
-    security_opt: [no-new-privileges:true]
+    cap_drop: [ ALL ]
+    cap_add: [ CHOWN, FOWNER ]
+    security_opt: [ no-new-privileges:true ]
     volumes:
       - type: bind
         source: ${MUNINN_H5_MODEL_BUNDLE:?Set existing local model bundle directory}
@@ -82,7 +82,7 @@ services:
     image: ${MUNINN_H5_BRIDGE_IMAGE:?Set locally available immutable bridge image digest}
     pull_policy: never
     user: "0:0"
-    entrypoint: ["/bin/sh", "-c"]
+    entrypoint: [ "/bin/sh", "-c" ]
     command:
       - >-
         set -eu;
@@ -91,9 +91,9 @@ services:
         chown 7474:7474 /credentials/neo4j_auth /credentials/bridge_token;
         chmod 0400 /credentials/neo4j_auth /credentials/bridge_token
     network_mode: none
-    cap_drop: [ALL]
-    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
-    security_opt: [no-new-privileges:true]
+    cap_drop: [ ALL ]
+    cap_add: [ CHOWN, DAC_OVERRIDE, FOWNER ]
+    security_opt: [ no-new-privileges:true ]
     volumes:
       - type: bind
         source: ${MUNINN_H5_NEO4J_AUTH_FILE:?Set dedicated H5 Neo4j auth file}
@@ -109,28 +109,28 @@ services:
           create_host_path: false
       - credentials:/credentials
   runner-output-init:
-    profiles: [evaluation]
+    profiles: [ evaluation ]
     image: ${MUNINN_H5_BRIDGE_IMAGE:?Set locally available immutable bridge image digest}
     pull_policy: never
     user: "0:0"
-    entrypoint: ["/bin/sh", "-c"]
+    entrypoint: [ "/bin/sh", "-c" ]
     command:
       - >-
         set -eu;
         chown 7474:7474 /out;
         chmod 0700 /out
     network_mode: none
-    cap_drop: [ALL]
-    cap_add: [CHOWN, FOWNER]
-    security_opt: [no-new-privileges:true]
+    cap_drop: [ ALL ]
+    cap_add: [ CHOWN, FOWNER ]
+    security_opt: [ no-new-privileges:true ]
     volumes:
       - runner-output:/out
   runner:
-    profiles: [evaluation]
+    profiles: [ evaluation ]
     image: ${MUNINN_H5_BRIDGE_IMAGE:?Set locally available immutable bridge image digest}
     pull_policy: never
     user: "7474:7474"
-    entrypoint: [python3, /runner/retrieval_h5_runner.py]
+    entrypoint: [ python3, /runner/retrieval_h5_runner.py ]
     command:
       - --corpus
       - /input/retrieval-pilot-v1-corpus.json
@@ -153,8 +153,8 @@ services:
       - --output
       - /out/report.json
     read_only: true
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
+    cap_drop: [ ALL ]
+    security_opt: [ no-new-privileges:true ]
     tmpfs:
       - "/tmp:rw,noexec,nosuid,size=16m"
     environment:
@@ -189,7 +189,7 @@ services:
           create_host_path: false
       - credentials:/run/secrets:ro
       - runner-output:/out
-    networks: [h5]
+    networks: [ h5 ]
     depends_on:
       runner-output-init:
         condition: service_completed_successfully
@@ -201,6 +201,6 @@ networks:
   h5:
     internal: true
 volumes:
-  artifacts: {}
-  credentials: {}
-  runner-output: {}
+  artifacts: { }
+  credentials: { }
+  runner-output: { }

@@ -98,25 +98,26 @@ unmanaged provider uses its provider ID. The configuration does not translate pr
 to connection IDs. Each value is a non-negative finite number. Unconfigured targets have
 zero weight and are never selected.
 
-| Field    | Type   | Description                                                    |
-|----------|--------|----------------------------------------------------------------|
-| *(key)*  | string | Target/connection ID                                           |
-| *(value)| f64    | Non-negative finite weight (0 means never selected)            |
+| Field    | Type   | Description                                         |
+|----------|--------|-----------------------------------------------------|
+| *(key)*  | string | Target/connection ID                                |
+| *(value) | f64    | Non-negative finite weight (0 means never selected) |
 
 #### Routing Policies
 
 Rook supports six explicit routing policies, configurable via `routing.strategy`:
 
-| Policy | Selection | Required evidence | Missing/ties |
-|--------|-----------|-------------------|--------------|
-| `priority` | First eligible candidate in registry order | None | N/A |
-| `weighted` | Weighted random over eligible candidates | `routing.weights` mapping | Zero-weight targets never win; all-zero → error |
-| `round-robin` | Rotates through eligible candidates | RR counter | Preserves legacy rotation |
-| `least-latency` | Minimum raw p95 latency (ms) | Known p95 telemetry | All unknown → priority fallback |
-| `least-cost` | Minimum projected request cost in USD | Comparable input + output per-million-token pricing and `max_tokens` for every eligible candidate | Any missing completion bound or candidate pricing → priority fallback |
-| `auto` | Resolves to concrete policy per request | Request context + signals | Ordered rules (see below) |
+| Policy          | Selection                                  | Required evidence                                                                                 | Missing/ties                                                          |
+|-----------------|--------------------------------------------|---------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------|
+| `priority`      | First eligible candidate in registry order | None                                                                                              | N/A                                                                   |
+| `weighted`      | Weighted random over eligible candidates   | `routing.weights` mapping                                                                         | Zero-weight targets never win; all-zero → error                       |
+| `round-robin`   | Rotates through eligible candidates        | RR counter                                                                                        | Preserves legacy rotation                                             |
+| `least-latency` | Minimum raw p95 latency (ms)               | Known p95 telemetry                                                                               | All unknown → priority fallback                                       |
+| `least-cost`    | Minimum projected request cost in USD      | Comparable input + output per-million-token pricing and `max_tokens` for every eligible candidate | Any missing completion bound or candidate pricing → priority fallback |
+| `auto`          | Resolves to concrete policy per request    | Request context + signals                                                                         | Ordered rules (see below)                                             |
 
 **Auto resolver rules** (evaluated in order):
+
 1. If request has `spending_budget` and every eligible candidate has a comparable projected cost → `least-cost`
 2. If streaming and at least one eligible candidate has a comparable p95 → `least-latency`
 3. If at least one eligible candidate has a comparable p95 → `least-latency`

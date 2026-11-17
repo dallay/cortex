@@ -13,8 +13,7 @@ local runner files appear in each report.
 - Adapted Silver: **64 passed and 3 failed**, out of 67.
 - Adapted Gold: **9 passed, 6 failed, and 3 skipped**, out of 18.
 - Adapted Platinum: **11 skipped**. These are not passes.
-- `native-delete` profile: **13 selected** out of 189, 176 deselected;
-  **1 passed and 12 failed**, without skips. All selected cases are Bronze.
+- `native-delete` profile: **13 selected** out of 189, 176 deselected; **1 passed and 12 failed**, without skips. All selected cases are Bronze.
   Result `FAIL`; exit code **2**. This profile does not run the rest of the TCK.
 
 Thus, the adapter's passing Bronze does not demonstrate native Bronze for the

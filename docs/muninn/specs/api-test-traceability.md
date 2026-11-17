@@ -12,12 +12,12 @@ or documents its delegation; it does not mean equivalence of every backend, MCP,
 or LLM. `covered_by_integration` binds a declared integration source, not a new
 execution. `coverage_gap` remains open even when the TCK passes.
 
-| State | Backend rows |
-| --- | ---: |
-| `covered_by_tck` | 76 |
-| `covered_by_integration` | 2 |
-| `unsupported_by_reference_profile` | 122 |
-| `coverage_gap` | 122 |
+| State                              | Backend rows |
+|------------------------------------|-------------:|
+| `covered_by_tck`                   |           76 |
+| `covered_by_integration`           |            2 |
+| `unsupported_by_reference_profile` |          122 |
+| `coverage_gap`                     |          122 |
 
 ## Open gaps and exact support
 

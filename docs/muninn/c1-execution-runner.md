@@ -14,11 +14,11 @@ uses it as its foundation: it admits the frozen manifest using the digest the
 operator obtains from an independently reviewed record, and reads each input
 only once through `read_frozen_input`.
 
-| Phase | `c1_execution` | `c1_runner` |
-| --- | --- | --- |
-| Manifest | `admit` authenticates bytes and contract | executes and verifies again |
-| Inputs | `read_frozen_input` returns bytes and digest | delivers them to the process and revalidates them |
-| Outputs | has no knowledge of them | captures, seals, and rereads them |
+| Phase    | `c1_execution`                               | `c1_runner`                                       |
+|----------|----------------------------------------------|---------------------------------------------------|
+| Manifest | `admit` authenticates bytes and contract     | executes and verifies again                       |
+| Inputs   | `read_frozen_input` returns bytes and digest | delivers them to the process and revalidates them |
+| Outputs  | has no knowledge of them                     | captures, seals, and rereads them                 |
 
 ## Running a stage
 

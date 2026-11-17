@@ -383,7 +383,6 @@ impl GeocodingService {
 
 #[cfg(test)]
 mod tests {
-
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
     use std::time::Duration;
