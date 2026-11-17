@@ -1,8 +1,0 @@
-{
-  "model_profiles": {
-    "providers-ui": {
-      "model": "nan/deepseek-v4-flash",
-      "effort": "high"
-    }
-  }
-}
