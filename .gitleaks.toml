@@ -50,6 +50,13 @@ paths = ['''^dev/muninn/tests/test_gm05_build\.py$''']
 regexes = ['''(?i)^token\s*=\s*"synthetic-test-value$''']
 
 [[rules.allowlists]]
+description = "Password fixture assignments in the product chain security test"
+condition = "AND"
+regexTarget = "match"
+paths = ['''^dev/muninn/tests/test_product_chain_fixture_security\.py$''']
+regexes = ['''(?i)^f[12]\.password\s*=\s*product_chain_fixture\.secrets\.token_urlsafe''']
+
+[[rules.allowlists]]
 description = "OAuth client secret field binding in the connection update path; the value is a decrypted blob variable, not a literal secret"
 condition = "AND"
 regexTarget = "match"

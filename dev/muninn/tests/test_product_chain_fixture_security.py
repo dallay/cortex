@@ -223,16 +223,16 @@ class ProductFixtureIsolationTests(unittest.TestCase):
         # and uses secrets.token_urlsafe
         with patch.object(product_chain_fixture.secrets, 'token_urlsafe',
                           return_value='synthetic-password'):
-            f1.password = product_chain_fixture.secrets.token_urlsafe(30)
-            f2.password = product_chain_fixture.secrets.token_urlsafe(30)
+            f1.password = product_chain_fixture.secrets.token_urlsafe(30)  # gitleaks:allow
+            f2.password = product_chain_fixture.secrets.token_urlsafe(30)  # gitleaks:allow
             # With mock, they'd be the same; without mock, they'd differ
             self.assertEqual(f1.password, f2.password)  # mock returns same value
 
         # Without mock, verify the function is called
         with patch.object(product_chain_fixture.secrets, 'token_urlsafe',
                           side_effect=['password-a', 'password-b']) as mock_token:
-            f1.password = product_chain_fixture.secrets.token_urlsafe(30)
-            f2.password = product_chain_fixture.secrets.token_urlsafe(30)
+            f1.password = product_chain_fixture.secrets.token_urlsafe(30)  # gitleaks:allow
+            f2.password = product_chain_fixture.secrets.token_urlsafe(30)  # gitleaks:allow
             self.assertNotEqual(f1.password, f2.password)
             self.assertEqual(mock_token.call_count, 2)
 
