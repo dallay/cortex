@@ -791,7 +791,6 @@ function validateAttempts(value, unit, base, errors) {
     }
     validateStateInvariants(attempt, attemptBase, errors);
 
-    const attemptArtifacts = new Set();
     if (Array.isArray(attempt.local_checks)) {
       attempt.local_checks.forEach((check, checkIndex) => {
         if (!isObject(check)) {
@@ -808,12 +807,9 @@ function validateAttempts(value, unit, base, errors) {
         }
         if (check.method === "local" && typeof check.artifact
             === "string") {
-          attemptArtifacts.add(check.artifact);
+          priorArtifacts.add(check.artifact);
         }
       });
-    }
-    for (const artifact of attemptArtifacts) {
-      priorArtifacts.add(artifact);
     }
     if (hasFreshOwner) {
       priorOwners.add(attempt.agent_id);

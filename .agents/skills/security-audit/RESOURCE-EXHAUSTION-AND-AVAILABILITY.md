@@ -46,14 +46,8 @@ Expensive parsing, key lookup, cryptography, decompression, or external requests
 **Quota-accounting scope and reset gaps**
 Accounting uses attacker-influenceable IP, route, tenant, key prefix, task ID, or other dimension, allowing one principal's work to escape its intended budget or consume another principal's allocation. Review integer overflow, distributed races, retries, reconnects, and account switching.
 
-<!-- coderabbit-ai-generated:v1 -->
-
-<!-- coderabbit-ai-generated-section:v1:0105e5c6c07114290ab15de93af8cfdbb6dfb1026b9c4a95807ff2f844686a66 -->
-
 **Worker, pool, and priority starvation**
-Low-priority or attacker-controlled jobs hold shared locks, workers, database pools, event-loop turns, or scheduler priority needed by unrelated users. Require a path that bypasses queue/concurrency fairness, retains a slot beyond its deadline, or lets attacker-controlled work occupy the fair pool without an effective duration bound and prevent unrelated users from making progress.
-
-<!-- /coderabbit-ai-generated:v1 -->
+Low-priority or attacker-controlled jobs hold shared locks, workers, database pools, event-loop turns, or scheduler priority needed by unrelated users. Require a path that bypasses queue/concurrency fairness or retains a slot beyond its deadline.
 
 ## Failure and recovery attack classes (subagent_type: `general`)
 

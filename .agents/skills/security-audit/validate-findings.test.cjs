@@ -191,12 +191,11 @@ test("schema is an actual top-level array with exactly three branches", () => {
       undefined);
 });
 
-test("accepts a producer-shaped findings document through the CLI",
-    {skip: !HAS_SAFE_INPUT_OPEN}, () => {
-      const result = runCli(JSON.stringify(producerShapedFindings()));
-      assert.equal(result.status, 0, cliOutput(result));
-      assert.match(result.stdout, /PASS: 3 findings valid/);
-    });
+test("accepts a producer-shaped findings document through the CLI", () => {
+  const result = runCli(JSON.stringify(producerShapedFindings()));
+  assert.equal(result.status, 0, cliOutput(result));
+  assert.match(result.stdout, /PASS: 3 findings valid/);
+});
 
 test("accepts empty output and each complete branch", () => {
   assert.deepEqual(errorsFor([]), []);
@@ -486,7 +485,6 @@ test("accepts legitimate Unicode source paths and prose", () => {
 });
 
 test("CLI rejects input above the byte limit without an exception trace",
-    {skip: !HAS_SAFE_INPUT_OPEN},
     () => {
       const result = runCli(Buffer.alloc(LIMITS.inputBytes + 1, 0x20));
       const output = cliOutput(result);
@@ -498,7 +496,6 @@ test("CLI rejects input above the byte limit without an exception trace",
     });
 
 test("CLI rejects invalid UTF-8 without replacement or an exception trace",
-    {skip: !HAS_SAFE_INPUT_OPEN},
     () => {
       const findings = producerShapedFindings();
       findings[0].execution.payloads = ["INVALID_UTF8"];
@@ -567,7 +564,6 @@ test("does not reflect controls from a failed CLI input path", () => {
 });
 
 test("CLI rejects lone-surrogate prose without changing payload semantics",
-    {skip: !HAS_SAFE_INPUT_OPEN},
     () => {
       const findings = producerShapedFindings();
       findings[0].title = "\ud800";
@@ -638,7 +634,6 @@ test("CLI rejects a symlink without following it",
 
 test(
     "CLI rejects input above the nesting-depth limit without an exception trace",
-    {skip: !HAS_SAFE_INPUT_OPEN},
     () => {
       const levels = LIMITS.nestingDepth + 1;
       const result = runCli(`${"[".repeat(levels)}0${"]".repeat(levels)}`);
@@ -650,16 +645,15 @@ test(
           /RangeError|Maximum call stack|heap out of memory/i);
     });
 
-test("CLI rejects an oversized array without an exception trace",
-    {skip: !HAS_SAFE_INPUT_OPEN}, () => {
-      const result = runCli(
-          JSON.stringify(Array(LIMITS.arrayItems + 1).fill(null)));
-      const output = cliOutput(result);
-      assert.equal(result.status, 1, output);
-      assert.match(output, new RegExp(`${LIMITS.arrayItems} item array limit`));
-      assert.doesNotMatch(output,
-          /RangeError|Maximum call stack|heap out of memory/i);
-    });
+test("CLI rejects an oversized array without an exception trace", () => {
+  const result = runCli(
+      JSON.stringify(Array(LIMITS.arrayItems + 1).fill(null)));
+  const output = cliOutput(result);
+  assert.equal(result.status, 1, output);
+  assert.match(output, new RegExp(`${LIMITS.arrayItems} item array limit`));
+  assert.doesNotMatch(output,
+      /RangeError|Maximum call stack|heap out of memory/i);
+});
 
 test("checks pattern and branch invariants", () => {
   rejectMutation(rejected, (finding) => {

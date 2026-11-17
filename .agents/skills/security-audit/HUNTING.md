@@ -175,11 +175,15 @@ Return exactly one JSON object, with no surrounding prose:
     {
       "coverage_id": "one assigned ID",
       "disposition": "covered|candidate|blocked",
-      "reviewed_paths": ["repo/relative/path"],
+      "reviewed_paths": [
+        "repo/relative/path"
+      ],
       "checks": [
         {
           "agent_id": "canonical owner of this check",
-          "reviewed_paths": ["repo/relative/path owned by this check"],
+          "reviewed_paths": [
+            "repo/relative/path owned by this check"
+          ],
           "invariant": "specific control checked for this unit",
           "method": "source|local",
           "result": "what source or the bounded check established",
@@ -191,14 +195,18 @@ Return exactly one JSON object, with no surrounding prose:
     }
   ],
   "candidates": [],
-  "hardening": ["concrete non-finding note"],
+  "hardening": [
+    "concrete non-finding note"
+  ],
   "uncovered": [
     {
       "surface": "...",
       "boundary": "...",
       "subsystem": "...",
       "attack_class": "...",
-      "starting_paths": ["repo/relative/path"],
+      "starting_paths": [
+        "repo/relative/path"
+      ],
       "reason": "why this needs its own deterministic coverage unit"
     }
   ]
@@ -232,14 +240,27 @@ Immediately after each hunter wave, spend the reserved invocation on one fresh `
       "boundary": "...",
       "subsystem": "...",
       "attack_class": "...",
-      "starting_paths": ["repo/relative/path"],
-      "selected_companion_blocks": ["FILE.md#section"],
-      "excluded_blocks": [{"block": "FILE.md#section", "reason": "..."}],
+      "starting_paths": [
+        "repo/relative/path"
+      ],
+      "selected_companion_blocks": [
+        "FILE.md#section"
+      ],
+      "excluded_blocks": [
+        {
+          "block": "FILE.md#section",
+          "reason": "..."
+        }
+      ],
       "reason": "source-backed coverage gap"
     }
   ],
-  "reassign_ids": ["existing-id-that-did-not-close"],
-  "resolved_prior_leads": ["fingerprint"],
+  "reassign_ids": [
+    "existing-id-that-did-not-close"
+  ],
+  "resolved_prior_leads": [
+    "fingerprint"
+  ],
   "stop": false
 }
 ```
