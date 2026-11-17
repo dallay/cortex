@@ -360,15 +360,25 @@ fn plan_mapping(
         .map(|st| st.pole_type.to_uppercase() != pole_type)
         .unwrap_or(true);
     let subtype = target_type.subtype.as_deref().map(|s| s.to_uppercase());
+    // The subtype becomes a Cypher label in the migration query, so it must be a
+    // valid Neo4j identifier before any query runs.
+    let subtype_label = match &subtype {
+        Some(raw) => Some(ontology_node_label(raw).ok_or_else(|| {
+            MemoryError::invalid(format!(
+                "Type mapping {raw_to:?} contains a subtype {raw:?} that is not a valid Neo4j identifier"
+            ))
+        })?),
+        None => None,
+    };
 
     Ok(MappingStep {
         from_label,
         to_label,
-        subtype: subtype.clone(),
+        subtype: subtype_label.clone(),
         pole_type: pole_type.clone(),
         set_type,
         type_label: validate_entity_type(&pole_type),
-        subtype_label: subtype,
+        subtype_label,
     })
 }
 
@@ -1328,6 +1338,56 @@ mod tests {
             no_self_loops: true,
         };
         assert!(require_sound(&doc).is_err());
+    }
+
+    /// Ontology document with a single entity type, for mapping planning.
+    fn mapping_document(label: &str, subtype: Option<&str>) -> OntologyDocument {
+        OntologyDocument {
+            domain: crate::models::DomainInfo {
+                id: "test".to_string(),
+                name: "test".to_string(),
+                description: None,
+                tagline: None,
+                emoji: None,
+            },
+            entity_types: vec![crate::models::EntityTypeDef {
+                label: label.to_string(),
+                pole_type: "PERSON".to_string(),
+                subtype: subtype.map(str::to_string),
+                color: None,
+                icon: None,
+                properties: vec![],
+                description: None,
+                aliases: std::collections::HashMap::new(),
+                threshold: None,
+                resolution_threshold: None,
+                review_threshold: None,
+            }],
+            relationships: vec![],
+            no_self_loops: true,
+        }
+    }
+
+    #[test]
+    fn plan_mapping_rejects_subtype_that_is_not_a_valid_identifier() {
+        let source = mapping_document("Person", None);
+        let target = mapping_document("Actor", Some("Actor` DETACH DELETE n //"));
+        let error = plan_mapping(&source, &target, ("Person", "Actor"))
+            .err()
+            .expect("an invalid subtype must be rejected");
+        assert!(
+            matches!(error, MemoryError::InvalidInput(_)),
+            "expected invalid input, got {error:?}"
+        );
+    }
+
+    #[test]
+    fn plan_mapping_accepts_valid_subtype() {
+        let source = mapping_document("Person", None);
+        let target = mapping_document("Actor", Some("actor"));
+        let step = plan_mapping(&source, &target, ("Person", "Actor")).unwrap();
+        assert_eq!(step.subtype_label.as_deref(), Some("ACTOR"));
+        assert_eq!(step.subtype.as_deref(), Some("ACTOR"));
     }
 
     #[test]
