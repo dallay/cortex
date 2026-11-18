@@ -68,12 +68,12 @@ See our [Accessibility Statement](ACCESSIBILITY.md) for more information.
 6. **Push** to your branch (`git push origin feature/amazing-feature`)
 7. **Open a Pull Request** with a clear description
 
-Our PR template includes checklists for accessibility and quality — please complete them before requesting review.
+Our PR template includes checklists for accessibility (for UI changes) and quality — please complete them before requesting review (mark N/A if non-UI).
 
 ## Development Workflow
 
 1. **Set up your environment**. Run `just setup` for initial setup and consult [docs/development.md](docs/development.md) for details.
-2. **Follow Rust best practices** and project conventions defined in [AGENTS.md](AGENTS.md).
+2. **Follow Rust best practices** and project conventions defined in [.agents/AGENTS.md](.agents/AGENTS.md).
 3. **Write tests** for new behavior. See the [Development Guide](docs/development.md) for testing strategies.
 4. **Run focused checks** during iteration:
    - Rust: `cargo test -p <package>`

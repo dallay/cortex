@@ -17,18 +17,21 @@ Fixes # (issue number)
 
 ## Accessibility Checklist
 
+_For user interface changes only (check N/A if not applicable):_
+
 - [ ] Keyboard navigation works end-to-end
 - [ ] Focus states are visible and logical
 - [ ] Forms have labels and errors are announced to assistive technology
 - [ ] Color is not the only method to convey meaning
 - [ ] Screen reader behavior was checked (VoiceOver, NVDA, or TalkBack)
-- [ ] No accessibility linting errors (`biome ci .` passes)
+- [ ] No accessibility linting errors (`pnpm --filter @dallay/rook-dashboard exec biome ci .` passes)
+- [ ] N/A — This PR does not touch or affect user interfaces
 
 ## Quality Checklist
 
-- [ ] Tests pass (`cargo test` and/or `pnpm exec vitest run`)
+- [ ] Tests pass (`cargo test` and/or `pnpm --filter @dallay/rook-dashboard exec vitest run`)
 - [ ] Documentation is updated if this changes user-facing behavior
-- [ ] Linting passes (`cargo clippy --all -- -D warnings` and/or `biome ci .`)
+- [ ] Linting passes (`cargo clippy --all -- -D warnings` and/or `pnpm --filter @dallay/rook-dashboard exec biome ci .`)
 - [ ] `just ci-local` passes locally
 - [ ] Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/)
 
