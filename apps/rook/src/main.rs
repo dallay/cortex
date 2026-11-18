@@ -407,3 +407,99 @@ fn load_config_with_path(config_path: Option<PathBuf>) -> anyhow::Result<config:
     config::RookConfig::load(&config_path)
         .with_context(|| format!("failed to load config from {}", config_path.display()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Characterization test for the exact banner bytes.
+    ///
+    /// The rendered box is not rectangular: the border is 64 columns wide while
+    /// the content lines are 79 to 125 columns wide, because `left_pad` pads
+    /// both sides of the content instead of only the right one. The expected
+    /// string pins the current output so any layout change is deliberate.
+    #[test]
+    fn bootstrap_banner_renders_the_exact_current_layout() {
+        let banner = build_bootstrap_banner("tok-1234");
+        assert_eq!(
+            banner,
+            concat!(
+                "+--------------------------------------------------------------+\n",
+                "|                ROOK -- BOOTSTRAP MODE ACTIVE                 |\n",
+                "+--------------------------------------------------------------+\n",
+                "| Setup token: tok-1234                                                                                |\n",
+                "|                                                                                                                           |\n",
+                "| Paste it into the dashboard to complete setup.                              |\n",
+                "| To complete setup, open the dashboard at                                          |\n",
+                "| http://localhost:4747                                                                                |\n",
+                "| along with your desired admin password.                                            |\n",
+                "+--------------------------------------------------------------+"
+            )
+        );
+    }
+
+    #[test]
+    fn bootstrap_banner_preserves_the_sanitized_token_without_masking_it() {
+        let token = "A?B?C?D?E?F?G?H?I";
+        let banner = build_bootstrap_banner(token);
+        assert!(banner.contains("Setup token: A?B?C?D?E?F?G?H?I"));
+        assert!(!banner.contains('…'));
+    }
+
+    #[test]
+    fn bootstrap_banner_widens_to_fit_a_long_token() {
+        let token = "t".repeat(80);
+        let banner = build_bootstrap_banner(&token);
+        let border = banner.lines().next().expect("the banner has a border");
+        // The widest line is "Setup token: <token>", so the box grows with it.
+        let widest = "Setup token: ".len() + token.len();
+        assert_eq!(border.len(), widest + 2);
+        assert!(banner.contains(&format!("Setup token: {token}")));
+    }
+
+    #[test]
+    fn load_dotenv_reads_from_the_explicit_config_directory() {
+        let _guard = ENV_LOCK.lock().expect("environment lock");
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let config_path = directory.path().join("config.toml");
+        let dotenv_path = directory.path().join(".env");
+        let variable = format!("ROOK_DOTENV_TEST_{}", std::process::id());
+        std::env::remove_var(&variable);
+        std::fs::write(
+            &dotenv_path,
+            format!("{variable}=loaded-from-explicit-config\n"),
+        )
+        .expect("write controlled dotenv file");
+
+        load_dotenv(Some(&config_path));
+
+        assert_eq!(
+            std::env::var(&variable).as_deref(),
+            Ok("loaded-from-explicit-config")
+        );
+        std::env::remove_var(&variable);
+    }
+
+    #[test]
+    fn load_dotenv_keeps_valid_entries_when_a_line_is_malformed() {
+        let _guard = ENV_LOCK.lock().expect("environment lock");
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let config_path = directory.path().join("config.toml");
+        let dotenv_path = directory.path().join(".env");
+        let variable = format!("ROOK_DOTENV_INVALID_TEST_{}", std::process::id());
+        std::env::remove_var(&variable);
+        std::fs::write(
+            &dotenv_path,
+            format!("{variable}=loaded\nthis line is invalid dotenv syntax\n"),
+        )
+        .expect("write controlled dotenv file");
+
+        load_dotenv(Some(&config_path));
+
+        assert_eq!(std::env::var(&variable).as_deref(), Ok("loaded"));
+        std::env::remove_var(&variable);
+    }
+}

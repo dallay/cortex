@@ -277,6 +277,114 @@ mod tests {
             Err(MemoryError::DimensionMismatch(_))
         ));
     }
+
+    #[test]
+    fn hash_embedder_reports_configured_dimensions() {
+        assert_eq!(HashEmbedder::new(12).dimensions(), 12);
+    }
+
+    #[test]
+    fn debug_and_accessors_expose_configuration_without_credentials() {
+        let embedder = OpenAiEmbedder::new(
+            "https://example.invalid/v1/",
+            Some("secret".to_owned()),
+            "embedding-model",
+            3,
+        )
+        .expect("client configuration should be valid");
+        let debug = format!("{embedder:?}");
+        assert!(debug.contains("https://example.invalid/v1"));
+        assert!(debug.contains("embedding-model"));
+        assert!(debug.contains("3"));
+        assert!(!debug.contains("secret"));
+        assert_eq!(embedder.base_url_as_str(), "https://example.invalid/v1");
+        assert_eq!(embedder.model_as_str(), "embedding-model");
+    }
+
+    #[test]
+    fn with_identity_accepts_matching_dimensions_and_rejects_mismatch() {
+        let embedder = OpenAiEmbedder::new("https://example.invalid", None, "m", 3)
+            .expect("client configuration should be valid");
+        let identity = EmbeddingIdentity::new("model@revision", 3)
+            .expect("identity dimensions should be positive");
+        let embedder = embedder
+            .with_identity(identity)
+            .expect("matching dimensions should be accepted");
+        assert_eq!(
+            embedder.identity().expect("identity should be set").key(),
+            "model@revision"
+        );
+
+        let embedder = OpenAiEmbedder::new("https://example.invalid", None, "m", 3)
+            .expect("client configuration should be valid");
+        let identity = EmbeddingIdentity::new("model@revision", 2)
+            .expect("identity dimensions should be positive");
+        assert!(matches!(
+            embedder.with_identity(identity),
+            Err(MemoryError::InvalidInput(message)) if message == "embedding identity dimensions mismatch"
+        ));
+    }
+
+    #[tokio::test]
+    async fn invalid_request_url_is_mapped_to_provider_error() {
+        let embedder = OpenAiEmbedder::new("not a url", None, "m", 2)
+            .expect("client construction does not parse the endpoint URL");
+        let result = embedder.embed("text").await;
+        assert!(
+            matches!(result, Err(MemoryError::Provider(message)) if message.contains("embedding request failed"))
+        );
+    }
+
+    #[tokio::test]
+    async fn http_errors_are_mapped_to_provider_errors() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+        let embedder =
+            OpenAiEmbedder::new(server.uri(), None, "m", 2).expect("mock URL should be valid");
+        let result = embedder.embed("text").await;
+        assert!(matches!(
+            result,
+            Err(MemoryError::Provider(message))
+                if message.contains("embedding provider returned HTTP 503")
+        ));
+    }
+
+    #[tokio::test]
+    async fn malformed_response_is_mapped_to_provider_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&server)
+            .await;
+        let embedder =
+            OpenAiEmbedder::new(server.uri(), None, "m", 2).expect("mock URL should be valid");
+        let result = embedder.embed("text").await;
+        assert!(
+            matches!(result, Err(MemoryError::Provider(message)) if message.contains("invalid embedding response"))
+        );
+    }
+
+    #[tokio::test]
+    async fn vector_count_mismatch_is_a_provider_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": [{"index": 0, "embedding": [1.0, 0.0]}]
+            })))
+            .mount(&server)
+            .await;
+        let embedder =
+            OpenAiEmbedder::new(server.uri(), None, "m", 2).expect("mock URL should be valid");
+        let result = embedder
+            .embed_batch(&["first".to_owned(), "second".to_owned()])
+            .await;
+        assert!(
+            matches!(result, Err(MemoryError::Provider(message)) if message == "embedding provider returned 1 vectors for 2 inputs")
+        );
+    }
 }
 
 #[cfg(test)]
