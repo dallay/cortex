@@ -2320,8 +2320,14 @@ impl LongTermStore for RecordingLongTerm {
             .find(|entity| entity.id == id)
             .cloned())
     }
-    async fn get_entity_by_name(&self, _: &str) -> MemoryResult<Option<Entity>> {
-        unreachable!()
+    async fn get_entity_by_name(&self, name: &str) -> MemoryResult<Option<Entity>> {
+        Ok(self
+            .entities
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|entity| entity.name == name)
+            .cloned())
     }
     async fn search_entities(
         &self,
@@ -2342,11 +2348,24 @@ impl LongTermStore for RecordingLongTerm {
             .cloned()
             .collect())
     }
-    async fn update_entity(&self, _: Uuid, _: &EntityUpdate) -> MemoryResult<Option<Entity>> {
-        unreachable!()
+    async fn update_entity(&self, id: Uuid, update: &EntityUpdate) -> MemoryResult<Option<Entity>> {
+        let mut entities = self.entities.lock().unwrap();
+        if let Some(entity) = entities.iter_mut().find(|e| e.id == id) {
+            if let Some(ref name) = update.name {
+                entity.name = name.clone();
+            }
+            if let Some(ref desc) = update.description {
+                entity.description = Some(desc.clone());
+            }
+            return Ok(Some(entity.clone()));
+        }
+        Ok(None)
     }
-    async fn delete_entity(&self, _: Uuid) -> MemoryResult<bool> {
-        unreachable!()
+    async fn delete_entity(&self, id: Uuid) -> MemoryResult<bool> {
+        let mut entities = self.entities.lock().unwrap();
+        let len_before = entities.len();
+        entities.retain(|e| e.id != id);
+        Ok(entities.len() < len_before)
     }
     async fn related_entities(&self, _: Uuid, _: u8) -> MemoryResult<Vec<RelatedEntity>> {
         Ok(vec![])
@@ -2358,8 +2377,18 @@ impl LongTermStore for RecordingLongTerm {
         *self.relationship.lock().unwrap() = Some(relationship.clone());
         Ok(Some(relationship.clone()))
     }
-    async fn merge_entities(&self, _: Uuid, _: Uuid) -> MemoryResult<Option<(Entity, Entity)>> {
-        unreachable!()
+    async fn merge_entities(
+        &self,
+        source: Uuid,
+        target: Uuid,
+    ) -> MemoryResult<Option<(Entity, Entity)>> {
+        let entities = self.entities.lock().unwrap();
+        let source_ent = entities.iter().find(|e| e.id == source).cloned();
+        let target_ent = entities.iter().find(|e| e.id == target).cloned();
+        match (source_ent, target_ent) {
+            (Some(s), Some(t)) => Ok(Some((s, t))),
+            _ => Ok(None),
+        }
     }
     async fn link_same_as(
         &self,
@@ -2395,17 +2424,26 @@ impl LongTermStore for RecordingLongTerm {
         drop(mentions);
         Ok(true)
     }
-    async fn set_entity_feedback(&self, _: Uuid, _: f64, _: bool) -> MemoryResult<bool> {
-        unreachable!()
+    async fn set_entity_feedback(&self, id: Uuid, _: f64, _: bool) -> MemoryResult<bool> {
+        let entities = self.entities.lock().unwrap();
+        Ok(entities.iter().any(|e| e.id == id))
     }
     async fn link_message_to_entity(&self, _: Uuid, _: Uuid, _: f64) -> MemoryResult<bool> {
         unreachable!()
     }
-    async fn entity_mentions(&self, _: Uuid) -> MemoryResult<Option<Vec<EntityMention>>> {
-        unreachable!()
+    async fn entity_mentions(&self, id: Uuid) -> MemoryResult<Option<Vec<EntityMention>>> {
+        let entities = self.entities.lock().unwrap();
+        if entities.iter().any(|e| e.id == id) {
+            Ok(Some(vec![]))
+        } else {
+            Ok(None)
+        }
     }
     async fn entity_graph(&self, _: i64) -> MemoryResult<EntityGraph> {
-        unreachable!()
+        Ok(EntityGraph {
+            nodes: vec![],
+            edges: vec![],
+        })
     }
     async fn create_preference(&self, preference: &Preference) -> MemoryResult<Preference> {
         *self.preference.lock().unwrap() = Some(preference.clone());
@@ -3166,7 +3204,7 @@ impl ReasoningStore for CompletionStore {
         Ok(vec![])
     }
     async fn tool_stats(&self, _: Option<&str>) -> MemoryResult<Vec<ToolStats>> {
-        unreachable!()
+        Ok(vec![])
     }
     async fn search_traces(
         &self,
@@ -3175,7 +3213,7 @@ impl ReasoningStore for CompletionStore {
         _: f64,
         _: bool,
     ) -> MemoryResult<Vec<ScoredTrace>> {
-        unreachable!()
+        Ok(vec![])
     }
     async fn search_steps(
         &self,
@@ -3252,7 +3290,7 @@ impl muninn_core::ports::Embedder for CompletionEmbedder {
         1
     }
     async fn embed(&self, _: &str) -> MemoryResult<Vec<f64>> {
-        unreachable!()
+        Ok(vec![1.0])
     }
     async fn embed_batch(&self, texts: &[String]) -> MemoryResult<Vec<Vec<f64>>> {
         assert_eq!(texts, &["Action: safe action"]);
@@ -3760,4 +3798,278 @@ async fn t2_preserves_legacy_completion_and_list_defaults() {
     assert_eq!(query.order_by, muninn_core::ports::TraceOrder::StartedAt);
     assert!(!query.ascending);
     drop(calls);
+}
+
+#[tokio::test]
+async fn bridge_get_entity_found_and_missing() {
+    let store = Arc::new(RecordingLongTerm::default());
+    let entity_id = Uuid::new_v4();
+    store
+        .entities
+        .lock()
+        .unwrap()
+        .push(target_entity(entity_id));
+
+    // Found
+    let res = request(
+        state_with_long_term(store.clone()),
+        "get_entity",
+        &serde_json::json!({ "entity_id": entity_id }).to_string(),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["id"], entity_id.to_string());
+    assert!(body["relationships"].is_array());
+
+    // Missing
+    let missing_id = Uuid::new_v4();
+    let res = request(
+        state_with_long_term(store.clone()),
+        "get_entity",
+        &serde_json::json!({ "entity_id": missing_id }).to_string(),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn bridge_get_entity_by_name_and_list() {
+    let store = Arc::new(RecordingLongTerm::default());
+    let entity_id = Uuid::new_v4();
+    let mut e = target_entity(entity_id);
+    e.name = "Ada Lovelace".into();
+    e.entity_type = "PERSON".into();
+    store.entities.lock().unwrap().push(e);
+
+    // get_entity_by_name: found
+    let res = request(
+        state_with_long_term(store.clone()),
+        "get_entity_by_name",
+        r#"{"name":"Ada Lovelace"}"#,
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["name"], "Ada Lovelace");
+
+    // get_entity_by_name: not found -> 200 Null
+    let res = request(
+        state_with_long_term(store.clone()),
+        "get_entity_by_name",
+        r#"{"name":"Nonexistent"}"#,
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(body.is_null());
+
+    // get_related_entities
+    let res = request(
+        state_with_long_term(store.clone()),
+        "get_related_entities",
+        &serde_json::json!({ "entity_id": entity_id }).to_string(),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(body.is_array());
+
+    // list_entities with entity_type filter
+    let res = request(
+        state_with_long_term(store.clone()),
+        "list_entities",
+        r#"{"entity_type":"PERSON","limit":10}"#,
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body.as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn bridge_update_and_delete_entity() {
+    let store = Arc::new(RecordingLongTerm::default());
+    let entity_id = Uuid::new_v4();
+    store
+        .entities
+        .lock()
+        .unwrap()
+        .push(target_entity(entity_id));
+
+    // Update
+    let res = request(
+        state_with_long_term(store.clone()),
+        "update_entity",
+        &serde_json::json!({
+            "entity_id": entity_id,
+            "name": "Updated Name",
+            "description": "Updated Description"
+        })
+        .to_string(),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["name"], "Updated Name");
+    assert_eq!(body["description"], "Updated Description");
+
+    // Delete
+    let res = request(
+        state_with_long_term(store.clone()),
+        "delete_entity",
+        &serde_json::json!({ "entity_id": entity_id }).to_string(),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+
+    // Update nonexistent entity returns 404
+    let res = request(
+        state_with_long_term(store.clone()),
+        "update_entity",
+        &serde_json::json!({ "entity_id": entity_id, "name": "Now Missing" }).to_string(),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn bridge_entity_feedback_history_merge_and_graph() {
+    let store = Arc::new(RecordingLongTerm::default());
+    let e1 = Uuid::new_v4();
+    let e2 = Uuid::new_v4();
+    store.entities.lock().unwrap().push(target_entity(e1));
+    store.entities.lock().unwrap().push(target_entity(e2));
+
+    // set_entity_feedback
+    let res = request(
+        state_with_long_term(store.clone()),
+        "set_entity_feedback",
+        &serde_json::json!({
+            "entity_id": e1,
+            "user_score": 0.95,
+            "confirmed": true
+        })
+        .to_string(),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["id"], e1.to_string());
+    assert_eq!(body["updated"], true);
+
+    // get_entity_history
+    let res = request(
+        state_with_long_term(store.clone()),
+        "get_entity_history",
+        &serde_json::json!({ "entity_id": e1 }).to_string(),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // merge_entities
+    let res = request(
+        state_with_long_term(store.clone()),
+        "merge_entities",
+        &serde_json::json!({ "source_id": e1, "target_id": e2 }).to_string(),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["status"], "merged");
+
+    // get_entity_graph
+    let res = request(
+        state_with_long_term(store.clone()),
+        "get_entity_graph",
+        r#"{"limit":50}"#,
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(body["nodes"].is_array());
+    assert!(body["edges"].is_array());
+}
+
+#[tokio::test]
+async fn bridge_reasoning_get_trace_tool_stats_and_similar_traces() {
+    let store = Arc::new(CompletionStore::default());
+    let id = Uuid::new_v4();
+
+    // get_trace_with_steps: valid id
+    let (status, body) = completion_request(
+        "get_trace_with_steps",
+        serde_json::json!({ "trace_id": id }),
+        store.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["id"], id.to_string());
+
+    // get_trace_with_steps: invalid uuid returns null
+    let (status, body) = completion_request(
+        "get_trace_with_steps",
+        serde_json::json!({ "trace_id": "invalid" }),
+        store.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.is_null());
+
+    // get_tool_stats
+    let (status, body) = completion_request(
+        "get_tool_stats",
+        serde_json::json!({ "tool_name": "bash" }),
+        store.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.is_array());
+
+    // get_similar_traces
+    let (status, body) = completion_request(
+        "get_similar_traces",
+        serde_json::json!({ "task": "refactor code", "limit": 5, "threshold": 0.7 }),
+        store.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.is_array());
+
+    // find_similar_traces alias
+    let (status, body) = completion_request(
+        "find_similar_traces",
+        serde_json::json!({ "task": "refactor code" }),
+        store.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.is_array());
 }

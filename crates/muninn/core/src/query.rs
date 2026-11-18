@@ -110,6 +110,50 @@ pub trait CypherQuery: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::future::Future;
+    use std::sync::{Arc, Mutex};
+    use std::task::{Context, Poll, Wake, Waker};
+
+    struct NoopWaker;
+
+    // `Waker::noop` requires Rust 1.85; the workspace MSRV is 1.81.
+    #[allow(clippy::manual_noop_waker)]
+    impl Wake for NoopWaker {
+        fn wake(self: Arc<Self>) {}
+    }
+
+    fn block_on_ready<F: Future>(future: F) -> F::Output {
+        let waker = Waker::from(Arc::new(NoopWaker));
+        let mut context = Context::from_waker(&waker);
+        let mut future = Box::pin(future);
+        match future.as_mut().poll(&mut context) {
+            Poll::Ready(output) => output,
+            Poll::Pending => panic!("test future did not complete on its first poll"),
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingQuery {
+        calls: Mutex<Vec<(String, Map<String, Value>)>>,
+    }
+
+    #[async_trait]
+    impl CypherQuery for RecordingQuery {
+        async fn run_read_only(
+            &self,
+            query: &str,
+            params: &Map<String, Value>,
+        ) -> MemoryResult<CypherResult> {
+            self.calls
+                .lock()
+                .expect("query call lock is not poisoned")
+                .push((query.to_owned(), params.clone()));
+            Ok(CypherResult {
+                columns: vec!["value".to_owned()],
+                rows: vec![vec![Value::from(7)]],
+            })
+        }
+    }
 
     #[test]
     fn accepts_reads_and_read_procedures() {
@@ -152,5 +196,31 @@ mod tests {
         ] {
             assert!(!is_read_only_query(query), "{query}");
         }
+    }
+
+    #[test]
+    fn cypher_default_rejects_writes_and_forwards_read_queries_and_params() {
+        let query = RecordingQuery::default();
+        let params = Map::from_iter([("value".to_owned(), Value::from(7))]);
+        let error = block_on_ready(query.cypher("CREATE (n)", &params))
+            .expect_err("write query is rejected");
+        assert_eq!(
+            error.to_string(),
+            "invalid input: Only read-only Cypher queries are allowed. Detected write keywords (CREATE/MERGE/DELETE/SET/...) or a procedure outside the read-only allowlist. Use the appropriate memory-layer method for writes."
+        );
+        assert!(query
+            .calls
+            .lock()
+            .expect("query call lock is not poisoned")
+            .is_empty());
+
+        let cypher = "MATCH (n) WHERE n.value = $value RETURN n";
+        let result = block_on_ready(query.cypher(cypher, &params)).expect("read query accepted");
+        assert_eq!(result.columns, ["value"]);
+        assert_eq!(result.rows, [vec![Value::from(7)]]);
+        assert_eq!(
+            *query.calls.lock().expect("query call lock is not poisoned"),
+            vec![(cypher.to_owned(), params)]
+        );
     }
 }
