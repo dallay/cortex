@@ -31,7 +31,7 @@ These are minimum expectations. Going beyond them is encouraged.
 
 ## Reporting accessibility issues
 
-Report accessibility barriers through [GitHub Issues](https://github.com/dallay/cortex/issues/new). Use the same issue tracker as bugs and features — accessibility barriers are bugs.
+Report accessibility barriers using the [Accessibility Issue form](https://github.com/dallay/cortex/issues/new?template=accessibility.yml). Use the same issue tracker as bugs and features — accessibility barriers are bugs.
 
 When reporting, include as much of the following context as is practical:
 
@@ -41,7 +41,7 @@ When reporting, include as much of the following context as is practical:
 • Your environment — browser, operating system, and assistive technology (if applicable).
 • Screenshots or recordings — optional and helpful, but never required.
 
-You do not need to disclose a disability to report an accessibility issue. If you need help using the product, you can ask in the issue or in discussions.
+You do not need to disclose a disability to report an accessibility issue. If you need help using the product, you can ask in the issue.
 
 ### Severity
 

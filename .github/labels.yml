@@ -97,6 +97,9 @@
 - name: stale
   color: "fef3c7"
   description: "Stale item pending closure"
+- name: accessibility
+  color: "0e7490"
+  description: "Accessibility barriers and inclusive user experience"
 
 # Triage
 - name: triage/needs-classification
