@@ -1,14 +1,48 @@
 name: Accessibility Issue
 description: Report an accessibility barrier or improvement opportunity
 title: "[Accessibility] "
-labels: ["accessibility"]
+labels: ["accessibility", "type/bug"]
 body:
   - type: markdown
     attributes:
       value: |
         Thank you for helping us make Cortex more accessible! This template helps us understand and address accessibility barriers.
 
-        If you're unsure whether this is an accessibility issue, you can also [search existing issues](https://github.com/dallay/cortex/issues) or [open a discussion](https://github.com/dallay/cortex/discussions).
+        Before reporting, [search existing issues](https://github.com/dallay/cortex/issues) to avoid duplicates. The maintainers will classify severity; you do not need to.
+
+  - type: dropdown
+    id: product
+    attributes:
+      label: Product
+      description: Which product is affected? Exactly one.
+      options:
+        - Rook
+        - Huginn
+        - Shared
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Technical Area
+      description: Primary technical area.
+      options:
+        - auth
+        - ci
+        - core
+        - dashboard
+        - dependencies
+        - docs
+        - observability
+        - providers
+        - release
+        - runtime
+        - storage
+        - testing
+        - transport
+    validations:
+      required: true
 
   - type: textarea
     id: summary
@@ -66,14 +100,14 @@ body:
     id: severity
     attributes:
       label: Severity
-      description: How severely does this barrier affect users?
+      description: Optional estimate. Maintainers will triage severity; you do not need to assess it.
       options:
         - "Critical — Content or function is completely inaccessible; no workaround"
         - "High — Content or function is difficult to access; cumbersome workaround"
         - "Medium — Accessibility feature is missing; task is still completable"
         - "Low — Minor improvement opportunity; no significant barrier"
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: environment
