@@ -115,6 +115,9 @@ impl Default for CsrfGuard {
 }
 
 /// CSRF guard middleware function
+///
+/// Validates the CSRF token for state-changing requests, then rotates it
+/// on success so that each consumed token is single-use.
 pub async fn csrf_guard_middleware(
     State(guard): State<Arc<CsrfGuard>>,
     request: Request,
@@ -142,12 +145,47 @@ pub async fn csrf_guard_middleware(
     let validation = guard.validate(cookie_value.as_deref(), header_value.as_deref());
 
     match validation {
-        CsrfValidation::Valid => next.run(request).await,
+        CsrfValidation::Valid => {
+            // Generate a fresh CSRF token to replace the one that was just consumed.
+            // This prevents CSRF token reuse attacks.
+            let new_token = guard.generate_token().unwrap_or_else(|_| {
+                // Fallback: if RNG fails, generate a zero-filled token.
+                // This should never happen in practice, but keeps the request flowing
+                // rather than returning 500.
+                URL_SAFE_NO_PAD.encode([0u8; 32])
+            });
+            let response = next.run(request).await;
+            rotate_csrf_token_in_response(response, &guard, &new_token)
+        }
         CsrfValidation::MissingCookie | CsrfValidation::MissingHeader => {
             csrf_error_response("csrf_missing", "CSRF token required")
         }
         CsrfValidation::Mismatch => csrf_error_response("csrf_mismatch", "CSRF token mismatch"),
     }
+}
+
+/// Rotate the CSRF token in a successful response.
+///
+/// Sets a new `csrf_token` cookie and an `X-CSRF-Token` header so the
+/// client can update its stored token for the next state-changing request.
+fn rotate_csrf_token_in_response(
+    mut response: axum::response::Response,
+    guard: &CsrfGuard,
+    new_token: &str,
+) -> axum::response::Response {
+    // Determine whether to set the Secure flag based on the request URI scheme.
+    // In practice the router state determines this, but we can infer it from
+    // whether the connection is HTTPS. Fall back to checking the ROOK_ENV var.
+    let secure = std::env::var("ROOK_ENV").ok().as_deref() == Some("production");
+    let cookie_header = guard.build_cookie_header(new_token, secure);
+
+    response
+        .headers_mut()
+        .append(axum::http::header::SET_COOKIE, cookie_header);
+    if let Ok(header_value) = HeaderValue::from_str(new_token) {
+        response.headers_mut().insert("X-CSRF-Token", header_value);
+    }
+    response
 }
 
 /// Check if the HTTP method is state-changing

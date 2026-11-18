@@ -540,6 +540,14 @@ fn config_to_domain(config: &ConnectionConfigDto) -> Result<ConnectionConfig, St
         Some("anthropic") => Some(rook_core::ApiFormat::Anthropic),
         Some(_) => return Err("invalid apiFormat".to_string()),
     };
+
+    // Validate base_url if provided — defense in depth against SSRF.
+    // EndpointPolicy already validates at request time, but rejecting invalid
+    // URLs at configuration time prevents persisting dangerous configurations.
+    if let Some(ref base_url) = config.base_url {
+        validate_base_url(base_url)?;
+    }
+
     Ok(ConnectionConfig {
         max_concurrent: config.max_concurrent,
         quota_window_thresholds: rook_core::QuotaWindowThresholds {
@@ -551,6 +559,93 @@ fn config_to_domain(config: &ConnectionConfigDto) -> Result<ConnectionConfig, St
         supported_models: config.supported_models.iter().map(ModelId::new).collect(),
         api_format,
     })
+}
+
+/// Validate a provider base_url to prevent SSRF attacks.
+///
+/// Rejects URLs with non-HTTPS schemes, loopback hosts, and private network hosts.
+/// This is defense in depth: EndpointPolicy already validates at request time.
+fn validate_base_url(base_url: &str) -> Result<(), String> {
+    // Extract scheme
+    let scheme_end = base_url
+        .find(':')
+        .ok_or_else(|| "base_url must contain a scheme".to_string())?;
+    let scheme = &base_url[..scheme_end].to_lowercase();
+
+    // Only allow HTTPS schemes
+    if scheme != "https" {
+        return Err(format!("base_url scheme must be https, got: {scheme}"));
+    }
+
+    // Extract host from the authority section (after //)
+    let after_scheme = &base_url[scheme_end + 1..];
+    let authority_start = after_scheme
+        .find("//")
+        .ok_or_else(|| "base_url must contain a host".to_string())?
+        + 2;
+    let authority = &after_scheme[authority_start..];
+
+    // Host ends at the first / or : or end of string
+    let host_end = authority
+        .find('/')
+        .or_else(|| authority.find(':'))
+        .unwrap_or(authority.len());
+    let host = &authority[..host_end];
+
+    if host.is_empty() {
+        return Err("base_url must contain a valid host".to_string());
+    }
+
+    // Check for loopback hosts
+    let host_lower = host.to_lowercase();
+    if is_loopback_host(&host_lower) {
+        return Err(format!(
+            "base_url host must not be a loopback address: {host}"
+        ));
+    }
+
+    // Check for private network hosts
+    if is_private_host(&host_lower) {
+        return Err(format!(
+            "base_url host must not be a private network address: {host}"
+        ));
+    }
+
+    Ok(())
+}
+
+/// Check if a host is a loopback address
+fn is_loopback_host(host: &str) -> bool {
+    matches!(
+        host,
+        "localhost" | "127.0.0.1" | "::1" | "0.0.0.0" | "0:0:0:0:0:0:0:1" | "0:0:0:0:0:0:0:0"
+    ) || host.starts_with("127.")
+}
+
+/// Check if a host is a private network address
+fn is_private_host(host: &str) -> bool {
+    // 10.0.0.0/8
+    if host.starts_with("10.") {
+        return true;
+    }
+    // 192.168.0.0/16
+    if host.starts_with("192.168.") {
+        return true;
+    }
+    // 172.16.0.0/12 (172.16.x.x - 172.31.x.x)
+    if host.starts_with("172.") {
+        if let Some(rest) = host.strip_prefix("172.") {
+            if let Some(dot_pos) = rest.find('.') {
+                if let Ok(second_octet) = rest[..dot_pos].parse::<u8>() {
+                    if (16..=31).contains(&second_octet) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    // Link-local 169.254.0.0/16
+    host.starts_with("169.254.")
 }
 
 fn parse_auth_type(value: &str) -> Result<AuthType, String> {

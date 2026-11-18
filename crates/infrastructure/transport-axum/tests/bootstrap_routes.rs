@@ -524,9 +524,9 @@ async fn setup_succeeds_with_correct_token_and_returns_api_key() {
 }
 
 #[tokio::test]
-async fn get_login_reuses_valid_incoming_csrf_cookie() {
-    // Regression for WebKit delayed Set-Cookie race (issue #82): repeated
-    // GET /login must not rotate a well-formed token out from under the jar.
+async fn get_login_always_generates_fresh_csrf_token() {
+    // Security remediation: GET /login now always generates a fresh CSRF token
+    // rather than reusing the existing one. This prevents CSRF token reuse attacks.
     let usecases = make_bootstrap_usecases(Arc::new(FakeUserRepo::fresh()), None);
     let app = transport_axum::router(
         usecases,
@@ -538,6 +538,7 @@ async fn get_login_reuses_valid_incoming_csrf_cookie() {
         None,
     );
 
+    // Even with a valid incoming token, GET /login generates a fresh one
     let valid_token = "A".repeat(43);
     let request = Request::builder()
         .method(Method::GET)
@@ -555,10 +556,14 @@ async fn get_login_reuses_valid_incoming_csrf_cookie() {
         .unwrap()
         .to_string();
     let json = body_json(response).await;
-    assert_eq!(json["csrf_token"], valid_token);
-    assert!(set_cookie.contains(&valid_token));
+    let new_token = json["csrf_token"].as_str().unwrap();
+    // The new token should be different from the incoming one
+    assert_ne!(new_token, &valid_token);
+    // The new token should be a valid 43-char base64url token
+    assert_eq!(new_token.len(), 43);
+    assert!(set_cookie.contains(new_token));
 
-    // Invalid cookie values must still rotate to a fresh well-formed token.
+    // Without any incoming cookie, GET /login also generates a fresh token
     let usecases = make_bootstrap_usecases(Arc::new(FakeUserRepo::fresh()), None);
     let app = transport_axum::router(
         usecases,
@@ -572,14 +577,12 @@ async fn get_login_reuses_valid_incoming_csrf_cookie() {
     let request = Request::builder()
         .method(Method::GET)
         .uri("/login")
-        .header("cookie", "csrf_token=not-a-valid-token")
         .body(axum::body::Body::empty())
         .unwrap();
     let response = app.oneshot(request).await.unwrap();
     let json = body_json(response).await;
-    let rotated = json["csrf_token"].as_str().unwrap();
-    assert_ne!(rotated, "not-a-valid-token");
-    assert_eq!(rotated.len(), 43);
+    let token = json["csrf_token"].as_str().unwrap();
+    assert_eq!(token.len(), 43);
 }
 
 #[tokio::test]

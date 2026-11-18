@@ -129,7 +129,7 @@ async fn public_login_logout_and_csrf_handlers_set_secure_cookies_in_production(
         .iter()
         .any(|cookie| cookie.starts_with("csrf_token=") && cookie.contains("; Secure")));
 
-    let login_response = get_login_handler(State(usecases.clone()), HeaderMap::new())
+    let login_response = get_login_handler(State(usecases.clone()))
         .await
         .into_response();
     let csrf_cookie = login_response
