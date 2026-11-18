@@ -479,4 +479,111 @@ mod tests {
     fn is_opik_available_false() {
         assert!(!is_opik_available());
     }
+
+    #[test]
+    fn span_value_from_owned_string() {
+        let v: SpanValue = String::from("hello").into();
+        assert_eq!(v, SpanValue::String("hello".to_owned()));
+    }
+
+    #[test]
+    fn span_value_from_float() {
+        let v: SpanValue = 1.5_f64.into();
+        assert_eq!(v, SpanValue::Float(1.5));
+    }
+
+    #[test]
+    fn span_value_from_bool() {
+        let v: SpanValue = true.into();
+        assert_eq!(v, SpanValue::Boolean(true));
+    }
+
+    #[test]
+    fn span_value_from_string_list() {
+        let v: SpanValue = SpanValue::StringList(vec!["a".to_owned(), "b".to_owned()]);
+        assert_eq!(
+            v,
+            SpanValue::StringList(vec!["a".to_owned(), "b".to_owned()])
+        );
+    }
+
+    #[test]
+    fn noop_tracer_start_span_with_attrs() {
+        let tracer = NoOpTracer::new("test-service");
+        let mut attributes = HashMap::new();
+        attributes.insert("key".to_owned(), SpanValue::String("value".to_owned()));
+        attributes.insert("count".to_owned(), SpanValue::Integer(7));
+
+        let span = tracer.start_span_with_attrs("operation", attributes);
+        span.end();
+
+        let spans = tracer.collected_spans();
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].name, "operation");
+        assert_eq!(
+            spans[0].attributes.get("key"),
+            Some(&SpanValue::String("value".to_owned()))
+        );
+        assert_eq!(
+            spans[0].attributes.get("count"),
+            Some(&SpanValue::Integer(7))
+        );
+        assert_eq!(spans[0].parent_id, None);
+    }
+
+    #[test]
+    fn noop_tracer_reports_its_service_name() {
+        let tracer = NoOpTracer::new("test-service");
+        assert_eq!(tracer.service_name(), "test-service");
+        assert_eq!(tracer.provider(), TracingProvider::None);
+    }
+
+    #[test]
+    fn noop_tracer_default_service_name_is_muninn() {
+        let tracer = NoOpTracer::default();
+        assert_eq!(tracer.service_name(), "muninn");
+    }
+
+    #[test]
+    fn set_global_tracer_replaces_the_default_tracer() {
+        set_global_tracer(Arc::new(NoOpTracer::new("global-service")));
+        let tracer = get_tracer();
+        assert_eq!(tracer.service_name(), "global-service");
+        // The global tracer keeps reporting the no-op provider.
+        assert_eq!(tracer.provider(), TracingProvider::None);
+    }
+
+    #[test]
+    fn init_tracing_subscriber_installs_a_global_subscriber() {
+        init_tracing_subscriber(Some("muninn=debug"))
+            .expect("the global tracing subscriber should install");
+    }
+
+    #[test]
+    fn noop_span_end_keeps_an_explicit_status() {
+        let span = NoOpSpan::new("test", None);
+        span.set_status(SpanStatus::Error, Some("boom"));
+        span.end();
+
+        let rec = span.record();
+        assert_eq!(rec.status, SpanStatus::Error);
+        assert_eq!(rec.status_description, Some("boom".to_owned()));
+        assert_ne!(rec.end_time, 0);
+    }
+
+    #[test]
+    fn noop_span_ignores_updates_when_the_record_lock_is_poisoned() {
+        let span = NoOpSpan::new("test", None);
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = span.record.lock().expect("the lock is not poisoned yet");
+            panic!("poison the record lock");
+        }));
+        assert!(poisoned.is_err(), "the panic must poison the record lock");
+
+        // A poisoned lock must not panic on the mutating span API.
+        span.set_attribute("key", SpanValue::Integer(1));
+        span.set_status(SpanStatus::Error, None);
+        span.record_exception("Error", "boom");
+        span.end();
+    }
 }

@@ -314,4 +314,47 @@ mod tests {
         let result = embedder.embed("test").await;
         assert!(matches!(result, Err(MemoryError::DimensionMismatch(_))));
     }
+
+    #[test]
+    fn ollama_chat_constructors_and_debug_use_expected_configuration() {
+        let default_chat = OllamaChat::new().expect("default client should be valid");
+        assert_eq!(default_chat.inner().base_url_as_str(), DEFAULT_BASE_URL);
+        assert_eq!(default_chat.inner().model_as_str(), DEFAULT_CHAT_MODEL);
+
+        let custom_chat =
+            OllamaChat::with_model("qwen").expect("custom model client should be valid");
+        assert_eq!(custom_chat.inner().model_as_str(), "qwen");
+        let debug = format!("{custom_chat:?}");
+        assert!(debug.contains(DEFAULT_BASE_URL));
+        assert!(debug.contains("qwen"));
+        assert!(!debug.contains("ollama"));
+    }
+
+    #[test]
+    fn ollama_embedder_constructors_and_debug_use_expected_configuration() {
+        let default_embedder = OllamaEmbedder::new().expect("default client should be valid");
+        assert_eq!(default_embedder.inner().base_url_as_str(), DEFAULT_BASE_URL);
+        assert_eq!(default_embedder.inner().model_as_str(), DEFAULT_EMBED_MODEL);
+        assert_eq!(default_embedder.dimensions(), DEFAULT_EMBED_DIMENSIONS);
+
+        let custom_embedder = OllamaEmbedder::with_model("custom-embed", 384)
+            .expect("custom model client should be valid");
+        assert_eq!(custom_embedder.inner().model_as_str(), "custom-embed");
+        assert_eq!(custom_embedder.dimensions(), 384);
+        let debug = format!("{custom_embedder:?}");
+        assert!(debug.contains(DEFAULT_BASE_URL));
+        assert!(debug.contains("custom-embed"));
+        assert!(debug.contains("384"));
+        assert!(!debug.contains("ollama"));
+    }
+
+    #[test]
+    fn ollama_embedder_requires_an_explicit_identity() {
+        let embedder = OllamaEmbedder::with_model("custom-embed", 384)
+            .expect("custom model client should be valid");
+        assert!(matches!(
+            embedder.identity(),
+            Err(MemoryError::InvalidInput(message)) if message == "remote embedding identity is required"
+        ));
+    }
 }
