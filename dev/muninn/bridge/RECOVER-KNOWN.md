@@ -32,9 +32,24 @@ a 64 KiB metadata allowance, no more than 128 MiB. Available filesystem space is
 also checked, but not reserved. This is neither a physical allocation quota nor
 an RSS bound; verification can hold more than one artifact-sized memory buffer.
 
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:879e4bdcd30b3bf6687bf16ca93435600f31034898a6d2536705ecfab3bec893 -->
+
 An exclusive `.muninn-recovery-once` marker admits one cooperating recovery. It
 persists on every failure. Sync errors can report `OutcomeUnknown`; no marker is
 deleted and no automatic retry or third attempt follows.
+
+A failure to reopen the published destination (`parent.open_subdir(target)`)
+after the rename also propagates `OutcomeUnknown` through `RecoveryRun::publish`.
+The destination may already be installed, and the recovery marker has already
+been committed. Stop and have an operator inspect the original root, destination
+and receipt, verifying the complete bundle against the pinned manifest before
+accepting it for use. Preserve the marker, old data and any new stage or published
+directory for explicit manual disposition. Another `recover-known` run is blocked
+by the marker; no automatic continuation or supported retry is provided.
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 ## Copy and acquisition
 

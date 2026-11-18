@@ -88,8 +88,8 @@ impl ExclusiveStage {
             ArtifactDir::from_directory(self.parent.try_clone().map_err(|_| FsError::Io)?)?;
         {
             // The identity check borrows the named entry, so its descriptor closes
-            // here. A volume without VOL_CAP_INT_RENAME_OPENFAIL refuses to rename a
-            // directory that is itself open, which surfaces as EACCES.
+            // here. When VOL_CAP_INT_RENAME_OPENFAIL is set, renaming an open
+            // object may fail, which can surface as EACCES.
             let named = parent.open_subdir(&self.source_name)?;
             let owned = self
                 .directory
@@ -294,10 +294,17 @@ mod tests {
         let metadata =
             std::fs::metadata(root.path().join(&stage.source_name)).expect("stage metadata");
         let (device, inode) = (metadata.dev(), metadata.ino());
+        assert_eq!(
+            crate::artifact_fs::diagnostics::descriptor_open_for(device, inode),
+            Some(true),
+            "the scan must detect the known-live stage descriptor"
+        );
         let open_during_rename = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let observed = std::sync::Arc::clone(&open_during_rename);
         let _guard = crate::artifact_fs::diagnostics::set_pre_rename_probe(move || {
-            if crate::artifact_fs::diagnostics::descriptor_open_for(device, inode) {
+            if crate::artifact_fs::diagnostics::descriptor_open_for(device, inode)
+                .expect("conclusive descriptor scan before rename")
+            {
                 observed.store(true, std::sync::atomic::Ordering::SeqCst);
             }
         });
@@ -306,7 +313,7 @@ mod tests {
             .expect("publication");
         assert!(
             !open_during_rename.load(std::sync::atomic::Ordering::SeqCst),
-            "a volume without VOL_CAP_INT_RENAME_OPENFAIL refuses to rename an open directory"
+            "a descriptor to the staged directory was still open before the rename"
         );
     }
 
