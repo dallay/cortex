@@ -100,7 +100,7 @@ impl CsrfGuard {
             return CsrfValidation::Mismatch;
         };
 
-        if cookie_decoded.len() != 32 || cookie_decoded.len() != header_decoded.len() {
+        if cookie_decoded.len() != 32 || header_decoded.len() != 32 {
             return CsrfValidation::Mismatch;
         }
 
@@ -141,8 +141,17 @@ impl CsrfGuard {
 
 // Initial issuance in auth handlers and middleware rotation share the same
 // process-local token registry, including across cloned router guards.
-fn issued_tokens() -> Arc<Mutex<HashMap<Vec<u8>, Instant>>> {
-    static TOKENS: OnceLock<Arc<Mutex<HashMap<Vec<u8>, Instant>>>> = OnceLock::new();
+//
+// Note: This store is process-local. In multi-instance deployments (e.g., behind
+// a load balancer), replay prevention is limited to requests hitting the same
+// instance. An unknown token on a different instance will be rejected (safe),
+// but a consumed token could theoretically be replayed on another instance
+// before the store is updated. For cross-instance replay prevention, a shared
+// store (e.g., Redis) would be needed.
+type TokenRegistry = Arc<Mutex<HashMap<Vec<u8>, Instant>>>;
+
+fn issued_tokens() -> TokenRegistry {
+    static TOKENS: OnceLock<TokenRegistry> = OnceLock::new();
     TOKENS
         .get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
         .clone()
@@ -548,5 +557,4 @@ mod tests {
         assert!(!is_state_changing_method(&Method::HEAD));
         assert!(!is_state_changing_method(&Method::OPTIONS));
     }
-
 }

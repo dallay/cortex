@@ -75,6 +75,7 @@ pub async fn login_handler(
                 cfg!(not(debug_assertions)),
             );
 
+            let csrf_header = HeaderValue::from_str(&csrf_token).expect("base64url token");
             let body = LoginResponse {
                 session_id,
                 expires_at,
@@ -82,7 +83,14 @@ pub async fn login_handler(
             };
 
             (
-                AppendHeaders([(SET_COOKIE, auth_cookie), (SET_COOKIE, csrf_cookie)]),
+                AppendHeaders([
+                    (SET_COOKIE, auth_cookie),
+                    (SET_COOKIE, csrf_cookie),
+                    (
+                        axum::http::HeaderName::from_static("x-csrf-token"),
+                        csrf_header,
+                    ),
+                ]),
                 Json(body),
             )
                 .into_response()
@@ -320,6 +328,6 @@ fn rook_environment() -> Option<String> {
     std::env::var("ROOK_ENV").ok()
 }
 
-fn is_secure(rook_env: Option<&str>, is_release: bool) -> bool {
+pub(crate) fn is_secure(rook_env: Option<&str>, is_release: bool) -> bool {
     is_release || rook_env == Some("production")
 }
