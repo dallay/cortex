@@ -488,6 +488,11 @@ see the [Huginn development guide](../development/huginn.md).
 
 ## 🔒 Security
 
+For security support and vulnerability reporting, consult the
+[Cortex Security Policy](../../SECURITY.md). Do not share exploit details in
+public issues or pull requests. The safeguards below are scoped to the
+documented tools and platforms; they are not an agent-wide sandbox guarantee.
+
 | Concern         | Mitigation                                                  |
 |-----------------|-------------------------------------------------------------|
 | API keys        | Use environment variables, not config files                 |

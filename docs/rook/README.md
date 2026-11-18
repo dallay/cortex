@@ -75,6 +75,7 @@ The Vue SPA dashboard is embedded in the Rook binary under `/dashboard/` and all
 
 ## Additional resources
 
+- [Cortex Security Policy](../../SECURITY.md) — Supported versions and vulnerability reporting
 - [Main README](../../README.md) — Cortex project overview
 - [Dashboard docs](../../apps/rook/dashboard/README.md) — Dashboard development
 - [Repository-wide development](../development.md) — Shared setup, test selection, and CI

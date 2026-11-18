@@ -959,4 +959,202 @@ mod tests {
         let node = map(&[("id", "Alice:PERSON".into()), ("name", "Alice".into())]);
         assert!(entity_from_value(&node).unwrap().is_none());
     }
+
+    #[test]
+    fn entity_nodes_decode_into_domain_entities() {
+        let id = Uuid::new_v4();
+        let node = map(&[
+            ("id", id.to_string().into()),
+            ("name", "Alice".into()),
+            ("canonical_name", "Alice Liddell".into()),
+            ("type", "PERSON".into()),
+            ("subtype", "AUTHOR".into()),
+            ("description", "A writer".into()),
+            (
+                "confidence",
+                BoltType::Float(neo4rs::BoltFloat { value: 0.75 }),
+            ),
+            (
+                "aliases",
+                BoltType::List(vec![BoltType::from("A. Liddell")].into()),
+            ),
+            (
+                "embedding",
+                BoltType::List(vec![BoltType::Float(neo4rs::BoltFloat { value: 0.5 })].into()),
+            ),
+            ("created_at", "2026-01-01T00:00:00Z".into()),
+            ("updated_at", "2026-02-01T00:00:00Z".into()),
+            ("metadata", r#"{"origin": "test"}"#.into()),
+        ]);
+        let entity = entity_from_value(&node)
+            .expect("entity node decodes")
+            .expect("an entity with a UUID id is kept");
+        assert_eq!(entity.id, id);
+        assert_eq!(entity.name, "Alice");
+        assert_eq!(entity.canonical_name.as_deref(), Some("Alice Liddell"));
+        assert_eq!(entity.entity_type, "PERSON");
+        assert_eq!(entity.subtype.as_deref(), Some("AUTHOR"));
+        assert_eq!(entity.description.as_deref(), Some("A writer"));
+        assert!((entity.confidence - 0.75).abs() < f64::EPSILON);
+        assert_eq!(entity.aliases, vec!["A. Liddell".to_owned()]);
+        let embedding = entity.embedding.expect("embedding list");
+        assert_eq!(embedding.len(), 1);
+        assert!((embedding[0] - 0.5).abs() < f64::EPSILON);
+        assert_eq!(entity.created_at.to_rfc3339(), "2026-01-01T00:00:00+00:00");
+        assert_eq!(
+            entity.updated_at.map(|time| time.to_rfc3339()),
+            Some("2026-02-01T00:00:00+00:00".to_owned())
+        );
+        assert_eq!(entity.metadata["origin"], json!("test"));
+    }
+
+    #[test]
+    fn entity_nodes_without_optional_properties_use_defaults() {
+        let id = Uuid::new_v4();
+        let node = map(&[("id", id.to_string().into())]);
+        let entity = entity_from_value(&node)
+            .expect("entity node decodes")
+            .expect("an entity with a UUID id is kept");
+        assert_eq!(entity.id, id);
+        assert_eq!(entity.name, "");
+        assert_eq!(entity.canonical_name, None);
+        assert_eq!(entity.entity_type, "");
+        assert_eq!(entity.subtype, None);
+        assert_eq!(entity.description, None);
+        assert!((entity.confidence - 1.0).abs() < f64::EPSILON);
+        assert!(entity.aliases.is_empty());
+        assert_eq!(entity.embedding, None);
+        assert_eq!(entity.updated_at, None);
+        assert!(entity.metadata.is_empty());
+    }
+
+    #[test]
+    fn entity_nodes_without_an_id_are_skipped_and_scalars_are_rejected() {
+        let without_id = map(&[("name", "Alice".into())]);
+        assert!(entity_from_value(&without_id)
+            .expect("a node without id is skipped, not rejected")
+            .is_none());
+        let scalar = BoltType::Integer(neo4rs::BoltInteger { value: 7 });
+        let error = entity_from_value(&scalar).expect_err("a scalar is not an entity");
+        assert!(
+            matches!(error, MemoryError::Storage(ref message) if message == "expected a node or map")
+        );
+    }
+
+    #[test]
+    fn tool_call_lists_skip_nulls_and_sort_by_creation_time() {
+        let step_id = Uuid::new_v4();
+        let (first, second) = (Uuid::new_v4(), Uuid::new_v4());
+        let call = |id: Uuid, timestamp: &str| {
+            map(&[
+                ("id", id.to_string().into()),
+                ("tool_name", "search".into()),
+                ("timestamp", timestamp.into()),
+            ])
+        };
+        let list = BoltType::List(
+            vec![
+                call(second, "2026-01-02T00:00:00Z"),
+                BoltType::Null(BoltNull),
+                call(first, "2026-01-01T00:00:00Z"),
+            ]
+            .into(),
+        );
+        let calls = tool_calls_from_list(&list, step_id).expect("tool calls");
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].id, first);
+        assert_eq!(calls[1].id, second);
+        assert!(calls.iter().all(|call| call.step_id == Some(step_id)));
+    }
+
+    #[test]
+    fn tool_call_lists_are_empty_for_non_lists_and_reject_malformed_entries() {
+        let step_id = Uuid::new_v4();
+        assert!(
+            tool_calls_from_list(&BoltType::String("not a list".into()), step_id)
+                .expect("a non-list holds no tool calls")
+                .is_empty()
+        );
+        assert!(tool_calls_from_list(&BoltType::Null(BoltNull), step_id)
+            .expect("a null holds no tool calls")
+            .is_empty());
+        let malformed = BoltType::List(vec![map(&[("tool_name", "search".into())])].into());
+        let error = tool_calls_from_list(&malformed, step_id).expect_err("a tool call needs an id");
+        assert!(
+            matches!(error, MemoryError::Storage(ref message) if message == "missing string property 'id'")
+        );
+    }
+
+    #[test]
+    fn optional_bolt_helpers_encode_absence_as_null() {
+        assert_eq!(opt_bool(Some(true)), BoltType::from(true));
+        assert_eq!(opt_bool(None), BoltType::Null(BoltNull));
+        assert_eq!(opt_i64(Some(7)), BoltType::from(7i64));
+        assert_eq!(opt_i64(None), BoltType::Null(BoltNull));
+        assert_eq!(
+            list(&BoltType::List(vec![BoltType::from(1i64)].into())).len(),
+            1
+        );
+        assert!(list(&BoltType::Null(BoltNull)).is_empty());
+    }
+
+    #[test]
+    fn metadata_parameters_are_null_when_empty() {
+        assert_eq!(metadata_param(&Metadata::new()), BoltType::Null(BoltNull));
+        let mut metadata = Metadata::new();
+        metadata.insert("origin".into(), json!("test"));
+        assert!(matches!(metadata_param(&metadata), BoltType::String(_)));
+    }
+
+    #[test]
+    fn tool_call_parameters_require_a_step_id() {
+        let call = ToolCall {
+            id: Uuid::new_v4(),
+            step_id: None,
+            tool_name: "search".into(),
+            arguments: Metadata::new(),
+            result: None,
+            status: ToolCallStatus::Success,
+            duration_ms: None,
+            error: None,
+            created_at: chrono::Utc::now(),
+        };
+        let error = tool_call_params(&call).expect_err("a tool call needs its step");
+        assert!(
+            matches!(error, MemoryError::InvalidInput(ref message) if message == "tool call has no step id")
+        );
+    }
+
+    #[test]
+    fn tool_call_parameters_bind_every_documented_field() {
+        let step_id = Uuid::new_v4();
+        let mut arguments = Metadata::new();
+        arguments.insert("q".into(), json!("rust"));
+        let call = ToolCall {
+            id: Uuid::new_v4(),
+            step_id: Some(step_id),
+            tool_name: "search".into(),
+            arguments,
+            result: Some(json!({"found": true})),
+            status: ToolCallStatus::Failure,
+            duration_ms: Some(12),
+            error: Some("boom".into()),
+            created_at: chrono::Utc::now(),
+        };
+        let params = tool_call_params(&call).expect("tool call parameters");
+        let bound = |name: &str| {
+            params
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value.clone())
+        };
+        assert_eq!(bound("step_id"), Some(BoltType::from(step_id.to_string())));
+        assert_eq!(bound("id"), Some(BoltType::from(call.id.to_string())));
+        assert_eq!(bound("tool_name"), Some(BoltType::from("search")));
+        assert_eq!(bound("arguments"), Some(BoltType::from(r#"{"q": "rust"}"#)));
+        assert_eq!(bound("result"), Some(BoltType::from(r#"{"found": true}"#)));
+        assert_eq!(bound("status"), Some(BoltType::from("failure")));
+        assert_eq!(bound("duration_ms"), Some(BoltType::from(12i64)));
+        assert_eq!(bound("error"), Some(BoltType::from("boom")));
+    }
 }

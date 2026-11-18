@@ -159,4 +159,64 @@ mod tests {
             .await;
         assert!(matches!(result, Err(MemoryError::Provider(_))));
     }
+
+    #[test]
+    fn debug_and_accessors_expose_configuration_without_credentials() {
+        let chat = OpenAiChat::new(
+            "https://example.invalid/v1/",
+            Some("secret".to_owned()),
+            "model",
+        )
+        .expect("client configuration should be valid");
+        let debug = format!("{chat:?}");
+        assert!(debug.contains("https://example.invalid/v1"));
+        assert!(debug.contains("model"));
+        assert!(!debug.contains("secret"));
+        assert_eq!(chat.base_url_as_str(), "https://example.invalid/v1");
+        assert_eq!(chat.model_as_str(), "model");
+    }
+
+    #[tokio::test]
+    async fn invalid_request_url_is_mapped_to_provider_error() {
+        let chat = OpenAiChat::new("not a url", None, "m")
+            .expect("client construction does not parse the endpoint URL");
+        let result = chat
+            .complete(&[ChatMessage::user("hi")], &CompletionOptions::default())
+            .await;
+        assert!(
+            matches!(result, Err(MemoryError::Provider(message)) if message.contains("LLM request failed"))
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_response_is_mapped_to_provider_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&server)
+            .await;
+        let chat = OpenAiChat::new(server.uri(), None, "m").expect("mock URL should be valid");
+        let result = chat
+            .complete(&[ChatMessage::user("hi")], &CompletionOptions::default())
+            .await;
+        assert!(
+            matches!(result, Err(MemoryError::Provider(message)) if message.contains("invalid LLM response"))
+        );
+    }
+
+    #[tokio::test]
+    async fn response_without_content_is_a_provider_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"choices": []})))
+            .mount(&server)
+            .await;
+        let chat = OpenAiChat::new(server.uri(), None, "m").expect("mock URL should be valid");
+        let result = chat
+            .complete(&[ChatMessage::user("hi")], &CompletionOptions::default())
+            .await;
+        assert!(
+            matches!(result, Err(MemoryError::Provider(message)) if message == "LLM response has no content")
+        );
+    }
 }

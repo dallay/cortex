@@ -530,6 +530,48 @@ mod tests {
         assert_eq!(stats.avg, 0.0);
     }
 
+    #[test]
+    fn histogram_tracks_min_and_max_under_concurrent_updates() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let hist = Arc::new(Histogram::new());
+        let ready = Arc::new(AtomicUsize::new(0));
+        let go = Arc::new(AtomicBool::new(false));
+        let threads = 8usize;
+        let steps = 100_000i64;
+        std::thread::scope(|scope| {
+            for _ in 0..threads {
+                let hist = Arc::clone(&hist);
+                let ready = Arc::clone(&ready);
+                let go = Arc::clone(&go);
+                scope.spawn(move || {
+                    // Spin until every worker runs so the workers race on the same
+                    // counters instead of running one after the other.
+                    ready.fetch_add(1, Ordering::SeqCst);
+                    while !go.load(Ordering::SeqCst) {
+                        std::hint::spin_loop();
+                    }
+                    for step in 0..steps {
+                        // Descending values make every worker race to lower the minimum.
+                        hist.record(10_000_000 - step * 10);
+                        // Ascending values make every worker race to raise the maximum.
+                        hist.record(20_000_000 + step * 10);
+                    }
+                });
+            }
+            while ready.load(Ordering::SeqCst) < threads {
+                std::hint::spin_loop();
+            }
+            go.store(true, Ordering::SeqCst);
+        });
+
+        let stats = hist.stats();
+        assert_eq!(stats.count, threads as i64 * steps * 2);
+        assert_eq!(stats.min, 10_000_000 - (steps - 1) * 10);
+        assert_eq!(stats.max, 20_000_000 + (steps - 1) * 10);
+    }
+
     #[tokio::test]
     async fn metrics_message_added() {
         let metrics = Metrics::new();
@@ -602,5 +644,186 @@ mod tests {
         };
         let json = serde_json::to_string(&point).unwrap();
         assert!(json.contains("test"));
+    }
+
+    #[tokio::test]
+    async fn metrics_default_matches_new() {
+        let metrics = Metrics::default();
+        assert_eq!(metrics.snapshot().messages_added, 0);
+        assert_eq!(metrics.snapshot().errors, 0);
+        assert!(metrics.points().is_empty());
+    }
+
+    #[tokio::test]
+    async fn metrics_message_searched() {
+        let metrics = Metrics::new();
+        metrics.message_searched().await;
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.messages_searched, 1);
+        assert_eq!(snapshot.messages_added, 0);
+    }
+
+    #[tokio::test]
+    async fn metrics_entity_searched() {
+        let metrics = Metrics::new();
+        metrics.entity_searched().await;
+        assert_eq!(metrics.snapshot().entities_searched, 1);
+        assert_eq!(metrics.snapshot().entities_created, 0);
+    }
+
+    #[tokio::test]
+    async fn metrics_relationship_created() {
+        let metrics = Metrics::new();
+        metrics.relationship_created("WORKS_AT".to_owned()).await;
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.relationships_created, 1);
+        let points = metrics.points();
+        assert_eq!(points.len(), 1);
+        assert_eq!(points[0].name, "relationships_created");
+        assert_eq!(
+            points[0].labels.get("rel_type").map(String::as_str),
+            Some("WORKS_AT")
+        );
+    }
+
+    #[tokio::test]
+    async fn metrics_preference_stored() {
+        let metrics = Metrics::new();
+        metrics.preference_stored("food".to_owned()).await;
+        assert_eq!(metrics.snapshot().preferences_stored, 1);
+        let points = metrics.points();
+        assert_eq!(points[0].name, "preferences_stored");
+        assert_eq!(
+            points[0].labels.get("category").map(String::as_str),
+            Some("food")
+        );
+    }
+
+    #[tokio::test]
+    async fn metrics_fact_stored() {
+        let metrics = Metrics::new();
+        metrics.fact_stored().await;
+        assert_eq!(metrics.snapshot().facts_stored, 1);
+        assert_eq!(metrics.points()[0].name, "facts_stored");
+    }
+
+    #[tokio::test]
+    async fn metrics_enrichment_call() {
+        let metrics = Metrics::new();
+        metrics.enrichment_call("wikimedia".to_owned()).await;
+        assert_eq!(metrics.snapshot().enrichment_calls, 1);
+        let points = metrics.points();
+        assert_eq!(points[0].name, "enrichment_calls");
+        assert_eq!(
+            points[0].labels.get("provider").map(String::as_str),
+            Some("wikimedia")
+        );
+    }
+
+    #[tokio::test]
+    async fn metrics_extraction_call() {
+        let metrics = Metrics::new();
+        metrics.extraction_call("llm".to_owned()).await;
+        assert_eq!(metrics.snapshot().extraction_calls, 1);
+        let points = metrics.points();
+        assert_eq!(points[0].name, "extraction_calls");
+        assert_eq!(
+            points[0].labels.get("extractor").map(String::as_str),
+            Some("llm")
+        );
+    }
+
+    #[tokio::test]
+    async fn metrics_resolution_call() {
+        let metrics = Metrics::new();
+        metrics.resolution_call().await;
+        assert_eq!(metrics.snapshot().resolution_calls, 1);
+        assert_eq!(metrics.points()[0].name, "resolution_calls");
+    }
+
+    #[tokio::test]
+    async fn metrics_trace_created() {
+        let metrics = Metrics::new();
+        metrics.trace_created().await;
+        assert_eq!(metrics.snapshot().traces_created, 1);
+        assert_eq!(metrics.points()[0].name, "traces_created");
+    }
+
+    #[tokio::test]
+    async fn metrics_reasoning_step() {
+        let metrics = Metrics::new();
+        metrics.reasoning_step().await;
+        assert_eq!(metrics.snapshot().reasoning_steps, 1);
+        assert_eq!(metrics.points()[0].name, "reasoning_steps");
+    }
+
+    #[tokio::test]
+    async fn metrics_entity_created_records_the_label() {
+        let metrics = Metrics::new();
+        metrics.entity_created("PERSON".to_owned()).await;
+        let points = metrics.points();
+        assert_eq!(points[0].name, "entities_created");
+        assert_eq!(
+            points[0].labels.get("label").map(String::as_str),
+            Some("PERSON")
+        );
+    }
+
+    #[tokio::test]
+    async fn metrics_error_records_the_error_type() {
+        let metrics = Metrics::new();
+        metrics.error("ValueError".to_owned()).await;
+        let points = metrics.points();
+        assert_eq!(points[0].name, "errors");
+        assert_eq!(
+            points[0].labels.get("error_type").map(String::as_str),
+            Some("ValueError")
+        );
+    }
+
+    #[tokio::test]
+    async fn metrics_latency_records_the_operation_label() {
+        let metrics = Metrics::new();
+        metrics.record_latency("search", 42).await;
+        let points = metrics.points();
+        assert_eq!(points[0].name, "operation_latency_ms");
+        assert_eq!(points[0].value, 42.0);
+        assert_eq!(
+            points[0].labels.get("operation").map(String::as_str),
+            Some("search")
+        );
+    }
+
+    #[tokio::test]
+    async fn metrics_points_are_ordered_by_recording() {
+        let metrics = Metrics::new();
+        metrics.message_added().await;
+        metrics.fact_stored().await;
+        let names: Vec<String> = metrics.points().into_iter().map(|p| p.name).collect();
+        assert_eq!(names, vec!["messages_added", "facts_stored"]);
+    }
+
+    #[tokio::test]
+    async fn global_metrics_can_be_replaced() {
+        let replacement = Metrics::new();
+        replacement.message_added().await;
+        set_global_metrics(replacement);
+
+        let guard = get_metrics();
+        assert_eq!(guard.snapshot().messages_added, 1);
+    }
+
+    #[tokio::test]
+    async fn metrics_ignore_points_when_the_points_lock_is_poisoned() {
+        let metrics = Metrics::new();
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = metrics.points.lock().expect("the lock is not poisoned yet");
+            panic!("poison the points lock");
+        }));
+        assert!(poisoned.is_err(), "the panic must poison the points lock");
+
+        // Recording must not panic even though the point buffer is unavailable.
+        metrics.message_added().await;
+        assert_eq!(metrics.snapshot().messages_added, 1);
     }
 }

@@ -47,11 +47,11 @@ pub const DEFAULT_CONSOLIDATION_LIMIT: i64 = 100;
 /// Equivalent to `neo4j_agent_memory.memory.consolidation.ConsolidationMemory`.
 pub struct ConsolidationMemory {
     #[allow(dead_code)]
-    long_term: Box<dyn LongTermStore>,
+    long_term: Option<Box<dyn LongTermStore>>,
     #[allow(dead_code)]
-    reasoning: Box<dyn ReasoningStore>,
+    reasoning: Option<Box<dyn ReasoningStore>>,
     #[allow(dead_code)]
-    short_term: Box<dyn ShortTermStore>,
+    short_term: Option<Box<dyn ShortTermStore>>,
     consolidation: Box<dyn ConsolidationStore>,
 }
 
@@ -64,9 +64,19 @@ impl ConsolidationMemory {
         consolidation: Box<dyn ConsolidationStore>,
     ) -> Self {
         Self {
-            long_term,
-            reasoning,
-            short_term,
+            long_term: Some(long_term),
+            reasoning: Some(reasoning),
+            short_term: Some(short_term),
+            consolidation,
+        }
+    }
+
+    /// Create a consolidation orchestrator with only a consolidation store.
+    pub fn from_store(consolidation: Box<dyn ConsolidationStore>) -> Self {
+        Self {
+            long_term: None,
+            reasoning: None,
+            short_term: None,
             consolidation,
         }
     }
@@ -714,5 +724,51 @@ mod tests {
         assert_eq!(candidate.kind, "merge");
         assert_eq!(candidate.target_id.as_deref(), Some("target-id"));
         assert_eq!(candidate.score, Some(0.95));
+    }
+
+    #[tokio::test]
+    async fn consolidation_memory_methods_directly_exercise_orchestrator() {
+        let store = Box::new(TestConsolidationStore {
+            entity_count: 2,
+            trace_count: 2,
+            pref_count: 2,
+            conversation_count: 2,
+        });
+        let memory = ConsolidationMemory::from_store(store);
+
+        // Dry run
+        let reports = memory.run_all(Some(true)).await.unwrap();
+        assert_eq!(reports.len(), 4);
+        assert!(reports.iter().all(|r| r.dry_run));
+        assert!(reports.iter().all(|r| r.run_id.is_none()));
+
+        // Mutating run (records run_id)
+        let dedupe = memory
+            .dedupe_entities(None, None, Some(false))
+            .await
+            .unwrap();
+        assert!(!dedupe.dry_run);
+        assert!(dedupe.run_id.is_some());
+
+        let traces = memory
+            .summarize_long_traces(None, None, Some(false))
+            .await
+            .unwrap();
+        assert!(!traces.dry_run);
+        assert!(traces.run_id.is_some());
+
+        let prefs = memory
+            .detect_superseded_preferences(None, None, Some(false))
+            .await
+            .unwrap();
+        assert!(!prefs.dry_run);
+        assert!(prefs.run_id.is_some());
+
+        let convs = memory
+            .archive_expired_conversations(None, None, Some(false))
+            .await
+            .unwrap();
+        assert!(!convs.dry_run);
+        assert!(convs.run_id.is_some());
     }
 }

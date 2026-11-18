@@ -1814,3 +1814,482 @@ mod usage_tests {
         });
     }
 }
+
+#[cfg(test)]
+mod audit_record_tests {
+    use super::*;
+    use rook_core::{AuditEntry, ModelId, RequestStatus, TokenUsage};
+    use shared_kernel::{ComboId, ProviderId, RequestId};
+
+    const CONNECTION_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
+
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("runtime")
+    }
+
+    fn audit_store() -> (tempfile::TempDir, std::path::PathBuf, SqliteAudit) {
+        let directory = tempfile::tempdir().expect("temporary test directory");
+        let db_path = directory.path().join("audit.db");
+        let store = SqliteAudit::new(&db_path).expect("audit store");
+        (directory, db_path, store)
+    }
+
+    fn fixed_timestamp() -> DateTime<Utc> {
+        "2026-06-01T11:00:00+00:00"
+            .parse::<DateTime<Utc>>()
+            .expect("fixed timestamp")
+    }
+
+    fn entry(status: RequestStatus, usage: Option<TokenUsage>) -> AuditEntry {
+        AuditEntry {
+            request_id: RequestId::new(),
+            provider: ProviderId::new("openai-primary"),
+            model: ModelId::new("gpt-4o"),
+            status,
+            usage,
+            latency_ms: 42,
+            timestamp: fixed_timestamp(),
+            combo_id: None,
+            combo_step_index: None,
+            connection_id: None,
+            provider_runtime_id: None,
+        }
+    }
+
+    fn token_usage() -> TokenUsage {
+        TokenUsage {
+            prompt_tokens: 11,
+            completion_tokens: 7,
+            total_tokens: 18,
+            cache_read_tokens: None,
+            cache_creation_tokens: None,
+            reasoning_tokens: None,
+            estimated_cost_usd: Some(0.25),
+        }
+    }
+
+    fn stored_row(
+        db_path: &std::path::Path,
+    ) -> rusqlite::Result<(String, i64, i64, i64, Option<f64>)> {
+        let conn = Connection::open(db_path)?;
+        conn.query_row(
+            "SELECT status, prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd
+             FROM audit ORDER BY id LIMIT 1",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, Option<f64>>(4)?,
+                ))
+            },
+        )
+    }
+
+    #[test]
+    fn record_persists_token_usage_columns() {
+        runtime().block_on(async {
+            let (_directory, db_path, store) = audit_store();
+            store
+                .record(entry(RequestStatus::Success, Some(token_usage())))
+                .await
+                .expect("record audit entry");
+
+            let (status, prompt, completion, total, cost) =
+                stored_row(&db_path).expect("read stored audit row");
+            assert_eq!(status, "success");
+            assert_eq!(prompt, 11);
+            assert_eq!(completion, 7);
+            assert_eq!(total, 18);
+            assert_eq!(cost, Some(0.25));
+        });
+    }
+
+    #[test]
+    fn record_defaults_token_columns_when_usage_is_absent() {
+        runtime().block_on(async {
+            let (_directory, db_path, store) = audit_store();
+            store
+                .record(entry(RequestStatus::Failure, None))
+                .await
+                .expect("record audit entry");
+
+            let (status, prompt, completion, total, cost) =
+                stored_row(&db_path).expect("read stored audit row");
+            assert_eq!(status, "failure");
+            assert_eq!(prompt, 0);
+            assert_eq!(completion, 0);
+            assert_eq!(total, 0);
+            assert_eq!(cost, None);
+        });
+    }
+
+    #[test]
+    fn record_maps_every_request_status_to_its_stored_string() {
+        runtime().block_on(async {
+            for (status, expected) in [
+                (RequestStatus::Success, "success"),
+                (RequestStatus::Failure, "failure"),
+                (RequestStatus::RateLimited, "rate_limited"),
+                (RequestStatus::Timeout, "timeout"),
+            ] {
+                let (_directory, db_path, store) = audit_store();
+                store
+                    .record(entry(status, None))
+                    .await
+                    .expect("record audit entry");
+                let (stored, _, _, _, _) = stored_row(&db_path).expect("read stored audit row");
+                assert_eq!(stored, expected);
+            }
+        });
+    }
+
+    #[test]
+    fn record_persists_combo_and_connection_context() {
+        runtime().block_on(async {
+            let (_directory, db_path, store) = audit_store();
+            let mut entry = entry(RequestStatus::Success, None);
+            entry.combo_id = Some(ComboId::new());
+            entry.combo_step_index = Some(2);
+            entry.connection_id =
+                Some(ConnectionId::parse_str(CONNECTION_ID).expect("connection id"));
+            entry.provider_runtime_id = Some(ProviderId::new("openai-primary"));
+            let combo_id = entry.combo_id.expect("combo id").to_string();
+            store.record(entry).await.expect("record audit entry");
+
+            let conn = Connection::open(&db_path).expect("open audit database");
+            let (stored_combo, step, connection, runtime_id): (
+                Option<String>,
+                Option<i64>,
+                Option<String>,
+                Option<String>,
+            ) = conn
+                .query_row(
+                    "SELECT combo_id, combo_step_index, connection_id, provider_runtime_id
+                     FROM audit ORDER BY id LIMIT 1",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .expect("read stored audit row");
+            assert_eq!(stored_combo.as_deref(), Some(combo_id.as_str()));
+            assert_eq!(step, Some(2));
+            assert_eq!(connection.as_deref(), Some(CONNECTION_ID));
+            assert_eq!(runtime_id.as_deref(), Some("openai-primary"));
+        });
+    }
+
+    #[test]
+    fn new_is_idempotent_for_an_existing_audit_table() {
+        let (_directory, db_path, _store) = audit_store();
+        let reopened = SqliteAudit::new(&db_path).expect("reopen audit store");
+        runtime().block_on(async {
+            reopened
+                .record(entry(RequestStatus::Success, None))
+                .await
+                .expect("record audit entry");
+        });
+        let (status, _, _, _, _) = stored_row(&db_path).expect("read stored audit row");
+        assert_eq!(status, "success");
+    }
+}
+
+#[cfg(test)]
+mod quota_row_mapping_tests {
+    use super::*;
+    use rusqlite::types::{Type, Value};
+
+    const STORED_COLUMNS: &str =
+        "provider_kind, provider_runtime_id, connection_id, metric, source, \
+         scope, window, quota_limit, remaining, reset_at, reset_after_milliseconds, observed_at";
+
+    const BOUND_COLUMNS: &str = "?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12";
+
+    const CONNECTION_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
+
+    /// One row of `provider_quota_observations`, mirroring the stored schema.
+    struct Fixture {
+        provider_kind: String,
+        provider_runtime_id: String,
+        connection_id: Option<String>,
+        metric: String,
+        source: String,
+        scope: Option<String>,
+        window: Option<String>,
+        limit: Option<f64>,
+        remaining: Option<f64>,
+        reset_at: Option<String>,
+        reset_after_milliseconds: Option<i64>,
+        observed_at: String,
+    }
+
+    fn base_fixture() -> Fixture {
+        Fixture {
+            provider_kind: "openai".to_string(),
+            provider_runtime_id: "openai-primary".to_string(),
+            connection_id: Some(CONNECTION_ID.to_string()),
+            metric: "requests".to_string(),
+            source: "headers".to_string(),
+            scope: Some("account".to_string()),
+            window: Some("daily".to_string()),
+            limit: Some(100.0),
+            remaining: Some(42.5),
+            reset_at: Some("2026-06-01T12:00:00+00:00".to_string()),
+            reset_after_milliseconds: Some(60_000),
+            observed_at: "2026-06-01T11:00:00+00:00".to_string(),
+        }
+    }
+
+    fn migrated_connection() -> (tempfile::TempDir, Connection) {
+        let directory = tempfile::tempdir().expect("temporary test directory");
+        let db_path = directory.path().join("audit.db");
+        let db_path_str = db_path.to_string_lossy().into_owned();
+        db_migration::run_migrations(&db_path_str).expect("migrations");
+        let conn = Connection::open(&db_path).expect("open migrated database");
+        (directory, conn)
+    }
+
+    fn insert(conn: &Connection, fixture: &Fixture) {
+        conn.execute(
+            "INSERT INTO provider_quota_observations (
+                provider_kind, provider_runtime_id, connection_id, metric, source,
+                scope, window, quota_limit, remaining, reset_at,
+                reset_after_milliseconds, observed_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                fixture.provider_kind,
+                fixture.provider_runtime_id,
+                fixture.connection_id,
+                fixture.metric,
+                fixture.source,
+                fixture.scope,
+                fixture.window,
+                fixture.limit,
+                fixture.remaining,
+                fixture.reset_at,
+                fixture.reset_after_milliseconds,
+                fixture.observed_at,
+            ],
+        )
+        .expect("insert quota observation");
+    }
+
+    fn map_stored_row(conn: &Connection) -> rusqlite::Result<QuotaObservation> {
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT {STORED_COLUMNS} FROM provider_quota_observations ORDER BY id LIMIT 1"
+            ))
+            .expect("prepare stored quota observation select");
+        stmt.query_row([], map_quota_observation_row)
+    }
+
+    fn map_bound_row(conn: &Connection, values: &[Value]) -> rusqlite::Result<QuotaObservation> {
+        let mut stmt = conn
+            .prepare(&format!("SELECT {BOUND_COLUMNS}"))
+            .expect("prepare bound quota observation select");
+        stmt.query_row(
+            rusqlite::params_from_iter(values.iter()),
+            map_quota_observation_row,
+        )
+    }
+
+    fn bound_values(fixture: &Fixture) -> Vec<Value> {
+        vec![
+            Value::Text(fixture.provider_kind.clone()),
+            Value::Text(fixture.provider_runtime_id.clone()),
+            match &fixture.connection_id {
+                Some(id) => Value::Text(id.clone()),
+                None => Value::Null,
+            },
+            Value::Text(fixture.metric.clone()),
+            Value::Text(fixture.source.clone()),
+            match &fixture.scope {
+                Some(scope) => Value::Text(scope.clone()),
+                None => Value::Null,
+            },
+            match &fixture.window {
+                Some(window) => Value::Text(window.clone()),
+                None => Value::Null,
+            },
+            match fixture.limit {
+                Some(limit) => Value::Real(limit),
+                None => Value::Null,
+            },
+            match fixture.remaining {
+                Some(remaining) => Value::Real(remaining),
+                None => Value::Null,
+            },
+            match &fixture.reset_at {
+                Some(reset_at) => Value::Text(reset_at.clone()),
+                None => Value::Null,
+            },
+            match fixture.reset_after_milliseconds {
+                Some(milliseconds) => Value::Integer(milliseconds),
+                None => Value::Null,
+            },
+            Value::Text(fixture.observed_at.clone()),
+        ]
+    }
+
+    fn expect_invalid_column_type(
+        result: rusqlite::Result<QuotaObservation>,
+        expected_index: usize,
+        expected_name: &str,
+        expected_type: Type,
+    ) {
+        match result {
+            Err(rusqlite::Error::InvalidColumnType(index, name, column_type)) => {
+                assert_eq!(index, expected_index);
+                assert_eq!(name, expected_name);
+                assert_eq!(column_type, expected_type);
+            }
+            Err(other) => panic!("expected InvalidColumnType, got {other:?}"),
+            Ok(observation) => panic!("expected a mapping error, got {observation:?}"),
+        }
+    }
+
+    #[test]
+    fn map_quota_observation_row_reads_every_column() {
+        let (_directory, conn) = migrated_connection();
+        insert(&conn, &base_fixture());
+
+        let observation = map_stored_row(&conn).expect("map quota observation");
+        assert_eq!(observation.provider_id, "openai");
+        assert_eq!(observation.provider, ProviderId::new("openai-primary"));
+        assert_eq!(
+            observation.connection_id,
+            Some(ConnectionId::parse_str(CONNECTION_ID).expect("valid connection id"))
+        );
+        assert_eq!(observation.metric, "requests");
+        assert_eq!(observation.source, "headers");
+        assert_eq!(observation.scope.as_deref(), Some("account"));
+        assert_eq!(observation.window.as_deref(), Some("daily"));
+        assert_eq!(observation.limit, Some(100.0));
+        assert_eq!(observation.remaining, Some(42.5));
+        assert_eq!(
+            observation.reset_at,
+            Some(
+                DateTime::parse_from_rfc3339("2026-06-01T12:00:00+00:00")
+                    .expect("valid reset timestamp")
+                    .with_timezone(&Utc)
+            )
+        );
+        assert_eq!(observation.reset_after_milliseconds, Some(60_000));
+        assert_eq!(
+            observation.observed_at,
+            DateTime::parse_from_rfc3339("2026-06-01T11:00:00+00:00")
+                .expect("valid observed timestamp")
+                .with_timezone(&Utc)
+        );
+    }
+
+    #[test]
+    fn map_quota_observation_row_maps_null_optional_columns_to_none() {
+        let (_directory, conn) = migrated_connection();
+        let mut fixture = base_fixture();
+        fixture.connection_id = None;
+        fixture.scope = None;
+        fixture.window = None;
+        fixture.limit = None;
+        fixture.remaining = None;
+        fixture.reset_at = None;
+        fixture.reset_after_milliseconds = None;
+        insert(&conn, &fixture);
+
+        let observation = map_stored_row(&conn).expect("map quota observation");
+        assert!(observation.connection_id.is_none());
+        assert!(observation.scope.is_none());
+        assert!(observation.window.is_none());
+        assert!(observation.limit.is_none());
+        assert!(observation.remaining.is_none());
+        assert!(observation.reset_at.is_none());
+        assert!(observation.reset_after_milliseconds.is_none());
+        assert_eq!(observation.metric, "requests");
+        assert_eq!(observation.provider_id, "openai");
+    }
+
+    #[test]
+    fn map_quota_observation_row_resolves_legacy_provider_spellings() {
+        let (_directory, conn) = migrated_connection();
+        let mut fixture = base_fixture();
+        fixture.provider_kind = "azureopenai".to_string();
+        insert(&conn, &fixture);
+
+        let observation = map_stored_row(&conn).expect("map quota observation");
+        assert_eq!(observation.provider_id, "azure-openai");
+    }
+
+    #[test]
+    fn map_quota_observation_row_rejects_an_unknown_provider() {
+        let (_directory, conn) = migrated_connection();
+        let mut fixture = base_fixture();
+        fixture.provider_kind = "not-a-provider".to_string();
+
+        expect_invalid_column_type(
+            map_bound_row(&conn, &bound_values(&fixture)),
+            0,
+            "provider_kind",
+            Type::Text,
+        );
+    }
+
+    #[test]
+    fn map_quota_observation_row_rejects_a_malformed_connection_id() {
+        let (_directory, conn) = migrated_connection();
+        let mut fixture = base_fixture();
+        fixture.connection_id = Some("not-a-uuid".to_string());
+
+        expect_invalid_column_type(
+            map_bound_row(&conn, &bound_values(&fixture)),
+            2,
+            "connection_id",
+            Type::Text,
+        );
+    }
+
+    #[test]
+    fn map_quota_observation_row_rejects_a_malformed_reset_at() {
+        let (_directory, conn) = migrated_connection();
+        let mut fixture = base_fixture();
+        fixture.reset_at = Some("not-a-timestamp".to_string());
+
+        expect_invalid_column_type(
+            map_bound_row(&conn, &bound_values(&fixture)),
+            9,
+            "reset_at",
+            Type::Text,
+        );
+    }
+
+    #[test]
+    fn map_quota_observation_row_rejects_a_malformed_observed_at() {
+        let (_directory, conn) = migrated_connection();
+        let mut fixture = base_fixture();
+        fixture.observed_at = "not-a-timestamp".to_string();
+
+        expect_invalid_column_type(
+            map_bound_row(&conn, &bound_values(&fixture)),
+            11,
+            "observed_at",
+            Type::Text,
+        );
+    }
+
+    #[test]
+    fn map_quota_observation_row_rejects_a_negative_reset_duration() {
+        let (_directory, conn) = migrated_connection();
+        let mut fixture = base_fixture();
+        fixture.reset_after_milliseconds = Some(-1);
+
+        expect_invalid_column_type(
+            map_bound_row(&conn, &bound_values(&fixture)),
+            10,
+            "reset_after_milliseconds",
+            Type::Integer,
+        );
+    }
+}
