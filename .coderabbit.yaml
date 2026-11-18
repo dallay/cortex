@@ -54,6 +54,7 @@ reviews:
       - 'dependabot[bot]'
       - 'renovate[bot]'
       - 'github-actions[bot]'
+      - 'release-please[bot]'
 
   # Evaluate unsolicited low-quality PRs without introducing new labels.
   slop_detection:
