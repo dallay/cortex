@@ -65,7 +65,8 @@ impl ExclusiveStage {
     }
 
     /// Publishes directory visibility only, never a complete or durable model.
-    /// OutcomeUnknown means rename succeeded but the subsequent parent sync failed.
+    /// OutcomeUnknown means the rename happened but the parent sync failed, or the
+    /// published entry could not be reopened afterwards.
     pub fn publish_directory(self, target: &str) -> Result<ArtifactDir, FsError> {
         self.publish_with_sync(target, File::sync_all, File::sync_all)
     }
@@ -85,15 +86,20 @@ impl ExclusiveStage {
         }
         let parent =
             ArtifactDir::from_directory(self.parent.try_clone().map_err(|_| FsError::Io)?)?;
-        let named = parent.open_subdir(&self.source_name)?;
-        let owned = self
-            .directory
-            .directory
-            .metadata()
-            .map_err(|_| FsError::Io)?;
-        let current = named.directory.metadata().map_err(|_| FsError::Io)?;
-        if owned.dev() != current.dev() || owned.ino() != current.ino() {
-            return Err(FsError::UnsafeEntry);
+        {
+            // The identity check borrows the named entry, so its descriptor closes
+            // here. A volume without VOL_CAP_INT_RENAME_OPENFAIL refuses to rename a
+            // directory that is itself open, which surfaces as EACCES.
+            let named = parent.open_subdir(&self.source_name)?;
+            let owned = self
+                .directory
+                .directory
+                .metadata()
+                .map_err(|_| FsError::Io)?;
+            let current = named.directory.metadata().map_err(|_| FsError::Io)?;
+            if owned.dev() != current.dev() || owned.ino() != current.ino() {
+                return Err(FsError::UnsafeEntry);
+            }
         }
         before(&self.directory.directory).map_err(|error| {
             #[cfg(test)]
@@ -102,6 +108,9 @@ impl ExclusiveStage {
             let _ = error;
             FsError::Io
         })?;
+        // Same reason as above: the owned descriptor to the renamed entry closes
+        // before the rename and the published entry is reopened through the parent.
+        drop(self.directory);
         #[cfg(test)]
         super::diagnostics::probe_pre_rename();
         rustix::fs::renameat_with(
@@ -123,7 +132,9 @@ impl ExclusiveStage {
             let _ = error;
             FsError::OutcomeUnknown
         })?;
-        Ok(self.directory)
+        parent
+            .open_subdir(target)
+            .map_err(|_| FsError::OutcomeUnknown)
     }
 }
 
@@ -273,6 +284,30 @@ mod tests {
         assert!(matches!(result, Err(FsError::OutcomeUnknown)));
         assert!(root.path().join(&target).is_dir());
         assert!(!root.path().join(source).exists());
+    }
+
+    #[test]
+    fn publication_releases_every_descriptor_to_the_renamed_directory() {
+        let root = fixture();
+        let parent = ArtifactDir::open_root(root.path()).expect("root");
+        let stage = ExclusiveStage::begin(&parent).expect("stage");
+        let metadata =
+            std::fs::metadata(root.path().join(&stage.source_name)).expect("stage metadata");
+        let (device, inode) = (metadata.dev(), metadata.ino());
+        let open_during_rename = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed = std::sync::Arc::clone(&open_during_rename);
+        let _guard = crate::artifact_fs::diagnostics::set_pre_rename_probe(move || {
+            if crate::artifact_fs::diagnostics::descriptor_open_for(device, inode) {
+                observed.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
+        stage
+            .publish_directory(&"d".repeat(64))
+            .expect("publication");
+        assert!(
+            !open_during_rename.load(std::sync::atomic::Ordering::SeqCst),
+            "a volume without VOL_CAP_INT_RENAME_OPENFAIL refuses to rename an open directory"
+        );
     }
 
     #[test]
