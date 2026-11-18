@@ -166,4 +166,77 @@ mod tests {
         // StatusCode::as_u16() never returns 0, but guard anyway.
         assert_eq!(classify_status_code(0), ProbeClassification::ServerError(0));
     }
+
+    #[test]
+    fn classify_1xx_as_server_error() {
+        // Informational responses never reach the helper in practice, and they
+        // are not part of any documented bucket.
+        assert_eq!(
+            classify_status_code(100),
+            ProbeClassification::ServerError(100)
+        );
+        assert_eq!(
+            classify_status_code(199),
+            ProbeClassification::ServerError(199)
+        );
+    }
+
+    #[test]
+    fn classify_bucket_boundaries_are_inclusive() {
+        assert_eq!(classify_status_code(200), ProbeClassification::Ok);
+        assert_eq!(classify_status_code(299), ProbeClassification::Ok);
+        assert_eq!(
+            classify_status_code(300),
+            ProbeClassification::ServerError(300)
+        );
+        assert_eq!(
+            classify_status_code(399),
+            ProbeClassification::ServerError(399)
+        );
+        assert_eq!(
+            classify_status_code(400),
+            ProbeClassification::ClientError(400)
+        );
+        assert_eq!(
+            classify_status_code(499),
+            ProbeClassification::ClientError(499)
+        );
+        assert_eq!(
+            classify_status_code(500),
+            ProbeClassification::ServerError(500)
+        );
+        assert_eq!(
+            classify_status_code(599),
+            ProbeClassification::ServerError(599)
+        );
+        assert_eq!(
+            classify_status_code(600),
+            ProbeClassification::ServerError(600)
+        );
+    }
+
+    #[test]
+    fn auth_rejection_is_limited_to_401_and_403() {
+        assert_eq!(
+            classify_status_code(400),
+            ProbeClassification::ClientError(400)
+        );
+        assert_eq!(
+            classify_status_code(402),
+            ProbeClassification::ClientError(402)
+        );
+        assert_eq!(
+            classify_status_code(404),
+            ProbeClassification::ClientError(404)
+        );
+    }
+
+    #[test]
+    fn network_errors_carry_the_operator_visible_reason() {
+        let classification = ProbeClassification::NetworkError("dns lookup failed".to_string());
+        match &classification {
+            ProbeClassification::NetworkError(reason) => assert_eq!(reason, "dns lookup failed"),
+            other => panic!("unexpected classification: {other:?}"),
+        }
+    }
 }
