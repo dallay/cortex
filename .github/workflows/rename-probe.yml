@@ -1,0 +1,41 @@
+name: Probe
+
+# TEMPORARY. Delete this workflow with the probe branch once the report is read.
+on:
+  push:
+    branches: [ probe/macos-rename-excl ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  rename-excl:
+    name: macOS rename capabilities
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Report host and volume
+        run: |
+          sw_vers
+          echo "arch=$(uname -m)"
+          echo "TMPDIR=${TMPDIR:-unset}"
+          echo "RUNNER_TEMP=${RUNNER_TEMP:-unset}"
+          df -h "${TMPDIR:-/tmp}" "${RUNNER_TEMP:-/tmp}" / || true
+          ls -lde "${TMPDIR:-/tmp}" || true
+          mount | head -20
+      - uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
+      - name: Probe renameatx_np
+        continue-on-error: true
+        run: >-
+          cargo test --locked -p muninn-c1-exporter
+          --target aarch64-apple-darwin
+          --test rename_capabilities -- --nocapture
+      - name: Report mount after
+        if: always()
+        run: mount | head -20
