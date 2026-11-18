@@ -345,6 +345,121 @@ mod tests {
         assert_eq!(reply, "ok");
     }
 
+    #[test]
+    fn new_accepts_a_key_and_uses_the_default_endpoint() {
+        let chat = AnthropicChat::new("secret-key", "claude-sonnet-4")
+            .expect("a non-empty API key should be accepted");
+        assert_eq!(chat.model_as_str(), "claude-sonnet-4");
+        assert_eq!(chat.base_url_as_str(), DEFAULT_BASE_URL);
+    }
+
+    #[test]
+    fn debug_output_excludes_the_api_key() {
+        let chat = AnthropicChat::new("secret-key", "claude-test-model")
+            .expect("a non-empty API key is accepted");
+        let debug = format!("{chat:?}");
+        assert!(debug.contains("https://api.anthropic.com"));
+        assert!(debug.contains("claude-test-model"));
+        assert!(!debug.contains("secret-key"));
+    }
+
+    #[test]
+    fn with_base_url_rejects_an_empty_api_key() {
+        let result = AnthropicChat::with_base_url("https://example.invalid", "   ", "m");
+        assert!(matches!(
+            result,
+            Err(MemoryError::InvalidInput(message))
+                if message == "Anthropic API key must not be empty"
+        ));
+    }
+
+    #[test]
+    fn with_base_url_trims_trailing_slashes() {
+        let chat = AnthropicChat::with_base_url("https://example.invalid/", "key", "m")
+            .expect("a non-empty API key should be accepted");
+        assert_eq!(chat.base_url_as_str(), "https://example.invalid");
+    }
+
+    #[tokio::test]
+    async fn request_failures_are_provider_errors() {
+        let chat = AnthropicChat::with_base_url("not a url", "key", "m")
+            .expect("the endpoint URL is not parsed during construction");
+        let result = chat
+            .complete(&[ChatMessage::user("hi")], &CompletionOptions::default())
+            .await;
+        assert!(matches!(
+            result,
+            Err(MemoryError::Provider(message)) if message.contains("Anthropic request failed")
+        ));
+    }
+
+    /// Serve a response that advertises more bytes than it sends so the client
+    /// fails while reading the error body.
+    async fn serve_truncated_body(listener: tokio::net::TcpListener) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let (mut socket, _) = listener
+            .accept()
+            .await
+            .expect("the test listener accepts the request");
+        let mut chunk = [0u8; 4096];
+        let _ = socket.read(&mut chunk).await;
+        let headers = "HTTP/1.1 500 Internal Server Error\r\ncontent-length: 100\r\nconnection: close\r\n\r\n";
+        let _ = socket.write_all(headers.as_bytes()).await;
+        let _ = socket.flush().await;
+        // Send the headers first so the client observes the status code and only
+        // fails once it reads the truncated body.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let _ = socket.write_all(b"short").await;
+        let _ = socket.flush().await;
+        let _ = socket.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn unreadable_error_body_uses_the_no_body_fallback() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("the test listener binds");
+        let address = listener
+            .local_addr()
+            .expect("the listener exposes its address");
+
+        let chat = AnthropicChat::with_base_url(format!("http://{address}"), "key", "m").unwrap();
+        let messages = [ChatMessage::user("hi")];
+        let options = CompletionOptions::default();
+        let ((), result) = tokio::join!(
+            serve_truncated_body(listener),
+            chat.complete(&messages, &options)
+        );
+        let actual = format!("{result:?}");
+        assert!(
+            matches!(
+                result,
+                Err(MemoryError::Provider(message))
+                    if message.contains("HTTP 500") && message.contains("<no body>")
+            ),
+            "actual: {actual}"
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_response_is_a_provider_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&server)
+            .await;
+
+        let chat = AnthropicChat::with_base_url(server.uri(), "key", "m").unwrap();
+        let result = chat
+            .complete(&[ChatMessage::user("hi")], &CompletionOptions::default())
+            .await;
+        assert!(matches!(
+            result,
+            Err(MemoryError::Provider(message)) if message.contains("invalid Anthropic response")
+        ));
+    }
+
     #[tokio::test]
     async fn multiple_text_blocks_returns_first() {
         let server = MockServer::start().await;

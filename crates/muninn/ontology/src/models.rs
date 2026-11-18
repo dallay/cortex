@@ -964,4 +964,333 @@ mod tests {
         let value = serde_json::json!([1, 2, 3]);
         assert!(parse_document(&value).is_none());
     }
+
+    fn test_entity(label: &str, pole_type: &str, subtype: Option<&str>) -> EntityTypeDef {
+        EntityTypeDef {
+            label: label.into(),
+            pole_type: pole_type.into(),
+            subtype: subtype.map(str::to_owned),
+            color: None,
+            icon: None,
+            properties: vec![],
+            description: None,
+            aliases: HashMap::new(),
+            threshold: None,
+            resolution_threshold: None,
+            review_threshold: None,
+        }
+    }
+
+    fn test_relationship(rel_type: &str, source: &str, target: &str) -> RelationshipDef {
+        RelationshipDef {
+            r#type: rel_type.into(),
+            source: source.into(),
+            target: target.into(),
+            description: None,
+            threshold: None,
+            inverse: None,
+            unique_source: false,
+            unique_target: false,
+            acyclic: false,
+            allow_self: false,
+        }
+    }
+
+    fn test_document(
+        entity_types: Vec<EntityTypeDef>,
+        relationships: Vec<RelationshipDef>,
+    ) -> OntologyDocument {
+        OntologyDocument {
+            domain: DomainInfo {
+                id: "test".into(),
+                name: "Test".into(),
+                description: None,
+                tagline: None,
+                emoji: None,
+            },
+            entity_types,
+            relationships,
+            no_self_loops: true,
+        }
+    }
+
+    #[test]
+    fn label_for_handles_case_no_subtype_and_declared_label_fallbacks() {
+        let doc = test_document(
+            vec![
+                test_entity("Person", "person", None),
+                test_entity("Customer", "PERSON", Some("Customer")),
+                test_entity("Actor", "PERSON", Some("ACTOR")),
+                test_entity("TvShow", "OBJECT", None),
+            ],
+            vec![],
+        );
+
+        assert_eq!(doc.label_for("person", Some("customer")), Some("Customer"));
+        assert_eq!(doc.label_for("PERSON", Some("unknown")), Some("Person"));
+        assert_eq!(doc.label_for("PERSON", None), Some("Person"));
+        assert_eq!(doc.label_for("ACTOR", None), Some("Actor"));
+        assert_eq!(doc.label_for("tvshow", None), Some("TvShow"));
+        assert_eq!(doc.label_for("TVSHOW", Some("unknown")), None);
+        assert_eq!(doc.label_for("EVENT", Some("unknown")), None);
+    }
+
+    #[test]
+    fn validate_structure_reports_entity_threshold_fields_and_valid_boundaries() {
+        let mut invalid_thresholds = test_entity("Person", "PERSON", None);
+        invalid_thresholds.threshold = Some(-0.1);
+        invalid_thresholds.resolution_threshold = Some(1.1);
+        invalid_thresholds.review_threshold = Some(f64::NAN);
+
+        let mut boundary_thresholds = test_entity("Place", "LOCATION", None);
+        boundary_thresholds.threshold = Some(0.0);
+        boundary_thresholds.resolution_threshold = Some(1.0);
+        boundary_thresholds.review_threshold = Some(0.5);
+
+        let problems = test_document(vec![invalid_thresholds, boundary_thresholds], vec![])
+            .validate_structure();
+
+        for field in ["threshold", "resolution_threshold", "review_threshold"] {
+            assert!(
+                problems.iter().any(|problem| problem.contains(field)),
+                "expected a problem for {field}: {problems:?}"
+            );
+        }
+        assert_eq!(problems.len(), 3, "valid boundary values must be accepted");
+    }
+
+    #[test]
+    fn validate_structure_reports_relationship_problems() {
+        let relationships = vec![
+            {
+                let mut rel = test_relationship("works_for", "Missing", "Person");
+                rel.threshold = Some(1.5);
+                rel.allow_self = true;
+                rel
+            },
+            test_relationship("WORKS_FOR", "Person", "Missing"),
+            test_relationship("WORKS_FOR", "person", "missing"),
+        ];
+        let problems = test_document(vec![test_entity("Person", "PERSON", None)], relationships)
+            .validate_structure();
+
+        for expected in [
+            "not UPPER_SNAKE",
+            "threshold",
+            "duplicate relationship",
+            "source \"Missing\" is not a declared label",
+            "target \"Missing\" is not a declared label",
+            "allow_self but its endpoints differ",
+        ] {
+            assert!(
+                problems.iter().any(|problem| problem.contains(expected)),
+                "expected {expected:?} in {problems:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_structure_reports_relationship_policy_disagreements_and_inverse_errors() {
+        let mut first = test_relationship("KNOWS", "Person", "Person");
+        first.inverse = Some("KNOWN_BY".into());
+        first.unique_source = true;
+        first.acyclic = true;
+
+        let mut second = test_relationship("KNOWS", "Person", "Organization");
+        second.inverse = Some("OTHER".into());
+        second.unique_target = true;
+
+        let mut mirror = test_relationship("KNOWN_BY", "Person", "Organization");
+        mirror.inverse = Some("KNOWS".into());
+
+        let problems = test_document(
+            vec![
+                test_entity("Person", "PERSON", None),
+                test_entity("Organization", "ORGANIZATION", None),
+            ],
+            vec![first, second, mirror],
+        )
+        .validate_structure();
+
+        for expected in [
+            "disagree on inverse",
+            "disagree on unique_source",
+            "disagree on unique_target",
+            "disagree on acyclic",
+            "do not mirror each other's source/target",
+        ] {
+            assert!(
+                problems.iter().any(|problem| problem.contains(expected)),
+                "expected {expected:?} in {problems:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_structure_reports_unknown_inverse_and_relationship_threshold() {
+        let mut rel = test_relationship("KNOWS", "Person", "Person");
+        rel.inverse = Some("UNKNOWN".into());
+        rel.threshold = Some(-0.1);
+        let problems = test_document(vec![test_entity("Person", "PERSON", None)], vec![rel])
+            .validate_structure();
+
+        assert!(problems
+            .iter()
+            .any(|problem| problem.contains("names unknown inverse \"UNKNOWN\"")));
+        assert!(problems
+            .iter()
+            .any(|problem| problem.contains("has threshold") && problem.contains("[0, 1]")));
+    }
+
+    #[test]
+    fn parse_document_strict_accepts_document_and_absent_forms() {
+        let json = serde_json::json!({"domain": {"id": "strict", "name": "Strict"}});
+        let parsed = parse_document_strict(&json).expect("document should parse");
+        assert_eq!(
+            parsed.expect("object should produce a document").domain.id,
+            "strict"
+        );
+
+        let encoded = json.to_string();
+        let parsed_string = parse_document_strict(&serde_json::Value::String(encoded))
+            .expect("encoded document should parse");
+        assert_eq!(
+            parsed_string
+                .expect("encoded object should parse")
+                .domain
+                .name,
+            "Strict"
+        );
+
+        assert!(parse_document_strict(&serde_json::Value::Null)
+            .expect("null is absent")
+            .is_none());
+        assert!(parse_document_strict(&serde_json::json!({}))
+            .expect("empty object is absent")
+            .is_none());
+        assert!(parse_document_strict(&serde_json::json!(""))
+            .expect("empty string is absent")
+            .is_none());
+    }
+
+    #[test]
+    fn parse_document_strict_reports_malformed_json_and_non_document_values() {
+        let invalid_json = parse_document_strict(&serde_json::json!("{not json"))
+            .expect_err("malformed JSON string must fail");
+        assert!(invalid_json.contains("not valid JSON"), "{invalid_json}");
+
+        let non_object = parse_document_strict(&serde_json::json!([1, 2, 3]))
+            .expect_err("array cannot represent an ontology document");
+        assert!(
+            non_object.contains("Ontology document is not valid:"),
+            "{non_object}"
+        );
+
+        let missing_fields = parse_document_strict(&serde_json::json!({"domain": {}}))
+            .expect_err("domain without required fields must fail");
+        assert!(
+            missing_fields.contains("Ontology document is not valid:"),
+            "{missing_fields}"
+        );
+    }
+
+    #[test]
+    fn validate_structure_accepts_mirroring_inverse_relationships() {
+        let mut works_for = test_relationship("WORKS_FOR", "Person", "Organization");
+        works_for.inverse = Some("EMPLOYED_BY".into());
+        let mut employed_by = test_relationship("EMPLOYED_BY", "Organization", "Person");
+        employed_by.inverse = Some("WORKS_FOR".into());
+
+        let problems = test_document(
+            vec![
+                test_entity("Person", "PERSON", None),
+                test_entity("Organization", "ORGANIZATION", None),
+            ],
+            vec![works_for, employed_by],
+        )
+        .validate_structure();
+
+        assert!(problems.is_empty(), "{problems:?}");
+    }
+
+    #[test]
+    fn label_for_falls_back_to_the_first_subtype_declaration() {
+        let doc = test_document(
+            vec![
+                test_entity("Customer", "PERSON", Some("CUSTOMER")),
+                test_entity("Actor", "PERSON", Some("ACTOR")),
+            ],
+            vec![],
+        );
+
+        // No base declaration exists for PERSON, so the first subtype wins.
+        assert_eq!(doc.label_for("PERSON", None), Some("Customer"));
+        // An undeclared subtype resolves to nothing.
+        assert_eq!(doc.label_for("PERSON", Some("VIP")), None);
+    }
+
+    #[test]
+    fn parse_document_reads_a_json_encoded_document() {
+        let encoded = serde_json::json!({
+            "domain": {"id": "encoded", "name": "Encoded"},
+            "entity_types": []
+        })
+        .to_string();
+
+        let parsed = parse_document(&serde_json::Value::String(encoded))
+            .expect("encoded document should parse");
+        assert_eq!(parsed.domain.id, "encoded");
+
+        let malformed = parse_document(&serde_json::Value::String("{not json".into()));
+        assert!(malformed.is_none());
+    }
+
+    #[test]
+    fn validate_structure_rejects_an_empty_relationship_type() {
+        let problems = test_document(
+            vec![test_entity("Person", "PERSON", None)],
+            vec![test_relationship("", "Person", "Person")],
+        )
+        .validate_structure();
+
+        assert!(
+            problems
+                .iter()
+                .any(|problem| problem.contains("is not UPPER_SNAKE")),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn content_key_sorts_entity_types_and_relationships() {
+        let mut first = test_document(
+            vec![
+                test_entity("Person", "PERSON", None),
+                test_entity("Organization", "ORGANIZATION", None),
+            ],
+            vec![],
+        );
+        first
+            .relationships
+            .push(test_relationship("KNOWS", "Person", "Person"));
+        first
+            .relationships
+            .push(test_relationship("WORKS_FOR", "Person", "Organization"));
+
+        let mut second = test_document(
+            vec![
+                test_entity("Organization", "ORGANIZATION", None),
+                test_entity("Person", "PERSON", None),
+            ],
+            vec![],
+        );
+        second
+            .relationships
+            .push(test_relationship("WORKS_FOR", "Person", "Organization"));
+        second
+            .relationships
+            .push(test_relationship("KNOWS", "Person", "Person"));
+
+        assert_eq!(first.content_key(), second.content_key());
+    }
 }
