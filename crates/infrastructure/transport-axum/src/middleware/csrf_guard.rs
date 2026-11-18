@@ -195,19 +195,27 @@ pub async fn csrf_guard_middleware(
 
     match validation {
         CsrfValidation::Valid => {
-            // Generate a fresh CSRF token to replace the one that was just consumed.
-            // This prevents CSRF token reuse attacks.
-            let new_token = match guard.generate_token() {
-                Ok(token) => token,
-                Err(error) => return error.into_response(),
-            };
             // Login issues its own token in the body, cookie, and response header.
+            // Skip token rotation for POST /login to avoid wasting an RNG call
+            // and emitting a second csrf_token cookie.
             let is_login = request.method() == Method::POST && request.uri().path() == "/login";
-            let response = next.run(request).await;
-            if is_login && response.status().is_success() {
-                response
+
+            // For non-login routes, generate a fresh token BEFORE running the handler.
+            // This ensures RNG failure fails-closed (handler never runs).
+            let new_token = if is_login {
+                None
             } else {
-                rotate_csrf_token_in_response(response, &guard, &new_token)
+                Some(match guard.generate_token() {
+                    Ok(token) => token,
+                    Err(error) => return error.into_response(),
+                })
+            };
+
+            let response = next.run(request).await;
+            if let Some(token) = new_token {
+                rotate_csrf_token_in_response(response, &guard, &token)
+            } else {
+                response
             }
         }
         CsrfValidation::MissingCookie | CsrfValidation::MissingHeader => {
