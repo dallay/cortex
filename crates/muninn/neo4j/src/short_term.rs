@@ -781,7 +781,37 @@ fn observation_from_row(row: &Row) -> MemoryResult<Observation> {
 
 #[cfg(test)]
 mod observation_tests {
+    use super::*;
     use crate::queries::short_term as q;
+
+    fn observation_node(
+        id: Option<Uuid>,
+        conversation_id: Option<Uuid>,
+        content: Option<&str>,
+        created_at: Option<&str>,
+    ) -> BoltType {
+        let mut map = BoltMap::new();
+        if let Some(id) = id {
+            map.put("id".into(), BoltType::from(id.to_string()));
+        }
+        if let Some(conversation_id) = conversation_id {
+            map.put(
+                "conversation_id".into(),
+                BoltType::from(conversation_id.to_string()),
+            );
+        }
+        if let Some(content) = content {
+            map.put("content".into(), BoltType::from(content));
+        }
+        if let Some(created_at) = created_at {
+            map.put("created_at".into(), BoltType::from(created_at));
+        }
+        BoltType::Map(map)
+    }
+
+    fn observation_row(node: BoltType) -> Row {
+        Row::new(vec!["o".into()].into(), vec![node].into())
+    }
 
     #[test]
     fn observation_queries_enforce_owner_scope_and_stable_pagination() {
@@ -792,6 +822,93 @@ mod observation_tests {
         assert!(q::LIST_OBSERVATIONS.contains("SKIP $offset"));
         assert!(q::LIST_OBSERVATIONS.contains("LIMIT $limit"));
         assert!(q::GET_OBSERVATION_CONVERSATION.contains("WHERE c.owner_scope = $owner_scope"));
+    }
+
+    #[test]
+    fn observation_rows_decode_into_observations() {
+        let id = Uuid::new_v4();
+        let conversation_id = Uuid::new_v4();
+        let row = observation_row(observation_node(
+            Some(id),
+            Some(conversation_id),
+            Some("noted"),
+            Some("2026-03-01T10:00:00Z"),
+        ));
+        let observation = observation_from_row(&row).expect("observation row");
+        assert_eq!(observation.id, id);
+        assert_eq!(observation.conversation_id, conversation_id);
+        assert_eq!(observation.content, "noted");
+        assert_eq!(
+            observation.created_at.to_rfc3339(),
+            "2026-03-01T10:00:00+00:00"
+        );
+    }
+
+    #[test]
+    fn observation_rows_report_missing_and_invalid_properties() {
+        let id = Uuid::new_v4();
+        let conversation_id = Uuid::new_v4();
+
+        for created_at in [None, Some("not-a-timestamp")] {
+            let row = observation_row(observation_node(
+                Some(id),
+                Some(conversation_id),
+                Some("noted"),
+                created_at,
+            ));
+            let error = observation_from_row(&row).expect_err("a timestamp is required");
+            assert!(
+                matches!(error, MemoryError::Storage(ref message) if message == "observation property 'created_at' is missing or invalid"),
+                "{created_at:?}"
+            );
+        }
+
+        let missing_id = observation_row(observation_node(
+            None,
+            Some(conversation_id),
+            Some("noted"),
+            Some("2026-03-01T10:00:00Z"),
+        ));
+        let error = observation_from_row(&missing_id).expect_err("an id is required");
+        assert!(
+            matches!(error, MemoryError::Storage(ref message) if message == "missing string property 'id'")
+        );
+
+        let missing_conversation = observation_row(observation_node(
+            Some(id),
+            None,
+            Some("noted"),
+            Some("2026-03-01T10:00:00Z"),
+        ));
+        let error =
+            observation_from_row(&missing_conversation).expect_err("a conversation is required");
+        assert!(
+            matches!(error, MemoryError::Storage(ref message) if message == "missing string property 'conversation_id'")
+        );
+
+        let missing_content = observation_row(observation_node(
+            Some(id),
+            Some(conversation_id),
+            None,
+            Some("2026-03-01T10:00:00Z"),
+        ));
+        let error = observation_from_row(&missing_content).expect_err("content is required");
+        assert!(
+            matches!(error, MemoryError::Storage(ref message) if message == "missing string property 'content'")
+        );
+    }
+
+    #[test]
+    fn observation_rows_require_the_observation_column() {
+        let row = Row::new(
+            vec!["other".into()].into(),
+            vec![BoltType::Null(BoltNull)].into(),
+        );
+        let error = observation_from_row(&row).expect_err("the observation column is required");
+        assert!(
+            matches!(error, MemoryError::Storage(ref message) if message.contains("column 'o'")),
+            "{error}"
+        );
     }
 }
 
@@ -812,6 +929,7 @@ fn validate_record_identity(record: &MessageRecord) -> MemoryResult<()> {
 #[cfg(test)]
 mod identity_tests {
     use super::*;
+    use serde_json::json;
 
     fn record() -> MessageRecord {
         MessageRecord {
@@ -856,6 +974,153 @@ mod identity_tests {
             Some(EmbeddingIdentity::new("model-b:revision-1:mean:l2", 2).unwrap());
         assert_ne!(record_to_bolt(&first), record_to_bolt(&second));
     }
+
+    fn bolt_map(entries: &[(&str, BoltType)]) -> BoltType {
+        let mut map = BoltMap::new();
+        for (key, value) in entries {
+            map.put((*key).into(), value.clone());
+        }
+        BoltType::Map(map)
+    }
+
+    #[test]
+    fn message_nodes_decode_into_domain_messages() {
+        let id = Uuid::new_v4();
+        let conversation_id = Uuid::new_v4();
+        let node = bolt_map(&[
+            ("id", BoltType::from(id.to_string())),
+            ("role", BoltType::from("user")),
+            ("content", BoltType::from("hello")),
+            ("timestamp", BoltType::from("2026-01-01T12:00:00Z")),
+            (
+                "embedding",
+                BoltType::List(vec![BoltType::Float(neo4rs::BoltFloat { value: 0.25 })].into()),
+            ),
+            ("metadata", BoltType::from(r#"{"source": "chat"}"#)),
+        ]);
+        let message = message_from_value(&node, Some(conversation_id)).expect("message node");
+        assert_eq!(message.id, id);
+        assert_eq!(message.role, muninn_core::model::MessageRole::User);
+        assert_eq!(message.content, "hello");
+        assert_eq!(message.conversation_id, Some(conversation_id));
+        assert_eq!(message.created_at.to_rfc3339(), "2026-01-01T12:00:00+00:00");
+        let embedding = message.embedding.expect("embedding list");
+        assert_eq!(embedding.len(), 1);
+        assert!((embedding[0] - 0.25).abs() < f64::EPSILON);
+        assert_eq!(message.metadata["source"], json!("chat"));
+    }
+
+    #[test]
+    fn message_nodes_use_defaults_for_absent_optional_properties() {
+        let id = Uuid::new_v4();
+        let node = bolt_map(&[
+            ("id", BoltType::from(id.to_string())),
+            ("role", BoltType::from("assistant")),
+        ]);
+        let message = message_from_value(&node, None).expect("message node");
+        assert_eq!(message.role, muninn_core::model::MessageRole::Assistant);
+        assert_eq!(message.content, "");
+        assert_eq!(message.conversation_id, None);
+        assert_eq!(message.embedding, None);
+        assert!(message.metadata.is_empty());
+        let age = chrono::Utc::now()
+            .signed_duration_since(message.created_at)
+            .num_seconds();
+        assert!((0..5).contains(&age), "a missing timestamp defaults to now");
+    }
+
+    #[test]
+    fn message_nodes_require_an_id_and_a_known_role() {
+        let id = Uuid::new_v4();
+
+        let missing_id = bolt_map(&[("role", BoltType::from("user"))]);
+        let error = message_from_value(&missing_id, None).expect_err("a message needs an id");
+        assert!(
+            matches!(error, MemoryError::Storage(ref message) if message == "missing string property 'id'")
+        );
+
+        let missing_role = bolt_map(&[("id", BoltType::from(id.to_string()))]);
+        let error = message_from_value(&missing_role, None).expect_err("a message needs a role");
+        assert!(
+            matches!(error, MemoryError::Storage(ref message) if message == "missing string property 'role'")
+        );
+
+        let unknown_role = bolt_map(&[
+            ("id", BoltType::from(id.to_string())),
+            ("role", BoltType::from("superuser")),
+        ]);
+        let error = message_from_value(&unknown_role, None).expect_err("the role must be known");
+        assert!(
+            matches!(error, MemoryError::InvalidInput(ref message) if message == "unknown message role 'superuser'")
+        );
+
+        let scalar = BoltType::Integer(neo4rs::BoltInteger { value: 3 });
+        let error = message_from_value(&scalar, None).expect_err("a scalar is not a message");
+        assert!(
+            matches!(error, MemoryError::Storage(ref message) if message == "expected a node or map")
+        );
+    }
+
+    #[test]
+    fn message_records_serialize_every_bolt_field() {
+        let mut record = record();
+        record.timestamp = Some(chrono::Utc::now());
+        let value = record_to_bolt(&record);
+        let props = Props::of(&value).expect("record map");
+        let id = record.id.to_string();
+        assert_eq!(props.string("id").as_deref(), Some(id.as_str()));
+        assert_eq!(props.string("role").as_deref(), Some("user"));
+        assert_eq!(props.string("content").as_deref(), Some("text"));
+        assert_eq!(
+            props.string("embedding_identity").as_deref(),
+            Some("model-a:revision-1:mean:l2")
+        );
+        assert_eq!(props.i64("embedding_dimensions"), Some(2));
+        assert!(props.string("timestamp").is_some());
+        assert!(props.raw("metadata").is_none());
+        let embedding = props.f64_list("embedding").expect("embedding list");
+        assert_eq!(embedding.len(), 2);
+        assert!((embedding[0] - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn message_records_without_optional_fields_are_null() {
+        let mut record = record();
+        record.timestamp = None;
+        record.embedding = None;
+        record.embedding_identity = None;
+        let value = record_to_bolt(&record);
+        let props = Props::of(&value).expect("record map");
+        assert!(props.raw("embedding").is_none());
+        assert!(props.raw("embedding_identity").is_none());
+        assert!(props.raw("embedding_dimensions").is_none());
+        assert!(props.raw("timestamp").is_none());
+    }
+
+    #[test]
+    fn metadata_parameters_are_null_when_empty() {
+        assert_eq!(metadata_param(&Metadata::new()), BoltType::Null(BoltNull));
+        let mut metadata = Metadata::new();
+        metadata.insert("source".into(), json!("chat"));
+        assert!(matches!(metadata_param(&metadata), BoltType::String(_)));
+    }
+
+    #[test]
+    fn legacy_conflict_parameters_bind_optional_identifiers() {
+        let id = Uuid::new_v4();
+        let message = Uuid::new_v4();
+        let params = legacy_params(Some("session"), Some(id), Some(message));
+        assert_eq!(params.len(), 3);
+        assert_eq!(params[0], ("session", BoltType::from("session")));
+        assert_eq!(params[1], ("id", BoltType::from(id.to_string())));
+        assert_eq!(params[2], ("message", BoltType::from(message.to_string())));
+
+        let empty = legacy_params(None, None, None);
+        assert_eq!(empty.len(), 3);
+        assert!(empty
+            .iter()
+            .all(|(_, value)| matches!(value, BoltType::Null(_))));
+    }
 }
 
 /// Replace underfilled ANN results. Errors must not trigger an exact scan.
@@ -875,6 +1140,7 @@ where
 #[cfg(test)]
 mod fallback_tests {
     use super::*;
+    use serde_json::json;
     use std::future::ready;
 
     #[tokio::test]
@@ -945,5 +1211,73 @@ mod fallback_tests {
         })
         .await;
         assert!(matches!(result, Err(MemoryError::Storage(_))));
+    }
+
+    #[test]
+    fn metadata_filters_bind_values_as_parameters() {
+        let mut filters = Metadata::new();
+        filters.insert("category".into(), json!("tech"));
+        let (clause, params) = metadata_filter_clause(&filters);
+        assert_eq!(
+            clause,
+            "(m.metadata CONTAINS $mf_0 OR m.metadata CONTAINS $mf_0_alt)"
+        );
+        assert_eq!(params.len(), 2);
+        assert_eq!(params[0].0, "mf_0");
+        assert_eq!(params[0].1, BoltType::from(r#""category": "tech""#));
+        assert_eq!(params[1].0, "mf_0_alt");
+        assert_eq!(params[1].1, BoltType::from(r#""category":"tech""#));
+    }
+
+    #[test]
+    fn metadata_filters_render_numbers_and_booleans_like_python_json() {
+        let mut filters = Metadata::new();
+        filters.insert("count".into(), json!(5));
+        filters.insert("pinned".into(), json!(true));
+        let (clause, params) = metadata_filter_clause(&filters);
+        assert_eq!(
+            clause,
+            "(m.metadata CONTAINS $mf_0 OR m.metadata CONTAINS $mf_0_alt) AND (m.metadata CONTAINS $mf_1 OR m.metadata CONTAINS $mf_1_alt)"
+        );
+        assert_eq!(params.len(), 4);
+        assert_eq!(params[0].1, BoltType::from(r#""count": 5"#));
+        assert_eq!(params[1].1, BoltType::from(r#""count":5"#));
+        assert_eq!(params[2].1, BoltType::from(r#""pinned": true"#));
+        assert_eq!(params[3].1, BoltType::from(r#""pinned":true"#));
+    }
+
+    #[test]
+    fn metadata_filters_skip_unsupported_operators_and_values() {
+        for value in [
+            json!({"$ne": "tech"}),
+            json!({"$gt": 5}),
+            json!(["tech"]),
+            json!(null),
+        ] {
+            let mut filters = Metadata::new();
+            filters.insert("category".into(), value.clone());
+            let (clause, params) = metadata_filter_clause(&filters);
+            assert!(clause.is_empty(), "{value}");
+            assert!(params.is_empty(), "{value}");
+        }
+    }
+
+    #[test]
+    fn metadata_filters_accept_the_equality_operator() {
+        let mut filters = Metadata::new();
+        filters.insert("category".into(), json!({"$eq": "tech"}));
+        let (clause, params) = metadata_filter_clause(&filters);
+        assert_eq!(
+            clause,
+            "(m.metadata CONTAINS $mf_0 OR m.metadata CONTAINS $mf_0_alt)"
+        );
+        assert_eq!(params[0].1, BoltType::from(r#""category": "tech""#));
+    }
+
+    #[test]
+    fn empty_metadata_filters_produce_no_clause() {
+        let (clause, params) = metadata_filter_clause(&Metadata::new());
+        assert!(clause.is_empty());
+        assert!(params.is_empty());
     }
 }

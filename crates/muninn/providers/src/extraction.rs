@@ -454,4 +454,132 @@ mod tests {
             .await
             .is_err());
     }
+
+    struct Failing;
+
+    #[async_trait]
+    impl LlmProvider for Failing {
+        async fn complete(&self, _: &[ChatMessage], _: &CompletionOptions) -> MemoryResult<String> {
+            Err(MemoryError::provider("provider exploded"))
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_failures_are_wrapped_as_provider_errors() {
+        let extractor = LlmEntityExtractor::for_poleo(Arc::new(Failing));
+        let result = extractor.extract("text", &ExtractOptions::default()).await;
+        assert!(matches!(
+            result,
+            Err(MemoryError::Provider(message))
+                if message.contains("failed to extract entities")
+                    && message.contains("provider exploded")
+        ));
+    }
+
+    #[tokio::test]
+    async fn entities_without_a_type_default_to_object() {
+        let (extractor, _) = extractor("{\"entities\": [{\"name\": \"Widget\"}]}");
+        let result = extractor
+            .extract("text", &ExtractOptions::default())
+            .await
+            .expect("a valid payload should extract");
+        assert_eq!(result.entities.len(), 1);
+        assert_eq!(result.entities[0].entity_type, "OBJECT");
+        assert_eq!(result.entities[0].confidence, 1.0);
+    }
+
+    #[tokio::test]
+    async fn types_outside_the_allowed_set_are_mapped() {
+        let (extractor, _) =
+            extractor("{\"entities\": [{\"name\": \"Acme\", \"type\": \"COMPANY\"}]}");
+        let options = ExtractOptions {
+            entity_types: Some(vec!["PERSON".to_owned()]),
+            ..ExtractOptions::default()
+        };
+        let result = extractor
+            .extract("text", &options)
+            .await
+            .expect("a valid payload should extract");
+        assert_eq!(result.entities[0].entity_type, "PERSON");
+    }
+
+    #[tokio::test]
+    async fn relations_and_preferences_can_be_disabled() {
+        let (extractor, _) = extractor(
+            "{\"entities\": [{\"name\": \"Alice\", \"type\": \"PERSON\"}],\
+              \"relations\": [{\"source\": \"Alice\", \"target\": \"Alice\", \"relation_type\": \"knows\"}],\
+              \"preferences\": [{\"category\": \"food\", \"preference\": \"likes pizza\"}]}",
+        );
+        let options = ExtractOptions {
+            extract_relations: Some(false),
+            extract_preferences: Some(false),
+            ..ExtractOptions::default()
+        };
+        let result = extractor
+            .extract("text", &options)
+            .await
+            .expect("a valid payload should extract");
+        assert_eq!(result.entities.len(), 1);
+        assert!(result.relations.is_empty());
+        assert!(result.preferences.is_empty());
+    }
+
+    #[tokio::test]
+    async fn types_without_known_subtypes_omit_the_subtype_section() {
+        let (extractor, canned) = extractor("{}");
+        let options = ExtractOptions {
+            entity_types: Some(vec!["CUSTOM".to_owned()]),
+            ..ExtractOptions::default()
+        };
+        extractor
+            .extract("hello", &options)
+            .await
+            .expect("an empty payload should extract");
+        let prompt = canned.prompts.lock().unwrap()[0].clone();
+        assert!(prompt.contains("Extract entities of these types:\nCUSTOM"));
+        assert!(!prompt.contains("Subtypes (optional"));
+    }
+
+    #[test]
+    fn map_to_allowed_type_maps_place_variants_to_location() {
+        let allowed = vec!["LOCATION".to_owned()];
+        assert_eq!(map_to_allowed_type("PLACE", &allowed), "LOCATION");
+        assert_eq!(map_to_allowed_type("CITY", &allowed), "LOCATION");
+        assert_eq!(map_to_allowed_type("COUNTRY", &allowed), "LOCATION");
+        assert_eq!(map_to_allowed_type("ADDRESS", &allowed), "LOCATION");
+    }
+
+    #[test]
+    fn map_to_allowed_type_maps_organization_person_and_event_variants() {
+        let allowed = vec![
+            "ORGANIZATION".to_owned(),
+            "PERSON".to_owned(),
+            "EVENT".to_owned(),
+        ];
+        assert_eq!(map_to_allowed_type("COMPANY", &allowed), "ORGANIZATION");
+        assert_eq!(map_to_allowed_type("ORG", &allowed), "ORGANIZATION");
+        assert_eq!(map_to_allowed_type("INDIVIDUAL", &allowed), "PERSON");
+        assert_eq!(map_to_allowed_type("HUMAN", &allowed), "PERSON");
+        assert_eq!(map_to_allowed_type("INCIDENT", &allowed), "EVENT");
+        assert_eq!(map_to_allowed_type("MEETING", &allowed), "EVENT");
+        assert_eq!(map_to_allowed_type("DATE", &allowed), "EVENT");
+        assert_eq!(map_to_allowed_type("TIME", &allowed), "EVENT");
+    }
+
+    #[test]
+    fn map_to_allowed_type_falls_back_to_object_for_unknown_kinds() {
+        let allowed = vec!["OBJECT".to_owned()];
+        assert_eq!(map_to_allowed_type("ALIEN", &allowed), "OBJECT");
+    }
+
+    #[test]
+    fn map_to_allowed_type_falls_back_to_the_first_allowed_type() {
+        let allowed = vec!["PERSON".to_owned(), "OBJECT".to_owned()];
+        assert_eq!(map_to_allowed_type("PLACE", &allowed), "PERSON");
+    }
+
+    #[test]
+    fn map_to_allowed_type_falls_back_to_object_without_allowed_types() {
+        assert_eq!(map_to_allowed_type("PLACE", &[]), "OBJECT");
+    }
 }
