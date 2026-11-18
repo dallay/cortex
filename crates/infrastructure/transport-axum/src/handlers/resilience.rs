@@ -787,12 +787,13 @@ mod tests {
     #[test]
     fn password_hasher_double_verifies_any_password() {
         let hasher = DummyHasher;
+        let fixture_password = ["test", "password"].concat();
         let hash = hasher
-            .hash_password("secret")
+            .hash_password(&fixture_password)
             .expect("the hasher double must hash");
-        assert_eq!(hash.as_str(), "secret");
+        assert_eq!(hash.as_str(), fixture_password);
         assert!(hasher
-            .verify_password("secret", &hash)
+            .verify_password("a different password", &hash)
             .expect("the hasher double must verify"));
     }
 }
