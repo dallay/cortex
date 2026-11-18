@@ -1429,6 +1429,527 @@ mod preference_lifecycle_tests {
         assert!(!valid_server_limit("2s", 1.0));
     }
 
+    fn bolt_map(entries: &[(&str, BoltType)]) -> BoltType {
+        let mut map = neo4rs::BoltMap::new();
+        for (key, value) in entries {
+            map.put((*key).into(), value.clone());
+        }
+        BoltType::Map(map)
+    }
+
+    fn bolt_row(entries: &[(&str, BoltType)]) -> Row {
+        let mut fields = Vec::with_capacity(entries.len());
+        let mut data = Vec::with_capacity(entries.len());
+        for (key, value) in entries {
+            fields.push(BoltType::from(*key));
+            data.push(value.clone());
+        }
+        Row::new(fields.into(), data.into())
+    }
+
+    #[test]
+    fn entity_nodes_decode_into_domain_entities() {
+        let id = Uuid::new_v4();
+        let node = bolt_map(&[
+            ("id", BoltType::from(id.to_string())),
+            ("name", BoltType::from("Alice")),
+            ("canonical_name", BoltType::from("Alice Liddell")),
+            ("type", BoltType::from("PERSON")),
+            ("subtype", BoltType::from("AUTHOR")),
+            ("description", BoltType::from("A writer")),
+            (
+                "confidence",
+                BoltType::Float(neo4rs::BoltFloat { value: 0.75 }),
+            ),
+            (
+                "aliases",
+                BoltType::List(vec![BoltType::from("A. Liddell")].into()),
+            ),
+            (
+                "embedding",
+                BoltType::List(vec![BoltType::Float(neo4rs::BoltFloat { value: 0.5 })].into()),
+            ),
+            ("created_at", BoltType::from("2026-01-01T00:00:00Z")),
+            ("updated_at", BoltType::from("2026-02-01T00:00:00Z")),
+            ("metadata", BoltType::from(r#"{"origin": "test"}"#)),
+        ]);
+        let entity = entity_from_value(&node).expect("entity node");
+        assert_eq!(entity.id, id);
+        assert_eq!(entity.name, "Alice");
+        assert_eq!(entity.canonical_name.as_deref(), Some("Alice Liddell"));
+        assert_eq!(entity.entity_type, "PERSON");
+        assert_eq!(entity.subtype.as_deref(), Some("AUTHOR"));
+        assert_eq!(entity.description.as_deref(), Some("A writer"));
+        assert!((entity.confidence - 0.75).abs() < f64::EPSILON);
+        assert_eq!(entity.aliases, vec!["A. Liddell".to_owned()]);
+        let embedding = entity.embedding.expect("embedding list");
+        assert_eq!(embedding.len(), 1);
+        assert!((embedding[0] - 0.5).abs() < f64::EPSILON);
+        assert_eq!(entity.created_at.to_rfc3339(), "2026-01-01T00:00:00+00:00");
+        assert_eq!(
+            entity.updated_at.map(|time| time.to_rfc3339()),
+            Some("2026-02-01T00:00:00+00:00".to_owned())
+        );
+        assert_eq!(entity.metadata["origin"], Value::from("test"));
+    }
+
+    #[test]
+    fn entity_nodes_use_defaults_for_absent_optional_properties() {
+        let id = Uuid::new_v4();
+        let node = bolt_map(&[("id", BoltType::from(id.to_string()))]);
+        let entity = entity_from_value(&node).expect("entity node");
+        assert_eq!(entity.id, id);
+        assert_eq!(entity.name, "");
+        assert_eq!(entity.canonical_name, None);
+        assert_eq!(entity.entity_type, "");
+        assert_eq!(entity.subtype, None);
+        assert_eq!(entity.description, None);
+        assert!((entity.confidence - 1.0).abs() < f64::EPSILON);
+        assert!(entity.aliases.is_empty());
+        assert_eq!(entity.embedding, None);
+        assert_eq!(entity.updated_at, None);
+        assert!(entity.metadata.is_empty());
+        let age = Utc::now()
+            .signed_duration_since(entity.created_at)
+            .num_seconds();
+        assert!((0..5).contains(&age), "a missing timestamp defaults to now");
+    }
+
+    #[test]
+    fn entity_nodes_fall_back_to_legacy_metadata_aliases() {
+        let id = Uuid::new_v4();
+        let legacy = bolt_map(&[
+            ("id", BoltType::from(id.to_string())),
+            ("name", BoltType::from("Alice")),
+            (
+                "metadata",
+                BoltType::from(r#"{"aliases": ["one", "two"], "origin": "legacy"}"#),
+            ),
+        ]);
+        let entity = entity_from_value(&legacy).expect("entity node");
+        assert_eq!(entity.aliases, vec!["one".to_owned(), "two".to_owned()]);
+        assert_eq!(entity.metadata["origin"], Value::from("legacy"));
+        assert!(!entity.metadata.contains_key("aliases"));
+    }
+
+    #[test]
+    fn entity_nodes_prefer_top_level_aliases_over_legacy_metadata() {
+        let id = Uuid::new_v4();
+        let node = bolt_map(&[
+            ("id", BoltType::from(id.to_string())),
+            (
+                "aliases",
+                BoltType::List(vec![BoltType::from("top")].into()),
+            ),
+            ("metadata", BoltType::from(r#"{"aliases": ["legacy"]}"#)),
+        ]);
+        let entity = entity_from_value(&node).expect("entity node");
+        assert_eq!(entity.aliases, vec!["top".to_owned()]);
+        assert!(!entity.metadata.contains_key("aliases"));
+    }
+
+    #[test]
+    fn entity_nodes_require_a_uuid_id_and_a_map() {
+        let missing_id = bolt_map(&[("name", BoltType::from("Alice"))]);
+        let error = entity_from_value(&missing_id).expect_err("an id is required");
+        assert!(
+            matches!(error, MemoryError::Storage(ref message) if message == "missing string property 'id'")
+        );
+
+        let invalid_id = bolt_map(&[("id", BoltType::from("not-a-uuid"))]);
+        let error = entity_from_value(&invalid_id).expect_err("the id must be a UUID");
+        assert!(
+            matches!(error, MemoryError::Storage(ref message) if message == "property 'id' is not a UUID")
+        );
+
+        let scalar = BoltType::Integer(neo4rs::BoltInteger { value: 5 });
+        let error = entity_from_value(&scalar).expect_err("a scalar is not an entity");
+        assert!(
+            matches!(error, MemoryError::Storage(ref message) if message == "expected a node or map")
+        );
+    }
+
+    #[test]
+    fn preference_nodes_decode_into_domain_preferences() {
+        let id = Uuid::new_v4();
+        let node = bolt_map(&[
+            ("id", BoltType::from(id.to_string())),
+            ("category", BoltType::from("food")),
+            ("preference", BoltType::from("tea")),
+            ("context", BoltType::from("morning")),
+            (
+                "confidence",
+                BoltType::Float(neo4rs::BoltFloat { value: 0.9 }),
+            ),
+            (
+                "embedding",
+                BoltType::List(vec![BoltType::Float(neo4rs::BoltFloat { value: 0.1 })].into()),
+            ),
+            ("valid_from", BoltType::from("2026-01-01T00:00:00Z")),
+            ("valid_until", BoltType::from("2026-12-01T00:00:00Z")),
+            ("created_at", BoltType::from("2026-01-01T00:00:00Z")),
+            ("metadata", BoltType::from(r#"{"origin": "test"}"#)),
+        ]);
+        let preference = preference_from_value(&node).expect("preference node");
+        assert_eq!(preference.id, id);
+        assert_eq!(preference.category, "food");
+        assert_eq!(preference.preference, "tea");
+        assert_eq!(preference.context.as_deref(), Some("morning"));
+        assert!((preference.confidence - 0.9).abs() < f64::EPSILON);
+        assert_eq!(preference.embedding.as_ref().map(Vec::len), Some(1));
+        assert_eq!(
+            preference.valid_from.map(|time| time.to_rfc3339()),
+            Some("2026-01-01T00:00:00+00:00".to_owned())
+        );
+        assert_eq!(
+            preference.valid_until.map(|time| time.to_rfc3339()),
+            Some("2026-12-01T00:00:00+00:00".to_owned())
+        );
+        assert_eq!(preference.metadata["origin"], Value::from("test"));
+    }
+
+    #[test]
+    fn preference_nodes_use_defaults_and_require_an_id() {
+        let id = Uuid::new_v4();
+        let node = bolt_map(&[("id", BoltType::from(id.to_string()))]);
+        let preference = preference_from_value(&node).expect("preference node");
+        assert_eq!(preference.category, "");
+        assert_eq!(preference.preference, "");
+        assert_eq!(preference.context, None);
+        assert!((preference.confidence - 1.0).abs() < f64::EPSILON);
+        assert_eq!(preference.embedding, None);
+        assert_eq!(preference.valid_from, None);
+        assert_eq!(preference.valid_until, None);
+        assert!(preference.metadata.is_empty());
+
+        let missing_id = bolt_map(&[("preference", BoltType::from("tea"))]);
+        let error = preference_from_value(&missing_id).expect_err("an id is required");
+        assert!(
+            matches!(error, MemoryError::Storage(ref message) if message == "missing string property 'id'")
+        );
+    }
+
+    #[test]
+    fn fact_nodes_decode_into_domain_facts() {
+        let id = Uuid::new_v4();
+        let node = bolt_map(&[
+            ("id", BoltType::from(id.to_string())),
+            ("subject", BoltType::from("Alice")),
+            ("predicate", BoltType::from("works_at")),
+            ("object", BoltType::from("Acme")),
+            (
+                "confidence",
+                BoltType::Float(neo4rs::BoltFloat { value: 0.6 }),
+            ),
+            (
+                "embedding",
+                BoltType::List(vec![BoltType::Float(neo4rs::BoltFloat { value: 0.2 })].into()),
+            ),
+            ("valid_from", BoltType::from("2026-01-01T00:00:00Z")),
+            ("valid_until", BoltType::Null(neo4rs::BoltNull)),
+            ("created_at", BoltType::from("2026-01-01T00:00:00Z")),
+            ("metadata", BoltType::from(r#"{"origin": "test"}"#)),
+        ]);
+        let fact = fact_from_value(&node).expect("fact node");
+        assert_eq!(fact.id, id);
+        assert_eq!(fact.subject, "Alice");
+        assert_eq!(fact.predicate, "works_at");
+        assert_eq!(fact.object, "Acme");
+        assert!((fact.confidence - 0.6).abs() < f64::EPSILON);
+        assert_eq!(fact.embedding.as_ref().map(Vec::len), Some(1));
+        assert_eq!(fact.valid_until, None);
+        assert_eq!(fact.metadata["origin"], Value::from("test"));
+    }
+
+    #[test]
+    fn fact_nodes_use_defaults_and_require_an_id() {
+        let id = Uuid::new_v4();
+        let node = bolt_map(&[("id", BoltType::from(id.to_string()))]);
+        let fact = fact_from_value(&node).expect("fact node");
+        assert_eq!(fact.subject, "");
+        assert_eq!(fact.predicate, "");
+        assert_eq!(fact.object, "");
+        assert!((fact.confidence - 1.0).abs() < f64::EPSILON);
+        assert_eq!(fact.embedding, None);
+        assert_eq!(fact.valid_from, None);
+        assert_eq!(fact.valid_until, None);
+        assert!(fact.metadata.is_empty());
+
+        let missing_id = bolt_map(&[("subject", BoltType::from("Alice"))]);
+        let error = fact_from_value(&missing_id).expect_err("an id is required");
+        assert!(
+            matches!(error, MemoryError::Storage(ref message) if message == "missing string property 'id'")
+        );
+    }
+
+    #[test]
+    fn related_rows_decode_into_related_entities() {
+        let source_id = Uuid::new_v4();
+        let target_id = Uuid::new_v4();
+        let relation_id = Uuid::new_v4();
+        let other = bolt_map(&[
+            ("id", BoltType::from(target_id.to_string())),
+            ("name", BoltType::from("Acme")),
+            ("type", BoltType::from("ORGANIZATION")),
+        ]);
+        let row = bolt_row(&[
+            ("other", other),
+            ("rel_id", BoltType::from(relation_id.to_string())),
+            ("rel_type", BoltType::from("WORKS_AT")),
+            ("neo4j_type", BoltType::from("WORKS_WITH")),
+            (
+                "confidence",
+                BoltType::Float(neo4rs::BoltFloat { value: 0.8 }),
+            ),
+            ("description", BoltType::from("since 2020")),
+            ("valid_from", BoltType::from("2026-01-01T00:00:00Z")),
+            ("valid_until", BoltType::Null(neo4rs::BoltNull)),
+            ("created_at", BoltType::from("2026-01-02T00:00:00Z")),
+            ("properties", BoltType::from(r#"{"weight": 2}"#)),
+        ]);
+        let related = related_from_row(&row, source_id).expect("related entity");
+        assert_eq!(related.relationship.id, relation_id);
+        assert_eq!(related.relationship.source_id, source_id);
+        assert_eq!(related.relationship.target_id, target_id);
+        assert_eq!(related.relationship.relationship_type, "WORKS_AT");
+        assert_eq!(
+            related.relationship.description.as_deref(),
+            Some("since 2020")
+        );
+        assert!((related.relationship.confidence - 0.8).abs() < f64::EPSILON);
+        assert_eq!(
+            related
+                .relationship
+                .valid_from
+                .map(|time| time.to_rfc3339()),
+            Some("2026-01-01T00:00:00+00:00".to_owned())
+        );
+        assert_eq!(related.relationship.valid_until, None);
+        assert_eq!(related.relationship.properties["weight"], Value::from(2));
+        assert_eq!(related.entity.id, target_id);
+        assert_eq!(related.entity.name, "Acme");
+        assert_eq!(related.entity.entity_type, "ORGANIZATION");
+    }
+
+    #[test]
+    fn related_rows_fall_back_to_legacy_relationship_types() {
+        let source_id = Uuid::new_v4();
+        let target_id = Uuid::new_v4();
+        let row_with = |rel_type: Option<&str>, neo4j_type: Option<&str>| {
+            let null = BoltType::Null(neo4rs::BoltNull);
+            let other = bolt_map(&[("id", BoltType::from(target_id.to_string()))]);
+            bolt_row(&[
+                ("other", other),
+                ("rel_id", null.clone()),
+                (
+                    "rel_type",
+                    rel_type.map_or_else(|| null.clone(), BoltType::from),
+                ),
+                (
+                    "neo4j_type",
+                    neo4j_type.map_or_else(|| null.clone(), BoltType::from),
+                ),
+                ("confidence", null.clone()),
+                ("description", null.clone()),
+                ("valid_from", null.clone()),
+                ("valid_until", null.clone()),
+                ("created_at", null.clone()),
+                ("properties", null),
+            ])
+        };
+
+        let legacy =
+            related_from_row(&row_with(None, Some("KNOWS")), source_id).expect("legacy row");
+        assert_eq!(legacy.relationship.relationship_type, "KNOWS");
+
+        let fallback = related_from_row(&row_with(None, None), source_id).expect("fallback row");
+        assert_eq!(fallback.relationship.relationship_type, "RELATED_TO");
+        assert!(!fallback.relationship.id.is_nil());
+        assert_eq!(fallback.relationship.description, None);
+        assert!((fallback.relationship.confidence - 1.0).abs() < f64::EPSILON);
+        assert!(fallback.relationship.properties.is_empty());
+    }
+
+    #[test]
+    fn related_rows_report_missing_columns() {
+        let row = bolt_row(&[("rel_id", BoltType::Null(neo4rs::BoltNull))]);
+        let error =
+            related_from_row(&row, Uuid::new_v4()).expect_err("the entity column is required");
+        assert!(
+            matches!(error, MemoryError::Storage(ref message) if message.contains("column 'other'")),
+            "{error}"
+        );
+
+        let other = bolt_map(&[("id", BoltType::from(Uuid::new_v4().to_string()))]);
+        let row = bolt_row(&[("other", other)]);
+        let error =
+            related_from_row(&row, Uuid::new_v4()).expect_err("the relation columns are required");
+        assert!(
+            matches!(error, MemoryError::Storage(ref message) if message.contains("column 'rel_id'")),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn scores_are_read_from_the_score_column() {
+        let row = bolt_row(&[("score", BoltType::Float(neo4rs::BoltFloat { value: 0.95 }))]);
+        let value = score(&row).expect("score column");
+        assert!((value - 0.95).abs() < f64::EPSILON);
+
+        let integer = bolt_row(&[("score", BoltType::from(1i64))]);
+        let value = score(&integer).expect("integer score");
+        assert!((value - 1.0).abs() < f64::EPSILON);
+
+        let textual = bolt_row(&[("score", BoltType::from("high"))]);
+        let value = score(&textual).expect("a non numeric score falls back to zero");
+        assert!((value - 0.0).abs() < f64::EPSILON);
+
+        let missing = bolt_row(&[("other", BoltType::from(1i64))]);
+        let error = score(&missing).expect_err("the score column is required");
+        assert!(
+            matches!(error, MemoryError::Storage(ref message) if message.contains("column 'score'")),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn list_items_reads_lists_and_ignores_everything_else() {
+        let list = BoltType::List(vec![BoltType::from(1i64), BoltType::from("two")].into());
+        let items = list_items(&list);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0], BoltType::from(1i64));
+        assert_eq!(items[1], BoltType::from("two"));
+        assert!(list_items(&BoltType::Null(neo4rs::BoltNull)).is_empty());
+        assert!(list_items(&BoltType::from("text")).is_empty());
+    }
+
+    #[test]
+    fn bounded_preference_params_cap_the_candidate_set() {
+        let params = bounded_preference_params(vec![("embedding", BoltType::from(0.5f64))]);
+        assert_eq!(params.len(), 3);
+        assert_eq!(params[0].0, "embedding");
+        assert_eq!(
+            params[1],
+            ("candidate_probe_limit", BoltType::from(10_001i64))
+        );
+        assert_eq!(params[2], ("max_candidates", BoltType::from(10_000i64)));
+    }
+
+    #[test]
+    fn preference_bounds_reject_oversized_candidate_sets() {
+        assert!(check_preference_bound(Vec::new())
+            .expect("no rows")
+            .is_empty());
+
+        let within = bolt_row(&[("over_limit", BoltType::from(false))]);
+        assert_eq!(
+            check_preference_bound(vec![within])
+                .expect("within bound")
+                .len(),
+            1
+        );
+
+        let without_column = bolt_row(&[("other", BoltType::from(1i64))]);
+        assert_eq!(
+            check_preference_bound(vec![without_column])
+                .expect("a missing flag is within bound")
+                .len(),
+            1
+        );
+
+        let over = bolt_row(&[("over_limit", BoltType::from(true))]);
+        let error = check_preference_bound(vec![over]).expect_err("the bound is exceeded");
+        assert!(
+            matches!(error, MemoryError::Storage(ref message) if message == "preference candidate set exceeds 10000")
+        );
+    }
+
+    #[test]
+    fn preference_parameters_bind_every_documented_field() {
+        let mut metadata = Metadata::new();
+        metadata.insert("origin".into(), Value::from("test"));
+        let record = Preference {
+            id: Uuid::new_v4(),
+            category: "food".into(),
+            preference: "tea".into(),
+            context: Some("morning".into()),
+            confidence: 0.9,
+            embedding: Some(vec![0.1, 0.2]),
+            valid_from: None,
+            valid_until: None,
+            created_at: Utc::now(),
+            metadata,
+        };
+        let params = preference_params(&record);
+        assert_eq!(params.len(), 7);
+        let bound = |name: &str| {
+            params
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value.clone())
+        };
+        assert_eq!(bound("id"), Some(BoltType::from(record.id.to_string())));
+        assert_eq!(bound("category"), Some(BoltType::from("food")));
+        assert_eq!(bound("preference"), Some(BoltType::from("tea")));
+        assert_eq!(bound("context"), Some(BoltType::from("morning")));
+        assert!(matches!(bound("confidence"), Some(BoltType::Float(_))));
+        assert!(matches!(bound("embedding"), Some(BoltType::List(_))));
+        assert!(matches!(bound("metadata"), Some(BoltType::String(_))));
+    }
+
+    #[test]
+    fn preference_parameters_bind_missing_optional_fields_as_null() {
+        let record = Preference {
+            id: Uuid::new_v4(),
+            category: "food".into(),
+            preference: "tea".into(),
+            context: None,
+            confidence: 1.0,
+            embedding: None,
+            valid_from: None,
+            valid_until: None,
+            created_at: Utc::now(),
+            metadata: Metadata::new(),
+        };
+        let params = preference_params(&record);
+        let bound = |name: &str| {
+            params
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value.clone())
+        };
+        assert_eq!(bound("context"), Some(BoltType::Null(neo4rs::BoltNull)));
+        assert_eq!(bound("embedding"), Some(BoltType::Null(neo4rs::BoltNull)));
+        assert_eq!(bound("metadata"), Some(BoltType::Null(neo4rs::BoltNull)));
+    }
+
+    #[test]
+    fn identifier_and_metadata_parameters_use_the_documented_encoding() {
+        let id = Uuid::new_v4();
+        assert_eq!(id_param(id), BoltType::from(id.to_string()));
+        assert_eq!(
+            metadata_param(&Metadata::new()),
+            BoltType::Null(neo4rs::BoltNull)
+        );
+        let mut metadata = Metadata::new();
+        metadata.insert("origin".into(), Value::from("test"));
+        assert_eq!(
+            metadata_param(&metadata),
+            BoltType::from(r#"{"origin": "test"}"#)
+        );
+    }
+
+    #[test]
+    fn search_parameters_bind_embedding_limit_and_threshold() {
+        let params = search_params(&[0.5, 0.25], 7, 0.8);
+        assert_eq!(params.len(), 3);
+        assert_eq!(params[0].0, "embedding");
+        assert!(matches!(params[0].1, BoltType::List(_)));
+        assert_eq!(params[1], ("limit", BoltType::from(7i64)));
+        assert_eq!(params[2].0, "threshold");
+        assert!(matches!(params[2].1, BoltType::Float(_)));
+    }
+
     async fn connect() -> Neo4jClient {
         Neo4jClient::connect(&Neo4jConfig {
             uri: std::env::var("MUNINN_FIXTURE_URI").unwrap(),
