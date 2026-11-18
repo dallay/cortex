@@ -165,6 +165,45 @@ fn oauth_connection_response_exposes_status_but_never_tokens_or_client_secret() 
     assert!(!serialized.contains("client-secret-value"));
 }
 
+#[test]
+fn connection_response_emits_the_canonical_auth_type_strings() {
+    use transport_axum::provider_dto::ProviderConnectionResponse;
+
+    // The API key connection is the baseline.
+    let api_key_connection = test_connection("550e8400-e29b-41d4-a716-446655440001", "ApiKey");
+    let response = ProviderConnectionResponse::from(&api_key_connection);
+    assert_eq!(response.auth_type, "apiKey");
+
+    // The OAuth connection must use the same spelling the database CHECK
+    // constraint (`auth_type IN ('apiKey', 'oauth')`) and the dashboard expect.
+    // `AuthType` derives `Serialize` with `rename_all = "camelCase"`, which
+    // renders the `OAuth` variant as `"oAuth"`; the transport layer must not
+    // use that spelling, because it is rejected by the database and does not
+    // match the dashboard's `authType === "oauth"` comparison.
+    let mut oauth_connection = test_connection("550e8400-e29b-41d4-a716-446655440002", "OAuth");
+    oauth_connection.provider =
+        rook_core::descriptor_by_id("azure-openai").expect("azure-openai descriptor");
+    oauth_connection.auth_type = rook_core::AuthType::OAuth;
+    oauth_connection.credentials = Credentials::OAuth {
+        email: EncryptedBlob("encrypted-email".to_string()),
+        access_token: EncryptedBlob("access-secret".to_string()),
+        refresh_token: EncryptedBlob("refresh-secret".to_string()),
+        expires_at: chrono::Utc::now().timestamp() + 3600,
+        scope: EncryptedBlob("encrypted-scope".to_string()),
+        id_token: EncryptedBlob("id-token-secret".to_string()),
+        project_id: EncryptedBlob("encrypted-project".to_string()),
+        oauth_client_id: "safe-client-id".to_string(),
+        oauth_client_secret: Some(EncryptedBlob("client-secret-value".to_string())),
+        oauth_tenant_id: Some("tenant-guid".to_string()),
+    };
+
+    let response = ProviderConnectionResponse::from(&oauth_connection);
+    assert_eq!(response.auth_type, "oauth");
+
+    let serialized = serde_json::to_value(&response).expect("serialize response");
+    assert_eq!(serialized["authType"], serde_json::json!("oauth"));
+}
+
 // ---------------------------------------------------------------------------
 // Tests: CreateProviderRequest deserialization
 // ---------------------------------------------------------------------------
