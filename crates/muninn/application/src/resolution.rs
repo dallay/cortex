@@ -95,3 +95,116 @@ fn indel_similarity(left: &[char], right: &[char]) -> f64 {
         2.0 * row[right.len()] as f64 / (left.len() + right.len()) as f64
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use muninn_core::model::Metadata;
+    use muninn_core::resolution::DeduplicationAction;
+    use uuid::Uuid;
+
+    fn sample_entity(id: Uuid, name: &str, entity_type: &str) -> Entity {
+        Entity {
+            id,
+            name: name.to_string(),
+            entity_type: entity_type.to_string(),
+            subtype: None,
+            description: None,
+            aliases: vec![],
+            canonical_name: None,
+            metadata: Metadata::new(),
+            created_at: chrono::Utc::now(),
+            updated_at: None,
+            confidence: 1.0,
+            embedding: None,
+        }
+    }
+
+    #[test]
+    fn test_ratio_empty_and_exact() {
+        assert_eq!(ratio("", ""), 0.0);
+        assert_eq!(ratio("a", ""), 0.0);
+        assert_eq!(ratio("", "b"), 0.0);
+        assert_eq!(ratio("apple", "apple"), 1.0);
+        assert_eq!(ratio("Apple", "apple"), 1.0);
+        assert!(ratio("apple", "apples") > 0.8);
+    }
+
+    #[test]
+    fn test_resolve_empty_candidates() {
+        let config = ResolutionConfig::default();
+        let res = resolve("Ada", "PERSON", vec![], &config);
+        assert!(!res.is_duplicate);
+        assert_eq!(res.action, DeduplicationAction::None);
+    }
+
+    #[test]
+    fn test_resolve_filters_below_review_threshold() {
+        let config = ResolutionConfig {
+            review_threshold: 0.8,
+            ..Default::default()
+        };
+        let entity = sample_entity(Uuid::new_v4(), "Ada", "PERSON");
+        let candidates = vec![Scored {
+            item: entity,
+            score: 0.75,
+        }];
+        let res = resolve("Ada", "PERSON", candidates, &config);
+        assert!(!res.is_duplicate);
+    }
+
+    #[test]
+    fn test_resolve_type_mismatch_filtering() {
+        let config = ResolutionConfig {
+            match_same_type_only: true,
+            review_threshold: 0.5,
+            ..Default::default()
+        };
+        let entity = sample_entity(Uuid::new_v4(), "Ada", "ORGANIZATION");
+        let candidates = vec![Scored {
+            item: entity,
+            score: 0.9,
+        }];
+        let res = resolve("Ada", "PERSON", candidates, &config);
+        assert!(!res.is_duplicate);
+    }
+
+    #[test]
+    fn test_resolve_fuzzy_match_both() {
+        let config = ResolutionConfig {
+            use_fuzzy_matching: true,
+            fuzzy_threshold: 0.8,
+            review_threshold: 0.5,
+            ..Default::default()
+        };
+        let mut entity = sample_entity(Uuid::new_v4(), "Ada Lovelace", "PERSON");
+        entity.canonical_name = Some("Lady Ada".into());
+        let candidates = vec![Scored {
+            item: entity.clone(),
+            score: 0.85,
+        }];
+        let res = resolve("Ada Lovelace", "PERSON", candidates, &config);
+        assert!(res.is_duplicate);
+        assert_eq!(res.match_type.as_deref(), Some("both"));
+        assert_eq!(res.matched_entity_id, Some(entity.id));
+    }
+
+    #[test]
+    fn test_resolve_embedding_only_when_fuzzy_fails() {
+        let config = ResolutionConfig {
+            use_fuzzy_matching: true,
+            fuzzy_threshold: 0.95,
+            review_threshold: 0.5,
+            ..Default::default()
+        };
+        let entity = sample_entity(Uuid::new_v4(), "Completely Different Name", "PERSON");
+        let candidates = vec![Scored {
+            item: entity.clone(),
+            score: 0.85,
+        }];
+        let res = resolve("Ada", "PERSON", candidates, &config);
+        assert!(res.is_duplicate);
+        assert_eq!(res.match_type.as_deref(), Some("embedding"));
+        assert_eq!(res.matched_entity_id, Some(entity.id));
+    }
+}

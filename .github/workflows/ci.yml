@@ -238,8 +238,6 @@ jobs:
         run: cargo nextest run --workspace --all-features --profile ci --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn
       - name: Run default-feature Muninn tests
         run: cargo test --locked -p muninn-providers -p muninn
-      - name: Run unit and integration tests
-        run: cargo nextest run --workspace --all-features --profile ci --exclude muninn-c1-exporter --exclude muninn-providers --exclude muninn
       - name: Run doctests
         if: ${{ !cancelled() }}
         run: cargo test --workspace --all-features --doc
@@ -658,8 +656,9 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
       - name: Install cargo-llvm-cov
-        # Pinned because `cargo install` ignores registry.global-min-publish-age.
-        run: cargo install cargo-llvm-cov --locked --version 0.9.1
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
+        with:
+          tool: cargo-llvm-cov@0.9.1
       - name: Wait for Neo4j readiness and verify authentication
         run: |
           attempt=0
@@ -798,8 +797,9 @@ jobs:
         working-directory: apps/rook/dashboard
         run: pnpm exec vitest run --coverage --coverage.reporter=lcov --coverage.reportsDirectory=coverage
       - name: Install cargo-llvm-cov
-        # Pinned because `cargo install` ignores registry.global-min-publish-age.
-        run: cargo install cargo-llvm-cov --locked --version 0.9.1
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
+        with:
+          tool: cargo-llvm-cov@0.9.1
       - name: Generate Rust coverage
         run: |
           mkdir -p coverage

@@ -8,6 +8,7 @@ Cortex is a Rust project that includes **Rook** (AI proxy and router) and **Hugi
 docs/
 ├── README.md              ← This file
 ├── development.md         ← Local development guide
+├── build-strategy.md      ← Measured build/CI baseline and Phase A decisions
 ├── development/           ← Product development runbooks
 │   ├── rook.md            ← Rook backend
 │   ├── dashboard.md       ← Rook dashboard
@@ -75,11 +76,12 @@ docs/
 ### For developers
 
 1. [development.md](development.md) — Repository setup, test selection, and CI
-2. [development/rook.md](development/rook.md) — Run and test the Rook backend
-3. [development/dashboard.md](development/dashboard.md) — Run and test the dashboard
-4. [development/huginn.md](development/huginn.md) — Run and test Huginn
-5. [Docker testing guide](../dev/README.md) — Smoke, E2E, and multi-distribution testing
-6. [Contributing](../CONTRIBUTING.md) — How to contribute
+2. [build-strategy.md](build-strategy.md) — Measured build and CI baseline, and the gate for build-tool decisions
+3. [development/rook.md](development/rook.md) — Run and test the Rook backend
+4. [development/dashboard.md](development/dashboard.md) — Run and test the dashboard
+5. [development/huginn.md](development/huginn.md) — Run and test Huginn
+6. [Docker testing guide](../dev/README.md) — Smoke, E2E, and multi-distribution testing
+7. [Contributing](../CONTRIBUTING.md) — How to contribute
 
 ### For advanced contributors
 

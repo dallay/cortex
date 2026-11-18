@@ -670,4 +670,63 @@ mod vector_metadata_tests {
             assert!(error.contains("384"), "{error}");
         }
     }
+
+    #[test]
+    fn validate_vector_metadata_allow_missing() {
+        let mut rows = inventory();
+        rows.clear();
+        // allow_missing = true -> returns Ok
+        assert!(validate_vector_metadata(&rows, 384, true).is_ok());
+        // allow_missing = false -> returns Err
+        assert!(validate_vector_metadata(&rows, 384, false).is_err());
+    }
+
+    #[test]
+    fn validate_schema_definition_rejects_missing_and_mismatched() {
+        let valid_constraint = json!({
+            "name": "custom_idx",
+            "type": "RANGE",
+            "entityType": "NODE",
+            "labelsOrTypes": ["Entity"],
+            "properties": ["name"]
+        });
+
+        // Valid
+        assert!(validate_schema_definition(
+            std::slice::from_ref(&valid_constraint),
+            "custom_idx",
+            "RANGE",
+            "Entity",
+            &["name"]
+        )
+        .is_ok());
+
+        // Missing name in list
+        assert!(
+            validate_schema_definition(&[], "custom_idx", "RANGE", "Entity", &["name"]).is_err()
+        );
+
+        // Mismatched entityType
+        let mut wrong_entity = valid_constraint.clone();
+        wrong_entity["entityType"] = json!("RELATIONSHIP");
+        assert!(validate_schema_definition(
+            &[wrong_entity],
+            "custom_idx",
+            "RANGE",
+            "Entity",
+            &["name"]
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn vector_indexes_rejects_populating_state() {
+        let mut rows = inventory();
+        rows[0]["state"] = json!("POPULATING");
+        // validate_vector_index_configuration accepts POPULATING
+        assert!(validate_vector_index_configuration(&rows, 384).is_ok());
+        // but validate_vector_indexes requires ONLINE
+        let err = validate_vector_indexes(&rows, 384).unwrap_err();
+        assert!(err.to_string().contains("is not ONLINE"));
+    }
 }

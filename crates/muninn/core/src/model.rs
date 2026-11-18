@@ -552,4 +552,288 @@ mod tests {
             ("LOCATION".into(), Some("ADDRESS".into()))
         );
     }
+
+    #[test]
+    fn role_strings_are_lowercase() {
+        assert_eq!(MessageRole::User.as_str(), "user");
+        assert_eq!(MessageRole::Assistant.as_str(), "assistant");
+        assert_eq!(MessageRole::System.as_str(), "system");
+        assert_eq!(MessageRole::Tool.as_str(), "tool");
+        assert_eq!(MessageRole::User.to_string(), "user");
+        assert_eq!(MessageRole::Tool.to_string(), "tool");
+    }
+
+    #[test]
+    fn role_parsing_accepts_every_variant_case_insensitively() {
+        assert_eq!(
+            "user".parse::<MessageRole>().expect("user parses"),
+            MessageRole::User
+        );
+        assert_eq!(
+            "ASSISTANT"
+                .parse::<MessageRole>()
+                .expect("assistant parses"),
+            MessageRole::Assistant
+        );
+        assert_eq!(
+            "System".parse::<MessageRole>().expect("system parses"),
+            MessageRole::System
+        );
+        assert_eq!(
+            "TOOL".parse::<MessageRole>().expect("tool parses"),
+            MessageRole::Tool
+        );
+        let error = "robot"
+            .parse::<MessageRole>()
+            .expect_err("unknown role is rejected");
+        assert_eq!(
+            error.to_string(),
+            "invalid input: unknown message role 'robot'"
+        );
+    }
+
+    #[test]
+    fn empty_conversation_has_no_messages_or_optional_fields() {
+        let conversation = Conversation::empty("session-x");
+        assert_eq!(conversation.session_id, "session-x");
+        assert!(conversation.messages.is_empty());
+        assert!(conversation.title.is_none());
+        assert!(conversation.updated_at.is_none());
+        assert!(conversation.user_identifier.is_none());
+    }
+
+    #[test]
+    fn empty_summary_uses_the_documented_defaults() {
+        let summary = ConversationSummary::empty("session-y");
+        assert_eq!(summary.session_id, "session-y");
+        assert_eq!(summary.summary, "No messages in this conversation.");
+        assert_eq!(summary.message_count, 0);
+        assert!(summary.time_range.is_none());
+        assert!(summary.key_entities.is_empty());
+        assert!(summary.key_topics.is_empty());
+    }
+
+    #[test]
+    fn entity_display_name_prefers_the_canonical_name() {
+        let mut entity = entity_with_name("ada");
+        assert_eq!(entity.display_name(), "ada");
+        entity.canonical_name = Some("Ada Lovelace".to_owned());
+        assert_eq!(entity.display_name(), "Ada Lovelace");
+    }
+
+    #[test]
+    fn entity_full_type_appends_the_subtype() {
+        let mut entity = entity_with_name("ada");
+        assert_eq!(entity.full_type(), "PERSON");
+        entity.subtype = Some("SCIENTIST".to_owned());
+        assert_eq!(entity.full_type(), "PERSON:SCIENTIST");
+    }
+
+    #[test]
+    fn preference_equivalence_ignores_case_and_extra_whitespace() {
+        let preference = Preference {
+            id: Uuid::new_v4(),
+            category: "ui".to_owned(),
+            preference: "  Dark   Mode ".to_owned(),
+            context: None,
+            confidence: 1.0,
+            embedding: None,
+            valid_from: None,
+            valid_until: None,
+            created_at: fixed_timestamp(),
+            metadata: Metadata::new(),
+        };
+        assert!(preference.equivalent_value("dark mode"));
+        assert!(preference.equivalent_value("DARK MODE"));
+        assert!(!preference.equivalent_value("light mode"));
+    }
+
+    #[test]
+    fn tool_stats_derive_success_rate_and_failures_from_counters() {
+        let stats = ToolStats::from_counters(
+            "search".to_owned(),
+            Some("Search the web".to_owned()),
+            4,
+            3,
+            200.0,
+            Some(fixed_timestamp()),
+        );
+        assert_eq!(stats.name, "search");
+        assert_eq!(stats.description.as_deref(), Some("Search the web"));
+        assert_eq!(stats.total_calls, 4);
+        assert_eq!(stats.successful_calls, 3);
+        assert_eq!(stats.failed_calls, 1);
+        assert!((stats.success_rate - 0.75).abs() < f64::EPSILON);
+        assert_eq!(stats.avg_duration_ms, Some(50.0));
+        assert_eq!(stats.last_used_at, Some(fixed_timestamp()));
+    }
+
+    #[test]
+    fn tool_stats_clamp_counters_and_handle_no_calls() {
+        let stats = ToolStats::from_counters("search".to_owned(), None, 2, 5, 10.0, None);
+        assert_eq!(stats.successful_calls, 2);
+        assert_eq!(stats.failed_calls, 0);
+        assert!((stats.success_rate - 1.0).abs() < f64::EPSILON);
+        assert_eq!(stats.avg_duration_ms, Some(5.0));
+
+        let empty = ToolStats::from_counters("search".to_owned(), None, 0, 0, 10.0, None);
+        assert_eq!(empty.successful_calls, 0);
+        assert_eq!(empty.failed_calls, 0);
+        assert!((empty.success_rate - 0.0).abs() < f64::EPSILON);
+        assert!(empty.avg_duration_ms.is_none());
+    }
+
+    #[test]
+    fn outcome_validation_accepts_finite_metrics_and_named_entities() {
+        let outcome = TraceOutcome {
+            success: true,
+            summary: "done".to_owned(),
+            error_kind: None,
+            related_entities: vec![
+                EntityRef::Id("id-1".to_owned()),
+                EntityRef::Name("Ada".to_owned()),
+                EntityRef::NameType {
+                    name: "Ada".to_owned(),
+                    entity_type: "PERSON".to_owned(),
+                },
+            ],
+            metrics: std::collections::BTreeMap::from([("latency".to_owned(), 1.5)]),
+        };
+        assert!(outcome.validate().is_ok());
+    }
+
+    #[test]
+    fn outcome_validation_rejects_non_finite_metrics() {
+        let outcome = TraceOutcome {
+            success: true,
+            summary: "done".to_owned(),
+            error_kind: None,
+            related_entities: Vec::new(),
+            metrics: std::collections::BTreeMap::from([("latency".to_owned(), f64::NAN)]),
+        };
+        let error = outcome.validate().expect_err("NaN metric is rejected");
+        assert_eq!(
+            error.to_string(),
+            "invalid input: outcome metrics must be finite numbers"
+        );
+    }
+
+    #[test]
+    fn outcome_validation_rejects_entities_without_identity() {
+        let outcome = TraceOutcome {
+            success: false,
+            summary: "failed".to_owned(),
+            error_kind: Some("timeout".to_owned()),
+            related_entities: vec![EntityRef::NameType {
+                name: String::new(),
+                entity_type: "PERSON".to_owned(),
+            }],
+            metrics: std::collections::BTreeMap::new(),
+        };
+        let error = outcome
+            .validate()
+            .expect_err("blank entity name is rejected");
+        assert_eq!(
+            error.to_string(),
+            "invalid input: entity reference requires a nonempty name or id"
+        );
+    }
+
+    #[test]
+    fn tool_call_status_strings_are_lowercase_and_parseable() {
+        assert_eq!(ToolCallStatus::Pending.as_str(), "pending");
+        assert_eq!(ToolCallStatus::Success.as_str(), "success");
+        assert_eq!(ToolCallStatus::Failure.as_str(), "failure");
+        assert_eq!(ToolCallStatus::Error.as_str(), "error");
+        assert_eq!(ToolCallStatus::Timeout.as_str(), "timeout");
+        assert_eq!(ToolCallStatus::Cancelled.as_str(), "cancelled");
+
+        assert_eq!(
+            "PENDING".parse::<ToolCallStatus>().expect("pending parses"),
+            ToolCallStatus::Pending
+        );
+        assert_eq!(
+            "Success".parse::<ToolCallStatus>().expect("success parses"),
+            ToolCallStatus::Success
+        );
+        assert_eq!(
+            "failure".parse::<ToolCallStatus>().expect("failure parses"),
+            ToolCallStatus::Failure
+        );
+        assert_eq!(
+            "error".parse::<ToolCallStatus>().expect("error parses"),
+            ToolCallStatus::Error
+        );
+        assert_eq!(
+            "timeout".parse::<ToolCallStatus>().expect("timeout parses"),
+            ToolCallStatus::Timeout
+        );
+        assert_eq!(
+            "cancelled"
+                .parse::<ToolCallStatus>()
+                .expect("cancelled parses"),
+            ToolCallStatus::Cancelled
+        );
+        let error = "weird"
+            .parse::<ToolCallStatus>()
+            .expect_err("unknown status is rejected");
+        assert_eq!(
+            error.to_string(),
+            "invalid input: unknown tool call status 'weird'"
+        );
+    }
+
+    #[test]
+    fn agent_step_flattens_a_reasoning_step() {
+        let step = ReasoningStep {
+            id: Uuid::new_v4(),
+            trace_id: Uuid::new_v4(),
+            step_number: 1,
+            thought: Some("thinking".to_owned()),
+            action: Some("acting".to_owned()),
+            observation: Some("observed".to_owned()),
+            tool_calls: Vec::new(),
+            embedding: None,
+            created_at: fixed_timestamp(),
+            metadata: Metadata::new(),
+        };
+        let conversation_id = Uuid::new_v4();
+        let agent_step = AgentStep::from_step(conversation_id, &step);
+        assert_eq!(agent_step.id, step.id);
+        assert_eq!(agent_step.conversation_id, conversation_id);
+        assert_eq!(agent_step.reasoning, "thinking");
+        assert_eq!(agent_step.action_taken, "acting");
+        assert_eq!(agent_step.result.as_deref(), Some("observed"));
+        assert_eq!(agent_step.created_at, fixed_timestamp());
+
+        let mut bare = step;
+        bare.thought = None;
+        bare.action = None;
+        bare.observation = None;
+        let bare_step = AgentStep::from_step(conversation_id, &bare);
+        assert_eq!(bare_step.reasoning, "");
+        assert_eq!(bare_step.action_taken, "");
+        assert!(bare_step.result.is_none());
+    }
+
+    fn fixed_timestamp() -> DateTime<Utc> {
+        DateTime::<Utc>::from_timestamp(1_700_000_000, 0).expect("timestamp is representable")
+    }
+
+    fn entity_with_name(name: &str) -> Entity {
+        Entity {
+            id: Uuid::new_v4(),
+            name: name.to_owned(),
+            canonical_name: None,
+            entity_type: "PERSON".to_owned(),
+            subtype: None,
+            description: None,
+            confidence: 1.0,
+            aliases: Vec::new(),
+            embedding: None,
+            created_at: fixed_timestamp(),
+            updated_at: None,
+            metadata: Metadata::new(),
+        }
+    }
 }

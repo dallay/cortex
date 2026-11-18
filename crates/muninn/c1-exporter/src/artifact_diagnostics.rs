@@ -42,7 +42,8 @@ pub(super) fn probe_pre_rename() {
 }
 
 /// Reports whether an open descriptor still refers to the given inode.
-pub(super) fn descriptor_open_for(device: u64, inode: u64) -> bool {
+/// Returns None when a failed scan cannot establish that it is closed.
+pub(super) fn descriptor_open_for(device: u64, inode: u64) -> Option<bool> {
     use std::os::unix::fs::MetadataExt;
 
     let directory = if cfg!(target_os = "macos") {
@@ -50,29 +51,59 @@ pub(super) fn descriptor_open_for(device: u64, inode: u64) -> bool {
     } else {
         "/proc/self/fd"
     };
-    let Ok(entries) = std::fs::read_dir(directory) else {
-        return false;
-    };
-    for entry in entries.flatten() {
-        let Ok(name) = entry.file_name().into_string() else {
+    let entries = std::fs::read_dir(directory).ok()?;
+    let mut conclusive = true;
+    for entry in entries {
+        let Ok(entry) = entry else {
+            conclusive = false;
             continue;
         };
-        let Ok(descriptor) = std::fs::File::open(format!("{directory}/{name}")) else {
-            continue;
-        };
-        let Ok(metadata) = descriptor.metadata() else {
+        // Follow the descriptor link for metadata only. Opening it for I/O can
+        // block on inherited FIFOs and needlessly reopens other objects.
+        let Ok(metadata) = std::fs::metadata(entry.path()) else {
+            conclusive = false;
             continue;
         };
         if metadata.dev() == device && metadata.ino() == inode {
-            return true;
+            return Some(true);
         }
     }
-    false
+    conclusive.then_some(false)
 }
 
 #[cfg(test)]
 mod tests {
     use super::format_error;
+
+    #[test]
+    fn descriptor_probe_does_not_block_on_a_fifo_without_writers() {
+        use std::os::unix::fs::MetadataExt;
+
+        let root = tempfile::tempdir().expect("fixture");
+        let path = root.path().join("fifo");
+        rustix::fs::mkfifoat(rustix::fs::CWD, &path, rustix::fs::Mode::RUSR).expect("fixture fifo");
+        let fifo = std::fs::File::from(
+            rustix::fs::open(
+                &path,
+                rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::NONBLOCK,
+                rustix::fs::Mode::empty(),
+            )
+            .expect("nonblocking reader"),
+        );
+        let metadata = fifo.metadata().expect("fifo metadata");
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let result = super::descriptor_open_for(metadata.dev(), metadata.ino());
+            drop(fifo);
+            sender.send(result).expect("probe result");
+        });
+        assert_eq!(
+            receiver.recv_timeout(std::time::Duration::from_secs(5)),
+            Ok(Some(true)),
+            "metadata probing must detect a live FIFO without waiting for a writer"
+        );
+        worker.join().expect("probe worker");
+    }
 
     #[test]
     fn diagnostics_include_operation_and_errno_without_error_payloads() {

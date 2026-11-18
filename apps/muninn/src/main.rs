@@ -1366,4 +1366,122 @@ mod tests {
         };
         assert!(error.to_string().contains("minilm-cpu"));
     }
+
+    #[test]
+    fn geocoding_is_disabled_by_default_and_builds_no_adapter() {
+        let cli = parse_cli(&[
+            "muninn",
+            "--neo4j-password",
+            "synthetic-test-password",
+            "bridge",
+        ]);
+        assert!(geocoding(&cli.geocoding)
+            .expect("default geocoding configuration is valid")
+            .is_none());
+    }
+
+    #[test]
+    fn geocoding_builds_nominatim_configuration_without_network_access() {
+        let cli = parse_cli(&[
+            "muninn",
+            "--neo4j-password",
+            "synthetic-test-password",
+            "--geocoding-enabled",
+            "--geocoding-base-url",
+            "http://127.0.0.1:8766/custom",
+            "bridge",
+        ]);
+        let (config, _adapter) = geocoding(&cli.geocoding)
+            .expect("valid local Nominatim config must build")
+            .expect("enabled geocoding must select an adapter");
+        assert!(config.enabled);
+        assert_eq!(config.provider, GeocodingProviderKind::Nominatim);
+        assert_eq!(config.rate_limit_per_second, 1.0);
+    }
+
+    #[test]
+    fn geocoding_rejects_google_provider_even_with_a_valid_key() {
+        let cli = parse_cli(&[
+            "muninn",
+            "--neo4j-password",
+            "synthetic-test-password",
+            "--geocoding-enabled",
+            "--geocoding-provider",
+            "google",
+            "--geocoding-api-key",
+            "synthetic-google-key",
+            "bridge",
+        ]);
+        let error = geocoding(&cli.geocoding)
+            .err()
+            .expect("Google is validated but has no adapter implementation");
+        assert!(error.to_string().contains("not implemented"), "{error}");
+        assert!(!error.to_string().contains("synthetic-google-key"));
+    }
+
+    #[test]
+    fn geocoding_rejects_zero_timeout_for_nominatim() {
+        let cli = parse_cli(&[
+            "muninn",
+            "--neo4j-password",
+            "synthetic-test-password",
+            "--geocoding-enabled",
+            "--geocoding-timeout-secs",
+            "0",
+            "bridge",
+        ]);
+        let error = geocoding(&cli.geocoding)
+            .err()
+            .expect("zero timeout must be rejected before network access");
+        assert!(
+            error.to_string().contains("configuration rejected"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn doctor_runs_with_synthetic_cli_configuration() {
+        let cli = parse_cli(&[
+            "muninn",
+            "--neo4j-password",
+            "synthetic-do-not-log-this-password",
+            "--embedding-provider",
+            "hash",
+            "--extraction-provider",
+            "spacy",
+            "--extraction-endpoint",
+            "http://127.0.0.1:8765/extract",
+            "doctor",
+        ]);
+        run_doctor(&cli).expect("doctor reads configuration and requires no database");
+    }
+
+    #[test]
+    fn stats_runs_in_both_output_modes_without_a_database() {
+        run_stats(false).expect("human-readable stats need no database");
+        run_stats(true).expect("JSON stats need no database");
+    }
+
+    #[test]
+    fn ontology_list_and_show_run_without_a_database() {
+        run_ontology(OntologyCommand::List).expect("listing built-in ontologies needs no database");
+        run_ontology(OntologyCommand::Show)
+            .expect("showing the built-in ontology needs no database");
+    }
+
+    #[test]
+    fn ontology_validation_reports_a_missing_document() {
+        let missing = std::env::temp_dir().join(format!(
+            "muninn-missing-ontology-{}-{}.json",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        let error = run_ontology(OntologyCommand::Validate {
+            path: missing.display().to_string(),
+        })
+        .expect_err("a missing ontology document must be reported");
+        assert!(error
+            .to_string()
+            .contains("failed to parse ontology document"));
+    }
 }

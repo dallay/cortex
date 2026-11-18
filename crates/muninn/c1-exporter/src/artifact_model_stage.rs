@@ -601,7 +601,9 @@ mod tests {
         let open_during_rename = Arc::new(AtomicBool::new(false));
         let observed = Arc::clone(&open_during_rename);
         let _guard = super::super::super::diagnostics::set_pre_rename_probe(move || {
-            if super::super::super::diagnostics::descriptor_open_for(device, inode) {
+            if super::super::super::diagnostics::descriptor_open_for(device, inode)
+                .expect("conclusive descriptor scan before rename")
+            {
                 observed.store(true, Ordering::SeqCst);
             }
         });

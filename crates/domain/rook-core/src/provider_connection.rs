@@ -336,4 +336,193 @@ mod tests {
         assert_eq!(never_tested.error_msg(), None);
         assert_eq!(never_tested.expires_at(), None);
     }
+
+    #[test]
+    fn validation_error_display_messages_are_stable() {
+        let cases: Vec<(ValidationError, &str)> = vec![
+            (ValidationError::InvalidProviderId, "unknown provider id"),
+            (
+                ValidationError::EmptyRuntimeId,
+                "provider runtime id must not be empty",
+            ),
+            (ValidationError::EmptyName, "name must not be empty"),
+            (
+                ValidationError::NameTooLong,
+                "name must be at most 256 Unicode scalar values",
+            ),
+            (
+                ValidationError::PriorityOutOfRange,
+                "priority must be between 1 and 255",
+            ),
+            (
+                ValidationError::MaxConcurrentTooLow,
+                "max_concurrent must be at least 1",
+            ),
+            (
+                ValidationError::QuotaThresholdOutOfRange,
+                "quota thresholds must be in [0.0, 1.0]",
+            ),
+            (
+                ValidationError::QuotaThresholdOrder,
+                "quota threshold error must be greater than warning",
+            ),
+            (
+                ValidationError::EmptyCredential,
+                "credential value must not be empty",
+            ),
+            (
+                ValidationError::AuthTypeCredentialMismatch,
+                "credentials do not match auth type",
+            ),
+            (
+                ValidationError::OAuthFieldMissing("access_token"),
+                "OAuth access_token must not be empty",
+            ),
+            (
+                ValidationError::OAuthFieldMissing("email"),
+                "OAuth email must not be empty",
+            ),
+            (
+                ValidationError::OAuthEmailInvalid,
+                "OAuth email format is invalid",
+            ),
+            (
+                ValidationError::OAuthExpiresAtPast,
+                "OAuth expires_at must be in the future",
+            ),
+            (
+                ValidationError::CloudMetadataEndpointNotAllowed,
+                "provider endpoint must not target cloud metadata services",
+            ),
+            (
+                ValidationError::InvalidBaseUrl,
+                "provider endpoint is invalid or blocked by server policy",
+            ),
+            (
+                ValidationError::EmptySupportedModels,
+                "OpenAI-compatible providers require at least one supported model",
+            ),
+            (
+                ValidationError::UnsupportedApiFormat,
+                "OpenAI-compatible providers currently support only OpenAI Chat Completions",
+            ),
+            (
+                ValidationError::AzureOpenAIRequiresEndpoint,
+                "Azure OpenAI requires a valid HTTPS resource endpoint",
+            ),
+            (
+                ValidationError::AzureOpenAIRequiresDeployment,
+                "Azure OpenAI requires a deployment name as default_model",
+            ),
+            (
+                ValidationError::AzureOpenAIRequiresOAuth,
+                "Azure OpenAI connections require OAuth authentication",
+            ),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(error.to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn repository_error_display_messages_are_stable() {
+        let connection_id = ConnectionId::new();
+        assert_eq!(
+            RepositoryError::NotFound(connection_id).to_string(),
+            format!("connection not found: {connection_id}")
+        );
+        assert_eq!(
+            RepositoryError::DuplicateId(connection_id).to_string(),
+            format!("duplicate connection id: {connection_id}")
+        );
+        assert_eq!(
+            RepositoryError::DuplicateConnection("primary".to_string()).to_string(),
+            "duplicate connection: primary"
+        );
+        assert_eq!(
+            RepositoryError::StaleUpdate.to_string(),
+            "connection was modified since last read"
+        );
+        assert_eq!(
+            RepositoryError::Encryption("key ring locked".to_string()).to_string(),
+            "encryption error: key ring locked"
+        );
+        assert_eq!(
+            RepositoryError::Database("disk full".to_string()).to_string(),
+            "database error: disk full"
+        );
+    }
+
+    #[test]
+    fn validation_and_repository_errors_are_std_errors() {
+        fn assert_std_error<E: std::error::Error>(error: E) -> String {
+            error.to_string()
+        }
+        assert_eq!(
+            assert_std_error(ValidationError::EmptyName),
+            "name must not be empty"
+        );
+        assert_eq!(
+            assert_std_error(RepositoryError::StaleUpdate),
+            "connection was modified since last read"
+        );
+    }
+
+    #[test]
+    fn encrypted_blob_exposes_its_inner_string() {
+        let blob = EncryptedBlob("cipher-text".to_string());
+        assert_eq!(blob.as_str(), "cipher-text");
+    }
+
+    #[test]
+    fn auth_type_serializes_as_camel_case() {
+        assert_eq!(
+            serde_json::to_string(&AuthType::ApiKey).expect("serialize api key auth"),
+            "\"apiKey\""
+        );
+        assert_eq!(
+            serde_json::to_string(&AuthType::OAuth).expect("serialize oauth auth"),
+            "\"oAuth\""
+        );
+        assert_eq!(
+            serde_json::from_str::<AuthType>("\"apiKey\"").expect("deserialize api key auth"),
+            AuthType::ApiKey
+        );
+    }
+
+    #[test]
+    fn test_status_round_trips_through_serde() {
+        let timestamp = "2026-06-01T12:00:00Z"
+            .parse::<DateTime<Utc>>()
+            .expect("timestamp");
+        let status = TestStatus::Active {
+            last_test_at: timestamp,
+            latency_ms: 42,
+        };
+        let encoded = serde_json::to_string(&status).expect("serialize status");
+        assert!(encoded.contains("\"status\":\"active\""), "{encoded}");
+        assert!(encoded.contains("\"last_test_at\""), "{encoded}");
+        assert!(encoded.contains("\"latency_ms\":42"), "{encoded}");
+        let decoded: TestStatus = serde_json::from_str(&encoded).expect("deserialize status");
+        assert_eq!(decoded, status);
+
+        let never_tested: TestStatus =
+            serde_json::from_str("{\"status\":\"neverTested\"}").expect("deserialize never tested");
+        assert_eq!(never_tested, TestStatus::NeverTested);
+    }
+
+    #[test]
+    fn connection_config_defaults_optional_fields_when_deserializing() {
+        let config: ConnectionConfig = serde_json::from_str(
+            r#"{"max_concurrent":4,"quota_window_thresholds":{"warning":0.8,"error":0.95}}"#,
+        )
+        .expect("deserialize connection config");
+        assert_eq!(config.max_concurrent, 4);
+        assert_eq!(config.quota_window_thresholds.warning, 0.8);
+        assert_eq!(config.quota_window_thresholds.error, 0.95);
+        assert!(config.supported_models.is_empty());
+        assert!(config.default_model.is_none());
+        assert!(config.base_url.is_none());
+        assert!(config.api_format.is_none());
+    }
 }
