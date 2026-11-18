@@ -516,6 +516,12 @@ see the [Huginn development guide](../development/huginn.md).
 
 ---
 
+## ♿ Accessibility
+
+Cortex is committed to accessibility. Please see the [Accessibility Statement](../../ACCESSIBILITY.md). If you encounter an accessibility barrier, [file a report](https://github.com/dallay/cortex/issues/new?template=accessibility.yml).
+
+---
+
 ## 📄 License
 
 MIT License - same as [Cortex repository](https://github.com/dallay/cortex).
