@@ -5,7 +5,6 @@ use axum::{
     extract::State,
     http::{header::SET_COOKIE, HeaderMap, HeaderValue},
     response::IntoResponse,
-    Json,
 };
 use chrono::Utc;
 use rook_core::{
@@ -15,7 +14,7 @@ use rook_core::{
 use rook_usecases::{BootstrapStatus, SetAdminPassword};
 use transport_axum::{
     bootstrap_helpers::make_test_bootstrap_usecases,
-    handlers::auth::{get_login_handler, login_handler, logout_handler, LoginRequest},
+    handlers::auth::{get_login_handler, login_handler, logout_handler},
 };
 
 struct EmptyUserRepository;
@@ -107,15 +106,31 @@ async fn public_login_logout_and_csrf_handlers_set_secure_cookies_in_production(
         None,
     );
 
-    let login_response = login_handler(
-        State(usecases.clone()),
-        Json(LoginRequest {
-            username: "admin".to_string(),
-            password: String::new(),
-        }),
-    )
-    .await
-    .into_response();
+    let guard = Arc::new(transport_axum::middleware::csrf_guard::CsrfGuard::new());
+    let token = guard.generate_token().unwrap();
+    let app = axum::Router::new()
+        .route("/login", axum::routing::post(login_handler))
+        .with_state(usecases.clone())
+        .layer(axum::middleware::from_fn_with_state(
+            guard,
+            transport_axum::middleware::csrf_guard::csrf_guard_middleware,
+        ));
+    use tower::ServiceExt;
+    let login_response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/login")
+                .header("content-type", "application/json")
+                .header("cookie", format!("csrf_token={token}"))
+                .header("x-csrf-token", token)
+                .body(axum::body::Body::from(
+                    r#"{"username":"admin","password":""}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     let login_cookies: Vec<_> = login_response
         .headers()
         .get_all(SET_COOKIE)
@@ -128,6 +143,25 @@ async fn public_login_logout_and_csrf_handlers_set_secure_cookies_in_production(
     assert!(login_cookies
         .iter()
         .any(|cookie| cookie.starts_with("csrf_token=") && cookie.contains("; Secure")));
+
+    let csrf_cookies: Vec<_> = login_cookies
+        .iter()
+        .filter(|cookie| cookie.starts_with("csrf_token="))
+        .collect();
+    assert_eq!(csrf_cookies.len(), 1);
+    let header_token = login_response.headers()["x-csrf-token"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        csrf_cookies[0].split(';').next().unwrap(),
+        format!("csrf_token={header_token}")
+    );
+    let body = axum::body::to_bytes(login_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["csrf_token"], header_token);
 
     let login_response = get_login_handler(State(usecases.clone()))
         .await

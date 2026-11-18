@@ -1313,3 +1313,67 @@ describe("Rook OAuth API client", () => {
 		);
 	});
 });
+
+describe("CSRF response rotation", () => {
+	it.each([200, 400, 500])(
+		"adopts initial response token with status %s",
+		async (status) => {
+			vi.resetModules();
+			const fetchMock = vi
+				.fn()
+				.mockResolvedValueOnce(
+					new Response(JSON.stringify({ csrf_token: "initial" })),
+				)
+				.mockResolvedValueOnce(
+					new Response("{}", {
+						status,
+						headers: { "X-CSRF-Token": "rotated" },
+					}),
+				)
+				.mockResolvedValueOnce(new Response("{}"));
+			vi.stubGlobal("fetch", fetchMock);
+			const { useApi } = await import("./api");
+			const api = useApi();
+			await api.logout().catch(() => {});
+			await api.logout();
+			expect(fetchMock.mock.calls[2]?.[1].headers["X-CSRF-Token"]).toBe(
+				"rotated",
+			);
+			vi.unstubAllGlobals();
+		},
+	);
+
+	it.each([200, 400, 500])(
+		"adopts retry response token with status %s",
+		async (status) => {
+			vi.resetModules();
+			const fetchMock = vi
+				.fn()
+				.mockResolvedValueOnce(
+					new Response(JSON.stringify({ csrf_token: "initial" })),
+				)
+				.mockResolvedValueOnce(
+					new Response('{"error":"csrf_mismatch"}', { status: 403 }),
+				)
+				.mockResolvedValueOnce(
+					new Response(JSON.stringify({ csrf_token: "refreshed" })),
+				)
+				.mockResolvedValueOnce(
+					new Response("{}", {
+						status,
+						headers: { "X-CSRF-Token": "rotated" },
+					}),
+				)
+				.mockResolvedValueOnce(new Response("{}"));
+			vi.stubGlobal("fetch", fetchMock);
+			const { useApi } = await import("./api");
+			const api = useApi();
+			await api.logout().catch(() => {});
+			await api.logout();
+			expect(fetchMock.mock.calls[4]?.[1].headers["X-CSRF-Token"]).toBe(
+				"rotated",
+			);
+			vi.unstubAllGlobals();
+		},
+	);
+});

@@ -4,7 +4,12 @@
 // Uses double-submit cookie pattern: cookie value vs X-CSRF-Token header value.
 // GET requests to MANAGEMENT routes do not need CSRF (they receive the token via cookie).
 
-use std::sync::Arc;
+use parking_lot::Mutex;
+use std::{
+    collections::HashMap,
+    sync::{Arc, OnceLock},
+    time::{Duration, Instant},
+};
 
 use axum::{
     extract::{Request, State},
@@ -32,6 +37,9 @@ pub enum CsrfValidation {
 #[derive(Clone)]
 pub struct CsrfGuard {
     rng: SystemRandom,
+    #[cfg(test)]
+    fail_generation: bool,
+    tokens: Arc<Mutex<HashMap<Vec<u8>, Instant>>>,
 }
 
 impl CsrfGuard {
@@ -39,19 +47,37 @@ impl CsrfGuard {
     pub fn new() -> Self {
         Self {
             rng: SystemRandom::new(),
+            #[cfg(test)]
+            fail_generation: false,
+            tokens: issued_tokens(),
         }
     }
 
     /// Generate a new CSRF token (32 bytes, base64url encoded)
     pub fn generate_token(&self) -> Result<String, CsrfError> {
+        #[cfg(test)]
+        if self.fail_generation {
+            return Err(CsrfError::GenerationFailed);
+        }
         let mut bytes = [0u8; 32];
         self.rng
             .fill(&mut bytes)
             .map_err(|_| CsrfError::GenerationFailed)?;
+        let mut tokens = self.tokens.lock();
+        let now = Instant::now();
+        // Evict an unused token at capacity; its client can fetch a fresh token.
+        // Consumed tokens are removed, so eviction can never permit a replay.
+        if tokens.len() >= 100_000 {
+            if let Some(key) = tokens.keys().next().cloned() {
+                tokens.remove(&key);
+            }
+        }
+        tokens.insert(bytes.to_vec(), now);
         Ok(URL_SAFE_NO_PAD.encode(bytes))
     }
 
-    /// Validate cookie and header values using constant-time comparison
+    /// Validate cookie and header values using constant-time comparison, then
+    /// atomically consume the issued, unexpired token.
     pub fn validate(
         &self,
         cookie_value: Option<&str>,
@@ -74,7 +100,7 @@ impl CsrfGuard {
             return CsrfValidation::Mismatch;
         };
 
-        if cookie_decoded.len() != header_decoded.len() {
+        if cookie_decoded.len() != 32 || cookie_decoded.len() != header_decoded.len() {
             return CsrfValidation::Mismatch;
         }
 
@@ -85,6 +111,11 @@ impl CsrfGuard {
         }
 
         if diff == 0 {
+            // Atomically remove the issued token so concurrent replays cannot both pass.
+            let issued = self.tokens.lock().remove(&cookie_decoded);
+            if !issued.is_some_and(|issued| issued.elapsed() < Duration::from_secs(86400)) {
+                return CsrfValidation::Mismatch;
+            }
             CsrfValidation::Valid
         } else {
             CsrfValidation::Mismatch
@@ -106,6 +137,15 @@ impl CsrfGuard {
         HeaderValue::from_str(&cookie)
             .unwrap_or_else(|_| HeaderValue::from_str("csrf_token=invalid; Path=/").unwrap())
     }
+}
+
+// Initial issuance in auth handlers and middleware rotation share the same
+// process-local token registry, including across cloned router guards.
+fn issued_tokens() -> Arc<Mutex<HashMap<Vec<u8>, Instant>>> {
+    static TOKENS: OnceLock<Arc<Mutex<HashMap<Vec<u8>, Instant>>>> = OnceLock::new();
+    TOKENS
+        .get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
+        .clone()
 }
 
 impl Default for CsrfGuard {
@@ -148,14 +188,18 @@ pub async fn csrf_guard_middleware(
         CsrfValidation::Valid => {
             // Generate a fresh CSRF token to replace the one that was just consumed.
             // This prevents CSRF token reuse attacks.
-            let new_token = guard.generate_token().unwrap_or_else(|_| {
-                // Fallback: if RNG fails, generate a zero-filled token.
-                // This should never happen in practice, but keeps the request flowing
-                // rather than returning 500.
-                URL_SAFE_NO_PAD.encode([0u8; 32])
-            });
+            let new_token = match guard.generate_token() {
+                Ok(token) => token,
+                Err(error) => return error.into_response(),
+            };
+            // Login issues its own token in the body, cookie, and response header.
+            let is_login = request.method() == Method::POST && request.uri().path() == "/login";
             let response = next.run(request).await;
-            rotate_csrf_token_in_response(response, &guard, &new_token)
+            if is_login && response.status().is_success() {
+                response
+            } else {
+                rotate_csrf_token_in_response(response, &guard, &new_token)
+            }
         }
         CsrfValidation::MissingCookie | CsrfValidation::MissingHeader => {
             csrf_error_response("csrf_missing", "CSRF token required")
@@ -173,10 +217,10 @@ fn rotate_csrf_token_in_response(
     guard: &CsrfGuard,
     new_token: &str,
 ) -> axum::response::Response {
-    // Determine whether to set the Secure flag based on the request URI scheme.
-    // In practice the router state determines this, but we can infer it from
-    // whether the connection is HTTPS. Fall back to checking the ROOK_ENV var.
-    let secure = std::env::var("ROOK_ENV").ok().as_deref() == Some("production");
+    let secure = crate::handlers::auth::is_secure(
+        std::env::var("ROOK_ENV").ok().as_deref(),
+        cfg!(not(debug_assertions)),
+    );
     let cookie_header = guard.build_cookie_header(new_token, secure);
 
     response
@@ -234,12 +278,163 @@ pub enum CsrfError {
     GenerationFailed,
 }
 
+impl IntoResponse for CsrfError {
+    fn into_response(self) -> axum::response::Response {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": "csrf_generation_failed",
+                "message": "Unable to generate CSRF token",
+            })),
+        )
+            .into_response()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn csrf_guard() -> CsrfGuard {
         CsrfGuard::new()
+    }
+
+    #[tokio::test]
+    async fn rotation_rejects_replay_before_handler_and_accepts_replacement() {
+        use axum::{middleware, routing::post, Router};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let guard = Arc::new(CsrfGuard::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        let app = Router::new()
+            .route(
+                "/change",
+                post(move || {
+                    let count = count.clone();
+                    async move {
+                        count.fetch_add(1, Ordering::SeqCst);
+                        StatusCode::OK
+                    }
+                }),
+            )
+            .layer(middleware::from_fn_with_state(
+                guard.clone(),
+                csrf_guard_middleware,
+            ));
+        let server = axum_test::TestServer::new(app);
+        let token = guard.generate_token().unwrap();
+        let first = server
+            .post("/change")
+            .add_header("cookie", format!("csrf_token={token}"))
+            .add_header("x-csrf-token", &token)
+            .await;
+        first.assert_status_ok();
+        let replacement = first.header("x-csrf-token").to_str().unwrap().to_owned();
+        let replay = server
+            .post("/change")
+            .add_header("cookie", format!("csrf_token={token}"))
+            .add_header("x-csrf-token", &token)
+            .await;
+        replay.assert_status_forbidden();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        server
+            .post("/change")
+            .add_header("cookie", format!("csrf_token={replacement}"))
+            .add_header("x-csrf-token", &replacement)
+            .await
+            .assert_status_ok();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn rng_failure_stops_before_handler_without_setting_cookie() {
+        use axum::{middleware, routing::post, Router};
+        let guard = Arc::new(CsrfGuard {
+            rng: SystemRandom::new(),
+            fail_generation: true,
+            tokens: issued_tokens(),
+        });
+        assert_eq!(guard.generate_token(), Err(CsrfError::GenerationFailed));
+        let app = Router::new()
+            .route(
+                "/change",
+                post(|| async {
+                    panic!("handler must not run");
+                }),
+            )
+            .layer(middleware::from_fn_with_state(guard, csrf_guard_middleware));
+        let token = CsrfGuard::new().generate_token().unwrap();
+        let response = axum_test::TestServer::new(app)
+            .post("/change")
+            .add_header("cookie", format!("csrf_token={token}"))
+            .add_header("x-csrf-token", &token)
+            .await;
+        response.assert_status_internal_server_error();
+        assert!(response.maybe_header("set-cookie").is_none());
+    }
+
+    #[test]
+    fn secure_cookie_policy_covers_release_and_production() {
+        for (env, release, expected) in [
+            (None, true, true),
+            (Some("production"), false, true),
+            (None, false, false),
+        ] {
+            let secure = crate::handlers::auth::is_secure(env, release);
+            assert_eq!(secure, expected);
+            assert_eq!(
+                csrf_guard()
+                    .build_cookie_header("token", secure)
+                    .to_str()
+                    .unwrap()
+                    .contains("; Secure"),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn validation_rejects_expired_and_unissued_tokens() {
+        let guard = CsrfGuard::new();
+        let token = guard.generate_token().unwrap();
+        let decoded = URL_SAFE_NO_PAD.decode(&token).unwrap();
+        guard
+            .tokens
+            .lock()
+            .insert(decoded, Instant::now() - Duration::from_secs(86401));
+        assert_eq!(
+            guard.validate(Some(&token), Some(&token)),
+            CsrfValidation::Mismatch
+        );
+        let unissued = URL_SAFE_NO_PAD.encode([0; 32]);
+        assert_eq!(
+            guard.validate(Some(&unissued), Some(&unissued)),
+            CsrfValidation::Mismatch
+        );
+    }
+
+    #[test]
+    fn concurrent_validation_consumes_token_atomically() {
+        let guard = Arc::new(CsrfGuard::new());
+        let token = guard.generate_token().unwrap();
+        let barrier = Arc::new(std::sync::Barrier::new(8));
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let guard = guard.clone();
+                let token = token.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    guard.validate(Some(&token), Some(&token))
+                })
+            })
+            .collect();
+        let valid = threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .filter(|result| *result == CsrfValidation::Valid)
+            .count();
+        assert_eq!(valid, 1);
     }
 
     #[test]

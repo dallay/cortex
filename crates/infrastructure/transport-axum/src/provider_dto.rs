@@ -541,12 +541,9 @@ fn config_to_domain(config: &ConnectionConfigDto) -> Result<ConnectionConfig, St
         Some(_) => return Err("invalid apiFormat".to_string()),
     };
 
-    // Validate base_url if provided — defense in depth against SSRF.
-    // EndpointPolicy already validates at request time, but rejecting invalid
-    // URLs at configuration time prevents persisting dangerous configurations.
-    if let Some(ref base_url) = config.base_url {
-        validate_base_url(base_url)?;
-    }
+    // URL validation belongs to the use case, which has the provider descriptor,
+    // existing connection (for partial updates), and configured endpoint grants.
+    // Applying a generic HTTPS-only policy here would reject local Ollama URLs.
 
     Ok(ConnectionConfig {
         max_concurrent: config.max_concurrent,
@@ -559,93 +556,6 @@ fn config_to_domain(config: &ConnectionConfigDto) -> Result<ConnectionConfig, St
         supported_models: config.supported_models.iter().map(ModelId::new).collect(),
         api_format,
     })
-}
-
-/// Validate a provider base_url to prevent SSRF attacks.
-///
-/// Rejects URLs with non-HTTPS schemes, loopback hosts, and private network hosts.
-/// This is defense in depth: EndpointPolicy already validates at request time.
-fn validate_base_url(base_url: &str) -> Result<(), String> {
-    // Extract scheme
-    let scheme_end = base_url
-        .find(':')
-        .ok_or_else(|| "base_url must contain a scheme".to_string())?;
-    let scheme = &base_url[..scheme_end].to_lowercase();
-
-    // Only allow HTTPS schemes
-    if scheme != "https" {
-        return Err(format!("base_url scheme must be https, got: {scheme}"));
-    }
-
-    // Extract host from the authority section (after //)
-    let after_scheme = &base_url[scheme_end + 1..];
-    let authority_start = after_scheme
-        .find("//")
-        .ok_or_else(|| "base_url must contain a host".to_string())?
-        + 2;
-    let authority = &after_scheme[authority_start..];
-
-    // Host ends at the first / or : or end of string
-    let host_end = authority
-        .find('/')
-        .or_else(|| authority.find(':'))
-        .unwrap_or(authority.len());
-    let host = &authority[..host_end];
-
-    if host.is_empty() {
-        return Err("base_url must contain a valid host".to_string());
-    }
-
-    // Check for loopback hosts
-    let host_lower = host.to_lowercase();
-    if is_loopback_host(&host_lower) {
-        return Err(format!(
-            "base_url host must not be a loopback address: {host}"
-        ));
-    }
-
-    // Check for private network hosts
-    if is_private_host(&host_lower) {
-        return Err(format!(
-            "base_url host must not be a private network address: {host}"
-        ));
-    }
-
-    Ok(())
-}
-
-/// Check if a host is a loopback address
-fn is_loopback_host(host: &str) -> bool {
-    matches!(
-        host,
-        "localhost" | "127.0.0.1" | "::1" | "0.0.0.0" | "0:0:0:0:0:0:0:1" | "0:0:0:0:0:0:0:0"
-    ) || host.starts_with("127.")
-}
-
-/// Check if a host is a private network address
-fn is_private_host(host: &str) -> bool {
-    // 10.0.0.0/8
-    if host.starts_with("10.") {
-        return true;
-    }
-    // 192.168.0.0/16
-    if host.starts_with("192.168.") {
-        return true;
-    }
-    // 172.16.0.0/12 (172.16.x.x - 172.31.x.x)
-    if host.starts_with("172.") {
-        if let Some(rest) = host.strip_prefix("172.") {
-            if let Some(dot_pos) = rest.find('.') {
-                if let Ok(second_octet) = rest[..dot_pos].parse::<u8>() {
-                    if (16..=31).contains(&second_octet) {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    // Link-local 169.254.0.0/16
-    host.starts_with("169.254.")
 }
 
 fn parse_auth_type(value: &str) -> Result<AuthType, String> {
@@ -661,5 +571,77 @@ fn auth_type_str(auth_type: AuthType) -> &'static str {
     match auth_type {
         AuthType::ApiKey => "apiKey",
         AuthType::OAuth => "oauth",
+    }
+}
+
+#[cfg(test)]
+mod endpoint_policy_regressions {
+    #[test]
+    fn parsed_authorities_follow_existing_remote_endpoint_policy() {
+        let policy = rook_core::EndpointPolicy {
+            allowed_origins: vec![
+                "https://api.example.com".into(),
+                "https://[2606:4700:4700::1111]".into(),
+            ],
+        };
+        for endpoint in [
+            "https://localhost:11434/v1",
+            "https://user:password@10.0.0.1/v1",
+            "https://[::1]/v1",
+            "https://[fc00::1]/v1",
+            "https://[fdff::1]/v1",
+        ] {
+            let url = reqwest::Url::parse(endpoint).unwrap();
+            assert!(policy.validate_url(&url).is_err(), "{endpoint}");
+        }
+        for endpoint in [
+            "https://api.example.com/v1",
+            "https://[2606:4700:4700::1111]/v1",
+        ] {
+            assert!(
+                policy
+                    .validate_url(&reqwest::Url::parse(endpoint).unwrap())
+                    .is_ok(),
+                "{endpoint}"
+            );
+        }
+    }
+
+    #[test]
+    fn config_conversion_preserves_ollama_localhost_for_descriptor_validation() {
+        let config: super::ConnectionConfigDto = serde_json::from_value(serde_json::json!({
+            "baseUrl": "http://localhost:11434",
+            "maxConcurrent": 1,
+            "quotaWindowThresholds": {"warning": 0.7, "error": 0.9}
+        }))
+        .unwrap();
+        assert_eq!(
+            super::config_to_domain(&config)
+                .unwrap()
+                .base_url
+                .as_deref(),
+            Some("http://localhost:11434")
+        );
+    }
+    #[test]
+    fn create_and_partial_update_allow_ollama_config() {
+        let config = serde_json::json!({
+            "baseUrl": "http://localhost:11434", "maxConcurrent": 1,
+            "quotaWindowThresholds": {"warning": 0.7, "error": 0.9}
+        });
+        let create: super::CreateProviderRequest = serde_json::from_value(serde_json::json!({
+            "providerKind": "ollama", "providerRuntimeId": "ollama",
+            "authType": "apiKey", "name": "local", "priority": 1, "isActive": true,
+            "credentials": {"apiKey": ""}, "config": config
+        }))
+        .unwrap();
+        assert!(super::CreateConnectionRequest::try_from(&create).is_ok());
+        for kind in [None, Some("ollama")] {
+            let update: super::UpdateProviderRequest = serde_json::from_value(serde_json::json!({
+                "expectedUpdatedAt": "2026-01-01T00:00:00Z", "providerKind": kind, "config": config
+            }))
+            .unwrap();
+            assert!(super::UsecaseUpdateConnectionRequest::try_from(&update).is_ok());
+        }
     }
 }

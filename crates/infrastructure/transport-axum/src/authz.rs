@@ -969,6 +969,10 @@ fn insert_standard_cors_headers(headers: &mut HeaderMap) {
         "access-control-allow-headers",
         HeaderValue::from_static("Content-Type, Authorization, X-API-Key, X-CSRF-Token"),
     );
+    headers.insert(
+        "access-control-expose-headers",
+        HeaderValue::from_static("X-CSRF-Token"),
+    );
     headers.insert("access-control-max-age", HeaderValue::from_static("86400"));
 }
 
@@ -1194,6 +1198,13 @@ mod tests {
         config: &AuthzConfig,
     ) -> AuthOutcome {
         runtime().block_on(evaluate_policy(route_class, method, path, headers, config))
+    }
+
+    #[test]
+    fn cors_exposes_rotated_csrf_token() {
+        let mut headers = HeaderMap::new();
+        insert_standard_cors_headers(&mut headers);
+        assert_eq!(headers["access-control-expose-headers"], "X-CSRF-Token");
     }
 
     #[test]

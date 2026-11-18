@@ -49,7 +49,10 @@ pub async fn login_handler(
             // This lets the client seed its CSRF cache before the first
             // state-changing request, avoiding the GET /login round-trip
             // that races with the Set-Cookie landing in WebKit's cookie jar.
-            let csrf_token = generate_csrf_token();
+            let csrf_token = match generate_csrf_token() {
+                Ok(token) => token,
+                Err(error) => return error.into_response(),
+            };
             let rook_env = rook_environment();
             let csrf_cookie = build_csrf_token_cookie(
                 &csrf_token,
@@ -64,6 +67,7 @@ pub async fn login_handler(
                 cfg!(not(debug_assertions)),
             );
 
+            let csrf_header = HeaderValue::from_str(&csrf_token).expect("base64url token");
             let body = LoginResponse {
                 session_id,
                 expires_at,
@@ -71,7 +75,14 @@ pub async fn login_handler(
             };
 
             (
-                AppendHeaders([(SET_COOKIE, auth_cookie), (SET_COOKIE, csrf_cookie)]),
+                AppendHeaders([
+                    (SET_COOKIE, auth_cookie),
+                    (SET_COOKIE, csrf_cookie),
+                    (
+                        axum::http::HeaderName::from_static("x-csrf-token"),
+                        csrf_header,
+                    ),
+                ]),
                 Json(body),
             )
                 .into_response()
@@ -238,8 +249,16 @@ pub async fn get_me_handler(State(_usecases): State<Arc<RookUsecases>>) -> impl 
 /// returns the token in the response body. The client must echo this token
 /// back in the X-CSRF-Token header for state-changing requests (POST, PUT, DELETE).
 pub async fn get_login_handler(State(_usecases): State<Arc<RookUsecases>>) -> impl IntoResponse {
-    // Always generate a fresh CSRF token — no reuse.
-    let token = generate_csrf_token();
+    login_token_response(generate_csrf_token())
+}
+
+fn login_token_response(
+    token: Result<String, crate::middleware::csrf_guard::CsrfError>,
+) -> axum::response::Response {
+    let token = match token {
+        Ok(token) => token,
+        Err(error) => return error.into_response(),
+    };
 
     let cookie = build_csrf_token_cookie(
         &token,
@@ -255,12 +274,8 @@ pub async fn get_login_handler(State(_usecases): State<Arc<RookUsecases>>) -> im
 }
 
 /// Generate a 32-byte random CSRF token encoded as base64url
-fn generate_csrf_token() -> String {
-    use ring::rand::SecureRandom;
-    let mut bytes = [0u8; 32];
-    let rng = ring::rand::SystemRandom::new();
-    let _ = rng.fill(&mut bytes);
-    URL_SAFE_NO_PAD.encode(bytes)
+fn generate_csrf_token() -> Result<String, crate::middleware::csrf_guard::CsrfError> {
+    crate::middleware::csrf_guard::CsrfGuard::new().generate_token()
 }
 
 /// Build the csrf_token cookie string
@@ -297,6 +312,37 @@ fn rook_environment() -> Option<String> {
     std::env::var("ROOK_ENV").ok()
 }
 
-fn is_secure(rook_env: Option<&str>, is_release: bool) -> bool {
+pub(crate) fn is_secure(rook_env: Option<&str>, is_release: bool) -> bool {
     is_release || rook_env == Some("production")
+}
+
+#[cfg(test)]
+mod csrf_tests {
+    use super::*;
+
+    #[test]
+    fn failed_generation_does_not_replace_incoming_cookie() {
+        let response = login_token_response(Err(
+            crate::middleware::csrf_guard::CsrfError::GenerationFailed,
+        ));
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(!response.headers().contains_key(SET_COOKIE));
+    }
+
+    #[tokio::test]
+    async fn successful_generation_preserves_cookie_and_body_contract() {
+        let token = generate_csrf_token().unwrap();
+        let response = login_token_response(Ok(token.clone()));
+        assert!(response.headers()[SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .starts_with(&format!("csrf_token={token};")));
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({"csrf_token": token})
+        );
+    }
 }

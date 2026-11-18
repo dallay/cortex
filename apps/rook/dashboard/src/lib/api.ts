@@ -782,6 +782,8 @@ function createApiClient() {
 			credentials: "include", // Include cookies for session auth
 		});
 
+		cacheResponseToken(response);
+
 		// Retry on CSRF failure with backoff: the cached token may be stale or
 		// the cookie may not have landed in the jar yet (WebKit delayed
 		// Set-Cookie described in issue #82). GET /login now reuses a valid
@@ -808,6 +810,7 @@ function createApiClient() {
 					headers,
 					credentials: "include",
 				});
+				cacheResponseToken(response);
 			} catch (err) {
 				console.warn("[Rook API] CSRF token refresh failed:", err);
 				// Fall through to the error path with the 403 response
@@ -824,6 +827,11 @@ function createApiClient() {
 		const body = await response.text();
 		if (body.length === 0) return undefined as T;
 		return JSON.parse(body) as T;
+	}
+
+	function cacheResponseToken(response: Response): void {
+		const token = response.headers.get("X-CSRF-Token");
+		if (token) cachedCsrfToken = token;
 	}
 
 	async function getCsrfToken(): Promise<string> {
