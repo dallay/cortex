@@ -8,8 +8,8 @@
 //! primitives execute. Local macOS 26/27 does not reproduce the failure, so the
 //! report has to come from the runner.
 //!
-//! The test fails on purpose: cargo captures the stdout of passing tests, so a
-//! failing assert is the only way to get the report into the job log.
+//! The test prints the report and stays green; the probe workflow reads it with
+//! `--nocapture`.
 
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 
@@ -258,5 +258,7 @@ fn temporary_rename_capability_report() {
     report.push(staging_probe(&root, "stage-frozen-0500", true, 'b'));
 
     let _ = fs::remove_dir_all(&root);
-    panic!("\n{}\n", report.join("\n"));
+    // The probe must stay green so repository hooks and unrelated suites keep
+    // working; the workflow reads the report through `--nocapture`.
+    println!("\n{}\n", report.join("\n"));
 }
