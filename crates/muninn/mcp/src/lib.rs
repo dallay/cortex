@@ -333,7 +333,11 @@ pub async fn serve<R: tokio::io::AsyncBufRead + Unpin, W: tokio::io::AsyncWrite 
 
 #[cfg(test)]
 mod tests {
-    use super::{BoundedBuffer, MAX_RESULT_BYTES};
+    use super::{
+        serialize_result, BoundedBuffer, ResultSerializationError, Server, MAX_RESULT_BYTES,
+        PROTOCOL_VERSION,
+    };
+    use serde_json::{json, Value};
     use std::io::Write;
 
     #[test]
@@ -354,5 +358,99 @@ mod tests {
         let _ = super::preference_detector::PreferenceDetector::new();
         let _ = super::prompts::list_prompts(super::prompts::PromptProfile::Core);
         let _ = super::resources::list_resources(super::resources::ResourceProfile::Core);
+    }
+
+    #[test]
+    fn bounded_buffer_flush_succeeds() {
+        let mut buffer = BoundedBuffer(Vec::new());
+        buffer.flush().expect("flush should not fail");
+    }
+
+    #[test]
+    fn serialize_result_rejects_a_value_over_the_limit() {
+        let value = Value::String("x".repeat(MAX_RESULT_BYTES - 1));
+        assert!(matches!(
+            serialize_result(&value),
+            Err(ResultSerializationError::TooLarge)
+        ));
+    }
+
+    #[tokio::test]
+    async fn initialize_requires_object_parameters() {
+        let response = Server::default()
+            .handle(json!({"jsonrpc":"2.0", "id":1, "method":"initialize", "params":null}))
+            .await
+            .expect("requests with an id return a response");
+        assert_eq!(response["error"]["code"], -32602);
+        assert_eq!(
+            response["error"]["message"],
+            "Initialization parameters required"
+        );
+    }
+
+    #[tokio::test]
+    async fn initialize_reports_unsupported_protocol_version() {
+        let response = Server::default()
+            .handle(json!({
+                "jsonrpc":"2.0",
+                "id":1,
+                "method":"initialize",
+                "params":{
+                    "protocolVersion":"unsupported",
+                    "capabilities":{},
+                    "clientInfo":{"name":"test", "version":"1"}
+                }
+            }))
+            .await
+            .expect("requests with an id return a response");
+        assert_eq!(response["error"]["code"], -32022);
+        assert_eq!(
+            response["error"]["message"],
+            "Unsupported protocol version or invalid client information"
+        );
+        assert_eq!(
+            response["error"]["data"]["supported"],
+            json!([PROTOCOL_VERSION])
+        );
+        assert_eq!(response["error"]["data"]["requested"], "unsupported");
+    }
+
+    fn request_meta() -> Value {
+        json!({
+            "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+            "io.modelcontextprotocol/clientCapabilities": {},
+            "io.modelcontextprotocol/clientInfo": {"name":"test", "version":"1"}
+        })
+    }
+
+    #[tokio::test]
+    async fn tools_call_requires_a_string_name() {
+        let response = Server::default()
+            .handle(json!({
+                "jsonrpc":"2.0",
+                "id":1,
+                "method":"tools/call",
+                "params":{"_meta":request_meta()}
+            }))
+            .await
+            .expect("requests with an id return a response");
+        assert_eq!(response["error"]["code"], -32602);
+        assert_eq!(response["error"]["message"], "Invalid tool name");
+    }
+
+    #[tokio::test]
+    async fn unknown_method_returns_method_not_found() {
+        let response = Server::default()
+            .handle(json!({
+                "jsonrpc":"2.0",
+                "id":1,
+                "method":"unknown/method",
+                "params":{"_meta":request_meta()}
+            }))
+            .await
+            .expect("requests with an id return a response");
+        assert_eq!(response["error"]["code"], -32601);
+        assert_eq!(response["error"]["message"], "Method not found");
+        assert!(response.get("result").is_none());
     }
 }
