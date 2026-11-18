@@ -18,7 +18,7 @@ Source of truth: `.github/labels.yml` (synced by `labels-sync.yml`, non-destruct
 - `type/*` — work type, exactly one per classified issue:
   `bug`, `feature`, `enhancement`, `chore`, `test`, `milestone`, `performance`.
 - `priority/*` — `high`, `low`. Owned by humans; the classifier never touches them.
-- Operational — `security`, `stale`. Owned by their workflows; the classifier never touches them.
+- Operational — `security`, `stale`, `accessibility`. The issue classifier preserves these labels; they are owned by their respective reporting or maintenance flows.
 - `triage/needs-classification` — needs a human. Added when information is missing
   or contradictory; removed once the issue is fully classified.
 
@@ -67,6 +67,7 @@ Examples:
 - `bug.yml` presets `type/bug`
 - `feature.yml` presets `type/feature`
 - `technical-task.yml` presets `type/chore`
+- `accessibility.yml` presets `type/bug` and `accessibility`
 
 Each form requires `Product` and `Technical Area`. GitHub renders answers as
 `### Product` and `### Technical Area` in the issue body; the classifier reads them
@@ -77,7 +78,7 @@ falls back to the title and then to existing labels.
 
 - Idempotent: running the classifier twice produces no additional changes.
 - Managed prefixes only: `product/`, `type/`, `area/`, `triage/`.
-  `priority/*`, `security`, `stale`, and Renovate-managed `area/dependencies`
+  `priority/*`, `security`, `stale`, `accessibility`, and Renovate-managed `area/dependencies`
   plus any unmanaged label are never added or removed by ordinary classification.
 - Exclusivity: an issue never ends with `product/rook` and `product/huginn`
   together. An explicit product (form or title scope) may replace the previous
