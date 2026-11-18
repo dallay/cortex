@@ -110,7 +110,7 @@ describe("CompatibleConnectionsSection", () => {
 		await button.trigger("click");
 		const emitted = wrapper.emitted("add");
 		expect(emitted).toBeDefined();
-		expect(emitted![0]).toEqual(["openai-compatible"]);
+		expect(emitted?.[0]).toEqual(["openai-compatible"]);
 	});
 
 	it("emits add event with correct kind when Add Anthropic Compatible is clicked", async () => {
@@ -119,7 +119,7 @@ describe("CompatibleConnectionsSection", () => {
 		await button.trigger("click");
 		const emitted = wrapper.emitted("add");
 		expect(emitted).toBeDefined();
-		expect(emitted![0]).toEqual(["anthropic-compatible"]);
+		expect(emitted?.[0]).toEqual(["anthropic-compatible"]);
 	});
 
 	it("shows protocol badge for OpenAI Compatible", () => {

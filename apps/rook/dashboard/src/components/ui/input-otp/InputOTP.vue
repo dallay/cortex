@@ -12,7 +12,7 @@ const props = defineProps<
 
 const emits = defineEmits<OTPInputEmits>();
 
-const delegatedProps = reactiveOmit(props, "class");
+const delegatedProps = reactiveOmit(props, "class", "containerClass");
 
 const forwarded = useForwardPropsEmits(delegatedProps, emits);
 </script>
@@ -20,7 +20,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
 <template>
   <OTPInput
     v-slot="slotProps"
-    :container-class="cn('flex items-center gap-2 has-disabled:opacity-50', props.class)"
+    :container-class="cn('flex items-center gap-2 has-disabled:opacity-50', props.containerClass, props.class)"
     class="disabled:cursor-not-allowed"
     data-slot="input-otp"
     v-bind="forwarded"
