@@ -493,7 +493,6 @@ For security support and vulnerability reporting, consult the
 public issues or pull requests. The safeguards below are scoped to the
 documented tools and platforms; they are not an agent-wide sandbox guarantee.
 
-
 | Concern         | Mitigation                                                  |
 |-----------------|-------------------------------------------------------------|
 | API keys        | Use environment variables, not config files                 |
