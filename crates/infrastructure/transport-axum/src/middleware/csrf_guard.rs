@@ -269,7 +269,12 @@ fn csrf_error_response(code: &str, message: &str) -> axum::response::Response {
         "error": code,
         "message": message,
     });
-    (StatusCode::FORBIDDEN, Json(body)).into_response()
+    let status = if code == "internal_error" {
+        StatusCode::INTERNAL_SERVER_ERROR
+    } else {
+        StatusCode::FORBIDDEN
+    };
+    (status, Json(body)).into_response()
 }
 
 /// CSRF-related errors
@@ -543,4 +548,5 @@ mod tests {
         assert!(!is_state_changing_method(&Method::HEAD));
         assert!(!is_state_changing_method(&Method::OPTIONS));
     }
+
 }

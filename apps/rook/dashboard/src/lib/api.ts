@@ -823,6 +823,15 @@ function createApiClient() {
 			throw new Error(`API Error ${response.status}: ${error}`);
 		}
 
+		// Update cached CSRF token from the response header if present.
+		// The backend rotates the token after each successful state-changing
+		// request via X-CSRF-Token, so the client must adopt it for the next
+		// mutation to avoid a 403 retry cycle.
+		const newCsrf = response.headers.get("x-csrf-token");
+		if (newCsrf) {
+			cachedCsrfToken = newCsrf;
+		}
+
 		// Read once as text so both null bodies and empty streams are handled.
 		const body = await response.text();
 		if (body.length === 0) return undefined as T;
