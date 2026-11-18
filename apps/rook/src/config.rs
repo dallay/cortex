@@ -1245,4 +1245,224 @@ mod tests {
         assert_eq!(config.cache.token_cache.mode, CacheMode::Never);
         assert!(config.cache.token_cache.providers.is_empty());
     }
+
+    #[test]
+    fn combo_step_validation_accepts_unique_nonzero_priorities() {
+        let combo = ComboConfig {
+            id: "combo-a".to_string(),
+            name: "Combo A".to_string(),
+            strategy: "priority".to_string(),
+            steps: vec![
+                ComboStepConfig {
+                    provider_id: "openai".to_string(),
+                    model: "gpt-4o".to_string(),
+                    priority: 1,
+                },
+                ComboStepConfig {
+                    provider_id: "anthropic".to_string(),
+                    model: "claude".to_string(),
+                    priority: 2,
+                },
+            ],
+        };
+        let warnings = capture_warnings(|| {
+            RookConfig::validate_combo_steps(&combo);
+            RookConfig::validate_combo_step_count(&combo);
+        });
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+    }
+
+    #[test]
+    fn combo_step_validation_warns_on_duplicate_priorities_and_zero() {
+        let combo = ComboConfig {
+            id: "combo-a".to_string(),
+            name: "Combo A".to_string(),
+            strategy: "priority".to_string(),
+            steps: vec![
+                ComboStepConfig {
+                    provider_id: "openai".to_string(),
+                    model: "gpt-4o".to_string(),
+                    priority: 0,
+                },
+                ComboStepConfig {
+                    provider_id: "anthropic".to_string(),
+                    model: "claude".to_string(),
+                    priority: 0,
+                },
+            ],
+        };
+        let warnings = capture_warnings(|| RookConfig::validate_combo_steps(&combo));
+        assert!(
+            warnings.contains(
+                &"duplicate priority within combo - execution order may be unpredictable"
+                    .to_string()
+            ),
+            "unexpected warnings: {warnings:?}"
+        );
+        assert!(
+            warnings.contains(
+                &"priority must be between 1 and 255, got 0 - this combo may fail at runtime"
+                    .to_string()
+            ),
+            "unexpected warnings: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn combo_step_count_validation_warns_on_empty_and_oversized_chains() {
+        let empty = ComboConfig {
+            id: "empty".to_string(),
+            name: "Empty".to_string(),
+            strategy: "priority".to_string(),
+            steps: Vec::new(),
+        };
+        let warnings = capture_warnings(|| RookConfig::validate_combo_step_count(&empty));
+        assert!(
+            warnings.contains(&"combo has no steps - it will fail at runtime".to_string()),
+            "unexpected warnings: {warnings:?}"
+        );
+
+        let too_many = ComboConfig {
+            id: "large".to_string(),
+            name: "Large".to_string(),
+            strategy: "priority".to_string(),
+            steps: (0..11)
+                .map(|index| ComboStepConfig {
+                    provider_id: format!("provider-{index}"),
+                    model: format!("model-{index}"),
+                    priority: index + 1,
+                })
+                .collect(),
+        };
+        let warnings = capture_warnings(|| RookConfig::validate_combo_step_count(&too_many));
+        assert!(
+            warnings.contains(
+                &"combo has more than 10 steps - maximum is 10, this may fail at runtime"
+                    .to_string()
+            ),
+            "unexpected warnings: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn combo_metadata_validation_warns_on_duplicates_and_unknown_strategy() {
+        let combo = ComboConfig {
+            id: "combo-a".to_string(),
+            name: "Combo A".to_string(),
+            strategy: "round-robin".to_string(),
+            steps: Vec::new(),
+        };
+        let mut seen_names = std::collections::HashSet::new();
+        let mut seen_ids = std::collections::HashSet::new();
+        // Seed the seen sets so the combo collides with itself.
+        seen_names.insert("Combo A".to_string());
+        seen_ids.insert("combo-a".to_string());
+
+        let warnings = capture_warnings(|| {
+            RookConfig::validate_combo_metadata(&combo, &mut seen_names, &mut seen_ids);
+        });
+        assert!(
+            warnings.contains(
+                &"duplicate combo name found in config - later definition will override"
+                    .to_string()
+            ),
+            "unexpected warnings: {warnings:?}"
+        );
+        assert!(
+            warnings.contains(
+                &"duplicate combo ID found in config - later definition will override".to_string()
+            ),
+            "unexpected warnings: {warnings:?}"
+        );
+        assert!(
+            warnings.contains(
+                &"unsupported combo strategy - only 'priority' is supported in this version"
+                    .to_string()
+            ),
+            "unexpected warnings: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn combo_metadata_validation_accepts_a_unique_priority_combo() {
+        let combo = ComboConfig {
+            id: "combo-a".to_string(),
+            name: "Combo A".to_string(),
+            strategy: "priority".to_string(),
+            steps: Vec::new(),
+        };
+        let mut seen_names = std::collections::HashSet::new();
+        let mut seen_ids = std::collections::HashSet::new();
+
+        let warnings = capture_warnings(|| {
+            RookConfig::validate_combo_metadata(&combo, &mut seen_names, &mut seen_ids);
+        });
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+    }
+
+    // ---------------------------------------------------------------------
+    // Warning capture
+    //
+    // The combo validators only report problems through `tracing::warn!`, so
+    // the tests install a subscriber that collects the emitted messages.
+    // ---------------------------------------------------------------------
+
+    #[derive(Clone, Default)]
+    struct WarnCapture {
+        messages: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    impl tracing::Subscriber for WarnCapture {
+        fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+            *metadata.level() >= tracing::Level::WARN
+        }
+
+        fn new_span(&self, _span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+
+        fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+
+        fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+
+        fn event(&self, event: &tracing::Event<'_>) {
+            let mut visitor = MessageVisitor::default();
+            event.record(&mut visitor);
+            self.messages
+                .lock()
+                .expect("warning capture lock")
+                .push(visitor.message);
+        }
+
+        fn enter(&self, _span: &tracing::span::Id) {}
+
+        fn exit(&self, _span: &tracing::span::Id) {}
+    }
+
+    #[derive(Default)]
+    struct MessageVisitor {
+        message: String,
+    }
+
+    impl tracing::field::Visit for MessageVisitor {
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "message" {
+                self.message = format!("{value:?}");
+            }
+        }
+
+        fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+            if field.name() == "message" {
+                self.message = value.to_string();
+            }
+        }
+    }
+
+    fn capture_warnings(body: impl FnOnce()) -> Vec<String> {
+        let capture = WarnCapture::default();
+        let sink = capture.messages.clone();
+        tracing::subscriber::with_default(capture, body);
+        let messages = sink.lock().expect("warning capture lock").clone();
+        messages
+    }
 }
