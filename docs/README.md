@@ -95,4 +95,5 @@ docs/
 
 - [Main README](../README.md) — Project overview
 - [Contributing](../CONTRIBUTING.md) — General guide
+- [Security Policy](../SECURITY.md) — Security support and responsible disclosure
 - [.github/](../.github/) — GitHub configs (labels, workflows)
