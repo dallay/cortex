@@ -35,10 +35,44 @@ body:
     validations:
       required: true
   - type: textarea
-    id: description
+    id: problem
     attributes:
-      label: Description
-      description: Problem, proposal, acceptance hints, out of scope.
-      placeholder: Who needs this, what changes, how do we know it works?
+      label: Problem Statement
+      description: What problem does this feature solve? Who is affected?
+      placeholder: "Describe the problem or need that this feature addresses."
     validations:
       required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: How do you propose to solve this problem?
+      placeholder: "Describe your proposed approach or solution."
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: What conditions must be met for this feature to be complete?
+      placeholder: |
+        - As a user, I can ...
+        - The system should ...
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered (optional)
+      description: Have you considered alternative approaches?
+      placeholder: "Describe any alternative solutions you've considered."
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context (optional)
+      description: Any other context, screenshots, or examples.
+      placeholder: "Add any other relevant information here."
+    validations:
+      required: false

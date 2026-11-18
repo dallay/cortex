@@ -327,6 +327,18 @@ cargo clippy -p rook -- -D warnings
 
 ---
 
+## ♿ Accessibility
+
+Cortex is committed to accessibility. Please see the [Accessibility Statement](../../ACCESSIBILITY.md). If you encounter an accessibility barrier, [file a report](https://github.com/dallay/cortex/issues/new?template=accessibility.yml).
+
+---
+
+## 🤝 Contributing
+
+See the [Contributing Guide](../../CONTRIBUTING.md) in the repository root.
+
+---
+
 ## 📄 License
 
 MIT License - same as [Cortex repository](https://github.com/dallay/cortex).

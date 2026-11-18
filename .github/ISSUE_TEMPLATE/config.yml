@@ -1,8 +1,15 @@
+<!-- markdownlint-disable MD034 -->
 blank_issues: false
 contact_links:
   - name: Documentation
     url: https://github.com/dallay/cortex/blob/main/README.md
-    about: Check docs before filing — most setup questions are answered there.
+    about: |
+      Check docs before filing — most setup questions are answered there.
   - name: Security policy
     url: https://github.com/dallay/cortex/blob/main/SECURITY.md
-    about: Do not file public issues for vulnerabilities; follow the policy instead.
+    about: |
+      Do not file public issues for vulnerabilities; follow the policy instead.
+  - name: Accessibility statement
+    url: https://github.com/dallay/cortex/blob/main/ACCESSIBILITY.md
+    about: |
+      Learn about our accessibility commitment and how to report barriers.

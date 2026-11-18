@@ -1,0 +1,115 @@
+name: Accessibility Issue
+description: Report an accessibility barrier or improvement opportunity
+title: "[Accessibility] "
+labels: ["accessibility"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for helping us make Cortex more accessible! This template helps us understand and address accessibility barriers.
+
+        If you're unsure whether this is an accessibility issue, you can also [search existing issues](https://github.com/dallay/cortex/issues) or [open a discussion](https://github.com/dallay/cortex/discussions).
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Brief description of the accessibility barrier
+      placeholder: |
+        Example: "The submit button in the model configuration form cannot be activated with the keyboard"
+    validations:
+      required: true
+
+  - type: input
+    id: url
+    attributes:
+      label: Affected URL or Component
+      description: The page, component, or feature where the barrier occurs
+      placeholder: "e.g., /dashboard/models, Rook CLI, Huginn TUI"
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What should happen for the task to be accessible?
+      placeholder: |
+        Example: "The submit button should be focusable via Tab and activatable with Enter or Space"
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happens? What prevents access?
+      placeholder: |
+        Example: "The button has no keyboard focus indicator and cannot be activated without a mouse"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the barrier
+      placeholder: |
+        1. Navigate to /dashboard/models
+        2. Press Tab to focus the submit button
+        3. Press Enter
+        4. Observe that nothing happens
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: How severely does this barrier affect users?
+      options:
+        - "Critical — Content or function is completely inaccessible; no workaround"
+        - "High — Content or function is difficult to access; cumbersome workaround"
+        - "Medium — Accessibility feature is missing; task is still completable"
+        - "Low — Minor improvement opportunity; no significant barrier"
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Your browser, operating system, and assistive technology
+      placeholder: |
+        - Browser: Chrome 120
+        - Operating System: macOS 14
+        - Assistive Technology: VoiceOver 14
+    validations:
+      required: false
+
+  - type: input
+    id: wcag
+    attributes:
+      label: WCAG Criterion (optional)
+      description: If known, the WCAG 2.2 criterion this relates to
+      placeholder: "e.g., 2.1.1 Keyboard (Level A)"
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or Recordings (optional)
+      description: Optional — helpful but never required. You do not need to disclose a disability to report an issue.
+      placeholder: "Drag and drop images or recordings here, or paste a link"
+    validations:
+      required: false
+
+  - type: textarea
+    id: code
+    attributes:
+      label: Relevant Code (optional)
+      description: If applicable, include the relevant HTML, CSS, or component code
+      render: html
+    validations:
+      required: false
