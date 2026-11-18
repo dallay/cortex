@@ -333,6 +333,14 @@ Cortex is committed to accessibility. Please see the [Accessibility Statement](.
 
 ---
 
+## 🔒 Security
+
+See the [Cortex Security Policy](../../SECURITY.md) for current support status,
+trust boundaries, and private vulnerability reporting. Do not publish
+vulnerability details in issues or pull requests.
+
+---
+
 ## 🤝 Contributing
 
 See the [Contributing Guide](../../CONTRIBUTING.md) in the repository root.
