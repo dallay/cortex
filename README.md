@@ -498,8 +498,8 @@ MIT License. See [LICENSE](LICENSE). By contributing to Cortex, you agree that y
 
 | Channel                                                        | Purpose           |
 |----------------------------------------------------------------|-------------------|
-| 💬 [Discussions](https://github.com/dallay/cortex/discussions) | Questions & ideas |
-| 🐛 [Issues](https://github.com/dallay/cortex/issues)           | Bug reports       |
+
+| [Issues](https://github.com/dallay/cortex/issues) | Bug reports, accessibility barriers, questions & feature proposals |
 | 🌐 [DeepWiki](https://deepwiki.com/dallay/cortex)              | AI-powered docs   |
 
 ---
