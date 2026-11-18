@@ -1142,7 +1142,7 @@ pub fn build_provider_from_connection_with_policy(
                 timeout_secs: 300,
                 api_key: (!api_key.is_empty()).then_some(api_key),
             };
-            providers_ollama::OllamaProvider::new(config)
+            providers_ollama::OllamaProvider::new_with_endpoint_policy(config, endpoint_policy)
                 .map(|provider| {
                     provider
                         .with_chat_path(descriptor.paths.chat)

@@ -79,10 +79,26 @@ pub struct OllamaProvider {
 
 impl OllamaProvider {
     pub fn new(config: OllamaProviderConfig) -> anyhow::Result<Arc<Self>> {
-        let client = Client::builder()
+        Self::new_with_endpoint_policy(config, rook_core::EndpointPolicy::default())
+    }
+
+    pub fn new_with_endpoint_policy(
+        config: OllamaProviderConfig,
+        policy: rook_core::EndpointPolicy,
+    ) -> anyhow::Result<Arc<Self>> {
+        let endpoint = providers_core::endpoint_resolver::resolver_for_url(
+            policy.for_ollama(),
+            &config.base_url,
+        )?;
+        let mut builder = Client::builder()
+            .no_proxy()
+            .dns_resolver(endpoint.resolver)
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()?;
+            .redirect(reqwest::redirect::Policy::none());
+        if let Some((host, addresses)) = endpoint.literal {
+            builder = builder.resolve_to_addrs(&host, &addresses);
+        }
+        let client = builder.build()?;
         let paths = rook_core::descriptor_by_id("ollama")
             .expect("Ollama descriptor")
             .paths;

@@ -286,12 +286,9 @@ pub async fn get_login_handler(State(_usecases): State<Arc<RookUsecases>>) -> im
 
 /// Generate a 32-byte random CSRF token encoded as base64url
 fn generate_csrf_token() -> Result<String, String> {
-    use ring::rand::SecureRandom;
-    let mut bytes = [0u8; 32];
-    ring::rand::SystemRandom::new()
-        .fill(&mut bytes)
-        .map_err(|_| "failed to generate CSRF token".to_string())?;
-    Ok(URL_SAFE_NO_PAD.encode(bytes))
+    crate::middleware::csrf_guard::CsrfGuard::new()
+        .generate_token()
+        .map_err(|_| "failed to generate CSRF token".to_string())
 }
 
 /// Build the csrf_token cookie string

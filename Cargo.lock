@@ -4287,9 +4287,12 @@ dependencies = [
 name = "providers-core"
 version = "0.0.1"
 dependencies = [
+ "anyhow",
+ "reqwest",
  "rook-core",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]

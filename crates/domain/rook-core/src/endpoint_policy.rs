@@ -137,6 +137,24 @@ pub enum EndpointPolicyError {
 }
 
 impl EndpointPolicy {
+    /// Built-in Ollama destinations plus operator-approved connection origins.
+    /// Custom local ports and hosts require an explicit connection grant.
+    pub fn for_ollama(&self) -> Self {
+        let mut policy = self.clone();
+        for origin in [
+            "http://localhost:11434",
+            "http://127.0.0.1:11434",
+            "http://[::1]:11434",
+            "https://localhost:11434",
+            "https://127.0.0.1:11434",
+            "https://[::1]:11434",
+            "https://ollama.com",
+        ] {
+            policy.allowed_origins.push(origin.to_string());
+        }
+        policy
+    }
+
     /// Require an exact operator grant for the URL origin. Userinfo is never accepted.
     pub fn validate_url(&self, url: &url::Url) -> Result<(), EndpointPolicyError> {
         let host = url.host_str().ok_or(EndpointPolicyError::InvalidHost)?;
