@@ -485,13 +485,42 @@ mod csrf_guard_tests {
         let guard = CsrfGuard::new();
         let token = guard.generate_token().expect("should generate");
 
-        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-        let decoded = URL_SAFE_NO_PAD.decode(&token).expect("should decode");
-        assert_eq!(decoded.len(), 98, "66-byte payload plus 32-byte HMAC");
-        assert_eq!(decoded[0], 1, "token format version");
         assert_eq!(
             guard.validate(Some(&token), Some(&token)),
             transport_axum::middleware::csrf_guard::CsrfValidation::Valid
+        );
+    }
+
+    #[test]
+    fn csrf_guard_rejects_a_modified_token() {
+        let guard = CsrfGuard::new();
+        let token = guard.generate_token().expect("should generate");
+
+        let mut modified = token.clone();
+        let target = modified.len() / 2;
+        let replacement = if modified.as_bytes()[target] == b'A' {
+            "B"
+        } else {
+            "A"
+        };
+        modified.replace_range(target..target + 1, replacement);
+
+        assert_ne!(modified, token, "the token must be modified");
+        assert_eq!(
+            guard.validate(Some(&modified), Some(&modified)),
+            transport_axum::middleware::csrf_guard::CsrfValidation::Mismatch
+        );
+    }
+
+    #[test]
+    fn csrf_guard_rejects_a_token_signed_by_another_guard() {
+        let guard = CsrfGuard::new();
+        let other_guard = CsrfGuard::with_signing_key([7u8; 32]);
+        let foreign_token = other_guard.generate_token().expect("should generate");
+
+        assert_eq!(
+            guard.validate(Some(&foreign_token), Some(&foreign_token)),
+            transport_axum::middleware::csrf_guard::CsrfValidation::Mismatch
         );
     }
 
