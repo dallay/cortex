@@ -99,7 +99,10 @@ fn slot_matches(
         Ok(stat) => stat,
         // A closed slot proves that no descriptor refers to the target.
         Err(rustix::io::Errno::BADF) => return Some(false),
-        Err(_) => return None,
+        Err(error) => {
+            report("descriptor.statat", &std::io::Error::from(error));
+            return None;
+        }
     };
     // macOS exposes every descriptor as a node of the descriptor filesystem. The
     // node carries the inode of the referenced object but not its device, so the
@@ -112,7 +115,13 @@ fn slot_matches(
         rustix::fs::Mode::empty(),
     ) {
         Ok(handle) => {
-            let reopened = rustix::fs::fstat(&handle).ok()?;
+            let reopened = match rustix::fs::fstat(&handle) {
+                Ok(stat) => stat,
+                Err(error) => {
+                    report("descriptor.fstat", &std::io::Error::from(error));
+                    return None;
+                }
+            };
             let reopened_device = u64::try_from(reopened.st_dev).ok()?;
             Some(reopened_device == device && reopened.st_ino == inode)
         }
