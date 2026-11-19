@@ -596,23 +596,72 @@ fn resolve_api_key_secret(db_path: &str) -> anyhow::Result<String> {
         );
     }
 
+    load_or_create_persisted_secret(&secret_path)
+}
+
+/// Load the persisted API key secret, generating and publishing it when absent.
+///
+/// The lookup, the generation, and the publication run under an exclusive lock
+/// taken on a sibling file. Every initializer reads the secret only after
+/// acquiring that lock, so concurrent initializers — in the same process or in
+/// different ones — converge on the value that was actually persisted.
+fn load_or_create_persisted_secret(secret_path: &std::path::Path) -> anyhow::Result<String> {
+    if let Some(parent) = secret_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            anyhow::anyhow!("failed to create data dir for api_key_secret.key: {e}")
+        })?;
+    }
+
+    let lock_path = secret_path.with_extension("key.lock");
+    let _lock_file = {
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(true).create(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options
+            .open(&lock_path)
+            .map_err(|e| anyhow::anyhow!("failed to open api_key_secret.key lock: {e}"))?;
+        let metadata = file
+            .metadata()
+            .map_err(|e| anyhow::anyhow!("failed to inspect api_key_secret.key lock: {e}"))?;
+        if !metadata.is_file() {
+            anyhow::bail!("api_key_secret.key lock must be a regular file");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o077 != 0 {
+                file.set_permissions(std::fs::Permissions::from_mode(0o600))
+                    .map_err(|e| {
+                        anyhow::anyhow!("failed to restrict api_key_secret.key lock: {e}")
+                    })?;
+            }
+        }
+        fs2::FileExt::lock_exclusive(&file)
+            .map_err(|e| anyhow::anyhow!("failed to lock api_key_secret.key: {e}"))?;
+        file
+    };
+
     if secret_path.exists() {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let permissions = std::fs::metadata(&secret_path)
+            let permissions = std::fs::metadata(secret_path)
                 .map_err(|e| {
                     anyhow::anyhow!("failed to inspect api_key_secret.key permissions: {e}")
                 })?
                 .permissions();
             if permissions.mode() & 0o077 != 0 {
-                std::fs::set_permissions(&secret_path, std::fs::Permissions::from_mode(0o600))
+                std::fs::set_permissions(secret_path, std::fs::Permissions::from_mode(0o600))
                     .map_err(|e| {
                         anyhow::anyhow!("failed to restrict api_key_secret.key permissions: {e}")
                     })?;
             }
         }
-        let s = std::fs::read_to_string(&secret_path) // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
+        let s = std::fs::read_to_string(secret_path) // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
             .map_err(|e| anyhow::anyhow!("failed to read api_key_secret.key: {e}"))?;
         let s = s.trim().to_string();
         if !s.is_empty() {
@@ -636,14 +685,14 @@ fn resolve_api_key_secret(db_path: &str) -> anyhow::Result<String> {
             .create(true)
             .truncate(true)
             .mode(0o600)
-            .open(&secret_path)
+            .open(secret_path)
             .map_err(|e| anyhow::anyhow!("failed to write api_key_secret.key: {e}"))?;
         file.write_all(secret.as_bytes())
             .and_then(|()| file.set_permissions(std::fs::Permissions::from_mode(0o600)))
             .map_err(|e| anyhow::anyhow!("failed to secure api_key_secret.key: {e}"))?;
     }
     #[cfg(not(unix))]
-    std::fs::write(&secret_path, &secret)
+    std::fs::write(secret_path, &secret)
         .map_err(|e| anyhow::anyhow!("failed to write api_key_secret.key: {e}"))?;
 
     tracing::warn!(
@@ -653,6 +702,55 @@ fn resolve_api_key_secret(db_path: &str) -> anyhow::Result<String> {
     );
 
     validate_api_key_secret(secret)
+}
+
+#[cfg(test)]
+mod api_key_secret_tests {
+    use super::load_or_create_persisted_secret;
+    use std::sync::{Arc, Barrier};
+
+    fn scratch_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("rook-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    #[test]
+    fn concurrent_initializers_converge_on_the_persisted_secret() {
+        let dir = scratch_dir("secret-init");
+        let path = dir.join("api_key_secret.key");
+
+        // Every thread starts at the same time, so without the lock they all
+        // observe the file as missing and publish a different secret.
+        let barrier = Arc::new(Barrier::new(8));
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let path = path.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    load_or_create_persisted_secret(&path).expect("resolved secret")
+                })
+            })
+            .collect();
+
+        let secrets: Vec<String> = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("initializer thread"))
+            .collect();
+        let persisted = std::fs::read_to_string(&path).expect("persisted secret");
+
+        for secret in &secrets {
+            assert_eq!(
+                secret.trim(),
+                persisted.trim(),
+                "every initializer must observe the secret that was actually persisted"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 /// Seed combos from config into SQLite on startup.
