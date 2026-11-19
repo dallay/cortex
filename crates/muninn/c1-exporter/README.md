@@ -38,7 +38,26 @@ Then run the package tests without a filter. Failed tests include their captured
 diagnostics by default; `--nocapture` also displays expected injected failures.
 The labels distinguish `freeze.chmod_directory`, `freeze.sync_directory`,
 `publish.pre_sync`, `publish.rename_noreplace`, `publish.post_sync` and file/receipt
-operations. These diagnostics do not establish the cause of the macOS 15 failure.
+operations.
+
+## Publication order on macOS 15
+
+macOS 15 (Darwin 24) denies renaming a directory whose mode lacks write permission.
+The denial returns `EACCES` and does not depend on open descriptors below the
+directory, on `RENAME_EXCL`, or on the destination name. Newer macOS releases
+accept the same rename, so the defect is invisible on a recent workstation.
+
+The staged directory therefore stays writable (`0o700`) until the rename publishes
+it, and the published entry is frozen to `0o500` right after the rename and before
+the parent sync makes the new name durable. Freezing before the rename cannot work
+on macOS 15, and freezing after the parent sync would let a crash expose a
+writable published directory under a durable name.
+
+The interval between the rename and the freeze keeps the staged directory writable
+for its owner only. The artifact contents are already immutable at that point: the
+artifact files are `0o400` and the `1_Pooling` child directory is `0o500`. Every
+reopen re-verifies the receipt and the artifact digests, so a modified bundle is
+rejected instead of trusted.
 
 Keep this test-only instrumentation for platform regressions. To remove it, remove
 `artifact_diagnostics.rs`, its `cfg(test)` module declaration and the matching
