@@ -4934,6 +4934,7 @@ dependencies = [
  "dirs",
  "dotenvy",
  "encryption-inmemory",
+ "fs2",
  "futures",
  "mime",
  "mime_guess",
