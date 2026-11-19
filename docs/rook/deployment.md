@@ -21,15 +21,20 @@ ENCRYPTION_PASSPHRASE="your-secure-passphrase-here"
 ENCRYPTION_SALT="Z3G83UBdTUkfGGWr-QDnQg"
 ```
 
-### Required for Client API Key Auth (`auth.api_keys.enabled = true`)
+### Persistent signing secret
 
 ```bash
-# Secret for hashing client API keys (generate with: openssl rand -hex 32)
-API_KEY_HASH_SECRET="your-hash-secret-here"
+# Optional when the persistent secret file is available; generate and store securely for production
+API_KEY_HASH_SECRET="$(openssl rand -hex 32)"
 ```
 
-> **⚠️ CRITICAL**: This secret MUST remain stable. If it changes, ALL existing API keys become invalid.
-> See [API Key Troubleshooting](api-key-troubleshooting.md) for recovery steps if this happens.
+Rook also derives its CSRF signing key from this secret using a separate HMAC domain label. Rook never uses the API key secret directly as the CSRF key. If this variable is unset, Rook stores `api_key_secret.key` beside the database and uses it as the source secret. This file is created even when client API key authentication is disabled. For in-memory SQLite, Rook uses a transient secret, so CSRF tokens do not survive process restarts.
+
+The configured or persisted source secret must contain at least 32 bytes. This length check does not prove entropy: generate the value with a cryptographically secure random generator (for example, `openssl rand -hex 32`) and do not use a human-chosen phrase.
+
+> **⚠️ CRITICAL**: Keep the secret stable. If `API_KEY_HASH_SECRET` changes, existing API keys become invalid and previously issued CSRF tokens fail validation. See [API Key Troubleshooting](api-key-troubleshooting.md) for API key recovery steps.
+
+When multiple Rook replicas share the same sessions database, they MUST also use the same `API_KEY_HASH_SECRET` or share the persistent `api_key_secret.key` file beside that database. Otherwise, a replica cannot validate CSRF tokens issued by another replica. Keep the clocks of those replicas synchronized: token validation tolerates up to 60 seconds of divergence.
 
 ### Optional
 
@@ -170,8 +175,8 @@ Create a `.env` file (never commit this to version control):
 ENCRYPTION_PASSPHRASE=your-secure-passphrase-min-12-chars
 ENCRYPTION_SALT=Z3G83UBdTUkfGGWr-QDnQg
 
-# Required for auth.api_keys (optional)
-API_KEY_HASH_SECRET=your-hash-secret-here
+# Optional override; generate securely with: openssl rand -hex 32
+API_KEY_HASH_SECRET=$(openssl rand -hex 32)
 ```
 
 ## Adding Providers

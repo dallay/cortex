@@ -481,13 +481,18 @@ mod csrf_guard_tests {
     }
 
     #[test]
-    fn csrf_token_is_32_bytes() {
+    fn csrf_token_contains_signed_payload_and_validates() {
         let guard = CsrfGuard::new();
         let token = guard.generate_token().expect("should generate");
 
         use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
         let decoded = URL_SAFE_NO_PAD.decode(&token).expect("should decode");
-        assert_eq!(decoded.len(), 32);
+        assert_eq!(decoded.len(), 98, "66-byte payload plus 32-byte HMAC");
+        assert_eq!(decoded[0], 1, "token format version");
+        assert_eq!(
+            guard.validate(Some(&token), Some(&token)),
+            transport_axum::middleware::csrf_guard::CsrfValidation::Valid
+        );
     }
 
     #[test]

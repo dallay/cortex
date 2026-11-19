@@ -66,11 +66,27 @@ impl ExclusiveStage {
 
     /// Publishes directory visibility only, never a complete or durable model.
     /// OutcomeUnknown means the rename happened but the parent sync failed, or the
-    /// published entry could not be reopened afterwards.
+    /// published entry could not be reopened.
     pub fn publish_directory(self, target: &str) -> Result<ArtifactDir, FsError> {
-        self.publish_with_sync(target, File::sync_all, File::sync_all)
+        self.publish_transaction(target, File::sync_all, File::sync_all, |_| Ok(()))
     }
 
+    /// Publishes directory visibility and freezes the published entry before the
+    /// parent sync makes the new name durable.
+    ///
+    /// The staged directory cannot be frozen before the rename: macOS 15 denies
+    /// renaming a directory whose mode lacks write permission.
+    pub fn publish_frozen_directory(self, target: &str) -> Result<ArtifactDir, FsError> {
+        self.publish_transaction(
+            target,
+            File::sync_all,
+            File::sync_all,
+            super::freeze_directory,
+        )
+    }
+
+    /// Test seam that injects synchronization failures around the publication.
+    #[cfg(test)]
     fn publish_with_sync<B, A>(
         self,
         target: &str,
@@ -80,6 +96,21 @@ impl ExclusiveStage {
     where
         B: FnOnce(&File) -> std::io::Result<()>,
         A: FnOnce(&File) -> std::io::Result<()>,
+    {
+        self.publish_transaction(target, before, after, |_| Ok(()))
+    }
+
+    fn publish_transaction<B, A, F>(
+        self,
+        target: &str,
+        before: B,
+        after: A,
+        freeze: F,
+    ) -> Result<ArtifactDir, FsError>
+    where
+        B: FnOnce(&File) -> std::io::Result<()>,
+        A: FnOnce(&File) -> std::io::Result<()>,
+        F: FnOnce(&ArtifactDir) -> Result<(), FsError>,
     {
         if !crate::artifacts::is_lower_hex(target, 64) {
             return Err(FsError::InvalidPath);
@@ -125,6 +156,13 @@ impl ExclusiveStage {
             super::diagnostics::report("publish.rename_noreplace", &std::io::Error::from(error));
             map_errno(error)
         })?;
+        // The published entry is reopened and frozen before the parent sync makes
+        // the new name durable, so a crash cannot expose a writable published
+        // directory under a durable name.
+        let published = parent
+            .open_subdir(target)
+            .map_err(|_| FsError::OutcomeUnknown)?;
+        freeze(&published).map_err(|_| FsError::OutcomeUnknown)?;
         after(&self.parent).map_err(|error| {
             #[cfg(test)]
             super::diagnostics::report("publish.post_sync", &error);
@@ -132,9 +170,7 @@ impl ExclusiveStage {
             let _ = error;
             FsError::OutcomeUnknown
         })?;
-        parent
-            .open_subdir(target)
-            .map_err(|_| FsError::OutcomeUnknown)
+        Ok(published)
     }
 }
 

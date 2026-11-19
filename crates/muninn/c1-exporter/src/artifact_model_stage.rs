@@ -255,19 +255,22 @@ impl ModelArtifactStage {
             sync_file(&file).map_err(CacheError::Filesystem)?;
         }
         {
-            // macOS refuses to rename a directory that still holds an open
-            // descriptor below it, so the frozen child closes before publication.
+            // The child directory is never renamed, so freezing it before
+            // publication keeps its contents immutable from the moment the
+            // bundle becomes visible.
             let child = self
                 .stage
                 .directory
                 .open_subdir("1_Pooling")
                 .map_err(CacheError::Filesystem)?;
-            freeze_directory(&child)?;
+            super::super::freeze_directory(&child).map_err(CacheError::Filesystem)?;
         }
-        freeze_directory(&self.stage.directory)?;
+        // The staged directory cannot be frozen before the rename: macOS 15
+        // denies renaming a directory whose mode lacks write permission. The
+        // published entry is frozen right after the rename instead.
         let directory = self
             .stage
-            .publish_directory(&bundle_id)
+            .publish_frozen_directory(&bundle_id)
             .map_err(CacheError::Filesystem)?;
         Ok(VerifiedArtifactCache {
             directory,
@@ -386,26 +389,6 @@ fn open_readonly_artifact(directory: &ArtifactDir, path: &str) -> Result<File, C
     };
     check_readonly(&file, 0o400)?;
     Ok(file)
-}
-
-fn freeze_directory(directory: &ArtifactDir) -> Result<(), CacheError> {
-    directory
-        .directory
-        .set_permissions(std::fs::Permissions::from_mode(0o500))
-        .map_err(|error| {
-            #[cfg(test)]
-            super::super::diagnostics::report("freeze.chmod_directory", &error);
-            #[cfg(not(test))]
-            let _ = error;
-            CacheError::Filesystem(FsError::Io)
-        })?;
-    directory.directory.sync_all().map_err(|error| {
-        #[cfg(test)]
-        super::super::diagnostics::report("freeze.sync_directory", &error);
-        #[cfg(not(test))]
-        let _ = error;
-        CacheError::Filesystem(FsError::Io)
-    })
 }
 
 fn create_new(directory: &ArtifactDir, name: &str) -> Result<File, FsError> {
@@ -586,16 +569,7 @@ mod tests {
     fn publication_keeps_no_descriptor_open_inside_the_renamed_directory() {
         let root = Fixture::new();
         let stage = complete_stage(&root);
-        let staged = fs::read_dir(root.0.path())
-            .expect("fixture entries")
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .find(|path| {
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| name.starts_with(".stage-"))
-            })
-            .expect("staged directory");
+        let staged = staged_path(&root);
         let pooling = fs::metadata(staged.join("1_Pooling")).expect("pooling metadata");
         let (device, inode) = (pooling.dev(), pooling.ino());
         let open_during_rename = Arc::new(AtomicBool::new(false));
@@ -612,6 +586,48 @@ mod tests {
             !open_during_rename.load(Ordering::SeqCst),
             "publication must not rename a directory that keeps descriptors open inside it"
         );
+    }
+
+    /// macOS 15 denies renaming a directory whose mode lacks write permission,
+    /// so the staged directory must stay writable until the rename completes and
+    /// the published directory is frozen afterwards.
+    #[test]
+    fn publication_keeps_the_staged_directory_writable_until_the_rename() {
+        let root = Fixture::new();
+        let stage = complete_stage(&root);
+        let staged = staged_path(&root);
+        let writable_at_rename = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&writable_at_rename);
+        let _guard = super::super::super::diagnostics::set_pre_rename_probe(move || {
+            let mode = fs::metadata(&staged)
+                .map(|metadata| metadata.mode() & 0o777)
+                .unwrap_or(0);
+            observed.store(mode & 0o200 != 0, Ordering::SeqCst);
+        });
+        let cache = stage.publish().expect("publication");
+        assert!(
+            writable_at_rename.load(Ordering::SeqCst),
+            "the staged directory must still be writable when it is renamed"
+        );
+        let published = root.0.path().join(cache.bundle_id());
+        assert_eq!(
+            published.metadata().expect("published mode").mode() & 0o777,
+            0o500,
+            "the published directory must be frozen after the rename"
+        );
+    }
+
+    fn staged_path(root: &Fixture) -> std::path::PathBuf {
+        fs::read_dir(root.0.path())
+            .expect("fixture entries")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(".stage-"))
+            })
+            .expect("staged directory")
     }
 
     fn complete_stage(root: &Fixture) -> ModelArtifactStage {

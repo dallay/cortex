@@ -3323,3 +3323,49 @@ fn redirect_uri_wildcard_origin_does_not_authorize_arbitrary_host() {
     let err = result.expect_err("wildcard must not authorize arbitrary hosts");
     assert!(matches!(err, ManageConnectionsError::OAuth(_)));
 }
+
+#[test]
+fn ollama_url_validation_requires_safe_or_granted_destinations() {
+    let provider = rook_core::descriptor_by_id("ollama").unwrap();
+    for url in [
+        "bad url",
+        "http://[broken",
+        "file:///tmp/socket",
+        "http://10.0.0.1:11434",
+        "http://169.254.169.254",
+        "http://user:pass@localhost:11434",
+    ] {
+        assert!(
+            validate_provider_config(
+                provider,
+                &connection_config(url),
+                &rook_core::EndpointPolicy::default(),
+                true
+            )
+            .is_err(),
+            "{url}"
+        );
+    }
+    for url in ["http://localhost:11434", "https://127.0.0.1:11434"] {
+        assert!(
+            validate_provider_config(
+                provider,
+                &connection_config(url),
+                &rook_core::EndpointPolicy::default(),
+                true
+            )
+            .is_ok(),
+            "{url}"
+        );
+    }
+    let policy = rook_core::EndpointPolicy {
+        allowed_origins: vec!["http://10.0.0.1:11434".into()],
+    };
+    assert!(validate_provider_config(
+        provider,
+        &connection_config("http://10.0.0.1:11434"),
+        &policy,
+        true
+    )
+    .is_ok());
+}
