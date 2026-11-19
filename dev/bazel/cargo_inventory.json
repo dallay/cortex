@@ -1,0 +1,1831 @@
+{
+  "entries": [
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "apps/huginn/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
+      "target": "auth_login"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "apps/huginn/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
+      "target": "banner_tests"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "apps/huginn/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
+      "target": "cli"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "apps/huginn/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
+      "target": "config_compat"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "apps/huginn/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
+      "target": "config_resolution"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "apps/huginn/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
+      "target": "guardrails"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "bin",
+      "manifest": "apps/huginn/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
+      "target": "huginn"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "lib",
+      "manifest": "apps/huginn/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
+      "target": "huginn"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "apps/huginn/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
+      "target": "legacy_lock_interop"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "apps/huginn/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
+      "target": "prompt_templates"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "apps/huginn/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
+      "target": "providers_flow"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "apps/huginn/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
+      "target": "providers_recovery"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "apps/huginn/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
+      "target": "session_ownership"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "apps/huginn/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
+      "target": "skill_completion"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "apps/huginn/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
+      "target": "skill_invocation"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "apps/huginn/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
+      "target": "skills_acceptance"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "apps/huginn/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
+      "target": "skills_cli"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "apps/huginn/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
+      "target": "tui"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "apps/huginn/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
+      "target": "ui_settings"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "apps/huginn/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
+      "target": "wasm_outline"
+    },
+    {
+      "kinds": "bin",
+      "label": "//apps/muninn:muninn",
+      "manifest": "apps/muninn/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/muninn#0.0.1",
+      "target": "muninn"
+    },
+    {
+      "kinds": "test",
+      "label": "//apps/rook:alias_routing_e2e",
+      "manifest": "apps/rook/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/rook#0.0.1",
+      "target": "alias_routing_e2e"
+    },
+    {
+      "kinds": "test",
+      "label": "//apps/rook:banner_tests",
+      "manifest": "apps/rook/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/rook#0.0.1",
+      "target": "banner_tests"
+    },
+    {
+      "exclusion": "The Cargo build script shells out to the pnpm dashboard build (vite). Bazel does not model the Node dashboard build step; the embedded dashboard assets are supplied as compile data instead.",
+      "kinds": "custom-build",
+      "manifest": "apps/rook/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/rook#0.0.1",
+      "target": "build-script-build"
+    },
+    {
+      "kinds": "test",
+      "label": "//apps/rook:cache_e2e",
+      "manifest": "apps/rook/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/rook#0.0.1",
+      "target": "cache_e2e"
+    },
+    {
+      "kinds": "test",
+      "label": "//apps/rook:config_diagnostics",
+      "manifest": "apps/rook/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/rook#0.0.1",
+      "target": "config_diagnostics"
+    },
+    {
+      "kinds": "test",
+      "label": "//apps/rook:config_tests",
+      "manifest": "apps/rook/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/rook#0.0.1",
+      "target": "config_tests"
+    },
+    {
+      "kinds": "test",
+      "label": "//apps/rook:default_combo_config",
+      "manifest": "apps/rook/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/rook#0.0.1",
+      "target": "default_combo_config"
+    },
+    {
+      "kinds": "test",
+      "label": "//apps/rook:di_tests",
+      "manifest": "apps/rook/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/rook#0.0.1",
+      "target": "di_tests"
+    },
+    {
+      "exclusion": "The integration test clears the child environment and changes the child working directory before launching CARGO_BIN_EXE_rook. Cargo supplies an absolute executable path, but Bazel's portable runfiles path is relative to the test runfiles directory. Supporting this target requires a runfiles-aware test helper or test-source change, which is outside the permitted BUILD-only changes.",
+      "kinds": "test",
+      "manifest": "apps/rook/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/rook#0.0.1",
+      "target": "dotenv_startup"
+    },
+    {
+      "kinds": "test",
+      "label": "//apps/rook:quota_capture_tests",
+      "manifest": "apps/rook/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/rook#0.0.1",
+      "target": "quota_capture_tests"
+    },
+    {
+      "kinds": "test",
+      "label": "//apps/rook:quota_identity_tests",
+      "manifest": "apps/rook/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/rook#0.0.1",
+      "target": "quota_identity_tests"
+    },
+    {
+      "kinds": "bin",
+      "label": "//apps/rook:rook_bin",
+      "manifest": "apps/rook/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/rook#0.0.1",
+      "target": "rook"
+    },
+    {
+      "kinds": "lib",
+      "label": "//apps/rook:rook",
+      "manifest": "apps/rook/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/rook#0.0.1",
+      "target": "rook"
+    },
+    {
+      "kinds": "test",
+      "label": "//apps/rook:usage_retention_tests",
+      "manifest": "apps/rook/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/rook#0.0.1",
+      "target": "usage_retention_tests"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/application/rook-usecases:api_key_provider_validation",
+      "manifest": "crates/application/rook-usecases/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/application/rook-usecases#0.0.1",
+      "target": "api_key_provider_validation"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/application/rook-usecases:capability_eligibility",
+      "manifest": "crates/application/rook-usecases/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/application/rook-usecases#0.0.1",
+      "target": "capability_eligibility"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/application/rook-usecases:estimate_cost",
+      "manifest": "crates/application/rook-usecases/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/application/rook-usecases#0.0.1",
+      "target": "estimate_cost"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/application/rook-usecases:health_check_test",
+      "manifest": "crates/application/rook-usecases/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/application/rook-usecases#0.0.1",
+      "target": "health_check_test"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/application/rook-usecases:manage_connections_test_credentials",
+      "manifest": "crates/application/rook-usecases/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/application/rook-usecases#0.0.1",
+      "target": "manage_connections_test_credentials"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/application/rook-usecases:manage_providers_test",
+      "manifest": "crates/application/rook-usecases/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/application/rook-usecases#0.0.1",
+      "target": "manage_providers_test"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/application/rook-usecases:oauth_flows",
+      "manifest": "crates/application/rook-usecases/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/application/rook-usecases#0.0.1",
+      "target": "oauth_flows"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/application/rook-usecases:oauth_tokens",
+      "manifest": "crates/application/rook-usecases/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/application/rook-usecases#0.0.1",
+      "target": "oauth_tokens"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/application/rook-usecases:openai_compatible_connections",
+      "manifest": "crates/application/rook-usecases/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/application/rook-usecases#0.0.1",
+      "target": "openai_compatible_connections"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/application/rook-usecases:policy_regression",
+      "manifest": "crates/application/rook-usecases/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/application/rook-usecases#0.0.1",
+      "target": "policy_regression"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/application/rook-usecases:policy_test",
+      "manifest": "crates/application/rook-usecases/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/application/rook-usecases#0.0.1",
+      "target": "policy_test"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/application/rook-usecases:retry_loop_tests",
+      "manifest": "crates/application/rook-usecases/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/application/rook-usecases#0.0.1",
+      "target": "retry_loop_tests"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/application/rook-usecases:rook_usecases",
+      "manifest": "crates/application/rook-usecases/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/application/rook-usecases#0.0.1",
+      "target": "rook_usecases"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/application/rook-usecases:route_attempt_lifecycle",
+      "manifest": "crates/application/rook-usecases/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/application/rook-usecases#0.0.1",
+      "target": "route_attempt_lifecycle"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/application/rook-usecases:route_request_restrictions",
+      "manifest": "crates/application/rook-usecases/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/application/rook-usecases#0.0.1",
+      "target": "route_request_restrictions"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/application/rook-usecases:route_request_telemetry_test",
+      "manifest": "crates/application/rook-usecases/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/application/rook-usecases#0.0.1",
+      "target": "route_request_telemetry_test"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/application/rook-usecases:router_circuit_states",
+      "manifest": "crates/application/rook-usecases/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/application/rook-usecases#0.0.1",
+      "target": "router_circuit_states"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/application/rook-usecases:scoring_test",
+      "manifest": "crates/application/rook-usecases/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/application/rook-usecases#0.0.1",
+      "target": "scoring_test"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/domain/rook-core:descriptor_table",
+      "manifest": "crates/domain/rook-core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/domain/rook-core#0.0.1",
+      "target": "descriptor_table"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/domain/rook-core:endpoint_policy",
+      "manifest": "crates/domain/rook-core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/domain/rook-core#0.0.1",
+      "target": "endpoint_policy"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/domain/rook-core:model_capabilities",
+      "manifest": "crates/domain/rook-core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/domain/rook-core#0.0.1",
+      "target": "model_capabilities"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/domain/rook-core:provider_kind",
+      "manifest": "crates/domain/rook-core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/domain/rook-core#0.0.1",
+      "target": "provider_kind"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/domain/rook-core:quota_tests",
+      "manifest": "crates/domain/rook-core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/domain/rook-core#0.0.1",
+      "target": "quota_tests"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/domain/rook-core:rook_core",
+      "manifest": "crates/domain/rook-core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/domain/rook-core#0.0.1",
+      "target": "rook_core"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/domain/rook-core:stream_validation_error",
+      "manifest": "crates/domain/rook-core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/domain/rook-core#0.0.1",
+      "target": "stream_validation_error"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/domain/shared-kernel:retry_after",
+      "manifest": "crates/domain/shared-kernel/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/domain/shared-kernel#0.0.1",
+      "target": "retry_after"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/domain/shared-kernel:shared_kernel",
+      "manifest": "crates/domain/shared-kernel/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/domain/shared-kernel#0.0.1",
+      "target": "shared_kernel"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/application/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
+      "target": "connections"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/application/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
+      "target": "contracts"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/huginn/application:huginn_application",
+      "manifest": "crates/huginn/application/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
+      "target": "huginn_application"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/application/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
+      "target": "permission_policy"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/application/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
+      "target": "provider_revisions"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/application/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
+      "target": "providers_contracts"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/application/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
+      "target": "providers_factories"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "example",
+      "manifest": "crates/huginn/application/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
+      "target": "providers_headless"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/application/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
+      "target": "providers_turns"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/huginn/application:runtime_binding_replacement",
+      "manifest": "crates/huginn/application/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
+      "target": "runtime_binding_replacement"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/application/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
+      "target": "service_slot_rebinding"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/application/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
+      "target": "tool_hooks"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/application/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
+      "target": "turn_identity"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "lib",
+      "manifest": "crates/huginn/conformance/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/conformance#huginn-conformance@0.0.1",
+      "target": "huginn_conformance"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/conformance/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/conformance#huginn-conformance@0.0.1",
+      "target": "loops"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/conformance/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/conformance#huginn-conformance@0.0.1",
+      "target": "substitution"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/huginn/core:huginn_core",
+      "manifest": "crates/huginn/core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/core#huginn-core@0.0.1",
+      "target": "huginn_core"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/huginn/core:kernel_lifecycle",
+      "manifest": "crates/huginn/core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/core#huginn-core@0.0.1",
+      "target": "kernel_lifecycle"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/huginn/core:loop_contract",
+      "manifest": "crates/huginn/core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/core#huginn-core@0.0.1",
+      "target": "loop_contract"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/huginn/core:registration_ownership",
+      "manifest": "crates/huginn/core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/core#huginn-core@0.0.1",
+      "target": "registration_ownership"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/huginn/core:service_lease",
+      "manifest": "crates/huginn/core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/core#huginn-core@0.0.1",
+      "target": "service_lease"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/huginn/core:session_admission",
+      "manifest": "crates/huginn/core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/core#huginn-core@0.0.1",
+      "target": "session_admission"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/huginn/core:staged_abort",
+      "manifest": "crates/huginn/core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/core#huginn-core@0.0.1",
+      "target": "staged_abort"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/huginn/core:tool_hook_evaluation",
+      "manifest": "crates/huginn/core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/core#huginn-core@0.0.1",
+      "target": "tool_hook_evaluation"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/huginn/core:tool_hooks",
+      "manifest": "crates/huginn/core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/core#huginn-core@0.0.1",
+      "target": "tool_hooks"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/huginn/core:turn_boundaries",
+      "manifest": "crates/huginn/core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/core#huginn-core@0.0.1",
+      "target": "turn_boundaries"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/guards/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/guards#huginn-guards@0.0.1",
+      "target": "configuration"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "lib",
+      "manifest": "crates/huginn/guards/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/guards#huginn-guards@0.0.1",
+      "target": "huginn_guards"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/guards/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/guards#huginn-guards@0.0.1",
+      "target": "mixed_shell_policy"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/guards/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/guards#huginn-guards@0.0.1",
+      "target": "plugin"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/guards/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/guards#huginn-guards@0.0.1",
+      "target": "policy"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/guards/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/guards#huginn-guards@0.0.1",
+      "target": "shell_policy"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "lib",
+      "manifest": "crates/huginn/outline-bindings/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/outline-bindings#huginn-outline-bindings@0.0.1",
+      "target": "huginn_outline_bindings"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/plugin-api/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/plugin-api#huginn-plugin-api@0.0.1",
+      "target": "agent_loop"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/plugin-api/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/plugin-api#huginn-plugin-api@0.0.1",
+      "target": "contract"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/plugin-api/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/plugin-api#huginn-plugin-api@0.0.1",
+      "target": "hooks"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "lib",
+      "manifest": "crates/huginn/plugin-api/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/plugin-api#huginn-plugin-api@0.0.1",
+      "target": "huginn_plugin_api"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/plugin-api/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/plugin-api#huginn-plugin-api@0.0.1",
+      "target": "tools"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/plugin-api/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/plugin-api#huginn-plugin-api@0.0.1",
+      "target": "workflows"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/presentation/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
+      "target": "completion"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/presentation/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
+      "target": "conversation"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/presentation/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
+      "target": "dispatch_settings"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/presentation/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
+      "target": "event"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/presentation/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
+      "target": "extensions"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/presentation/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
+      "target": "files"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "lib",
+      "manifest": "crates/huginn/presentation/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
+      "target": "huginn_presentation"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/presentation/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
+      "target": "input_parser"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/presentation/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
+      "target": "overlay"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/presentation/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
+      "target": "plugins"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/presentation/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
+      "target": "preemption"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/presentation/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
+      "target": "provider_search"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/presentation/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
+      "target": "providers_ui"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/presentation/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
+      "target": "pty"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/presentation/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
+      "target": "settings"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/presentation/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
+      "target": "state"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/presentation/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
+      "target": "status_bar"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "bin",
+      "manifest": "crates/huginn/presentation/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
+      "target": "tui-fixture"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/presentation/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
+      "target": "workflows"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/reference-extension/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/reference-extension#huginn-reference-extension@0.0.1",
+      "target": "approval"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "lib",
+      "manifest": "crates/huginn/reference-extension/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/reference-extension#huginn-reference-extension@0.0.1",
+      "target": "huginn_reference_extension"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/reference-extension/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/reference-extension#huginn-reference-extension@0.0.1",
+      "target": "smoke"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "adapter_security"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "approval_resource"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "coding_workflow"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "connection_workers"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "connections"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "guardrails"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "host_secrets"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "lib",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "huginn_runtime"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "inference_adapters"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "mcp_lifecycle"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "providers_integration"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "bin",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "session_lock_holder"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "session_locks"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "sessions_persistence"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "skill_loading"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "skills_catalog"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "stream_persistence"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "tls_transport"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "tool_authoring"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "tool_lifecycle"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "transports"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "example",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "verify_ollama"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "wasm_outline"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "wasm_output_validation"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "cdylib,rlib",
+      "manifest": "crates/huginn/rust-outline-component/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/rust-outline-component#huginn-rust-outline-component@0.0.1",
+      "target": "huginn_rust_outline_component"
+    },
+    {
+      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "kinds": "test",
+      "manifest": "crates/huginn/rust-outline-component/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/rust-outline-component#huginn-rust-outline-component@0.0.1",
+      "target": "outline"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/infrastructure/alias-sqlite:alias_sqlite",
+      "manifest": "crates/infrastructure/alias-sqlite/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/alias-sqlite#0.0.1",
+      "target": "alias_sqlite"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/audit-sqlite:audit_combo_connection",
+      "manifest": "crates/infrastructure/audit-sqlite/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/audit-sqlite#0.0.1",
+      "target": "audit_combo_connection"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/infrastructure/audit-sqlite:audit_sqlite",
+      "manifest": "crates/infrastructure/audit-sqlite/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/audit-sqlite#0.0.1",
+      "target": "audit_sqlite"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/infrastructure/auth-sqlite:auth_sqlite",
+      "manifest": "crates/infrastructure/auth-sqlite/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/auth-sqlite#0.0.1",
+      "target": "auth_sqlite"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/infrastructure/cache-memory:cache_memory",
+      "manifest": "crates/infrastructure/cache-memory/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/cache-memory#0.0.1",
+      "target": "cache_memory"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/combo-sqlite:combo_alias",
+      "manifest": "crates/infrastructure/combo-sqlite/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/combo-sqlite#0.0.1",
+      "target": "combo_alias"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/infrastructure/combo-sqlite:combo_sqlite",
+      "manifest": "crates/infrastructure/combo-sqlite/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/combo-sqlite#0.0.1",
+      "target": "combo_sqlite"
+    },
+    {
+      "kinds": "custom-build",
+      "label": "//crates/infrastructure/db-migration:build_script",
+      "manifest": "crates/infrastructure/db-migration/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/db-migration#0.0.1",
+      "target": "build-script-build"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/infrastructure/db-migration:db_migration",
+      "manifest": "crates/infrastructure/db-migration/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/db-migration#0.0.1",
+      "target": "db_migration"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/db-migration:provider_descriptor_ids",
+      "manifest": "crates/infrastructure/db-migration/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/db-migration#0.0.1",
+      "target": "provider_descriptor_ids"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/infrastructure/encryption-inmemory:encryption_inmemory",
+      "manifest": "crates/infrastructure/encryption-inmemory/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/encryption-inmemory#0.0.1",
+      "target": "encryption_inmemory"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/models-catalog:declarative_catalog",
+      "manifest": "crates/infrastructure/models-catalog/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/models-catalog#0.0.1",
+      "target": "declarative_catalog"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/infrastructure/models-catalog:models_catalog",
+      "manifest": "crates/infrastructure/models-catalog/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/models-catalog#0.0.1",
+      "target": "models_catalog"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/models-catalog:static_catalog",
+      "manifest": "crates/infrastructure/models-catalog/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/models-catalog#0.0.1",
+      "target": "static_catalog"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/infrastructure/observability:observability",
+      "manifest": "crates/infrastructure/observability/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/observability#0.0.1",
+      "target": "observability"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/provider-sqlite:adapter_revision_migration",
+      "manifest": "crates/infrastructure/provider-sqlite/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/provider-sqlite#0.0.1",
+      "target": "adapter_revision_migration"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/provider-sqlite:model_declarations",
+      "manifest": "crates/infrastructure/provider-sqlite/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/provider-sqlite#0.0.1",
+      "target": "model_declarations"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/provider-sqlite:oauth_credentials",
+      "manifest": "crates/infrastructure/provider-sqlite/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/provider-sqlite#0.0.1",
+      "target": "oauth_credentials"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/infrastructure/provider-sqlite:provider_sqlite",
+      "manifest": "crates/infrastructure/provider-sqlite/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/provider-sqlite#0.0.1",
+      "target": "provider_sqlite"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/providers-anthropic:provider",
+      "manifest": "crates/infrastructure/providers-anthropic/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/providers-anthropic#0.0.1",
+      "target": "provider"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/infrastructure/providers-anthropic:providers_anthropic",
+      "manifest": "crates/infrastructure/providers-anthropic/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/providers-anthropic#0.0.1",
+      "target": "providers_anthropic"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/providers-anthropic:quota_headers",
+      "manifest": "crates/infrastructure/providers-anthropic/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/providers-anthropic#0.0.1",
+      "target": "quota_headers"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/infrastructure/providers-core:providers_core",
+      "manifest": "crates/infrastructure/providers-core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/providers-core#0.0.1",
+      "target": "providers_core"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/providers-core:rate_limit",
+      "manifest": "crates/infrastructure/providers-core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/providers-core#0.0.1",
+      "target": "rate_limit"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/providers-core:tool_id",
+      "manifest": "crates/infrastructure/providers-core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/providers-core#0.0.1",
+      "target": "tool_id"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/providers-gemini:oauth_auth",
+      "manifest": "crates/infrastructure/providers-gemini/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/providers-gemini#0.0.1",
+      "target": "oauth_auth"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/providers-gemini:provider",
+      "manifest": "crates/infrastructure/providers-gemini/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/providers-gemini#0.0.1",
+      "target": "provider"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/infrastructure/providers-gemini:providers_gemini",
+      "manifest": "crates/infrastructure/providers-gemini/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/providers-gemini#0.0.1",
+      "target": "providers_gemini"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/providers-ollama:provider",
+      "manifest": "crates/infrastructure/providers-ollama/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/providers-ollama#0.0.1",
+      "target": "provider"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/infrastructure/providers-ollama:providers_ollama",
+      "manifest": "crates/infrastructure/providers-ollama/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/providers-ollama#0.0.1",
+      "target": "providers_ollama"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/providers-openai:error_mapping_tests",
+      "manifest": "crates/infrastructure/providers-openai/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/providers-openai#0.0.1",
+      "target": "error_mapping_tests"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/providers-openai:groq_behavior",
+      "manifest": "crates/infrastructure/providers-openai/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/providers-openai#0.0.1",
+      "target": "groq_behavior"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/providers-openai:groq_descriptor_adapter",
+      "manifest": "crates/infrastructure/providers-openai/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/providers-openai#0.0.1",
+      "target": "groq_descriptor_adapter"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/providers-openai:oauth_retry",
+      "manifest": "crates/infrastructure/providers-openai/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/providers-openai#0.0.1",
+      "target": "oauth_retry"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/providers-openai:openai_compatible_wire",
+      "manifest": "crates/infrastructure/providers-openai/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/providers-openai#0.0.1",
+      "target": "openai_compatible_wire"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/providers-openai:provider",
+      "manifest": "crates/infrastructure/providers-openai/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/providers-openai#0.0.1",
+      "target": "provider"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/infrastructure/providers-openai:providers_openai",
+      "manifest": "crates/infrastructure/providers-openai/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/providers-openai#0.0.1",
+      "target": "providers_openai"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/providers-openai:quota_headers",
+      "manifest": "crates/infrastructure/providers-openai/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/providers-openai#0.0.1",
+      "target": "quota_headers"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/sse-stream:sse_buffer",
+      "manifest": "crates/infrastructure/sse-stream/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/sse-stream#0.0.1",
+      "target": "sse_buffer"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/infrastructure/sse-stream:sse_stream",
+      "manifest": "crates/infrastructure/sse-stream/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/sse-stream#0.0.1",
+      "target": "sse_stream"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:alias_api",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "alias_api"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:api_key_handlers_test",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "api_key_handlers_test"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:api_key_routes",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "api_key_routes"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:api_models_dto",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "api_models_dto"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:auth_cookie_security",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "auth_cookie_security"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:auth_integration_tests",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "auth_integration_tests"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:bootstrap_routes",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "bootstrap_routes"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:cache_routes",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "cache_routes"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:capability_contract",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "capability_contract"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:client_ip_rate_limit",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "client_ip_rate_limit"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:csrf_session_binding",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "csrf_session_binding"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:format_translation_integration",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "format_translation_integration"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:gateway_e2e",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "gateway_e2e"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:gateway_perf",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "gateway_perf"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:health_circuit_visibility",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "health_circuit_visibility"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:oauth_routes",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "oauth_routes"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:openai_compatible_contract",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "openai_compatible_contract"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:openai_tool_stream_round_trip",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "openai_tool_stream_round_trip"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:provider_dto_test",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "provider_dto_test"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:provider_quota_routes",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "provider_quota_routes"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:provider_routes",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "provider_routes"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:provider_routes_test",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "provider_routes_test"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:resilience_handlers_test",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "resilience_handlers_test"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:responses_contract",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "responses_contract"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:stream_encoding_regression",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "stream_encoding_regression"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:telemetry_endpoints_test",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "telemetry_endpoints_test"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/infrastructure/transport-axum:transport_axum",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "transport_axum"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:usage_handlers",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "usage_handlers"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:usage_query",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "usage_query"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:usage_routes",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "usage_routes"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/muninn/application:muninn_application",
+      "manifest": "crates/muninn/application/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/application#muninn-application@0.0.1",
+      "target": "muninn_application"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/application:reasoning_recorder",
+      "manifest": "crates/muninn/application/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/application#muninn-application@0.0.1",
+      "target": "reasoning_recorder"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/application:short_term_flows",
+      "manifest": "crates/muninn/application/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/application#muninn-application@0.0.1",
+      "target": "short_term_flows"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/bridge:bridge_router",
+      "manifest": "crates/muninn/bridge/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/bridge#muninn-bridge@0.0.1",
+      "target": "bridge_router"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/bridge:context",
+      "manifest": "crates/muninn/bridge/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/bridge#muninn-bridge@0.0.1",
+      "target": "context"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/bridge:enrichment",
+      "manifest": "crates/muninn/bridge/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/bridge#muninn-bridge@0.0.1",
+      "target": "enrichment"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/muninn/bridge:muninn_bridge",
+      "manifest": "crates/muninn/bridge/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/bridge#muninn-bridge@0.0.1",
+      "target": "muninn_bridge"
+    },
+    {
+      "exclusion": "The binary requires the non-default `cpu-f32` feature whose optional candle-core/candle-nn/candle-transformers/safetensors/tokenizers dependencies are not vendored by crate_universe, so the target cannot be built under Bazel.",
+      "kinds": "bin",
+      "manifest": "crates/muninn/c1-exporter/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/c1-exporter#muninn-c1-exporter@0.0.1",
+      "target": "export_minilm_c1"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/muninn/c1-exporter:muninn_c1_exporter",
+      "manifest": "crates/muninn/c1-exporter/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/c1-exporter#muninn-c1-exporter@0.0.1",
+      "target": "muninn_c1_exporter"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/muninn/core:muninn_core",
+      "manifest": "crates/muninn/core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/core#muninn-core@0.0.1",
+      "target": "muninn_core"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/mcp:async_dispatch",
+      "manifest": "crates/muninn/mcp/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/mcp#muninn-mcp@0.0.1",
+      "target": "async_dispatch"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/mcp:errors",
+      "manifest": "crates/muninn/mcp/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/mcp#muninn-mcp@0.0.1",
+      "target": "errors"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/mcp:lifecycle",
+      "manifest": "crates/muninn/mcp/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/mcp#muninn-mcp@0.0.1",
+      "target": "lifecycle"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/mcp:metadata",
+      "manifest": "crates/muninn/mcp/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/mcp#muninn-mcp@0.0.1",
+      "target": "metadata"
+    },
+    {
+      "kinds": "bin",
+      "label": "//crates/muninn/mcp:muninn_mcp_bin",
+      "manifest": "crates/muninn/mcp/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/mcp#muninn-mcp@0.0.1",
+      "target": "muninn-mcp"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/muninn/mcp:muninn_mcp",
+      "manifest": "crates/muninn/mcp/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/mcp#muninn-mcp@0.0.1",
+      "target": "muninn_mcp"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/mcp:protocol",
+      "manifest": "crates/muninn/mcp/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/mcp#muninn-mcp@0.0.1",
+      "target": "protocol"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/mcp:registry",
+      "manifest": "crates/muninn/mcp/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/mcp#muninn-mcp@0.0.1",
+      "target": "registry"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/mcp:stdio",
+      "manifest": "crates/muninn/mcp/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/mcp#muninn-mcp@0.0.1",
+      "target": "stdio"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/neo4j:ann_fallback",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "ann_fallback"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/neo4j:cross_memory_edges",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "cross_memory_edges"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/neo4j:entity_enrichment",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "entity_enrichment"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/neo4j:entity_resolution",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "entity_resolution"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/neo4j:exact_bound",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "exact_bound"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/neo4j:extraction_mentions",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "extraction_mentions"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/neo4j:long_term_isolation_deletion",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "long_term_isolation_deletion"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/neo4j:long_term_lifecycle",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "long_term_lifecycle"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/muninn/neo4j:muninn_neo4j",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "muninn_neo4j"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/neo4j:observations",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "observations"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/neo4j:owner_namespace",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "owner_namespace"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/neo4j:preference_atomic",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "preference_atomic"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/neo4j:preference_filters",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "preference_filters"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/neo4j:preference_superseded",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "preference_superseded"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/neo4j:reasoning_execution",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "reasoning_execution"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/neo4j:reasoning_owner_scope",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "reasoning_owner_scope"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/neo4j:schema_migrations",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "schema_migrations"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/neo4j:schema_non_vector",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "schema_non_vector"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/neo4j:schema_vectors",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "schema_vectors"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/muninn/observability:muninn_observability",
+      "manifest": "crates/muninn/observability/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/observability#muninn-observability@0.0.1",
+      "target": "muninn_observability"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/muninn/ontology:muninn_ontology",
+      "manifest": "crates/muninn/ontology/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/ontology#muninn-ontology@0.0.1",
+      "target": "muninn_ontology"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/muninn/providers:muninn_providers",
+      "manifest": "crates/muninn/providers/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/providers#muninn-providers@0.0.1",
+      "target": "muninn_providers"
+    },
+    {
+      "kinds": "lib",
+      "label": "//crates/test-support:cortex_test_support",
+      "manifest": "crates/test-support/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/test-support#cortex-test-support@0.0.1",
+      "target": "cortex_test_support"
+    }
+  ]
+}
