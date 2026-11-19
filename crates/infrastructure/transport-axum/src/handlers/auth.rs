@@ -157,68 +157,57 @@ pub async fn logout_handler(
     hasher.update(&token_bytes);
     let token_hash = hex::encode(hasher.finalize());
 
-    // Prepare the anonymous CSRF token before revoking the session so RNG failure
-    // cannot leave the client logged out without a usable CSRF context.
+    // Revoke first: RNG failure must not preserve a session after the client
+    // requested logout. A later GET /login can issue a fresh anonymous token.
+    let _ = usecases.revoke_session_by_token_hash(&token_hash).await;
+
+    let secure = is_secure(rook_environment().as_deref(), cfg!(not(debug_assertions)));
     let csrf_token = match csrf_guard.generate_token() {
-        Ok(token) => token,
-        Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "internal_error",
-                    "message": "An internal error occurred."
-                })),
-            )
-                .into_response();
+        Ok(token) => Some((
+            token.clone(),
+            csrf_guard.build_cookie_header(&token, secure),
+        )),
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                "failed to generate anonymous CSRF token for logout response"
+            );
+            None
         }
     };
-    let secure = is_secure(rook_environment().as_deref(), cfg!(not(debug_assertions)));
-    let csrf_cookie = csrf_guard.build_cookie_header(&csrf_token, secure);
-    let csrf_header = HeaderValue::from_str(&csrf_token).expect("base64url token");
 
-    // Revoke the session.
-    // "Session not found" and "already revoked" are both fine — the client's intent
-    // (logout) is achieved either way. Always clear the cookie and return success.
-    match usecases.revoke_session_by_token_hash(&token_hash).await {
-        Ok(()) => {
-            let body = serde_json::json!({ "message": "Logged out successfully." });
-            let clear_cookie = build_clear_auth_token_cookie(
-                rook_environment().as_deref(),
-                cfg!(not(debug_assertions)),
-            );
+    logout_response(csrf_token)
+}
+
+/// Build the logout response.
+///
+/// The response always clears the `auth_token` cookie. When an anonymous CSRF
+/// token is available, the response also sets the CSRF cookie and header.
+///
+/// This builder is public so the logout response contract can be verified from
+/// the integration test target, without reaching into private handler internals.
+pub fn logout_response(csrf_token: Option<(String, HeaderValue)>) -> axum::response::Response {
+    let body = serde_json::json!({ "message": "Logged out successfully." });
+    let clear_cookie =
+        build_clear_auth_token_cookie(rook_environment().as_deref(), cfg!(not(debug_assertions)));
+
+    match csrf_token {
+        Some((token, csrf_cookie)) => {
+            let csrf_header = HeaderValue::from_str(&token).expect("base64url token");
             (
                 AppendHeaders([
                     (SET_COOKIE, clear_cookie),
-                    (SET_COOKIE, csrf_cookie.clone()),
+                    (SET_COOKIE, csrf_cookie),
                     (
                         axum::http::HeaderName::from_static("x-csrf-token"),
-                        csrf_header.clone(),
+                        csrf_header,
                     ),
                 ]),
                 Json(body),
             )
                 .into_response()
         }
-        Err(_) => {
-            // Session already gone — treat as successful logout and clear the cookie.
-            let body = serde_json::json!({ "message": "Logged out successfully." });
-            let clear_cookie = build_clear_auth_token_cookie(
-                rook_environment().as_deref(),
-                cfg!(not(debug_assertions)),
-            );
-            (
-                AppendHeaders([
-                    (SET_COOKIE, clear_cookie),
-                    (SET_COOKIE, csrf_cookie.clone()),
-                    (
-                        axum::http::HeaderName::from_static("x-csrf-token"),
-                        csrf_header.clone(),
-                    ),
-                ]),
-                Json(body),
-            )
-                .into_response()
-        }
+        None => (AppendHeaders([(SET_COOKIE, clear_cookie)]), Json(body)).into_response(),
     }
 }
 

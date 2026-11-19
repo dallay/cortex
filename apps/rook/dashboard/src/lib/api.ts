@@ -681,6 +681,14 @@ export interface MeResponse {
 
 const STORAGE_KEY = "rook-api-base-url";
 
+/**
+ * Deadline for a state-changing request. The bound covers the CSRF token
+ * lookup, the request itself, and the response body read, so a stalled
+ * exchange cannot hold the mutation queue and block the requests queued behind
+ * it (logout() in particular).
+ */
+const MUTATION_DEADLINE_MS = 30_000;
+
 function getBaseUrl(): string {
 	// Allow override for development/CI
 	const globalScope = globalThis as unknown as { __ROOK_API_BASE__?: string };
@@ -753,8 +761,10 @@ function createApiClient() {
 
 		// Response headers may rotate the token. Serialize mutations so the next
 		// request cannot dispatch with a token that predates the prior response.
+		// Every mutation runs under a deadline: a stalled request must not hold
+		// the queue, otherwise logout() would wait behind it forever.
 		const result = stateChangingQueue.then(() =>
-			performRequest<T>(path, options),
+			runWithDeadline((signal) => performRequest<T>(path, options, signal)),
 		);
 		stateChangingQueue = result.then(
 			() => undefined,
@@ -763,9 +773,47 @@ function createApiClient() {
 		return result;
 	}
 
+	/**
+	 * Runs a mutation under a deadline that covers the whole exchange: the
+	 * CSRF token lookup, the request itself, and the response body read.
+	 *
+	 * On expiry the controller is aborted and the caller is rejected, so the
+	 * mutation queue advances even if the underlying request never settles.
+	 * The rejection does not claim the server left the state untouched: an
+	 * aborted request may still have been applied upstream.
+	 */
+	function runWithDeadline<T>(
+		operation: (signal: AbortSignal) => Promise<T>,
+	): Promise<T> {
+		const controller = new AbortController();
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const deadline = new Promise<never>((_resolve, reject) => {
+			timer = setTimeout(() => {
+				// The server may have rotated the token before the abort landed,
+				// so the cached value is no longer trustworthy. Drop it so the
+				// next request recovers a fresh token.
+				cachedCsrfToken = null;
+				controller.abort();
+				reject(
+					new Error(
+						`API Error: request aborted after ${MUTATION_DEADLINE_MS} ms. ` +
+							"The server may still have applied the change.",
+					),
+				);
+			}, MUTATION_DEADLINE_MS);
+		});
+		const running = operation(controller.signal);
+		// The operation can reject after the deadline already settled the race.
+		running.catch(() => undefined);
+		return Promise.race([running, deadline]).finally(() => {
+			if (timer !== undefined) clearTimeout(timer);
+		});
+	}
+
 	async function performRequest<T>(
 		path: string,
 		options: RequestInit = {},
+		signal?: AbortSignal,
 	): Promise<T> {
 		const url = `${baseUrl}${path}`;
 		const method = (options.method || "GET").toUpperCase();
@@ -785,7 +833,7 @@ function createApiClient() {
 			try {
 				// Resolve inside the serialized mutation operation. This also refreshes
 				// tokens supplied explicitly by login/logout/setupBootstrap helpers.
-				const token = await getCsrfToken();
+				const token = await getCsrfToken(signal);
 				headers["X-CSRF-Token"] = token;
 			} catch (err) {
 				// Surface the failure so it shows up in DevTools — the request will
@@ -800,6 +848,7 @@ function createApiClient() {
 			...options,
 			headers,
 			credentials: "include", // Include cookies for session auth
+			signal,
 		});
 
 		cacheResponseToken(response);
@@ -824,11 +873,12 @@ function createApiClient() {
 				await new Promise((resolve) =>
 					setTimeout(resolve, 150 * (attempt + 1)),
 				);
-				headers["X-CSRF-Token"] = await getCsrfToken();
+				headers["X-CSRF-Token"] = await getCsrfToken(signal);
 				response = await fetch(url, {
 					...options,
 					headers,
 					credentials: "include",
+					signal,
 				});
 				cacheResponseToken(response);
 			} catch (err) {
@@ -863,10 +913,11 @@ function createApiClient() {
 		if (token) cachedCsrfToken = token;
 	}
 
-	async function getCsrfToken(): Promise<string> {
+	async function getCsrfToken(signal?: AbortSignal): Promise<string> {
 		if (cachedCsrfToken) return cachedCsrfToken;
 		const response = await fetch(`${baseUrl}/login`, {
 			credentials: "include",
+			signal,
 		});
 		if (!response.ok) {
 			throw new Error(`Failed to fetch CSRF token: HTTP ${response.status}`);

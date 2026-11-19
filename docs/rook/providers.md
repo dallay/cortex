@@ -134,6 +134,41 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 
 > **Note:** `base_url` is required for Ollama since there is no sensible default for non-local deployments.
 
+**Endpoint policy (server-owned):**
+
+Ollama reaches a fixed set of built-in destinations, plus the origins the
+operator grants for the connection.
+
+| Origin                                                                 | Behavior                   |
+|-------------------------------------------------------------------------|----------------------------|
+| `http://localhost:11434`, `http://127.0.0.1:11434`, `http://[::1]:11434` | Allowed without a grant   |
+| `https://localhost:11434`, `https://127.0.0.1:11434`, `https://[::1]:11434` | Allowed without a grant   |
+| `https://ollama.com` (Ollama Cloud)                                     | Allowed without a grant   |
+| Any other host, port, or URL                                            | Requires an operator grant |
+
+A custom origin needs a grant in `[provider_endpoint_policy]`, keyed by the
+immutable connection UUID. The grant lists the exact origin: scheme, host,
+and effective port, with no path. Rook checks the grant when the connection
+is activated or updated, and again when it opens the upstream connection.
+Link-local and cloud metadata destinations stay rejected even when granted.
+
+To register a custom Ollama destination:
+
+1. Create the connection inactive. The CRUD API returns its immutable UUID.
+   A custom `base_url` is rejected until the grant is loaded, so create the
+   connection with the default `http://localhost:11434`.
+2. Add the grant to `[provider_endpoint_policy]` with that UUID and the exact
+   origin.
+3. Restart Rook to load the grant.
+4. Update the connection with the custom `base_url` and activate it.
+
+Environment proxy variables are ignored for Ollama connections: the connection
+goes straight to the granted destination.
+
+**Upgrade note:** Existing Ollama connections that keep the default `base_url`
+keep working after this version. An Ollama connection with a custom URL and no
+grant can no longer be activated: add the grant for that connection.
+
 **Health check behavior:**
 
 - Two-step probe:
@@ -157,6 +192,8 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 **Auth:** API key (Bearer token)
 
 **Default base URL:** `https://ollama.com`
+
+> **Note:** `https://ollama.com` is a built-in Ollama origin and needs no operator grant. A custom Ollama Cloud endpoint follows the same grant flow described under [Ollama](#ollama).
 
 **Default timeout:** 300s (cloud models may take longer than standard API providers)
 

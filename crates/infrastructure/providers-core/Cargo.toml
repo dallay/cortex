@@ -16,5 +16,10 @@ anyhow = "1"
 reqwest = { version = "0.13", default-features = false }
 tokio = { version = "1", features = ["net"] }
 
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }
+reqwest = { version = "0.13", default-features = false }
+rook-core = { path = "../../domain/rook-core" }
+
 [lints]
 workspace = true

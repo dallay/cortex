@@ -606,6 +606,10 @@ fn build_api_key_auth_disabled_returns_none() {
 
 #[test]
 fn build_api_key_auth_enabled_returns_some() {
+    // Serialize against the tests that mutate API_KEY_HASH_SECRET so this test
+    // never observes a transient value from a parallel test.
+    #[cfg(unix)]
+    let _lock = API_KEY_SECRET_ENV_LOCK.lock().unwrap();
     // Use in-memory SQLite so resolve_api_key_secret generates a transient secret
     // automatically without needing to mutate the process environment.
     let config: RookConfig = toml::from_str(
@@ -845,6 +849,124 @@ fn already_restricted_api_key_secret_permissions_are_preserved() {
             .mode()
             & 0o777,
         0o400
+    );
+}
+
+/// Concurrent API key auth initializers must converge on the persisted secret.
+///
+/// The public surface is `build_api_key_auth`: every concurrent builder resolves
+/// the secret file on its own. The convergence is observable through the shared
+/// repository — a key created by one instance authenticates under every other
+/// instance, while an instance built with a different secret rejects it.
+#[cfg(unix)]
+#[tokio::test]
+async fn concurrent_api_key_auth_builds_converge_on_the_persisted_secret() {
+    const BUILDERS: usize = 8;
+
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("rook.db");
+    db_migration::run_migrations(db_path.to_str().unwrap()).expect("migrations run");
+    let config = api_key_auth_config(db_path.to_str().unwrap());
+    let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> =
+        Arc::new(auth_sqlite::SqliteApiKeyRepository::new(&db_path).expect("api key repository"));
+    let registry: Arc<dyn rook_core::ProviderRegistryPort> = Arc::new(FakeProviderRegistry);
+
+    // The secret file is only read while the environment is stable, so the
+    // environment lock covers the synchronous build phase only.
+    let (instances, later_auth, secret_path, persisted) = {
+        let _lock = API_KEY_SECRET_ENV_LOCK.lock().unwrap();
+        let _env = EnvVarGuard::remove("API_KEY_HASH_SECRET");
+
+        // Every builder starts at the same time, so without the exclusive lock
+        // they all observe the secret file as missing and publish a different
+        // secret.
+        let barrier = Arc::new(std::sync::Barrier::new(BUILDERS));
+        let handles: Vec<_> = (0..BUILDERS)
+            .map(|_| {
+                let config = config.clone();
+                let repo = Arc::clone(&repo);
+                let registry = Arc::clone(&registry);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    build_api_key_auth(&config, &repo, &registry).expect("api key auth builds")
+                })
+            })
+            .collect();
+
+        let instances: Vec<_> = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("builder thread"))
+            .map(|(auth, manage_keys)| {
+                (
+                    auth.expect("client authentication is enabled"),
+                    manage_keys.expect("api key management is enabled"),
+                )
+            })
+            .collect();
+
+        // An instance built after the concurrent phase reuses the persisted value.
+        let (later_auth, _) =
+            build_api_key_auth(&config, &repo, &registry).expect("api key auth builds");
+        let later_auth = later_auth.expect("client authentication is enabled");
+
+        let secret_path = dir.path().join("api_key_secret.key");
+        let persisted = std::fs::read_to_string(&secret_path).expect("persisted secret file");
+        assert!(
+            persisted.trim().len() >= 32,
+            "the persisted secret must satisfy the 32-byte minimum"
+        );
+
+        (instances, later_auth, secret_path, persisted)
+    };
+
+    // The creator publishes the key through the shared repository.
+    let (record, raw_key) = instances[0]
+        .1
+        .create(rook_usecases::CreateApiKeyRequest {
+            label: "convergence".to_string(),
+            scopes: vec![rook_core::ApiKeyScope::parse("chat:read").expect("canonical scope")],
+            tier: rook_core::ApiKeyTier::Free,
+            expires_at: None,
+            allowed_models: vec![],
+            allowed_providers: vec![],
+            spending_budget: None,
+        })
+        .await
+        .expect("api key created");
+
+    // Every concurrently built instance must accept the key, which holds only
+    // when all of them resolved the same persisted secret.
+    for (index, (authenticate, _)) in instances.iter().enumerate() {
+        let subject = authenticate
+            .execute(&raw_key)
+            .await
+            .unwrap_or_else(|error| panic!("instance {index} must accept the key: {error}"));
+        assert_eq!(subject.id, record.id);
+    }
+
+    // A divergent secret must reject the same key, so the assertion above is
+    // not vacuous.
+    let divergent = rook_usecases::AuthenticateClientApi::new(
+        Arc::clone(&repo),
+        "a-different-hash-secret-value-with-enough-bytes",
+    );
+    assert!(
+        divergent.execute(&raw_key).await.is_err(),
+        "an instance built with a different secret must reject the key"
+    );
+
+    // The instance built after the concurrent phase accepts the same key.
+    let subject = later_auth
+        .execute(&raw_key)
+        .await
+        .expect("a later instance must accept the key");
+    assert_eq!(subject.id, record.id);
+
+    // The persisted secret is never rewritten once published.
+    assert_eq!(
+        std::fs::read_to_string(&secret_path).expect("persisted secret file"),
+        persisted
     );
 }
 
