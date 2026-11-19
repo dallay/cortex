@@ -170,17 +170,11 @@ mod tests {
 
         let root = tempfile::tempdir().expect("fixture");
         let path = root.path().join("fifo");
-        #[cfg(target_os = "linux")]
-        rustix::fs::mkfifoat(rustix::fs::CWD, &path, rustix::fs::Mode::RUSR).expect("fixture fifo");
-
-        #[cfg(target_os = "macos")]
-        {
-            let status = std::process::Command::new("mkfifo")
-                .arg(&path)
-                .status()
-                .expect("create fixture fifo");
-            assert!(status.success(), "mkfifo command failed: {status}");
-        }
+        let status = std::process::Command::new("mkfifo")
+            .arg(&path)
+            .status()
+            .expect("create fixture fifo");
+        assert!(status.success(), "mkfifo command failed: {status}");
         let fifo = std::fs::File::from(
             rustix::fs::open(
                 &path,
