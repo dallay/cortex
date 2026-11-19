@@ -140,6 +140,19 @@ fn widen_device(device: i32) -> u64 {
     device as u64
 }
 
+/// Classifies a slot whose device could not be verified because the descriptor
+/// could not be reopened. A different inode proves that the slot refers to a
+/// different object. An equal inode on an unverified device cannot be ruled
+/// out, so the scan stays inconclusive instead of reporting the slot as open.
+#[cfg(any(target_os = "macos", test))]
+fn classify_unverified_device(inode: u64, target_inode: u64) -> Option<bool> {
+    if inode == target_inode {
+        None
+    } else {
+        Some(false)
+    }
+}
+
 /// Classifies one descriptor slot against the target identity.
 /// Returns None when the slot cannot be identified with certainty.
 #[cfg(target_os = "macos")]
@@ -162,26 +175,57 @@ fn slot_matches(
     // node carries the inode of the referenced object but not its device, so the
     // device is only readable from a reopened descriptor. The reopen is
     // non-blocking, so a descriptor on a FIFO cannot stall the scan.
-    match rustix::fs::openat(
+    let handle = match reopen_slot(descriptors, slot, rustix::fs::OFlags::RDONLY) {
+        Ok(handle) => handle,
+        // A read-only reopen of a write-only descriptor fails with EACCES, so
+        // the write mode is tried as well to verify the device of the target.
+        Err(_) => match reopen_slot(descriptors, slot, rustix::fs::OFlags::WRONLY) {
+            Ok(handle) => handle,
+            // The slot cannot be reopened at all, so the device of the referenced
+            // object stays unknown and only the inode stays verifiable.
+            Err(error) => {
+                report_scan_failure("descriptor.reopen", &std::io::Error::from(error));
+                return classify_unverified_device(stat.st_ino, inode);
+            }
+        },
+    };
+    let reopened = match rustix::fs::fstat(&handle) {
+        Ok(stat) => stat,
+        Err(error) => {
+            report_scan_failure("descriptor.fstat", &std::io::Error::from(error));
+            return None;
+        }
+    };
+    let reopened_device = widen_device(reopened.st_dev);
+    Some(reopened_device == device && reopened.st_ino == inode)
+}
+
+/// Reopens a descriptor slot with the given access mode.
+#[cfg(target_os = "macos")]
+fn reopen_slot(
+    descriptors: &rustix::fd::OwnedFd,
+    slot: &str,
+    access: rustix::fs::OFlags,
+) -> Result<rustix::fd::OwnedFd, rustix::io::Errno> {
+    rustix::fs::openat(
         descriptors,
         slot,
-        rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::NONBLOCK | rustix::fs::OFlags::CLOEXEC,
+        access | rustix::fs::OFlags::NONBLOCK | rustix::fs::OFlags::CLOEXEC,
         rustix::fs::Mode::empty(),
-    ) {
-        Ok(handle) => {
-            let reopened = match rustix::fs::fstat(&handle) {
-                Ok(stat) => stat,
-                Err(error) => {
-                    report_scan_failure("descriptor.fstat", &std::io::Error::from(error));
-                    return None;
-                }
-            };
-            let reopened_device = widen_device(reopened.st_dev);
-            Some(reopened_device == device && reopened.st_ino == inode)
-        }
-        // The slot cannot be reopened, for example because it is write-only, so
-        // only the inode stays verifiable.
-        Err(_) => Some(stat.st_ino == inode),
+    )
+}
+
+/// Classifies the result of the lookup that follows a missing link target.
+/// Only a missing link proves that the descriptor is closed. Any other error
+/// leaves the state of the descriptor unknown, so the scan stays inconclusive
+/// instead of reporting a closed descriptor without evidence.
+#[cfg(any(not(target_os = "macos"), test))]
+fn classify_missing_link(error: rustix::io::Errno) -> Option<bool> {
+    match error {
+        // The link itself is gone, so the descriptor is closed.
+        rustix::io::Errno::NOENT => Some(false),
+        // Any other error does not establish the absence of the link.
+        _ => None,
     }
 }
 
@@ -205,8 +249,10 @@ fn slot_matches(
             // The link target is gone. The descriptor is closed only when the
             // link itself is gone too.
             match rustix::fs::statat(descriptors, slot, rustix::fs::AtFlags::SYMLINK_NOFOLLOW) {
+                // The link exists but its target is gone, so the identity of
+                // the descriptor stays unknown.
                 Ok(_) => None,
-                Err(_) => Some(false),
+                Err(error) => classify_missing_link(error),
             }
         }
     }
@@ -268,6 +314,71 @@ mod tests {
             Some(false),
             "a closed descriptor must be reported as closed, not as inconclusive"
         );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn a_write_only_descriptor_of_the_target_is_reported_as_open() {
+        use std::os::unix::fs::MetadataExt;
+
+        let root = tempfile::tempdir().expect("fixture");
+        let path = root.path().join("write-only");
+        std::fs::write(&path, b"content").expect("fixture file");
+        let metadata = std::fs::metadata(&path).expect("fixture metadata");
+        // A write-only descriptor cannot be reopened for reading, so the scan
+        // must reopen it for writing to verify the device of the target.
+        let descriptor = std::fs::File::from(
+            rustix::fs::open(
+                &path,
+                rustix::fs::OFlags::WRONLY | rustix::fs::OFlags::CLOEXEC,
+                rustix::fs::Mode::empty(),
+            )
+            .expect("write-only descriptor"),
+        );
+        assert_eq!(
+            super::descriptor_open_for(metadata.dev(), metadata.ino()),
+            Some(true),
+            "a write-only descriptor of the target must be detected as open"
+        );
+        drop(descriptor);
+    }
+
+    #[test]
+    fn an_unverified_slot_with_the_same_inode_stays_inconclusive() {
+        assert_eq!(
+            super::classify_unverified_device(42, 42),
+            None,
+            "an equal inode on an unverified device does not prove that the slot is the target"
+        );
+        assert_eq!(
+            super::classify_unverified_device(42, 43),
+            Some(false),
+            "a different inode proves that the slot refers to a different object"
+        );
+    }
+
+    #[test]
+    fn a_missing_link_proves_that_the_descriptor_is_closed() {
+        assert_eq!(
+            super::classify_missing_link(rustix::io::Errno::NOENT),
+            Some(false),
+            "a missing link proves that the descriptor is closed"
+        );
+    }
+
+    #[test]
+    fn a_lookup_failure_that_is_not_an_absence_keeps_the_scan_inconclusive() {
+        for error in [
+            rustix::io::Errno::ACCESS,
+            rustix::io::Errno::NOMEM,
+            rustix::io::Errno::IO,
+        ] {
+            assert_eq!(
+                super::classify_missing_link(error),
+                None,
+                "a lookup failure that is not an absence does not prove that the descriptor is closed"
+            );
+        }
     }
 
     #[test]
