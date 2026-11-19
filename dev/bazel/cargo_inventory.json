@@ -1,141 +1,141 @@
 {
   "entries": [
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//apps/huginn:auth_login",
       "manifest": "apps/huginn/Cargo.toml",
       "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
       "target": "auth_login"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//apps/huginn:banner_tests",
       "manifest": "apps/huginn/Cargo.toml",
       "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
       "target": "banner_tests"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//apps/huginn:cli",
       "manifest": "apps/huginn/Cargo.toml",
       "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
       "target": "cli"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//apps/huginn:config_compat",
       "manifest": "apps/huginn/Cargo.toml",
       "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
       "target": "config_compat"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//apps/huginn:config_resolution",
       "manifest": "apps/huginn/Cargo.toml",
       "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
       "target": "config_resolution"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//apps/huginn:guardrails",
       "manifest": "apps/huginn/Cargo.toml",
       "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
       "target": "guardrails"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "bin",
+      "label": "//apps/huginn:huginn_bin",
       "manifest": "apps/huginn/Cargo.toml",
       "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
       "target": "huginn"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "lib",
+      "label": "//apps/huginn:huginn",
       "manifest": "apps/huginn/Cargo.toml",
       "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
       "target": "huginn"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//apps/huginn:legacy_lock_interop",
       "manifest": "apps/huginn/Cargo.toml",
       "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
       "target": "legacy_lock_interop"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//apps/huginn:prompt_templates",
       "manifest": "apps/huginn/Cargo.toml",
       "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
       "target": "prompt_templates"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//apps/huginn:providers_flow",
       "manifest": "apps/huginn/Cargo.toml",
       "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
       "target": "providers_flow"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//apps/huginn:providers_recovery",
       "manifest": "apps/huginn/Cargo.toml",
       "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
       "target": "providers_recovery"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//apps/huginn:session_ownership",
       "manifest": "apps/huginn/Cargo.toml",
       "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
       "target": "session_ownership"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//apps/huginn:skill_completion",
       "manifest": "apps/huginn/Cargo.toml",
       "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
       "target": "skill_completion"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//apps/huginn:skill_invocation",
       "manifest": "apps/huginn/Cargo.toml",
       "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
       "target": "skill_invocation"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//apps/huginn:skills_acceptance",
       "manifest": "apps/huginn/Cargo.toml",
       "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
       "target": "skills_acceptance"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//apps/huginn:skills_cli",
       "manifest": "apps/huginn/Cargo.toml",
       "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
       "target": "skills_cli"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//apps/huginn:tui",
       "manifest": "apps/huginn/Cargo.toml",
       "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
       "target": "tui"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//apps/huginn:ui_settings",
       "manifest": "apps/huginn/Cargo.toml",
       "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
       "target": "ui_settings"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//apps/huginn:wasm_outline",
       "manifest": "apps/huginn/Cargo.toml",
       "package_id": "path+file://<workspace>/apps/huginn#0.0.1",
       "target": "wasm_outline"
@@ -435,15 +435,15 @@
       "target": "shared_kernel"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/application:connections",
       "manifest": "crates/huginn/application/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
       "target": "connections"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/application:contracts",
       "manifest": "crates/huginn/application/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
       "target": "contracts"
@@ -456,43 +456,43 @@
       "target": "huginn_application"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/application:permission_policy",
       "manifest": "crates/huginn/application/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
       "target": "permission_policy"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/application:provider_revisions",
       "manifest": "crates/huginn/application/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
       "target": "provider_revisions"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/application:providers_contracts",
       "manifest": "crates/huginn/application/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
       "target": "providers_contracts"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/application:providers_factories",
       "manifest": "crates/huginn/application/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
       "target": "providers_factories"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "example",
+      "label": "//crates/huginn/application:providers_headless",
       "manifest": "crates/huginn/application/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
       "target": "providers_headless"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/application:providers_turns",
       "manifest": "crates/huginn/application/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
       "target": "providers_turns"
@@ -505,43 +505,43 @@
       "target": "runtime_binding_replacement"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/application:service_slot_rebinding",
       "manifest": "crates/huginn/application/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
       "target": "service_slot_rebinding"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/application:tool_hooks",
       "manifest": "crates/huginn/application/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
       "target": "tool_hooks"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/application:turn_identity",
       "manifest": "crates/huginn/application/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
       "target": "turn_identity"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "lib",
+      "label": "//crates/huginn/conformance:huginn_conformance",
       "manifest": "crates/huginn/conformance/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/conformance#huginn-conformance@0.0.1",
       "target": "huginn_conformance"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/conformance:loops",
       "manifest": "crates/huginn/conformance/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/conformance#huginn-conformance@0.0.1",
       "target": "loops"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/conformance:substitution",
       "manifest": "crates/huginn/conformance/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/conformance#huginn-conformance@0.0.1",
       "target": "substitution"
@@ -617,428 +617,428 @@
       "target": "turn_boundaries"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/guards:configuration",
       "manifest": "crates/huginn/guards/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/guards#huginn-guards@0.0.1",
       "target": "configuration"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "lib",
+      "label": "//crates/huginn/guards:huginn_guards",
       "manifest": "crates/huginn/guards/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/guards#huginn-guards@0.0.1",
       "target": "huginn_guards"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/guards:mixed_shell_policy",
       "manifest": "crates/huginn/guards/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/guards#huginn-guards@0.0.1",
       "target": "mixed_shell_policy"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/guards:plugin",
       "manifest": "crates/huginn/guards/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/guards#huginn-guards@0.0.1",
       "target": "plugin"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/guards:policy",
       "manifest": "crates/huginn/guards/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/guards#huginn-guards@0.0.1",
       "target": "policy"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/guards:shell_policy",
       "manifest": "crates/huginn/guards/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/guards#huginn-guards@0.0.1",
       "target": "shell_policy"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "lib",
+      "label": "//crates/huginn/outline-bindings:huginn_outline_bindings",
       "manifest": "crates/huginn/outline-bindings/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/outline-bindings#huginn-outline-bindings@0.0.1",
       "target": "huginn_outline_bindings"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/plugin-api:agent_loop",
       "manifest": "crates/huginn/plugin-api/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/plugin-api#huginn-plugin-api@0.0.1",
       "target": "agent_loop"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/plugin-api:contract",
       "manifest": "crates/huginn/plugin-api/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/plugin-api#huginn-plugin-api@0.0.1",
       "target": "contract"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/plugin-api:hooks",
       "manifest": "crates/huginn/plugin-api/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/plugin-api#huginn-plugin-api@0.0.1",
       "target": "hooks"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "lib",
+      "label": "//crates/huginn/plugin-api:huginn_plugin_api",
       "manifest": "crates/huginn/plugin-api/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/plugin-api#huginn-plugin-api@0.0.1",
       "target": "huginn_plugin_api"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/plugin-api:tools",
       "manifest": "crates/huginn/plugin-api/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/plugin-api#huginn-plugin-api@0.0.1",
       "target": "tools"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/plugin-api:workflows",
       "manifest": "crates/huginn/plugin-api/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/plugin-api#huginn-plugin-api@0.0.1",
       "target": "workflows"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/presentation:completion",
       "manifest": "crates/huginn/presentation/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
       "target": "completion"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/presentation:conversation",
       "manifest": "crates/huginn/presentation/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
       "target": "conversation"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/presentation:dispatch_settings",
       "manifest": "crates/huginn/presentation/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
       "target": "dispatch_settings"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/presentation:event",
       "manifest": "crates/huginn/presentation/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
       "target": "event"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/presentation:extensions",
       "manifest": "crates/huginn/presentation/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
       "target": "extensions"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/presentation:files",
       "manifest": "crates/huginn/presentation/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
       "target": "files"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "lib",
+      "label": "//crates/huginn/presentation:huginn_presentation",
       "manifest": "crates/huginn/presentation/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
       "target": "huginn_presentation"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/presentation:input_parser",
       "manifest": "crates/huginn/presentation/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
       "target": "input_parser"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/presentation:overlay",
       "manifest": "crates/huginn/presentation/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
       "target": "overlay"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/presentation:plugins",
       "manifest": "crates/huginn/presentation/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
       "target": "plugins"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/presentation:preemption",
       "manifest": "crates/huginn/presentation/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
       "target": "preemption"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/presentation:provider_search",
       "manifest": "crates/huginn/presentation/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
       "target": "provider_search"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/presentation:providers_ui",
       "manifest": "crates/huginn/presentation/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
       "target": "providers_ui"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/presentation:pty",
       "manifest": "crates/huginn/presentation/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
       "target": "pty"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/presentation:settings",
       "manifest": "crates/huginn/presentation/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
       "target": "settings"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/presentation:state",
       "manifest": "crates/huginn/presentation/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
       "target": "state"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/presentation:status_bar",
       "manifest": "crates/huginn/presentation/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
       "target": "status_bar"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "bin",
+      "label": "//crates/huginn/presentation:tui_fixture",
       "manifest": "crates/huginn/presentation/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
       "target": "tui-fixture"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/presentation:workflows",
       "manifest": "crates/huginn/presentation/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
       "target": "workflows"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/reference-extension:approval",
       "manifest": "crates/huginn/reference-extension/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/reference-extension#huginn-reference-extension@0.0.1",
       "target": "approval"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "lib",
+      "label": "//crates/huginn/reference-extension:huginn_reference_extension",
       "manifest": "crates/huginn/reference-extension/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/reference-extension#huginn-reference-extension@0.0.1",
       "target": "huginn_reference_extension"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/reference-extension:smoke",
       "manifest": "crates/huginn/reference-extension/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/reference-extension#huginn-reference-extension@0.0.1",
       "target": "smoke"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/runtime:adapter_security",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "adapter_security"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/runtime:approval_resource",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "approval_resource"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/runtime:coding_workflow",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "coding_workflow"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/runtime:connection_workers",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "connection_workers"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/runtime:connections",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "connections"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/runtime:guardrails",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "guardrails"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/runtime:host_secrets",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "host_secrets"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "lib",
+      "label": "//crates/huginn/runtime:huginn_runtime",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "huginn_runtime"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/runtime:inference_adapters",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "inference_adapters"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/runtime:mcp_lifecycle",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "mcp_lifecycle"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/runtime:providers_integration",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "providers_integration"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "bin",
+      "label": "//crates/huginn/runtime:session_lock_holder",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "session_lock_holder"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/runtime:session_locks",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "session_locks"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/runtime:sessions_persistence",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "sessions_persistence"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/runtime:skill_loading",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "skill_loading"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/runtime:skills_catalog",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "skills_catalog"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/runtime:stream_persistence",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "stream_persistence"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/runtime:tls_transport",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "tls_transport"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/runtime:tool_authoring",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "tool_authoring"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/runtime:tool_lifecycle",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "tool_lifecycle"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/runtime:transports",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "transports"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "example",
+      "label": "//crates/huginn/runtime:verify_ollama",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "verify_ollama"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "exclusion": "The test requires the non-default `experimental-wasm` feature, which activates the optional `wasmtime` dependency. The workspace-generated @crates repository omits that crate because no default Cargo target activates the feature, so modeling this target requires feature-aware crate_universe generation in MODULE.bazel.",
       "kinds": "test",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "wasm_outline"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
+      "exclusion": "The test requires the non-default `experimental-wasm` feature, which activates the optional `wasmtime` dependency. The workspace-generated @crates repository omits that crate because no default Cargo target activates the feature, so modeling this target requires feature-aware crate_universe generation in MODULE.bazel.",
       "kinds": "test",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "wasm_output_validation"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "cdylib,rlib",
+      "label": "//crates/huginn/rust-outline-component:huginn_rust_outline_component",
       "manifest": "crates/huginn/rust-outline-component/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/rust-outline-component#huginn-rust-outline-component@0.0.1",
       "target": "huginn_rust_outline_component"
     },
     {
-      "exclusion": "Huginn BUILD targets are owned by a concurrent workstream; this target is recorded but not yet independently verified by the non-Huginn generator.",
       "kinds": "test",
+      "label": "//crates/huginn/rust-outline-component:outline",
       "manifest": "crates/huginn/rust-outline-component/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/rust-outline-component#huginn-rust-outline-component@0.0.1",
       "target": "outline"

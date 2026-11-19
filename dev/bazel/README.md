@@ -45,11 +45,26 @@ carry that marker. Hand-tuned `BUILD.bazel` files stay untouched and are reporte
 
 - `crates/domain/rook-core`
 - `crates/domain/shared-kernel`
+- `crates/huginn/application`
+- `crates/huginn/conformance`
+- `crates/huginn/core`
+- `crates/huginn/guards`
+- `crates/huginn/outline-bindings`
+- `crates/huginn/plugin-api`
+- `crates/huginn/presentation`
+- `crates/huginn/reference-extension`
+- `crates/huginn/runtime`
+- `crates/huginn/rust-outline-component`
 - `crates/infrastructure/cache-memory`
 - `crates/infrastructure/encryption-inmemory`
 - `crates/infrastructure/models-catalog`
 - `crates/infrastructure/observability`
 - `crates/test-support`
+
+The Huginn packages are hand-tuned because the generator does not model their `test-hooks` and
+`test-driver` feature split, the Seatbelt sandbox tags of the shell tests, or the runfiles helpers
+that resolve auxiliary binaries. The generator still derives their inventory entries, and
+`--check` reports them as hand-tuned instead of writing them.
 
 The generator unit tests pin the mapping rules:
 
@@ -83,12 +98,19 @@ older than the version the tooling supports.
   `glob(["src/**/*.rs"])`.
 - A Cargo binary or example becomes a `rust_binary`. When the binary name collides with the
   library name of the same package, the Bazel target gets a `_bin` suffix and the Cargo crate name
-  is preserved in `crate_name`.
+  is preserved in `crate_name`. Examples link the package dev-dependencies, because Cargo compiles
+  examples with them; binaries do not.
+- A test that reads `CARGO_BIN_EXE_<name>` from any of its sources receives the `env` and
+  `rustc_env` contract of the matching binary target, and depends on it. The variable is
+  compile-time under Bazel, so a helper module must resolve the runfiles path before it spawns the
+  binary.
 - A Cargo library with `#[cfg(test)]` modules gets a `<crate>_unit_test` target that reuses the
   library through `crate`. A Cargo binary with `#[cfg(test)]` modules gets a `<bin>_test` target,
   because Cargo compiles a binary with the test harness as well.
 - A Cargo integration test becomes a `rust_test` with the test file and its `mod` helper modules
-  in `srcs`.
+  in `srcs`. A helper module declared with a relative `#[path]` that lives in another Bazel package
+  is referenced by label, so its owning package must export the file. For example,
+  `crates/huginn/presentation` exports the PTY harness that `apps/huginn` reuses.
 - A Cargo build script becomes a `cargo_build_script` target.
 - Registry dependencies resolve through `all_crate_deps()` and `aliases()` from `@crates`. Path
   dependencies inside the workspace are listed as explicit labels, for example
@@ -108,20 +130,21 @@ older than the version the tooling supports.
 `python3 dev/bazel/check_inventory.py` reports the current state:
 
 ```text
-Inventory coverage: 163/261 mapped; 98 reviewed exclusions.
+Inventory coverage: 256/261 mapped; 5 reviewed exclusions.
 ```
 
-- 151 non-Huginn Cargo targets map to verified Bazel labels.
-- 3 non-Huginn Cargo targets carry reviewed exclusions (see below).
-- 12 Huginn targets keep the labels recorded by the concurrent Huginn workstream.
-- 95 Huginn targets are recorded as exclusions and are not independently verified here.
+- 154 non-Huginn Cargo targets: 151 map to verified Bazel labels and 3 carry reviewed exclusions.
+- 107 Huginn Cargo targets, including `apps/huginn`: 105 map to Bazel labels and 2 carry reviewed
+  exclusions.
 
-The excluded non-Huginn targets are:
+The excluded targets are:
 
 | Cargo target | Reason |
 | --- | --- |
 | `apps/rook` `build-script-build` | The build script shells out to the pnpm dashboard build. Bazel does not model the Node build step; the dashboard assets are supplied as compile data instead. |
 | `apps/rook` `dotenv_startup` | The test clears the child environment and changes the child working directory before it launches `CARGO_BIN_EXE_rook`. Cargo supplies an absolute executable path; Bazel can only supply a runfiles-relative path, which the test cannot resolve from another working directory. |
+| `crates/huginn/runtime` `wasm_outline` | The test requires the non-default `experimental-wasm` feature, which activates the optional `wasmtime` dependency. The generated `@crates` repository omits that crate because no default Cargo target activates the feature, so modeling the target requires feature-aware `crate_universe` generation in `MODULE.bazel`. |
+| `crates/huginn/runtime` `wasm_output_validation` | Same reason as `wasm_outline`: the test requires `experimental-wasm` and `wasmtime` is not vendored. |
 | `crates/muninn/c1-exporter` `export_minilm_c1` | The binary requires the non-default `cpu-f32` feature, whose optional `candle-*`, `safetensors`, and `tokenizers` dependencies are not vendored by `crate_universe`. |
 
 The root `BUILD.bazel` now exports `dev/muninn/fixtures/**`. The generator detects those exported
@@ -142,8 +165,12 @@ Parity was measured by running both build systems over the non-Huginn packages:
 
 The case totals are the recorded baseline plus the 7 cases of the `transport-axum`
 `csrf_session_binding` target added by the security remediation, and both build systems were run
-again on that target. The target count is confirmed by the current full run: 229 targets, 0
-failures, including the two `//dev/bazel` tooling targets.
+again on that target. The target count is confirmed by the current full run: `just bazel-test`
+reports 249 test targets, 0 failures, including the two `//dev/bazel` tooling targets.
+
+The case comparison above still covers only the non-Huginn packages. Huginn is now modeled and
+green under Bazel (`bazel test //crates/huginn/... //apps/huginn/...`), but it is not part of the
+measured case-count comparison, so no case parity is claimed for it.
 
 The remaining differences are known and reviewed:
 

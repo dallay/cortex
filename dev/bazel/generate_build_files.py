@@ -56,7 +56,9 @@ class Raw(str):
     """A raw Starlark expression used verbatim as an attribute value."""
 
 
-DEFAULT_EXCLUDED_PREFIXES = ("crates/huginn", "apps/huginn")
+# No package is skipped by default. Hand-tuned BUILD files are detected and
+# preserved, and targets that cannot be modeled are listed in TARGET_EXCLUSIONS.
+DEFAULT_EXCLUDED_PREFIXES: tuple[str, ...] = ()
 
 # Cargo targets that cannot be modeled as Bazel targets. Each entry records a
 # precise, reviewed reason; nothing is ever dropped silently.
@@ -79,6 +81,20 @@ TARGET_EXCLUSIONS: dict[tuple[str, str], str] = {
         "to the test runfiles directory. Supporting this target requires a "
         "runfiles-aware test helper or test-source change, which is outside the "
         "permitted BUILD-only changes."
+    ),
+    ("crates/huginn/runtime", "wasm_outline"): (
+        "The test requires the non-default `experimental-wasm` feature, which "
+        "activates the optional `wasmtime` dependency. The workspace-generated "
+        "@crates repository omits that crate because no default Cargo target "
+        "activates the feature, so modeling this target requires feature-aware "
+        "crate_universe generation in MODULE.bazel."
+    ),
+    ("crates/huginn/runtime", "wasm_output_validation"): (
+        "The test requires the non-default `experimental-wasm` feature, which "
+        "activates the optional `wasmtime` dependency. The workspace-generated "
+        "@crates repository omits that crate because no default Cargo target "
+        "activates the feature, so modeling this target requires feature-aware "
+        "crate_universe generation in MODULE.bazel."
     ),
 }
 
@@ -444,16 +460,42 @@ def binary_sources(cargo_target: dict[str, Any], directory: str, root: Path = RO
 
 
 def test_sources(cargo_target: dict[str, Any], directory: str, root: Path = ROOT) -> list[str]:
-    """Return the package relative sources of an integration test target."""
+    """Return the sources of an integration test target.
+
+    A Rust file may pull in a module from another crate with a relative
+    `#[path]` attribute. Bazel only sees files that its own package declares, so
+    a module that a nearer package owns is addressed by label instead of by a
+    path that would escape the package.
+    """
     entry = Path(str(cargo_target["src_path"])).resolve()
     sources = [entry]
     sources.extend(module_sources(entry))
-    relative: list[str] = []
+    resolved: list[str] = []
     for source in sources:
         inside = relative_to_package(source, directory, root)
         if inside is not None:
-            relative.append(inside)
-    return sorted(set(relative))
+            resolved.append(inside)
+            continue
+        label = cross_package_label(source, root)
+        if label is not None:
+            resolved.append(label)
+    return sorted(set(resolved))
+
+
+def cross_package_label(path: Path, root: Path = ROOT) -> str | None:
+    """Return the Bazel label of a source that another package owns.
+
+    The owning package must export the file. `None` means the source is outside
+    the repository, which no label can address.
+    """
+    root = root.resolve()
+    path = path.resolve()
+    if root not in path.parents:
+        return None
+    owner = owning_package_directory(path, root)
+    if not owner:
+        return f"//:{path.relative_to(root).as_posix()}"
+    return f"//{owner}:{path.relative_to(root / owner).as_posix()}"
 
 
 def module_sources(path: Path) -> list[Path]:
@@ -517,15 +559,19 @@ def cargo_bin_executables(
 
     Cargo exposes the path of a package binary to integration tests through the
     `CARGO_BIN_EXE_<name>` environment variable. The generator reproduces that
-    contract with the runfiles path of the Bazel binary target.
+    contract with the runfiles path of the Bazel binary target. The variable can
+    be read from any module of the test crate, not only from the entry file, so
+    every source of the target is scanned.
     """
-    path = Path(str(cargo_target["src_path"]))
-    try:
-        content = path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return []
+    entry = Path(str(cargo_target["src_path"]))
+    contents: list[str] = []
+    for source in [entry, *module_sources(entry)]:
+        try:
+            contents.append(source.read_text(encoding="utf-8", errors="ignore"))
+        except OSError:
+            continue
     binaries: list[tuple[str, str]] = []
-    for cargo_name in sorted(set(CARGO_BIN_EXE_RE.findall(content))):
+    for cargo_name in sorted(set(CARGO_BIN_EXE_RE.findall("\n".join(contents)))):
         bazel_name = assigned_names.get(cargo_name)
         if bazel_name is None:
             continue
@@ -972,15 +1018,27 @@ def build_plan(
             used_names.add(target_name)
         elif "bin" in kinds or "example" in kinds:
             target_name = assigned_names[cargo_name]
+            # Cargo compiles examples with the dev-dependencies of the package,
+            # but not binaries.
+            normal_selector = (
+                "all_crate_deps(normal = True, normal_dev = True)"
+                if "example" in kinds
+                else "all_crate_deps(normal = True)"
+            )
+            proc_macro_selector = (
+                "all_crate_deps(proc_macro = True, proc_macro_dev = True)"
+                if "example" in kinds
+                else "all_crate_deps(proc_macro = True)"
+            )
             binary_dependencies = list(normal_workspace)
             if plan.target(library_name) is not None:
                 # Cargo links a binary and an example against the library of
                 # the same package.
                 binary_dependencies.append(f":{library_name}")
-            binary_deps = deps_expression(binary_dependencies, "all_crate_deps(normal = True)")
+            binary_deps = deps_expression(binary_dependencies, normal_selector)
             if plan.target("build_script") is not None:
                 binary_deps = deps_expression(
-                    binary_dependencies + [":build_script"], "all_crate_deps(normal = True)"
+                    binary_dependencies + [":build_script"], normal_selector
                 )
             attributes = {
                 "name": target_name,
@@ -991,7 +1049,7 @@ def build_plan(
                 attributes["crate_features"] = sorted(set(features) | set(required))
             attributes["edition"] = Raw("crate_edition()")
             attributes["deps"] = Raw(binary_deps)
-            attributes["proc_macro_deps"] = Raw("all_crate_deps(proc_macro = True)")
+            attributes["proc_macro_deps"] = Raw(proc_macro_selector)
             plan.targets.append(TargetPlan(
                 name=target_name,
                 rule="rust_binary",

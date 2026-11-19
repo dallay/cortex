@@ -3,6 +3,11 @@ load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
+# The Huginn binary's terminal test reuses the PTY harness that this package
+# owns through a relative `#[path]` module, so the file must be addressable from
+# another package.
+exports_files(["tests/support/pty.rs"])
+
 rust_library(
     name = "huginn_presentation_test_driver",
     srcs = glob(["src/**/*.rs"]),
@@ -15,7 +20,7 @@ rust_library(
 )
 
 rust_binary(
-    name = "tui-fixture",
+    name = "tui_fixture",
     srcs = ["tests/support/fixture.rs"],
     crate_name = "tui_fixture",
     crate_features = ["test-driver"],
@@ -156,12 +161,12 @@ rust_test(
     name = "pty",
     crate_name = "pty",
     srcs = ['tests/pty.rs', 'tests/support/pty.rs'],
-    env = {"CARGO_BIN_EXE_tui-fixture": "$(execpath :tui-fixture)"},
-    rustc_env = {"CARGO_BIN_EXE_tui-fixture": "_main/crates/huginn/presentation/tui-fixture"},
-    data = [":tui-fixture"],
+    env = {"CARGO_BIN_EXE_tui-fixture": "$(execpath :tui_fixture)"},
+    rustc_env = {"CARGO_BIN_EXE_tui-fixture": "_main/crates/huginn/presentation/tui_fixture"},
+    data = [":tui_fixture"],
     crate_features = ["test-driver"],
     edition = crate_edition(),
-    deps = [":tui-fixture", ":huginn_presentation_test_driver"] + ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/plugin-api:huginn_plugin_api', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True, normal_dev = True),
+    deps = [":tui_fixture", ":huginn_presentation_test_driver"] + ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/plugin-api:huginn_plugin_api', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 

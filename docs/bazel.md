@@ -50,8 +50,11 @@ source of truth for packages, targets, dependencies, and features. Hand-tuned `B
 are never overwritten.
 
 The declared inventory is tracked in `dev/bazel/cargo_inventory.json`: every Cargo target has
-either an explicit Bazel label or a reviewed exclusion reason. `dev/bazel/README.md` documents the
-mapping rules, the current coverage numbers, and the measured differences against Cargo.
+either an explicit Bazel label or a reviewed exclusion reason. All 43 workspace packages now have
+a generated or hand-tuned `BUILD.bazel`, including the Huginn CLI and its tests. The inventory
+maps 256 of 261 Cargo targets; the remaining 5 have reviewed exclusions. `dev/bazel/README.md`
+documents the mapping rules, current coverage, and the limits of the measured comparison against
+Cargo.
 
 ## Boundaries
 

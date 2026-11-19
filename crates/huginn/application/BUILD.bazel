@@ -1,7 +1,18 @@
 load("@crates//:defs.bzl", "aliases", "all_crate_deps", "crate_edition")
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
+
+# Cargo example binary; kept out of the generated file because this package is
+# hand-tuned for the `test-hooks` split.
+rust_binary(
+    name = "providers_headless",
+    srcs = ["examples/providers_headless.rs"],
+    crate_name = "providers_headless",
+    edition = crate_edition(),
+    deps = ["//crates/huginn/core:huginn_core", ":huginn_application"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
 
 rust_library(
     name = "huginn_application",

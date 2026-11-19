@@ -236,7 +236,78 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(integration.attributes["srcs"], ["tests/smoke.rs"])
         self.assertIn(":demo", integration.attributes["deps"])
 
+    def test_module_from_another_package_is_addressed_by_label(self):
+        packages = [package(targets=[
+            target("smoke", ["test"], "/repo/crates/demo/tests/smoke.rs", crate_types=["bin"]),
+        ])]
+        fixture = self.fixture(packages, {
+            "crates/demo/tests/smoke.rs":
+                '#[path = "../../other/tests/support/helper.rs"]\nmod support;\n',
+            "crates/other/tests/support/helper.rs": "pub fn helper() {}\n",
+            "crates/other/BUILD.bazel": "",
+        })
+        index = generator.package_index(fixture.packages, fixture.root)
+        plan = generator.build_plan(fixture.packages[0], fixture.root, index)
+        integration = self.targets_by_name(plan)["smoke"]
+        self.assertEqual(
+            integration.attributes["srcs"],
+            ["//crates/other:tests/support/helper.rs", "tests/smoke.rs"],
+            "a module that lives in another Bazel package must be referenced by label",
+        )
+
+    def test_module_from_the_root_package_is_addressed_by_label(self):
+        packages = [package(targets=[
+            target("smoke", ["test"], "/repo/crates/demo/tests/smoke.rs", crate_types=["bin"]),
+        ])]
+        fixture = self.fixture(packages, {
+            "crates/demo/tests/smoke.rs": '#[path = "../../../shared/helper.rs"]\nmod support;\n',
+            "shared/helper.rs": "pub fn helper() {}\n",
+        })
+        index = generator.package_index(fixture.packages, fixture.root)
+        plan = generator.build_plan(fixture.packages[0], fixture.root, index)
+        integration = self.targets_by_name(plan)["smoke"]
+        self.assertEqual(
+            integration.attributes["srcs"],
+            ["//:shared/helper.rs", "tests/smoke.rs"],
+        )
+
+    def test_cargo_bin_exe_used_by_a_module_declares_the_binary_dependency(self):
+        packages = [package(targets=[
+            target("demo", ["lib"], "/repo/crates/demo/src/lib.rs"),
+            target("demo", ["bin"], "/repo/crates/demo/src/main.rs", crate_types=["bin"]),
+            target("smoke", ["test"], "/repo/crates/demo/tests/smoke.rs", crate_types=["bin"]),
+        ])]
+        files = {
+            "crates/demo/tests/smoke.rs": '#[path = "support/binary.rs"]\nmod support;\n',
+            "crates/demo/tests/support/binary.rs":
+                "pub fn bin() -> &'static str { env!(\"CARGO_BIN_EXE_demo\") }\n",
+        }
+        plans, _ = self.plan(packages, files=files)
+        smoke = self.targets_by_name(plans[0])["smoke"]
+        self.assertEqual(
+            smoke.attributes["env"],
+            {"CARGO_BIN_EXE_demo": "$(execpath :demo_bin)"},
+            "a module that reads CARGO_BIN_EXE_* needs the same contract as the entry file",
+        )
+        self.assertIn(":demo_bin", smoke.attributes["deps"])
+
     # -- binaries ---------------------------------------------------------
+
+    def test_example_target_can_use_dev_dependencies(self):
+        packages = [package(targets=[
+            target("demo", ["lib"], "/repo/crates/demo/src/lib.rs"),
+            target(
+                "sample",
+                ["example"],
+                "/repo/crates/demo/examples/sample.rs",
+                crate_types=["bin"],
+            ),
+        ])]
+        plans, _ = self.plan(packages)
+        example = self.targets_by_name(plans[0])["sample"]
+        self.assertEqual(example.rule, "rust_binary")
+        self.assertIn("normal_dev = True", example.attributes["deps"])
+        self.assertIn("proc_macro_dev = True", example.attributes["proc_macro_deps"])
 
     def test_binary_target_uses_a_disambiguated_name_and_keeps_the_crate_name(self):
         packages = [package(targets=[
@@ -371,6 +442,33 @@ class GeneratorTests(unittest.TestCase):
         self.assertNotIn("compile_data", targets["alpha"].attributes)
         self.assertNotIn("beta", targets)
         self.assertIn("beta", plans[0].exclusions)
+
+    # -- inventory coverage -----------------------------------------------
+
+    def test_default_selection_keeps_every_package(self):
+        packages = [
+            package(),
+            package(name="huginn", directory="apps/huginn"),
+        ]
+        selected = generator.select_packages(
+            packages, Path("/repo"), generator.DEFAULT_EXCLUDED_PREFIXES, None
+        )
+        self.assertEqual([pkg["name"] for pkg in selected], ["demo", "huginn"])
+
+    def test_reviewed_exclusion_is_reported_in_the_inventory(self):
+        packages = [package(name="huginn-runtime", directory="crates/huginn/runtime", targets=[
+            target(
+                "wasm_outline",
+                ["test"],
+                "/repo/crates/huginn/runtime/tests/wasm_outline.rs",
+                crate_types=["bin"],
+            ),
+        ])]
+        plans, _ = self.plan(packages)
+        entries = generator.inventory_entries(plans[0])
+        self.assertEqual(len(entries), 1)
+        self.assertNotIn("label", entries[0])
+        self.assertIn("experimental-wasm", entries[0]["exclusion"])
 
     def test_included_files_become_compile_data(self):
         packages = [package()]

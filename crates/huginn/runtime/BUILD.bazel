@@ -3,7 +3,7 @@ load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["tests/fixtures/mcp_server.py", "tests/support/session_lock_holder.rs"])
+exports_files(["tests/fixtures/mcp_server.py", "tests/support/session_lock_holder.rs", "tests/support/wasm_component.rs"])
 
 rust_library(
     name = "huginn_runtime",
@@ -153,6 +153,17 @@ rust_binary(
     edition = crate_edition(),
     deps = all_crate_deps(normal = True),
     proc_macro_deps = all_crate_deps(proc_macro = True),
+)
+
+# Cargo example binary; kept out of the generated file because this package is
+# hand-tuned for the `test-hooks` and Seatbelt targets.
+rust_binary(
+    name = "verify_ollama",
+    srcs = ["examples/verify_ollama.rs"],
+    crate_name = "verify_ollama",
+    edition = crate_edition(),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/guards:huginn_guards", ":huginn_runtime"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
 rust_test(
