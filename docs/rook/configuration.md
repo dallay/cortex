@@ -295,8 +295,10 @@ allow_env_fallback = false
 When `enabled = true`, Rook resolves the hash secret in the following priority order:
 
 1. **`API_KEY_HASH_SECRET`** environment variable (production / Docker — always use this).
-2. **`api_key_secret.key`** next to the database — auto-generated and persisted on first run.
-3. **Transient in-memory secret** — for `:memory:` or `file::memory:` targets that cannot persist files.
+2. **`api_key_secret.key`** next to the database — auto-generated and persisted on first run. Used only when `API_KEY_HASH_SECRET` is undefined or blank.
+3. **Transient in-memory secret** — for `:memory:` or `file::memory:` targets that cannot persist files. Used only when `API_KEY_HASH_SECRET` is undefined or blank.
+
+A defined but blank `API_KEY_HASH_SECRET` does not win this order: Rook trims the value and, when nothing remains, continues with the `api_key_secret.key` or transient secret.
 
 Production deployments **must** set `API_KEY_HASH_SECRET` via environment variable so the secret is not stored on disk and survives restarts. The value must contain at least 32 bytes; generate it with a cryptographically secure random generator, because length alone does not prove entropy. For example, use `openssl rand -hex 32`. The `allow_env_fallback` option also permits the legacy `CLIENT_API_KEYS` fallback for local compatibility only.
 

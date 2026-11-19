@@ -34,6 +34,8 @@ The configured or persisted source secret must contain at least 32 bytes. This l
 
 > **⚠️ CRITICAL**: Keep the secret stable. If `API_KEY_HASH_SECRET` changes, existing API keys become invalid and previously issued CSRF tokens fail validation. See [API Key Troubleshooting](api-key-troubleshooting.md) for API key recovery steps.
 
+**⚠️ Upgrade note:** An installation whose configured or persisted secret contains fewer than 32 bytes fails to start after this update. Replace the secret with one of at least 32 bytes **before** starting the new version. Replacing the secret invalidates the existing API keys and the CSRF tokens already issued, so the affected API keys must be reissued.
+
 When multiple Rook replicas share the same sessions database, they MUST also use the same `API_KEY_HASH_SECRET` or share the persistent `api_key_secret.key` file beside that database. Otherwise, a replica cannot validate CSRF tokens issued by another replica. Keep the clocks of those replicas synchronized: token validation tolerates up to 60 seconds of divergence.
 
 ### Optional
@@ -175,9 +177,17 @@ Create a `.env` file (never commit this to version control):
 ENCRYPTION_PASSPHRASE=your-secure-passphrase-min-12-chars
 ENCRYPTION_SALT=Z3G83UBdTUkfGGWr-QDnQg
 
-# Optional override; generate securely with: openssl rand -hex 32
-API_KEY_HASH_SECRET=$(openssl rand -hex 32)
+# Optional override. Generate the value separately with `openssl rand -hex 32`
+# and paste the result here.
+API_KEY_HASH_SECRET=paste-the-generated-value-here
 ```
+
+The `.env` loader does not run command substitution. It stores the value
+literally, so `API_KEY_HASH_SECRET=$(openssl rand -hex 32)` keeps the
+23-character text `$(openssl rand -hex 32)` as the secret. That value is
+shorter than the 32-byte minimum, and Rook refuses to start. Run
+`openssl rand -hex 32` in a shell, copy the resulting 64 hexadecimal
+characters, and paste them into the variable.
 
 ## Adding Providers
 
