@@ -524,9 +524,10 @@ async fn setup_succeeds_with_correct_token_and_returns_api_key() {
 }
 
 #[tokio::test]
-async fn get_login_always_generates_fresh_csrf_token() {
-    // Security remediation: GET /login now always generates a fresh CSRF token
-    // rather than reusing the existing one. This prevents CSRF token reuse attacks.
+async fn get_login_replaces_an_invalid_csrf_cookie_with_a_fresh_token() {
+    // Contract: GET /login reuses the incoming CSRF cookie only when it fully
+    // validates (signature, expiry and session binding). The incoming token in
+    // this test is not a valid signed token, so the route issues a fresh one.
     let usecases = make_bootstrap_usecases(Arc::new(FakeUserRepo::fresh()), None);
     let guard = Arc::new(CsrfGuard::new());
     let app = transport_axum::router(
@@ -539,12 +540,12 @@ async fn get_login_always_generates_fresh_csrf_token() {
         None,
     );
 
-    // Even with a valid incoming token, GET /login generates a fresh one
-    let valid_token = "A".repeat(43);
+    // The incoming token is not a valid signed token, so it gets replaced.
+    let incoming_token = "A".repeat(43);
     let request = Request::builder()
         .method(Method::GET)
         .uri("/login")
-        .header("cookie", format!("csrf_token={valid_token}"))
+        .header("cookie", format!("csrf_token={incoming_token}"))
         .body(axum::body::Body::empty())
         .unwrap();
     let response = app.oneshot(request).await.unwrap();
@@ -559,12 +560,8 @@ async fn get_login_always_generates_fresh_csrf_token() {
     let json = body_json(response).await;
     let new_token = json["csrf_token"].as_str().unwrap();
     // The new token should be different from the incoming one
-    assert_ne!(new_token, &valid_token);
-    // The new token has the signed payload format and is bound to anonymous context.
-    let decoded =
-        base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, new_token)
-            .expect("CSRF token is base64url");
-    assert_eq!(decoded.len(), 98);
+    assert_ne!(new_token, &incoming_token);
+    // The new token is signed by the guard and bound to the anonymous context.
     assert_eq!(
         guard.validate(Some(new_token), Some(new_token)),
         transport_axum::middleware::csrf_guard::CsrfValidation::Valid
@@ -573,13 +570,14 @@ async fn get_login_always_generates_fresh_csrf_token() {
 
     // Without any incoming cookie, GET /login also generates a fresh token
     let usecases = make_bootstrap_usecases(Arc::new(FakeUserRepo::fresh()), None);
+    let anonymous_guard = Arc::new(CsrfGuard::new());
     let app = transport_axum::router(
         usecases,
         AuthzConfig::from_env(),
         Arc::new(LoginRateLimiter::new()),
         Arc::new(IpRateLimiter::new()),
         Arc::new(ApiKeyRateLimiter::new()),
-        Arc::new(CsrfGuard::new()),
+        anonymous_guard.clone(),
         None,
     );
     let request = Request::builder()
@@ -590,9 +588,10 @@ async fn get_login_always_generates_fresh_csrf_token() {
     let response = app.oneshot(request).await.unwrap();
     let json = body_json(response).await;
     let token = json["csrf_token"].as_str().unwrap();
-    let decoded = base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, token)
-        .expect("CSRF token is base64url");
-    assert_eq!(decoded.len(), 98);
+    assert_eq!(
+        anonymous_guard.validate(Some(token), Some(token)),
+        transport_axum::middleware::csrf_guard::CsrfValidation::Valid
+    );
 }
 
 #[tokio::test]
