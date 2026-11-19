@@ -114,8 +114,10 @@ fn slot_matches(
             Some(reopened_device == device && reopened.st_ino == inode)
         }
         // A write-only or otherwise non-reopenable descriptor can still be
-        // identified by the inode reported for its /dev/fd slot.
-        Err(_) => Some(stat.st_ino == inode),
+        // identified by the device and inode reported for its /dev/fd slot.
+        Err(_) => u64::try_from(stat.st_dev)
+            .ok()
+            .map(|stat_device| stat_device == device && stat.st_ino == inode),
     }
 }
 

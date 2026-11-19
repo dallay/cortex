@@ -163,10 +163,28 @@ fn create_and_partial_update_allow_ollama_config() {
             "expectedUpdatedAt": "2026-01-01T00:00:00Z", "providerKind": kind, "config": config
         }))
         .unwrap();
-        assert!(
-            rook_usecases::manage_connections::UpdateConnectionRequest::try_from(&update).is_ok()
+        let domain_update =
+            rook_usecases::manage_connections::UpdateConnectionRequest::try_from(&update).unwrap();
+        assert_eq!(
+            domain_update
+                .config
+                .as_ref()
+                .and_then(|config| config.base_url.as_deref()),
+            Some("http://localhost:11434")
         );
     }
+}
+
+#[test]
+fn endpoint_policy_allows_explicit_local_ollama_and_rejects_metadata_hosts() {
+    let local_policy = rook_core::EndpointPolicy {
+        allowed_origins: vec!["http://localhost:11434".to_string()],
+    };
+    let local_url = reqwest::Url::parse("http://localhost:11434/api/chat").unwrap();
+    assert_eq!(local_policy.validate_url(&local_url), Ok(()));
+
+    let metadata_url = reqwest::Url::parse("http://169.254.169.254/latest/meta-data/").unwrap();
+    assert!(local_policy.validate_url(&metadata_url).is_err());
 }
 
 #[test]
