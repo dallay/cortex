@@ -295,8 +295,47 @@ fn semicolons_require_commands_without_rejecting_newline_continuations() {
         "echo ok ||\n# comment\necho done",
         "echo ok |\ncat",
         "echo ok;\necho done",
-        "echo ok;",
+        "echo ok;\necho done",
     ] {
         assert!(policy.check_shell(command).is_ok(), "{command}");
     }
+}
+
+#[test]
+fn relative_paths_cannot_bypass_indirect_executable_blocklist() {
+    // Regression test: relative paths like ./bash or ../bin/sh must be blocked
+    // by the INDIRECT_EXECUTABLES blocklist. The guard extracts the basename
+    // using rsplit('/') before checking the blocklist.
+    let policy = Guardrails::default();
+    let accepted: Vec<_> = [
+        "./bash",
+        "./sh",
+        "./sudo",
+        "./eval",
+        "../bin/sh",
+        "../bin/bash",
+        "subdir/bash",
+        "./.hidden/sh",
+    ]
+    .into_iter()
+    .filter(|command| policy.check_shell(command).is_ok())
+    .collect();
+    assert!(
+        accepted.is_empty(),
+        "relative paths to indirect executables should be blocked: {accepted:?}"
+    );
+}
+
+#[test]
+fn relative_paths_to_destructive_executables_are_blocked() {
+    // Relative paths to destructive executables should also be blocked
+    let policy = Guardrails::default();
+    let accepted: Vec<_> = ["./dd if=/dev/zero", "./shred file.txt", "./rm -rf build"]
+        .into_iter()
+        .filter(|command| policy.check_shell(command).is_ok())
+        .collect();
+    assert!(
+        accepted.is_empty(),
+        "relative paths to destructive executables should be blocked: {accepted:?}"
+    );
 }

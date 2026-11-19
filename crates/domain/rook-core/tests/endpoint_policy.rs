@@ -481,3 +481,34 @@ fn dns_loopback_answers_require_a_loopback_hostname_as_well_as_a_grant() {
         );
     }
 }
+
+#[test]
+fn granted_origins_allow_listed_hosts_and_reject_unlisted_credentialed_or_local_targets() {
+    let policy = EndpointPolicy {
+        allowed_origins: vec![
+            "https://api.example.com".into(),
+            "https://[2606:4700:4700::1111]".into(),
+        ],
+    };
+    for endpoint in [
+        "https://localhost:11434/v1",
+        "https://user:password@10.0.0.1/v1",
+        "https://[::1]/v1",
+        "https://[fc00::1]/v1",
+        "https://[fdff::1]/v1",
+    ] {
+        let url = url::Url::parse(endpoint).unwrap();
+        assert!(policy.validate_url(&url).is_err(), "{endpoint}");
+    }
+    for endpoint in [
+        "https://api.example.com/v1",
+        "https://[2606:4700:4700::1111]/v1",
+    ] {
+        assert!(
+            policy
+                .validate_url(&url::Url::parse(endpoint).unwrap())
+                .is_ok(),
+            "{endpoint}"
+        );
+    }
+}

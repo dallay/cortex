@@ -227,14 +227,22 @@ async fn ollama_protocol_uses_descriptor_paths_independent_of_adapter_metadata()
     };
     let descriptor = Box::leak(Box::new(descriptor));
 
-    let provider = build_provider_from_connection(
+    let server_origin = server.uri();
+    let provider = build_provider_from_connection_with_policy(
         &ConnectionId::new(),
         descriptor,
         &DecryptedCredentials::ApiKey {
             api_key: "ollama-key".into(),
         },
-        Some(server.uri()),
+        Some(server_origin.clone()),
         vec![ModelId::new("test-model")],
+        ProviderConnectionBuildOptions {
+            quota_recorder: None,
+            oauth_token_port: None,
+            endpoint_policy: rook_core::EndpointPolicy {
+                allowed_origins: vec![server_origin],
+            },
+        },
     )
     .expect("Ollama protocol should build regardless of adapter metadata");
     provider
@@ -562,6 +570,12 @@ impl EnvVarGuard {
         std::env::remove_var(name);
         Self { name, original }
     }
+
+    fn set(name: &'static str, value: &str) -> Self {
+        let original = std::env::var_os(name);
+        std::env::set_var(name, value);
+        Self { name, original }
+    }
 }
 
 #[cfg(unix)]
@@ -634,6 +648,56 @@ enabled = false
 
 #[cfg(unix)]
 #[test]
+fn api_key_secret_rejects_values_shorter_than_32_bytes() {
+    let _lock = API_KEY_SECRET_ENV_LOCK.lock().unwrap();
+    let _env = EnvVarGuard::set("API_KEY_HASH_SECRET", "too-short-secret");
+    let config = api_key_auth_config(":memory:");
+    let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepository::default());
+    let registry: Arc<dyn rook_core::ProviderRegistryPort> = Arc::new(FakeProviderRegistry);
+
+    let error = match build_api_key_auth(&config, &repo, &registry) {
+        Ok(_) => panic!("short API key hash secrets must be rejected"),
+        Err(error) => error,
+    };
+
+    assert!(error.to_string().contains("at least 32 bytes"));
+}
+
+#[cfg(unix)]
+#[test]
+fn api_key_secret_accepts_values_with_at_least_32_bytes() {
+    let _lock = API_KEY_SECRET_ENV_LOCK.lock().unwrap();
+    let _env = EnvVarGuard::set("API_KEY_HASH_SECRET", "01234567890123456789012345678901");
+    let config = api_key_auth_config(":memory:");
+    let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepository::default());
+    let registry: Arc<dyn rook_core::ProviderRegistryPort> = Arc::new(FakeProviderRegistry);
+
+    assert!(build_api_key_auth(&config, &repo, &registry).is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn api_key_secret_rejects_persisted_values_shorter_than_32_bytes() {
+    let _lock = API_KEY_SECRET_ENV_LOCK.lock().unwrap();
+    let _env = EnvVarGuard::remove("API_KEY_HASH_SECRET");
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("rook.db");
+    std::fs::write(&db, "").unwrap();
+    std::fs::write(dir.path().join("api_key_secret.key"), "short-file-secret\n").unwrap();
+    let config = api_key_auth_config(db.to_str().unwrap());
+    let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepository::default());
+    let registry: Arc<dyn rook_core::ProviderRegistryPort> = Arc::new(FakeProviderRegistry);
+
+    let error = match build_api_key_auth(&config, &repo, &registry) {
+        Ok(_) => panic!("short persisted secrets must be rejected"),
+        Err(error) => error,
+    };
+
+    assert!(error.to_string().contains("at least 32 bytes"));
+}
+
+#[cfg(unix)]
+#[test]
 fn api_key_secret_storage_accepts_symlinked_database_directory() {
     use std::os::unix::fs::symlink;
 
@@ -667,7 +731,7 @@ fn api_key_secret_storage_rejects_symlink_outside_database_directory() {
     std::fs::create_dir(&database_dir).unwrap();
     std::fs::create_dir(&outside_dir).unwrap();
     let outside_secret = outside_dir.join("secret.key");
-    std::fs::write(&outside_secret, "secret\n").unwrap();
+    std::fs::write(&outside_secret, "secret-value-with-at-least-32-bytes\n").unwrap();
     symlink(&outside_secret, database_dir.join("api_key_secret.key")).unwrap();
     let db_path = database_dir.join("rook.db");
     let config = api_key_auth_config(db_path.to_str().unwrap());
@@ -721,7 +785,11 @@ fn existing_api_key_secret_permissions_are_restricted_without_changing_content()
     let db = dir.path().join("rook.db");
     std::fs::write(&db, "").unwrap();
     let secret_path = dir.path().join("api_key_secret.key");
-    std::fs::write(&secret_path, "existing-secret\n").unwrap();
+    std::fs::write(
+        &secret_path,
+        "existing-secret-value-with-at-least-32-bytes\n",
+    )
+    .unwrap();
     std::fs::set_permissions(&secret_path, std::fs::Permissions::from_mode(0o644)).unwrap();
     let config = api_key_auth_config(db.to_str().unwrap());
     let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepository::default());
@@ -731,7 +799,7 @@ fn existing_api_key_secret_permissions_are_restricted_without_changing_content()
 
     assert_eq!(
         std::fs::read_to_string(&secret_path).unwrap(),
-        "existing-secret\n"
+        "existing-secret-value-with-at-least-32-bytes\n"
     );
     assert_eq!(
         std::fs::metadata(&secret_path)
@@ -754,7 +822,11 @@ fn already_restricted_api_key_secret_permissions_are_preserved() {
     let db = dir.path().join("rook.db");
     std::fs::write(&db, "").unwrap();
     let secret_path = dir.path().join("api_key_secret.key");
-    std::fs::write(&secret_path, "read-only-secret\n").unwrap();
+    std::fs::write(
+        &secret_path,
+        "read-only-secret-value-with-at-least-32-bytes\n",
+    )
+    .unwrap();
     std::fs::set_permissions(&secret_path, std::fs::Permissions::from_mode(0o400)).unwrap();
     let config = api_key_auth_config(db.to_str().unwrap());
     let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepository::default());
@@ -764,7 +836,7 @@ fn already_restricted_api_key_secret_permissions_are_preserved() {
 
     assert_eq!(
         std::fs::read_to_string(&secret_path).unwrap(),
-        "read-only-secret\n"
+        "read-only-secret-value-with-at-least-32-bytes\n"
     );
     assert_eq!(
         std::fs::metadata(&secret_path)
@@ -988,12 +1060,19 @@ fn build_provider_from_connection_ollama_cloud_uses_override() {
         api_key: "ollama-cloud-key".to_string(),
     };
     let id = conn_id();
-    let result = build_provider_from_connection(
+    let result = build_provider_from_connection_with_policy(
         &id,
         rook_core::descriptor_by_id("ollama-cloud").expect("ollama-cloud descriptor"),
         &creds,
         Some("https://staging.ollama.example.com".to_string()),
         Vec::new(),
+        ProviderConnectionBuildOptions {
+            quota_recorder: None,
+            oauth_token_port: None,
+            endpoint_policy: rook_core::EndpointPolicy {
+                allowed_origins: vec!["https://staging.ollama.example.com".to_string()],
+            },
+        },
     );
     let provider = result.expect("expected Ok for OllamaCloud with override base_url");
     assert_eq!(provider.id().as_str(), id.to_string());
