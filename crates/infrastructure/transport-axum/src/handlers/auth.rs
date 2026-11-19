@@ -179,7 +179,14 @@ pub async fn logout_handler(
     logout_response(csrf_token)
 }
 
-fn logout_response(csrf_token: Option<(String, HeaderValue)>) -> axum::response::Response {
+/// Build the logout response.
+///
+/// The response always clears the `auth_token` cookie. When an anonymous CSRF
+/// token is available, the response also sets the CSRF cookie and header.
+///
+/// This builder is public so the logout response contract can be verified from
+/// the integration test target, without reaching into private handler internals.
+pub fn logout_response(csrf_token: Option<(String, HeaderValue)>) -> axum::response::Response {
     let body = serde_json::json!({ "message": "Logged out successfully." });
     let clear_cookie =
         build_clear_auth_token_cookie(rook_environment().as_deref(), cfg!(not(debug_assertions)));
@@ -333,26 +340,4 @@ fn rook_environment() -> Option<String> {
 
 pub(crate) fn is_secure(rook_env: Option<&str>, is_release: bool) -> bool {
     is_release || rook_env == Some("production")
-}
-
-#[cfg(test)]
-mod logout_response_tests {
-    use super::*;
-
-    #[test]
-    fn logout_response_clears_auth_cookie_when_anonymous_token_is_unavailable() {
-        let response = logout_response(None);
-
-        assert_eq!(response.status(), StatusCode::OK);
-        let cookies: Vec<_> = response
-            .headers()
-            .get_all(SET_COOKIE)
-            .iter()
-            .filter_map(|value| value.to_str().ok())
-            .collect();
-        assert_eq!(cookies.len(), 1);
-        assert!(cookies[0].starts_with("auth_token="));
-        assert!(cookies[0].contains("Max-Age=0"));
-        assert!(response.headers().get("x-csrf-token").is_none());
-    }
 }

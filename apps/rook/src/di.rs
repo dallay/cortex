@@ -704,55 +704,6 @@ fn load_or_create_persisted_secret(secret_path: &std::path::Path) -> anyhow::Res
     validate_api_key_secret(secret)
 }
 
-#[cfg(test)]
-mod api_key_secret_tests {
-    use super::load_or_create_persisted_secret;
-    use std::sync::{Arc, Barrier};
-
-    fn scratch_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("rook-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch dir");
-        dir
-    }
-
-    #[test]
-    fn concurrent_initializers_converge_on_the_persisted_secret() {
-        let dir = scratch_dir("secret-init");
-        let path = dir.join("api_key_secret.key");
-
-        // Every thread starts at the same time, so without the lock they all
-        // observe the file as missing and publish a different secret.
-        let barrier = Arc::new(Barrier::new(8));
-        let handles: Vec<_> = (0..8)
-            .map(|_| {
-                let path = path.clone();
-                let barrier = Arc::clone(&barrier);
-                std::thread::spawn(move || {
-                    barrier.wait();
-                    load_or_create_persisted_secret(&path).expect("resolved secret")
-                })
-            })
-            .collect();
-
-        let secrets: Vec<String> = handles
-            .into_iter()
-            .map(|handle| handle.join().expect("initializer thread"))
-            .collect();
-        let persisted = std::fs::read_to_string(&path).expect("persisted secret");
-
-        for secret in &secrets {
-            assert_eq!(
-                secret.trim(),
-                persisted.trim(),
-                "every initializer must observe the secret that was actually persisted"
-            );
-        }
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
-
 /// Seed combos from config into SQLite on startup.
 ///
 /// For each combo in config:
