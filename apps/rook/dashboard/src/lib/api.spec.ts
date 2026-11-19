@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { microsToUsd, usdToMicros } from "./api";
 
@@ -1434,4 +1434,81 @@ describe("CSRF response rotation", () => {
 			vi.unstubAllGlobals();
 		},
 	);
+});
+
+describe("Rook mutation deadline", () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+		localStorage.clear();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it("dispatches logout after a preceding mutation stalls", async () => {
+		const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+			if (url === "/login") {
+				return Promise.resolve(
+					new Response(JSON.stringify({ csrf_token: "csrf-token" }), {
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					}),
+				);
+			}
+			if (url.includes("test-credentials")) {
+				// A request that never settles until it is aborted.
+				return new Promise<Response>((_resolve, reject) => {
+					init?.signal?.addEventListener("abort", () =>
+						reject(new DOMException("Aborted", "AbortError")),
+					);
+				});
+			}
+			return Promise.resolve(
+				new Response(JSON.stringify({ message: "Logged out successfully." }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				}),
+			);
+		});
+
+		vi.stubGlobal("fetch", fetchMock);
+		vi.resetModules();
+		const { useApi } = await import("./api");
+		const api = useApi();
+
+		const stalled = api.testCredentials({
+			providerKind: "ollama",
+			providerRuntimeId: "provider-1",
+			authType: "apiKey",
+			credentials: { apiKey: "test-api-key" },
+			config: {
+				maxConcurrent: 1,
+				quotaWindowThresholds: { warning: 80, error: 95 },
+			},
+		});
+		const settled = stalled.catch((error: Error) => error);
+
+		// Let the queued mutation start and register its deadline.
+		await vi.advanceTimersByTimeAsync(0);
+		await vi.advanceTimersByTimeAsync(30_000);
+
+		// The stalled mutation is rejected, and the rejection states that the
+		// server may still have applied the change.
+		const error = await settled;
+		expect(error).toBeInstanceOf(Error);
+		expect((error as Error).message).toContain("aborted after 30000 ms");
+		expect((error as Error).message).toContain(
+			"may still have applied the change",
+		);
+
+		// The queue advanced: logout dispatches instead of waiting forever.
+		await api.logout();
+		const logoutCalls = fetchMock.mock.calls.filter(
+			([url]) => url === "/logout",
+		);
+		expect(logoutCalls).toHaveLength(1);
+	});
 });
