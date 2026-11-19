@@ -5,6 +5,9 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+#[path = "support/binary_path.rs"]
+mod binary_path;
+
 fn legacy_binary() -> Option<PathBuf> {
     std::env::var_os("CORTEX_AGENT_LEGACY_BIN").map(Into::into)
 }
@@ -136,16 +139,11 @@ fn old_and_new_binaries_compete_for_the_shared_lock_in_both_directions() {
 
     let (old_owner, old_master, old_transcript) =
         spawn_interactive(&old, &db, workspace.path(), &id, "agent>");
-    assert_contended(
-        Path::new(env!("CARGO_BIN_EXE_huginn")),
-        &db,
-        workspace.path(),
-        &id,
-    );
+    assert_contended(&binary_path::huginn(), &db, workspace.path(), &id);
     terminate(old_owner, old_master);
 
     let (new_owner, new_master, new_transcript) = spawn_interactive(
-        Path::new(env!("CARGO_BIN_EXE_huginn")),
+        &binary_path::huginn(),
         &db,
         workspace.path(),
         &id,

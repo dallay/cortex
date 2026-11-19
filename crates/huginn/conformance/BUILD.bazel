@@ -1,0 +1,41 @@
+load("@crates//:defs.bzl", "aliases", "all_crate_deps", "crate_edition")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "huginn_conformance",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "huginn_conformance",
+    crate_root = "src/lib.rs",
+    edition = crate_edition(),
+    deps = ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core'] + all_crate_deps(normal = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+)
+
+rust_test(
+    name = "huginn_conformance_unit_test",
+    crate = ":huginn_conformance",
+    aliases = aliases(normal_dev = True, proc_macro_dev = True),
+    edition = crate_edition(),
+    deps = ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "loops",
+    crate_name = "loops",
+    srcs = ['tests/loops.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_conformance"] + ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "substitution",
+    crate_name = "substitution",
+    srcs = ['tests/substitution.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_conformance"] + ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)

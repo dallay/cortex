@@ -2,6 +2,26 @@ set shell := ["/bin/bash", "-c"]
 set dotenv-load
 set positional-arguments
 
+# === Bazel ===
+
+# Build the current Bazel bootstrap target from the root Bzlmod graph.
+bazel-build-core:
+    bazel build //crates/huginn/core:huginn_core --lockfile_mode=error
+
+# Run all unit and integration tests currently modeled for huginn-core.
+bazel-test-core:
+    bazel test //crates/huginn/core:all --lockfile_mode=error
+
+# Build every target modeled across the workspace; needs the dashboard dependencies installed with pnpm.
+bazel-build:
+    pnpm --filter @dallay/rook-dashboard run build
+    bazel build //... --lockfile_mode=error
+
+# Run the full Bazel suite without cached results; needs the dashboard dependencies installed with pnpm.
+bazel-test:
+    pnpm --filter @dallay/rook-dashboard run build
+    bazel test //... --nocache_test_results --lockfile_mode=error --test_output=summary
+
 # === Colors ===
 # Generated via printf because just 1.51.0 doesn't accept \033 (octal) or \x1b (hex)
 # escape sequences in string variables. Newer just versions handle both.

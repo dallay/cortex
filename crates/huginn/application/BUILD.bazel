@@ -1,0 +1,146 @@
+load("@crates//:defs.bzl", "aliases", "all_crate_deps", "crate_edition")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# Cargo example binary; kept out of the generated file because this package is
+# hand-tuned for the `test-hooks` split.
+rust_binary(
+    name = "providers_headless",
+    srcs = ["examples/providers_headless.rs"],
+    crate_name = "providers_headless",
+    edition = crate_edition(),
+    deps = ["//crates/huginn/core:huginn_core", ":huginn_application"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_library(
+    name = "huginn_application",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "huginn_application",
+    crate_root = "src/lib.rs",
+    edition = crate_edition(),
+    deps = ["//crates/huginn/core:huginn_core"] + all_crate_deps(normal = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+)
+
+rust_test(
+    name = "huginn_application_unit_test",
+    crate = ":huginn_application",
+    aliases = aliases(normal_dev = True, proc_macro_dev = True),
+    edition = crate_edition(),
+    deps = ["//crates/huginn/core:huginn_core"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "connections",
+    crate_name = "connections",
+    srcs = ['tests/connections.rs', 'tests/support/providers.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_application", "//crates/huginn/core:huginn_core"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "contracts",
+    crate_name = "contracts",
+    srcs = ['tests/contracts.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_application", "//crates/huginn/core:huginn_core"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "permission_policy",
+    crate_name = "permission_policy",
+    srcs = ['tests/permission_policy.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_application", "//crates/huginn/core:huginn_core"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "provider_revisions",
+    crate_name = "provider_revisions",
+    srcs = ['tests/provider_revisions.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_application", "//crates/huginn/core:huginn_core"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "providers_contracts",
+    crate_name = "providers_contracts",
+    srcs = ['tests/providers_contracts.rs', 'tests/support/providers.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_application", "//crates/huginn/core:huginn_core"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "providers_factories",
+    crate_name = "providers_factories",
+    srcs = ['tests/providers_factories.rs', 'tests/support/providers.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_application", "//crates/huginn/core:huginn_core"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "providers_turns",
+    crate_name = "providers_turns",
+    srcs = ['tests/providers_turns.rs', 'tests/support/providers.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_application", "//crates/huginn/core:huginn_core"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+# Cargo enables `test-hooks` on the package for this required-feature integration test.
+rust_library(
+    name = "huginn_application_test_hooks",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "huginn_application",
+    crate_root = "src/lib.rs",
+    crate_features = ["test-hooks"],
+    edition = crate_edition(),
+    deps = ["//crates/huginn/core:huginn_core"] + all_crate_deps(normal = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+)
+
+rust_test(
+    name = "runtime_binding_replacement",
+    crate_name = "runtime_binding_replacement",
+    srcs = ["tests/runtime_binding_replacement.rs"],
+    aliases = aliases(normal_dev = True, proc_macro_dev = True),
+    edition = crate_edition(),
+    deps = [":huginn_application_test_hooks", "//crates/huginn/core:huginn_core"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "service_slot_rebinding",
+    crate_name = "service_slot_rebinding",
+    srcs = ['tests/service_slot_rebinding.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_application", "//crates/huginn/core:huginn_core"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "tool_hooks",
+    crate_name = "tool_hooks",
+    srcs = ['tests/tool_hooks.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_application", "//crates/huginn/core:huginn_core"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "turn_identity",
+    crate_name = "turn_identity",
+    srcs = ['tests/turn_identity.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_application", "//crates/huginn/core:huginn_core"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
