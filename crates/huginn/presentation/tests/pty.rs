@@ -4,8 +4,22 @@ mod support;
 use portable_pty::CommandBuilder;
 use support::Pty;
 
+fn tui_fixture_path() -> std::path::PathBuf {
+    // Bazel may hand the fixture over as a runfiles-relative path, while Cargo
+    // always exports an absolute path. `Path::join` would discard the runfiles
+    // root for an absolute path, so the two cases are separated explicitly.
+    let cargo_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_tui-fixture"));
+    if cargo_path.is_absolute() {
+        return cargo_path;
+    }
+    match std::env::var_os("RUNFILES_DIR") {
+        Some(dir) => std::path::PathBuf::from(dir).join(cargo_path),
+        None => cargo_path,
+    }
+}
+
 fn start(mode: &str, cursor: bool) -> Pty {
-    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    let mut command = CommandBuilder::new(tui_fixture_path());
     command.arg(mode);
     Pty::start(command, cursor)
 }
@@ -386,7 +400,7 @@ fn incomplete_secret_paste_does_not_block_cancellation_or_terminal_close() {
 #[test]
 fn resizing_during_incomplete_secret_paste_does_not_start_another_reader() {
     let root = tempfile::tempdir().unwrap();
-    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    let mut command = CommandBuilder::new(tui_fixture_path());
     command.arg("secret-form");
     command.cwd(root.path());
     let mut pty = Pty::start(command, true);
@@ -427,7 +441,7 @@ fn contribution_refresh_preserves_incomplete_secret_paste_ownership() {
 
 fn assert_invalidated_fragmented_paste(mode: &str) {
     let root = tempfile::tempdir().unwrap();
-    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    let mut command = CommandBuilder::new(tui_fixture_path());
     command.arg(mode);
     command.cwd(root.path());
     let mut pty = Pty::start(command, true);
@@ -699,7 +713,7 @@ fn enter_accepting_host_command_completion_still_dispatches_builtin() {
 fn file_enter_completes_without_sending_and_preserves_textual_reference() {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("guide file.md"), "NEVER_ATTACH_CONTENT").unwrap();
-    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    let mut command = CommandBuilder::new(tui_fixture_path());
     command.arg("normal");
     command.cwd(root.path());
     let mut pty = Pty::start(command, true);
@@ -722,7 +736,7 @@ fn enter_after_large_paste_refreshes_file_completion_before_submitting() {
     const PASTE: &str = "pasted-line-one\npasted-line-two\npasted-line-three";
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("guide.md"), "NEVER_ATTACH_CONTENT").unwrap();
-    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    let mut command = CommandBuilder::new(tui_fixture_path());
     command.arg("normal");
     command.cwd(root.path());
     let mut pty = Pty::start(command, true);
@@ -766,7 +780,7 @@ fn enter_after_large_paste_refreshes_file_completion_before_submitting() {
 fn file_enter_completes_during_an_active_turn() {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("guide.md"), "").unwrap();
-    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    let mut command = CommandBuilder::new(tui_fixture_path());
     command.arg("normal");
     command.cwd(root.path());
     let mut pty = Pty::start(command, true);
@@ -798,7 +812,7 @@ fn approval_does_not_erase_a_revoked_selection() {
 
 fn assert_revoked_selection(mode: &str, enter: &str, approval: bool) {
     let root = tempfile::tempdir().unwrap();
-    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    let mut command = CommandBuilder::new(tui_fixture_path());
     command.arg(mode);
     command.cwd(root.path());
     let mut pty = Pty::start(command, true);
@@ -830,7 +844,7 @@ fn assert_revoked_selection(mode: &str, enter: &str, approval: bool) {
 #[test]
 fn overlays_during_streaming_never_commit_ui_or_secrets_to_scrollback() {
     const SECRET: &str = "OVERLAY_SECRET_NEVER_HISTORY";
-    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    let mut command = CommandBuilder::new(tui_fixture_path());
     command.arg("bar");
     let mut pty = Pty::start(command, true);
     pty.wait_for("fixture/alpha");
@@ -912,7 +926,7 @@ fn overlays_during_streaming_never_commit_ui_or_secrets_to_scrollback() {
 
 #[test]
 fn actual_terminal_resize_preserves_bar_and_restores_overlay_surface() {
-    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    let mut command = CommandBuilder::new(tui_fixture_path());
     command.arg("bar");
     let mut pty = Pty::start(command, true);
     pty.wait_for("fixture/alpha");
@@ -948,7 +962,7 @@ fn actual_terminal_resize_preserves_bar_and_restores_overlay_surface() {
 #[test]
 fn overlays_keep_status_visible_at_minimum_inline_size() {
     for (rows, cols) in [(30, 100), (8, 20)] {
-        let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+        let mut command = CommandBuilder::new(tui_fixture_path());
         command.arg("bar");
         let mut pty = Pty::start_sized(command, true, rows, cols);
         pty.wait_for("Huginn");
@@ -1009,7 +1023,7 @@ fn settings_pty_render_header_and_marker() {
     pty.send("\x03");
     pty.finish(true);
 
-    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    let mut command = CommandBuilder::new(tui_fixture_path());
     command.arg("normal");
     let mut narrow = Pty::start_sized(command, true, 8, 20);
     narrow.wait_for("Huginn");
@@ -1062,7 +1076,7 @@ fn settings_pty_escape_closes_modal_without_cancelling_stream() {
 
 #[test]
 fn approval_resize_below_minimum_disarms_until_a_fresh_draw() {
-    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    let mut command = CommandBuilder::new(tui_fixture_path());
     command.arg("normal");
     let mut pty = Pty::start_sized(command, true, 30, 100);
     pty.wait_for("Huginn");
@@ -1101,7 +1115,7 @@ fn approval_resize_below_minimum_disarms_until_a_fresh_draw() {
 
 #[test]
 fn palette_keeps_selected_command_visible_in_minimum_terminal() {
-    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    let mut command = CommandBuilder::new(tui_fixture_path());
     command.arg("normal");
     let mut pty = Pty::start_sized(command, true, 8, 20);
     pty.wait_for("Huginn");
@@ -1211,7 +1225,7 @@ fn one_enter_opens_the_provider_form_and_does_not_submit_it() {
 #[test]
 fn composer_and_fresh_approval_work_after_100_streaming_resizes() {
     let root = tempfile::tempdir().unwrap();
-    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_tui-fixture"));
+    let mut command = CommandBuilder::new(tui_fixture_path());
     command.arg("resize-stream");
     command.cwd(root.path());
     let mut pty = Pty::start(command, true);
