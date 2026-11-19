@@ -528,13 +528,14 @@ async fn get_login_always_generates_fresh_csrf_token() {
     // Security remediation: GET /login now always generates a fresh CSRF token
     // rather than reusing the existing one. This prevents CSRF token reuse attacks.
     let usecases = make_bootstrap_usecases(Arc::new(FakeUserRepo::fresh()), None);
+    let guard = Arc::new(CsrfGuard::new());
     let app = transport_axum::router(
         usecases,
         AuthzConfig::from_env(),
         Arc::new(LoginRateLimiter::new()),
         Arc::new(IpRateLimiter::new()),
         Arc::new(ApiKeyRateLimiter::new()),
-        Arc::new(CsrfGuard::new()),
+        guard.clone(),
         None,
     );
 
@@ -559,8 +560,15 @@ async fn get_login_always_generates_fresh_csrf_token() {
     let new_token = json["csrf_token"].as_str().unwrap();
     // The new token should be different from the incoming one
     assert_ne!(new_token, &valid_token);
-    // The new token should be a valid 43-char base64url token
-    assert_eq!(new_token.len(), 43);
+    // The new token has the signed payload format and is bound to anonymous context.
+    let decoded =
+        base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, new_token)
+            .expect("CSRF token is base64url");
+    assert_eq!(decoded.len(), 98);
+    assert_eq!(
+        guard.validate(Some(new_token), Some(new_token)),
+        transport_axum::middleware::csrf_guard::CsrfValidation::Valid
+    );
     assert!(set_cookie.contains(new_token));
 
     // Without any incoming cookie, GET /login also generates a fresh token
@@ -582,7 +590,9 @@ async fn get_login_always_generates_fresh_csrf_token() {
     let response = app.oneshot(request).await.unwrap();
     let json = body_json(response).await;
     let token = json["csrf_token"].as_str().unwrap();
-    assert_eq!(token.len(), 43);
+    let decoded = base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, token)
+        .expect("CSRF token is base64url");
+    assert_eq!(decoded.len(), 98);
 }
 
 #[tokio::test]

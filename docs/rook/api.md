@@ -274,6 +274,8 @@ The provider redirects with `state` and `code`; on cancellation it may send `err
 
 ## Authentication and CSRF
 
-Management APIs use a session cookie. `GET /login` obtains a CSRF token and cookie. `POST /login` accepts the configured credentials and requires the CSRF cookie plus matching `X-CSRF-Token`; on success it creates the session. `POST /logout` revokes the session and also requires CSRF. Other mutating admin APIs follow the same CSRF requirement.
+Management APIs use a session cookie. `GET /login` obtains a CSRF token and cookie. `POST /login` accepts the configured credentials and requires the CSRF cookie plus matching `X-CSRF-Token`; on success it creates the session and returns a token bound to the new session. `POST /logout` revokes the session, clears the auth cookie, and issues an anonymous-bound CSRF token. Other mutating admin APIs follow the same CSRF requirement.
+
+CSRF tokens are stateless HMAC-SHA-256 signed tokens. The cookie value and `X-CSRF-Token` header must match; the server validates both the signature and the token's SHA-256 binding to the current `auth_token` cookie. When no auth cookie is present, the token uses the anonymous context. A valid token can be reused until it expires; validation does not consume it. Tokens expire within 24 hours, and the server rejects any token whose declared lifetime exceeds 24 hours. After a state-changing request passes CSRF validation, the middleware rotates the token, except for login and logout, whose handlers issue tokens for their new session context.
 
 For first-run installation, use the bootstrap API above. For pre-seeding an admin password in a controlled environment, use `rook seed-admin` with the `$ROOK_SEED_PASSWORD` environment variable set.

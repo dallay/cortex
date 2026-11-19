@@ -92,7 +92,31 @@ pub fn build_api_key_auth(
         return Ok((None, None));
     }
     let hash_secret = resolve_api_key_secret(&config.database.db_path)?;
-    Ok((
+    Ok(build_api_key_auth_with_secret(
+        config,
+        api_key_repo,
+        registry,
+        hash_secret,
+    ))
+}
+
+/// Build the API key use cases from an already resolved hash secret.
+///
+/// The composition root resolves the persistent secret once and shares it with
+/// every consumer, so the file-backed secret is read a single time.
+fn build_api_key_auth_with_secret(
+    config: &RookConfig,
+    api_key_repo: &Arc<dyn ApiKeyRepositoryPort>,
+    registry: &Arc<dyn ProviderRegistryPort>,
+    hash_secret: String,
+) -> (
+    Option<AuthenticateClientApi>,
+    Option<rook_usecases::ManageApiKeys>,
+) {
+    if !config.auth.api_keys.enabled {
+        return (None, None);
+    }
+    (
         Some(AuthenticateClientApi::new(
             api_key_repo.clone(),
             hash_secret.clone(),
@@ -102,7 +126,7 @@ pub fn build_api_key_auth(
             hash_secret,
             registry.clone(),
         )),
-    ))
+    )
 }
 
 pub fn build_manage_connections(
@@ -211,6 +235,11 @@ impl RookContainer {
             user_repo.clone(),
         ));
 
+        // Resolve persistent signing material once. CSRF uses a domain-separated
+        // key derived from this secret, including when API-key auth is disabled.
+        let hash_secret = resolve_api_key_secret(&config.database.db_path)?;
+        let csrf_signing_key = transport_axum::derive_csrf_signing_key(hash_secret.as_bytes());
+
         // 6. Auth use cases
         let bootstrap_status = BootstrapStatus::new(user_repo.clone());
         let ensure_admin_user = EnsureAdminUser::new(user_repo.clone());
@@ -225,7 +254,7 @@ impl RookContainer {
             sqlite_api_key_repo.clone();
 
         let (authenticate_client_api, manage_api_keys) =
-            build_api_key_auth(config, &api_key_repo, &registry)?;
+            build_api_key_auth_with_secret(config, &api_key_repo, &registry, hash_secret.clone());
 
         // 7. Build shared provider repository for manage_connections AND usage/connection lookup
         // Single shared instance — NOT duplicated for RouteRequest.
@@ -424,7 +453,9 @@ impl RookContainer {
             api_key_rate_limiter: Arc::new(transport_axum::ApiKeyRateLimiter::with_config(
                 rate_limiter_config,
             )),
-            csrf_guard: Arc::new(transport_axum::CsrfGuard::new()),
+            csrf_guard: Arc::new(transport_axum::CsrfGuard::with_signing_key(
+                csrf_signing_key,
+            )),
             rate_limit_store,
             usage_repository: sqlite_usage,
             quota_observation_recorder,
@@ -494,12 +525,23 @@ fn is_in_memory_sqlite_target(path: &str) -> bool {
         || path.starts_with("mem:")
 }
 
+const MIN_API_KEY_HASH_SECRET_BYTES: usize = 32;
+
+fn validate_api_key_secret(secret: String) -> anyhow::Result<String> {
+    if secret.len() < MIN_API_KEY_HASH_SECRET_BYTES {
+        anyhow::bail!(
+            "API_KEY_HASH_SECRET must contain at least {MIN_API_KEY_HASH_SECRET_BYTES} bytes"
+        );
+    }
+    Ok(secret)
+}
+
 fn resolve_api_key_secret(db_path: &str) -> anyhow::Result<String> {
     // 1. Explicit env var wins.
     if let Ok(s) = std::env::var("API_KEY_HASH_SECRET") {
         let s = s.trim().to_string();
         if !s.is_empty() {
-            return Ok(s);
+            return validate_api_key_secret(s);
         }
     }
 
@@ -510,7 +552,7 @@ fn resolve_api_key_secret(db_path: &str) -> anyhow::Result<String> {
             "API_KEY_HASH_SECRET not set and db_path is in-memory — \
              generating transient secret. Set API_KEY_HASH_SECRET env var for persistence."
         );
-        return Ok(generate_setup_token());
+        return validate_api_key_secret(generate_setup_token());
     }
 
     // 3. Filesystem path — resolve and validate, then check/create the secret file.
@@ -574,7 +616,7 @@ fn resolve_api_key_secret(db_path: &str) -> anyhow::Result<String> {
             .map_err(|e| anyhow::anyhow!("failed to read api_key_secret.key: {e}"))?;
         let s = s.trim().to_string();
         if !s.is_empty() {
-            return Ok(s);
+            return validate_api_key_secret(s);
         }
     }
 
@@ -610,7 +652,7 @@ fn resolve_api_key_secret(db_path: &str) -> anyhow::Result<String> {
          Set the env var for production deployments."
     );
 
-    Ok(secret)
+    validate_api_key_secret(secret)
 }
 
 /// Seed combos from config into SQLite on startup.

@@ -19,11 +19,11 @@ The same raw API key produces **different hashes** with **different secrets**. T
 ### Option 1: Environment Variable (Recommended for Production)
 
 ```bash
-# Generate a secure secret
+# Generate a secure 32-byte secret and copy the output into your secret manager
 openssl rand -hex 32
 
-# Add to your shell profile (~/.zshrc, ~/.bashrc)
-export API_KEY_HASH_SECRET="your-generated-secret-here"
+# Add the generated value to your shell profile (~/.zshrc, ~/.bashrc)
+export API_KEY_HASH_SECRET="<generated-64-character-hex-value>"
 ```
 
 Then restart your shell or run `source ~/.zshrc`.
@@ -93,7 +93,7 @@ cat ~/.cortex/rook/api_key_secret.key
 ### Step 2: Use the Correct Secret When Starting Rook
 
 ```bash
-API_KEY_HASH_SECRET="correct-secret-here" \
+API_KEY_HASH_SECRET="<existing-generated-secret-of-at-least-32-bytes>" \
 ROOK_CONFIG=$HOME/.cortex/rook/config.toml \
 cargo run -p rook
 ```

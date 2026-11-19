@@ -23,8 +23,8 @@ mod responses_stream;
 pub mod routes;
 
 pub use middleware::{
-    ApiKeyRateLimitExceeded, ApiKeyRateLimiter, CsrfGuard, IpRateLimiter, LoginRateLimiter,
-    RateLimitSnapshot,
+    derive_csrf_signing_key, ApiKeyRateLimitExceeded, ApiKeyRateLimiter, CsrfGuard, IpRateLimiter,
+    LoginRateLimiter, RateLimitSnapshot,
 };
 pub use routes::router;
 

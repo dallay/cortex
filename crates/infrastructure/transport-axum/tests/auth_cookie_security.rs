@@ -173,7 +173,7 @@ async fn public_login_logout_and_csrf_handlers_set_secure_cookies_in_production(
         ))
         .with_state(usecases.clone())
         .layer(axum::middleware::from_fn_with_state(
-            guard,
+            guard.clone(),
             transport_axum::middleware::csrf_guard::csrf_guard_middleware,
         ));
     use tower::ServiceExt;
@@ -271,9 +271,13 @@ async fn public_login_logout_and_csrf_handlers_set_secure_cookies_in_production(
     let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(body["csrf_token"], header_token);
 
-    let login_response = get_login_handler(State(usecases.clone()))
-        .await
-        .into_response();
+    let login_response = get_login_handler(
+        State(usecases.clone()),
+        axum::Extension(guard.clone()),
+        HeaderMap::new(),
+    )
+    .await
+    .into_response();
     let csrf_cookie = login_response
         .headers()
         .get(SET_COOKIE)
@@ -287,7 +291,7 @@ async fn public_login_logout_and_csrf_handlers_set_secure_cookies_in_production(
         axum::http::header::COOKIE,
         HeaderValue::from_static("auth_token=dGVzdA"),
     );
-    let logout_response = logout_handler(State(usecases), headers)
+    let logout_response = logout_handler(State(usecases), axum::Extension(guard), headers)
         .await
         .into_response();
     let cleared_cookie = logout_response

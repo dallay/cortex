@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::State,
+    extract::{Extension, State},
     http::{
         header::{COOKIE, SET_COOKIE},
         HeaderMap, HeaderValue, StatusCode,
@@ -28,6 +28,7 @@ use sha2::{Digest, Sha256};
 /// Rate limited: 429 Too Many Requests with Retry-After header
 pub async fn login_handler(
     State(usecases): State<Arc<RookUsecases>>,
+    Extension(csrf_guard): Extension<Arc<crate::middleware::csrf_guard::CsrfGuard>>,
     Json(body): Json<LoginRequest>,
 ) -> impl IntoResponse {
     // Note: Rate limiting is applied at the middleware level in production
@@ -49,7 +50,7 @@ pub async fn login_handler(
             // This lets the client seed its CSRF cache before the first
             // state-changing request, avoiding the GET /login round-trip
             // that races with the Set-Cookie landing in WebKit's cookie jar.
-            let csrf_token = match generate_csrf_token() {
+            let csrf_token = match csrf_guard.generate_token_for(Some(&cookie_value)) {
                 Ok(token) => token,
                 Err(_) => {
                     // RNG failure is extremely rare. Return 500 rather than
@@ -62,10 +63,9 @@ pub async fn login_handler(
                 }
             };
             let rook_env = rook_environment();
-            let csrf_cookie = build_csrf_token_cookie(
+            let csrf_cookie = csrf_guard.build_cookie_header(
                 &csrf_token,
-                rook_env.as_deref(),
-                cfg!(not(debug_assertions)),
+                is_secure(rook_env.as_deref(), cfg!(not(debug_assertions))),
             );
 
             // Build auth_token Set-Cookie header
@@ -125,6 +125,7 @@ pub async fn login_handler(
 /// Clears the cookie on success.
 pub async fn logout_handler(
     State(usecases): State<Arc<RookUsecases>>,
+    Extension(csrf_guard): Extension<Arc<crate::middleware::csrf_guard::CsrfGuard>>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
     // Extract auth_token cookie
@@ -156,6 +157,25 @@ pub async fn logout_handler(
     hasher.update(&token_bytes);
     let token_hash = hex::encode(hasher.finalize());
 
+    // Prepare the anonymous CSRF token before revoking the session so RNG failure
+    // cannot leave the client logged out without a usable CSRF context.
+    let csrf_token = match csrf_guard.generate_token() {
+        Ok(token) => token,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "internal_error",
+                    "message": "An internal error occurred."
+                })),
+            )
+                .into_response();
+        }
+    };
+    let secure = is_secure(rook_environment().as_deref(), cfg!(not(debug_assertions)));
+    let csrf_cookie = csrf_guard.build_cookie_header(&csrf_token, secure);
+    let csrf_header = HeaderValue::from_str(&csrf_token).expect("base64url token");
+
     // Revoke the session.
     // "Session not found" and "already revoked" are both fine — the client's intent
     // (logout) is achieved either way. Always clear the cookie and return success.
@@ -166,7 +186,18 @@ pub async fn logout_handler(
                 rook_environment().as_deref(),
                 cfg!(not(debug_assertions)),
             );
-            (AppendHeaders([(SET_COOKIE, clear_cookie)]), Json(body)).into_response()
+            (
+                AppendHeaders([
+                    (SET_COOKIE, clear_cookie),
+                    (SET_COOKIE, csrf_cookie.clone()),
+                    (
+                        axum::http::HeaderName::from_static("x-csrf-token"),
+                        csrf_header.clone(),
+                    ),
+                ]),
+                Json(body),
+            )
+                .into_response()
         }
         Err(_) => {
             // Session already gone — treat as successful logout and clear the cookie.
@@ -175,7 +206,18 @@ pub async fn logout_handler(
                 rook_environment().as_deref(),
                 cfg!(not(debug_assertions)),
             );
-            (AppendHeaders([(SET_COOKIE, clear_cookie)]), Json(body)).into_response()
+            (
+                AppendHeaders([
+                    (SET_COOKIE, clear_cookie),
+                    (SET_COOKIE, csrf_cookie.clone()),
+                    (
+                        axum::http::HeaderName::from_static("x-csrf-token"),
+                        csrf_header.clone(),
+                    ),
+                ]),
+                Json(body),
+            )
+                .into_response()
         }
     }
 }
@@ -256,9 +298,14 @@ pub async fn get_me_handler(State(_usecases): State<Arc<RookUsecases>>) -> impl 
 /// ensuring token rotation even on GET requests. Sets csrf_token cookie and
 /// returns the token in the response body. The client must echo this token
 /// back in the X-CSRF-Token header for state-changing requests (POST, PUT, DELETE).
-pub async fn get_login_handler(State(_usecases): State<Arc<RookUsecases>>) -> impl IntoResponse {
-    // Always generate a fresh CSRF token — no reuse.
-    let token = match generate_csrf_token() {
+pub async fn get_login_handler(
+    State(_usecases): State<Arc<RookUsecases>>,
+    Extension(csrf_guard): Extension<Arc<crate::middleware::csrf_guard::CsrfGuard>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    // Bind the token to the current session when a session cookie is present.
+    let auth_token = extract_cookie(&headers, "auth_token");
+    let token = match csrf_guard.generate_token_for(auth_token.as_deref()) {
         Ok(token) => token,
         Err(_) => {
             // RNG failure — preserve any existing incoming CSRF cookie so the
@@ -271,10 +318,9 @@ pub async fn get_login_handler(State(_usecases): State<Arc<RookUsecases>>) -> im
         }
     };
 
-    let cookie = build_csrf_token_cookie(
+    let cookie = csrf_guard.build_cookie_header(
         &token,
-        rook_environment().as_deref(),
-        cfg!(not(debug_assertions)),
+        is_secure(rook_environment().as_deref(), cfg!(not(debug_assertions))),
     );
 
     let body = serde_json::json!({
@@ -282,33 +328,6 @@ pub async fn get_login_handler(State(_usecases): State<Arc<RookUsecases>>) -> im
     });
 
     (AppendHeaders([(SET_COOKIE, cookie)]), Json(body)).into_response()
-}
-
-/// Generate a 32-byte random CSRF token encoded as base64url
-fn generate_csrf_token() -> Result<String, String> {
-    crate::middleware::csrf_guard::CsrfGuard::new()
-        .generate_token()
-        .map_err(|_| "failed to generate CSRF token".to_string())
-}
-
-/// Build the csrf_token cookie string
-fn build_csrf_token_cookie(token: &str, rook_env: Option<&str>, is_release: bool) -> HeaderValue {
-    let secure = is_secure(rook_env, is_release);
-    let mut cookie = format!(
-        "csrf_token={}; SameSite=Strict; Path=/; Max-Age=86400",
-        token
-    );
-    if secure {
-        cookie.push_str("; Secure");
-    }
-    HeaderValue::from_str(&cookie).unwrap_or_else(|_| {
-        let fallback = if secure {
-            "csrf_token=invalid; Path=/; Secure"
-        } else {
-            "csrf_token=invalid; Path=/"
-        };
-        HeaderValue::from_str(fallback).unwrap()
-    })
 }
 
 fn build_clear_auth_token_cookie(rook_env: Option<&str>, is_release: bool) -> HeaderValue {

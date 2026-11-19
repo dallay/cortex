@@ -9,6 +9,6 @@ pub mod token_bucket;
 pub use api_key_rate_limiter::{
     ApiKeyRateLimiter, RateLimitExceeded as ApiKeyRateLimitExceeded, RateLimitSnapshot,
 };
-pub use csrf_guard::{csrf_guard_middleware, CsrfGuard};
+pub use csrf_guard::{csrf_guard_middleware, derive_csrf_signing_key, CsrfGuard};
 pub use ip_rate_limiter::IpRateLimiter;
 pub use login_rate_limiter::{LoginRateLimiter, RateLimitExceeded};

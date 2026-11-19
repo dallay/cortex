@@ -127,6 +127,49 @@ fn credentials_request() -> TestCredentialsRequest {
 }
 
 #[test]
+fn ollama_config_conversion_preserves_local_base_url() {
+    let create: CreateProviderRequest = serde_json::from_value(serde_json::json!({
+        "providerKind": "ollama", "providerRuntimeId": "ollama",
+        "authType": "apiKey", "name": "local", "priority": 1, "isActive": true,
+        "credentials": {"apiKey": ""},
+        "config": {
+            "baseUrl": "http://localhost:11434", "maxConcurrent": 1,
+            "quotaWindowThresholds": {"warning": 0.7, "error": 0.9}
+        }
+    }))
+    .unwrap();
+    let domain = CreateConnectionRequest::try_from(&create).unwrap();
+    assert_eq!(
+        domain.config.base_url.as_deref(),
+        Some("http://localhost:11434")
+    );
+}
+
+#[test]
+fn create_and_partial_update_allow_ollama_config() {
+    let config = serde_json::json!({
+        "baseUrl": "http://localhost:11434", "maxConcurrent": 1,
+        "quotaWindowThresholds": {"warning": 0.7, "error": 0.9}
+    });
+    let create: CreateProviderRequest = serde_json::from_value(serde_json::json!({
+        "providerKind": "ollama", "providerRuntimeId": "ollama",
+        "authType": "apiKey", "name": "local", "priority": 1, "isActive": true,
+        "credentials": {"apiKey": ""}, "config": config
+    }))
+    .unwrap();
+    assert!(CreateConnectionRequest::try_from(&create).is_ok());
+    for kind in [None, Some("ollama")] {
+        let update: UpdateProviderRequest = serde_json::from_value(serde_json::json!({
+            "expectedUpdatedAt": "2026-01-01T00:00:00Z", "providerKind": kind, "config": config
+        }))
+        .unwrap();
+        assert!(
+            rook_usecases::manage_connections::UpdateConnectionRequest::try_from(&update).is_ok()
+        );
+    }
+}
+
+#[test]
 fn update_rejects_unknown_provider_id() {
     let request: UpdateProviderRequest = serde_json::from_value(serde_json::json!({
         "expectedUpdatedAt": Utc::now().to_rfc3339(),
