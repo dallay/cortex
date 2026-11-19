@@ -13,6 +13,31 @@ pub(super) fn report(operation: &'static str, error: &std::io::Error) {
     eprintln!("{}", format_error(operation, error));
 }
 
+/// Reports a failed scan step together with the descriptor pressure of the
+/// process, because an exhausted descriptor table is indistinguishable from a
+/// closed descriptor unless the errno is known.
+fn report_scan_failure(operation: &'static str, error: &std::io::Error) {
+    eprintln!(
+        "[c1-fs-test] operation={operation} errno={:?} nofile_cur={:?}",
+        error.raw_os_error(),
+        descriptor_limit().current
+    );
+}
+
+/// Returns the descriptor limit of the process.
+fn descriptor_limit() -> rustix::process::Rlimit {
+    rustix::process::getrlimit(rustix::process::Resource::Nofile)
+}
+
+/// Returns the directory that lists the descriptors of the process.
+fn descriptor_directory() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "/dev/fd"
+    } else {
+        "/proc/self/fd"
+    }
+}
+
 thread_local! {
     static PRE_RENAME_PROBE: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
 }
@@ -44,11 +69,7 @@ pub(super) fn probe_pre_rename() {
 /// Reports whether an open descriptor still refers to the given inode.
 /// Returns None when a failed scan cannot establish that it is closed.
 pub(super) fn descriptor_open_for(device: u64, inode: u64) -> Option<bool> {
-    let directory = if cfg!(target_os = "macos") {
-        "/dev/fd"
-    } else {
-        "/proc/self/fd"
-    };
+    let directory = descriptor_directory();
 
     // A single descriptor for the directory keeps every lookup relative to it,
     // so no path is ever built from a directory entry name.
@@ -59,7 +80,7 @@ pub(super) fn descriptor_open_for(device: u64, inode: u64) -> Option<bool> {
     ) {
         Ok(descriptors) => descriptors,
         Err(error) => {
-            report("descriptor.open_directory", &std::io::Error::from(error));
+            report_scan_failure("descriptor.open_directory", &std::io::Error::from(error));
             return None;
         }
     };
@@ -69,7 +90,7 @@ pub(super) fn descriptor_open_for(device: u64, inode: u64) -> Option<bool> {
     let entries = match std::fs::read_dir(directory) {
         Ok(entries) => entries,
         Err(error) => {
-            report("descriptor.read_directory", &error);
+            report_scan_failure("descriptor.read_directory", &error);
             return None;
         }
     };
@@ -78,7 +99,7 @@ pub(super) fn descriptor_open_for(device: u64, inode: u64) -> Option<bool> {
         let entry = match entry {
             Ok(entry) => entry,
             Err(error) => {
-                report("descriptor.read_entry", &error);
+                report_scan_failure("descriptor.read_entry", &error);
                 return None;
             }
         };
@@ -99,7 +120,24 @@ pub(super) fn descriptor_open_for(device: u64, inode: u64) -> Option<bool> {
             None => conclusive = false,
         }
     }
+    if !conclusive {
+        eprintln!("{}", format_scan_inconclusive(slots.len()));
+    }
     conclusive.then_some(false)
+}
+
+/// Formats the summary of a scan that could not classify every descriptor.
+fn format_scan_inconclusive(slots: usize) -> String {
+    format!("[c1-fs-test] operation=descriptor.scan_inconclusive slots={slots}")
+}
+
+/// Widens the signed device identifier of a descriptor the same way the
+/// standard library widens it. A socket descriptor reports a negative
+/// identifier on this platform, and that identifier still identifies the
+/// socket, so the scan must keep comparing it instead of giving up.
+#[cfg(target_os = "macos")]
+fn widen_device(device: i32) -> u64 {
+    device as u64
 }
 
 /// Classifies one descriptor slot against the target identity.
@@ -116,7 +154,7 @@ fn slot_matches(
         // A closed slot proves that no descriptor refers to the target.
         Err(rustix::io::Errno::BADF) => return Some(false),
         Err(error) => {
-            report("descriptor.statat", &std::io::Error::from(error));
+            report_scan_failure("descriptor.statat", &std::io::Error::from(error));
             return None;
         }
     };
@@ -134,20 +172,11 @@ fn slot_matches(
             let reopened = match rustix::fs::fstat(&handle) {
                 Ok(stat) => stat,
                 Err(error) => {
-                    report("descriptor.fstat", &std::io::Error::from(error));
+                    report_scan_failure("descriptor.fstat", &std::io::Error::from(error));
                     return None;
                 }
             };
-            let reopened_device = match u64::try_from(reopened.st_dev) {
-                Ok(device) => device,
-                Err(_) => {
-                    report(
-                        "descriptor.device_conversion",
-                        &std::io::Error::other("negative device identifier"),
-                    );
-                    return None;
-                }
-            };
+            let reopened_device = widen_device(reopened.st_dev);
             Some(reopened_device == device && reopened.st_ino == inode)
         }
         // The slot cannot be reopened, for example because it is write-only, so
@@ -252,6 +281,52 @@ mod tests {
         assert_eq!(
             format_error("publish.pre_sync", &sensitive),
             "[c1-fs-test] operation=publish.pre_sync errno=None"
+        );
+    }
+
+    #[test]
+    fn an_inconclusive_scan_reports_the_slot_count_without_paths() {
+        assert_eq!(
+            super::format_scan_inconclusive(7),
+            "[c1-fs-test] operation=descriptor.scan_inconclusive slots=7"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn descriptor_scan_stays_conclusive_with_a_socket_descriptor_open() {
+        use std::os::unix::fs::MetadataExt;
+
+        // A socket descriptor reports a negative device identifier on this
+        // platform. The scan must still classify it instead of giving up,
+        // because the process always holds sockets open.
+        let (_left, _right) = std::os::unix::net::UnixStream::pair().expect("socket pair");
+        let root = tempfile::tempdir().expect("fixture");
+        let path = root.path().join("closed");
+        std::fs::write(&path, b"content").expect("fixture file");
+        let metadata = std::fs::metadata(&path).expect("fixture metadata");
+        assert_eq!(
+            super::descriptor_open_for(metadata.dev(), metadata.ino()),
+            Some(false),
+            "an open socket descriptor must not make the scan inconclusive"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn the_widened_device_matches_the_standard_library_device() {
+        use std::os::unix::fs::MetadataExt;
+
+        let root = tempfile::tempdir().expect("fixture");
+        let path = root.path().join("file");
+        std::fs::write(&path, b"content").expect("fixture file");
+        let metadata = std::fs::metadata(&path).expect("fixture metadata");
+        let file = std::fs::File::open(&path).expect("open fixture");
+        let stat = rustix::fs::fstat(&file).expect("fstat fixture");
+        assert_eq!(
+            super::widen_device(stat.st_dev),
+            metadata.dev(),
+            "the widened device must match the device of the standard library"
         );
     }
 }
