@@ -606,6 +606,10 @@ fn build_api_key_auth_disabled_returns_none() {
 
 #[test]
 fn build_api_key_auth_enabled_returns_some() {
+    // Serialize against the tests that mutate API_KEY_HASH_SECRET so this test
+    // never observes a transient value from a parallel test.
+    #[cfg(unix)]
+    let _lock = API_KEY_SECRET_ENV_LOCK.lock().unwrap();
     // Use in-memory SQLite so resolve_api_key_secret generates a transient secret
     // automatically without needing to mutate the process environment.
     let config: RookConfig = toml::from_str(
