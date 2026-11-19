@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { microsToUsd, usdToMicros } from "./api";
 
@@ -1311,5 +1311,207 @@ describe("Rook OAuth API client", () => {
 			"/api/combos/combo-1",
 			expect.objectContaining({ method: "DELETE" }),
 		);
+	});
+});
+
+describe("CSRF response rotation", () => {
+	it("serializes four concurrent state-changing calls until response tokens are adopted", async () => {
+		vi.resetModules();
+		let releaseFirst!: (response: Response) => void;
+		const firstResponse = new Promise<Response>((resolve) => {
+			releaseFirst = resolve;
+		});
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ csrf_token: "initial" })),
+			)
+			.mockReturnValueOnce(firstResponse)
+			.mockResolvedValueOnce(
+				new Response("{}", { headers: { "X-CSRF-Token": "rotated-1" } }),
+			)
+			.mockResolvedValueOnce(
+				new Response("{}", { headers: { "X-CSRF-Token": "rotated-2" } }),
+			)
+			.mockResolvedValueOnce(new Response("{}"));
+		vi.stubGlobal("fetch", fetchMock);
+		const { useApi } = await import("./api");
+		const api = useApi();
+
+		const mutations = [api.logout(), api.logout(), api.logout(), api.logout()];
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		// Only the first mutation may dispatch while its response token is unknown.
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+
+		releaseFirst(
+			new Response("{}", { headers: { "X-CSRF-Token": "rotated-0" } }),
+		);
+		await Promise.all(mutations);
+		expect(fetchMock).toHaveBeenCalledTimes(5);
+		expect(
+			fetchMock.mock.calls
+				.slice(2)
+				.map(([, options]) => options.headers["X-CSRF-Token"]),
+		).toEqual(["rotated-0", "rotated-1", "rotated-2"]);
+	});
+
+	it("continues dispatching after a state-changing request rejects", async () => {
+		vi.resetModules();
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ csrf_token: "initial" })),
+			)
+			.mockRejectedValueOnce(new TypeError("network failed"))
+			.mockResolvedValueOnce(new Response("{}"));
+		vi.stubGlobal("fetch", fetchMock);
+		const { useApi } = await import("./api");
+		const api = useApi();
+
+		await expect(api.logout()).rejects.toThrow("network failed");
+		await expect(api.logout()).resolves.toBeUndefined();
+		expect(fetchMock).toHaveBeenCalledTimes(3);
+	});
+
+	it.each([200, 400, 500])(
+		"adopts initial response token with status %s",
+		async (status) => {
+			vi.resetModules();
+			const fetchMock = vi
+				.fn()
+				.mockResolvedValueOnce(
+					new Response(JSON.stringify({ csrf_token: "initial" })),
+				)
+				.mockResolvedValueOnce(
+					new Response("{}", {
+						status,
+						headers: { "X-CSRF-Token": "rotated" },
+					}),
+				)
+				.mockResolvedValueOnce(new Response("{}"));
+			vi.stubGlobal("fetch", fetchMock);
+			const { useApi } = await import("./api");
+			const api = useApi();
+			await api.logout().catch(() => {});
+			await api.logout();
+			expect(fetchMock.mock.calls[2]?.[1].headers["X-CSRF-Token"]).toBe(
+				"rotated",
+			);
+			vi.unstubAllGlobals();
+		},
+	);
+
+	it.each([200, 400, 500])(
+		"adopts retry response token with status %s",
+		async (status) => {
+			vi.resetModules();
+			const fetchMock = vi
+				.fn()
+				.mockResolvedValueOnce(
+					new Response(JSON.stringify({ csrf_token: "initial" })),
+				)
+				.mockResolvedValueOnce(
+					new Response('{"error":"csrf_mismatch"}', { status: 403 }),
+				)
+				.mockResolvedValueOnce(
+					new Response(JSON.stringify({ csrf_token: "refreshed" })),
+				)
+				.mockResolvedValueOnce(
+					new Response("{}", {
+						status,
+						headers: { "X-CSRF-Token": "rotated" },
+					}),
+				)
+				.mockResolvedValueOnce(new Response("{}"));
+			vi.stubGlobal("fetch", fetchMock);
+			const { useApi } = await import("./api");
+			const api = useApi();
+			await api.logout().catch(() => {});
+			await api.logout();
+			expect(fetchMock.mock.calls[4]?.[1].headers["X-CSRF-Token"]).toBe(
+				"rotated",
+			);
+			vi.unstubAllGlobals();
+		},
+	);
+});
+
+describe("Rook mutation deadline", () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+		localStorage.clear();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it("dispatches logout after a preceding mutation stalls", async () => {
+		let credentialSignal: AbortSignal | undefined;
+		const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+			if (url === "/login") {
+				return Promise.resolve(
+					new Response(JSON.stringify({ csrf_token: "csrf-token" }), {
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					}),
+				);
+			}
+			if (url.includes("test-credentials")) {
+				credentialSignal = init?.signal ?? undefined;
+				// A request that never settles until it is aborted.
+				return new Promise<Response>((_resolve, reject) => {
+					init?.signal?.addEventListener("abort", () =>
+						reject(new DOMException("Aborted", "AbortError")),
+					);
+				});
+			}
+			return Promise.resolve(
+				new Response(JSON.stringify({ message: "Logged out successfully." }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				}),
+			);
+		});
+
+		vi.stubGlobal("fetch", fetchMock);
+		vi.resetModules();
+		const { useApi } = await import("./api");
+		const api = useApi();
+
+		const stalled = api.testCredentials({
+			providerKind: "ollama",
+			providerRuntimeId: "provider-1",
+			authType: "apiKey",
+			credentials: { apiKey: "test-api-key" },
+			config: {
+				maxConcurrent: 1,
+				quotaWindowThresholds: { warning: 80, error: 95 },
+			},
+		});
+		const settled = stalled.catch((error: Error) => error);
+
+		// Let the queued mutation start and register its deadline.
+		await vi.advanceTimersByTimeAsync(0);
+		await vi.advanceTimersByTimeAsync(30_000);
+
+		// The stalled mutation is rejected, and the rejection states that the
+		// server may still have applied the change.
+		const error = await settled;
+		expect(error).toBeInstanceOf(Error);
+		expect((error as Error).message).toContain("aborted after 30000 ms");
+		expect(credentialSignal?.aborted).toBe(true);
+		expect((error as Error).message).toContain(
+			"may still have applied the change",
+		);
+
+		// The queue advanced: logout dispatches instead of waiting forever.
+		await api.logout();
+		const logoutCalls = fetchMock.mock.calls.filter(
+			([url]) => url === "/logout",
+		);
+		expect(logoutCalls).toHaveLength(1);
 	});
 });

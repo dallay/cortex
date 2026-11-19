@@ -82,6 +82,7 @@ docs/
 5. [development/huginn.md](development/huginn.md) — Run and test Huginn
 6. [Docker testing guide](../dev/README.md) — Smoke, E2E, and multi-distribution testing
 7. [Contributing](../CONTRIBUTING.md) — How to contribute
+8. [Bazel bootstrap](bazel.md) — Current experimental Bazel targets and commands
 
 ### For advanced contributors
 

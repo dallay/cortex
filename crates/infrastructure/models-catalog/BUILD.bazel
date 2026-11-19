@@ -1,0 +1,43 @@
+load("@crates//:defs.bzl", "all_crate_deps", "crate_edition")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "models_catalog",
+    srcs = glob(["src/**/*.rs"]),
+    compile_data = ["src/models.json"],
+    crate_name = "models_catalog",
+    crate_root = "src/lib.rs",
+    edition = crate_edition(),
+    deps = ["//crates/domain/rook-core:rook_core"] + all_crate_deps(normal = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+)
+
+rust_test(
+    name = "models_catalog_unit_test",
+    crate = ":models_catalog",
+    edition = crate_edition(),
+    deps = ["//crates/domain/rook-core:rook_core"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "declarative_catalog",
+    crate_name = "declarative_catalog",
+    edition = crate_edition(),
+    srcs = ["tests/declarative_catalog.rs"],
+    data = ["src/models.json"],
+    deps = [":models_catalog", "//crates/domain/rook-core:rook_core"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "static_catalog",
+    crate_name = "static_catalog",
+    edition = crate_edition(),
+    srcs = ["tests/static_catalog.rs"],
+    data = ["src/models.json"],
+    deps = [":models_catalog", "//crates/domain/rook-core:rook_core"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)

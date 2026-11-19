@@ -1,0 +1,18 @@
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "Cargo.lock",
+    "Cargo.toml",
+    "rust-toolchain.toml",
+])
+
+# Muninn keeps shared test fixtures at the repository root. Rust crates embed
+# them with include_bytes!/include_str! through paths relative to the crate, so
+# Bazel must expose them as root-package files to place them in the sandbox at
+# the same workspace-relative path the compiler expects.
+exports_files(
+    glob(
+        ["dev/muninn/fixtures/**"],
+        allow_empty = True,
+    ),
+)

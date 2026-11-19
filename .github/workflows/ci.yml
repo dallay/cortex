@@ -18,7 +18,11 @@ jobs:
   changes:
     name: Detect Changes
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    # The job checks out full history so the shadow-mode classifier can compute a
+    # merge base, and it resolves Cargo metadata before it can select crates.
+    # Both steps read the network on a cold runner, so the budget is wider than
+    # the two minutes the path-filter step alone needed.
+    timeout-minutes: 10
     permissions:
       contents: read
       pull-requests: read
@@ -34,11 +38,21 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
           filters: .github/ci-path-filters.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+      - name: Calculate affected crates (shadow mode)
+        if: always()
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node .github/scripts/ci-affected-crates.cjs
 
   ci-contract:
     name: Test (CI Contract)

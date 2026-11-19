@@ -1,0 +1,107 @@
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# The Rust binary embeds the built dashboard through rust-embed, so the
+# compiled assets must be available as Bazel inputs.
+filegroup(
+    name = "dist",
+    srcs = glob(
+        ["dist/**"],
+        allow_empty = True,
+    ),
+)
+
+# Bazel targets for the dashboard delegate dependency management and execution
+# to pnpm. The root pnpm-lock.yaml stays authoritative: no dashboard lockfile or
+# workspace file is created, and node_modules must be installed beforehand.
+#
+# These targets are not hermetic: they execute inside the source tree because the
+# dashboard toolchain (node_modules) is provided by pnpm, not by Bazel.
+
+sh_test(
+    name = "vitest",
+    srcs = ["bazel/vitest.sh"],
+    data = glob(
+        [
+            "bazel/lib.sh",
+            "package.json",
+            "src/**/*.ts",
+            "src/**/*.tsx",
+            "src/**/*.vue",
+            "src/**/*.json",
+            "vitest.config.ts",
+            "vite.config.ts",
+        ],
+        allow_empty = True,
+    ),
+    local = True,
+    tags = [
+        "manual",
+        "no-sandbox",
+        "non-hermetic",
+        "requires-node-modules",
+        "requires-pnpm",
+    ],
+)
+
+sh_test(
+    name = "typecheck",
+    srcs = ["bazel/typecheck.sh"],
+    data = glob(
+        [
+            "bazel/lib.sh",
+            "package.json",
+            "src/**/*.ts",
+            "src/**/*.tsx",
+            "src/**/*.vue",
+            "tsconfig.json",
+            "tsconfig.node.json",
+            "env.d.ts",
+        ],
+        allow_empty = True,
+    ),
+    local = True,
+    tags = [
+        "manual",
+        "no-sandbox",
+        "non-hermetic",
+        "requires-node-modules",
+        "requires-pnpm",
+    ],
+)
+
+sh_test(
+    name = "lint",
+    srcs = ["bazel/lint.sh"],
+    data = glob(
+        [
+            "bazel/lib.sh",
+            "biome.json",
+            "package.json",
+            "src/**/*.ts",
+            "src/**/*.tsx",
+            "src/**/*.vue",
+            "src/**/*.json",
+        ],
+        allow_empty = True,
+    ),
+    local = True,
+    tags = [
+        "manual",
+        "no-sandbox",
+        "non-hermetic",
+        "requires-node-modules",
+        "requires-pnpm",
+    ],
+)
+
+test_suite(
+    name = "test_suite",
+    tags = ["manual"],
+    tests = [
+        ":lint",
+        ":typecheck",
+        ":vitest",
+    ],
+)

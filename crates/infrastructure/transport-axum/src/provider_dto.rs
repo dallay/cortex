@@ -540,6 +540,10 @@ fn config_to_domain(config: &ConnectionConfigDto) -> Result<ConnectionConfig, St
         Some("anthropic") => Some(rook_core::ApiFormat::Anthropic),
         Some(_) => return Err("invalid apiFormat".to_string()),
     };
+
+    // URL validation belongs to the use case, which has the provider descriptor,
+    // existing connection (for partial updates), and configured endpoint grants.
+    // Applying a generic HTTPS-only policy here would reject local Ollama URLs.
     Ok(ConnectionConfig {
         max_concurrent: config.max_concurrent,
         quota_window_thresholds: rook_core::QuotaWindowThresholds {

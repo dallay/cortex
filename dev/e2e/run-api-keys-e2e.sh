@@ -87,7 +87,7 @@ docker run -d \
     -v "$TEST_CONFIG:/app/rook.toml:ro" \
     -e ROOK_CONFIG=/app/rook.toml \
     -e RUST_LOG=info \
-    -e API_KEY_HASH_SECRET="test-secret-for-e2e-testing-only" \
+    -e API_KEY_HASH_SECRET="cortex-e2e-api-key-secret-00000000000000000000000000000000" \
     -e RUST_BACKTRACE=1 \
     -e ENCRYPTION_PASSPHRASE="test-encryption-passphrase-for-e2e-tests-only" \
     -e ENCRYPTION_SALT="St7xmpfwUTbsXGBHIlYjvg" \

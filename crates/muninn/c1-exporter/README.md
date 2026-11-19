@@ -38,7 +38,33 @@ Then run the package tests without a filter. Failed tests include their captured
 diagnostics by default; `--nocapture` also displays expected injected failures.
 The labels distinguish `freeze.chmod_directory`, `freeze.sync_directory`,
 `publish.pre_sync`, `publish.rename_noreplace`, `publish.post_sync` and file/receipt
-operations. These diagnostics do not establish the cause of the macOS 15 failure.
+operations.
+
+## Publication order on macOS 15
+
+macOS 15 (Darwin 24) denies renaming a directory whose mode lacks write permission.
+The denial returns `EACCES` and does not depend on open descriptors below the
+directory, on `RENAME_EXCL`, or on the destination name. Newer macOS releases
+accept the same rename, so the defect is invisible on a recent workstation.
+
+The staged directory therefore stays writable (`0o700`) until the rename publishes
+it, and the published entry is frozen to `0o500` right after the rename and before
+the parent sync makes the new name durable. Freezing before the rename cannot work
+on macOS 15, and freezing after the parent sync would let a crash expose a
+writable published directory under a durable name.
+
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:417d21557b00c6e6be816f2475c740543e5ae0cacdf5c1fb32d35bdf87612384 -->
+
+The interval between the rename and the freeze keeps the root directory writable
+for its owner only. The artifact files are read-only (`0o400`), and the `1_Pooling`
+child directory is `0o500`, but the owner can replace top-level artifacts during
+this interval. Reopening the cache verifies the receipt and all artifact digests;
+reading an artifact checks its digest again. These checks detect replacements with
+different content; they do not prevent replacement.
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 Keep this test-only instrumentation for platform regressions. To remove it, remove
 `artifact_diagnostics.rs`, its `cfg(test)` module declaration and the matching

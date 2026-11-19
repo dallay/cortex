@@ -6,6 +6,9 @@ use std::time::{Duration, Instant};
 
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
+#[path = "support/binary_path.rs"]
+mod binary_path;
+
 /// Build the `huginn` binary command for tests. The argument list mirrors the
 /// harness used by the first CLI integration tests; the chat subcommand is the
 /// default and does not need to be passed explicitly when the prompt is the
@@ -228,7 +231,7 @@ fn run_chat_with_pty(workspace: &Path, db: &Path, script: &[&str]) -> PtyRun {
         })
         .expect("pty pair must open");
 
-    let mut builder = CommandBuilder::new(env!("CARGO_BIN_EXE_huginn"));
+    let mut builder = CommandBuilder::new(binary_path::huginn());
     builder.arg("--provider");
     builder.arg("mock");
     builder.arg("--workspace");

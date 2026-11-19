@@ -1,0 +1,58 @@
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# The BUILD file generator and the inventory checker are the source of truth for
+# the Bazel build graph. These targets delegate execution to the Python standard
+# library test runner, so the tooling that maintains the graph is covered by the
+# same suite as the code it generates.
+#
+# The targets are not hermetic: they use a Python interpreter provided by the
+# system, not by Bazel. They run without the sandbox so the interpreter can be
+# resolved outside the declared inputs.
+
+sh_test(
+    name = "test_generate_build_files",
+    srcs = ["bazel/test_generate_build_files.sh"],
+    data = [
+        "bazel/lib.sh",
+        "cargo_inventory.json",
+        "check_inventory.py",
+        "generate_build_files.py",
+        "test_check_inventory.py",
+        "test_generate_build_files.py",
+    ],
+    local = True,
+    tags = [
+        "no-sandbox",
+        "non-hermetic",
+        "requires-python",
+    ],
+)
+
+sh_test(
+    name = "test_check_inventory",
+    srcs = ["bazel/test_check_inventory.sh"],
+    data = [
+        "bazel/lib.sh",
+        "cargo_inventory.json",
+        "check_inventory.py",
+        "generate_build_files.py",
+        "test_check_inventory.py",
+        "test_generate_build_files.py",
+    ],
+    local = True,
+    tags = [
+        "no-sandbox",
+        "non-hermetic",
+        "requires-python",
+    ],
+)
+
+test_suite(
+    name = "test_suite",
+    tests = [
+        ":test_check_inventory",
+        ":test_generate_build_files",
+    ],
+)
