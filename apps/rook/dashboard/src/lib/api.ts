@@ -744,27 +744,47 @@ function createApiClient() {
 	// Result: WebKit, Chromium, and Firefox all work correctly. The cache also
 	// eliminates a per-request round-trip for all browsers, reducing latency.
 	let cachedCsrfToken: string | null = null;
+	let stateChangingQueue: Promise<void> = Promise.resolve();
 
-	async function request<T>(
+	function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+		const method = (options.method || "GET").toUpperCase();
+		const isStateChanging = ["POST", "PUT", "DELETE", "PATCH"].includes(method);
+		if (!isStateChanging) return performRequest<T>(path, options);
+
+		// Response headers may rotate the token. Serialize mutations so the next
+		// request cannot dispatch with a token that predates the prior response.
+		const result = stateChangingQueue.then(() =>
+			performRequest<T>(path, options),
+		);
+		stateChangingQueue = result.then(
+			() => undefined,
+			() => undefined,
+		);
+		return result;
+	}
+
+	async function performRequest<T>(
 		path: string,
 		options: RequestInit = {},
 	): Promise<T> {
 		const url = `${baseUrl}${path}`;
+		const method = (options.method || "GET").toUpperCase();
+		const isStateChanging = ["POST", "PUT", "DELETE", "PATCH"].includes(method);
 
 		// Extract CSRF token for state-changing requests.
 		// The csrf_token cookie is HttpOnly (XSS protection), so it cannot be read
 		// from document.cookie. Instead, fetch a fresh token from GET /login which
 		// returns it in the response body. The backend validates the double-submit
 		// cookie pattern: X-CSRF-Token header must match csrf_token cookie.
-		const method = (options.method || "GET").toUpperCase();
-		const isStateChanging = ["POST", "PUT", "DELETE", "PATCH"].includes(method);
 		const headers: Record<string, string> = {
 			"Content-Type": "application/json",
 			...(options.headers as Record<string, string>),
 		};
 
-		if (isStateChanging && !headers["X-CSRF-Token"]) {
+		if (isStateChanging) {
 			try {
+				// Resolve inside the serialized mutation operation. This also refreshes
+				// tokens supplied explicitly by login/logout/setupBootstrap helpers.
 				const token = await getCsrfToken();
 				headers["X-CSRF-Token"] = token;
 			} catch (err) {
@@ -826,7 +846,16 @@ function createApiClient() {
 		// Read once as text so both null bodies and empty streams are handled.
 		const body = await response.text();
 		if (body.length === 0) return undefined as T;
-		return JSON.parse(body) as T;
+		const parsed = JSON.parse(body) as T;
+		if (
+			typeof parsed === "object" &&
+			parsed !== null &&
+			"csrf_token" in parsed &&
+			typeof parsed.csrf_token === "string"
+		) {
+			cachedCsrfToken = parsed.csrf_token;
+		}
+		return parsed;
 	}
 
 	function cacheResponseToken(response: Response): void {
@@ -882,14 +911,10 @@ function createApiClient() {
 		async setupBootstrap(
 			data: BootstrapSetupRequest,
 		): Promise<BootstrapSetupResult> {
-			const csrfToken = await getCsrfToken();
 			const response = await request<BootstrapSetupResponse>(
 				"/api/bootstrap/setup",
 				{
 					method: "POST",
-					headers: {
-						"X-CSRF-Token": csrfToken,
-					},
 					body: JSON.stringify({
 						setup_token: data.setupToken,
 						password: data.password,
@@ -900,12 +925,8 @@ function createApiClient() {
 		},
 
 		async login(data: LoginRequest): Promise<LoginResult> {
-			const csrfToken = await getCsrfToken();
 			const response = await request<LoginResponse>("/login", {
 				method: "POST",
-				headers: {
-					"X-CSRF-Token": csrfToken,
-				},
 				body: JSON.stringify(data),
 			});
 			// Seed the cache from the POST response body so the very first
@@ -922,10 +943,8 @@ function createApiClient() {
 		},
 
 		async logout(): Promise<void> {
-			const csrfToken = await getCsrfToken();
 			await request<void>("/logout", {
 				method: "POST",
-				headers: { "X-CSRF-Token": csrfToken },
 			});
 		},
 

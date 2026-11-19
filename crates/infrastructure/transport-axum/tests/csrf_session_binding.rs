@@ -322,6 +322,26 @@ async fn login_token_is_bound_to_the_new_session() {
 }
 
 #[tokio::test]
+async fn signed_csrf_tokens_validate_across_guards_with_the_same_persistent_secret() {
+    let secret = b"shared-secret-for-csrf-replicas-with-at-least-32-bytes";
+    let issuing_replica = CsrfGuard::from_persistent_secret(secret);
+    let receiving_replica = CsrfGuard::from_persistent_secret(secret);
+    let token = issuing_replica.generate_token().unwrap();
+
+    assert_eq!(
+        receiving_replica.validate(Some(&token), Some(&token)),
+        transport_axum::middleware::csrf_guard::CsrfValidation::Valid
+    );
+
+    let isolated_replica =
+        CsrfGuard::from_persistent_secret(b"different-secret-for-other-replica-with-32-bytes");
+    assert_eq!(
+        isolated_replica.validate(Some(&token), Some(&token)),
+        transport_axum::middleware::csrf_guard::CsrfValidation::Mismatch
+    );
+}
+
+#[tokio::test]
 async fn logout_leaves_an_anonymous_token() {
     let app = build_app();
 

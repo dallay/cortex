@@ -44,44 +44,143 @@ pub(super) fn probe_pre_rename() {
 /// Reports whether an open descriptor still refers to the given inode.
 /// Returns None when a failed scan cannot establish that it is closed.
 pub(super) fn descriptor_open_for(device: u64, inode: u64) -> Option<bool> {
-    use std::os::unix::fs::MetadataExt;
-
     let directory = if cfg!(target_os = "macos") {
         "/dev/fd"
     } else {
         "/proc/self/fd"
     };
-    let entries = std::fs::read_dir(directory).ok()?;
-    let mut conclusive = true;
-    for entry in entries {
+
+    // Keep lookups relative to the descriptor directory. Rebuilding each slot
+    // name from its numeric value avoids using untrusted directory-entry text.
+    let descriptors = rustix::fs::open(
+        directory,
+        rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::DIRECTORY | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::empty(),
+    )
+    .ok()?;
+
+    let mut slots = Vec::new();
+    for entry in std::fs::read_dir(directory).ok()? {
         let Ok(entry) = entry else {
-            conclusive = false;
+            return None;
+        };
+        let Some(slot) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
             continue;
         };
-        // Follow the descriptor link for metadata only. Opening it for I/O can
-        // block on inherited FIFOs and needlessly reopens other objects.
-        let Ok(metadata) = std::fs::metadata(entry.path()) else {
-            conclusive = false;
-            continue;
-        };
-        if metadata.dev() == device && metadata.ino() == inode {
-            return Some(true);
+        slots.push(slot.to_string());
+    }
+
+    let mut conclusive = true;
+    for slot in &slots {
+        match slot_matches(&descriptors, slot, device, inode) {
+            Some(true) => return Some(true),
+            Some(false) => {}
+            None => conclusive = false,
         }
     }
     conclusive.then_some(false)
+}
+
+/// Classifies one descriptor slot against the target identity.
+/// Returns None when the slot cannot be identified with certainty.
+#[cfg(target_os = "macos")]
+fn slot_matches(
+    descriptors: &rustix::fd::OwnedFd,
+    slot: &str,
+    device: u64,
+    inode: u64,
+) -> Option<bool> {
+    let stat = match rustix::fs::statat(descriptors, slot, rustix::fs::AtFlags::empty()) {
+        Ok(stat) => stat,
+        Err(rustix::io::Errno::BADF) => return Some(false),
+        Err(_) => return None,
+    };
+
+    // /dev/fd entries identify the descriptor slot, but reopening it is needed
+    // to read the referenced object's device. NONBLOCK prevents FIFO stalls.
+    match rustix::fs::openat(
+        descriptors,
+        slot,
+        rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::NONBLOCK | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::empty(),
+    ) {
+        Ok(handle) => {
+            let reopened = rustix::fs::fstat(&handle).ok()?;
+            let reopened_device = u64::try_from(reopened.st_dev).ok()?;
+            Some(reopened_device == device && reopened.st_ino == inode)
+        }
+        // A write-only or otherwise non-reopenable descriptor can still be
+        // identified by the inode reported for its /dev/fd slot.
+        Err(_) => Some(stat.st_ino == inode),
+    }
+}
+
+/// On Linux, descriptor entries are symlinks to the referenced objects.
+#[cfg(target_os = "linux")]
+fn slot_matches(
+    descriptors: &rustix::fd::OwnedFd,
+    slot: &str,
+    device: u64,
+    inode: u64,
+) -> Option<bool> {
+    match rustix::fs::statat(descriptors, slot, rustix::fs::AtFlags::empty()) {
+        Ok(stat) => Some(stat.st_dev == device && stat.st_ino == inode),
+        Err(error) => {
+            if error != rustix::io::Errno::NOENT {
+                return None;
+            }
+            match rustix::fs::statat(descriptors, slot, rustix::fs::AtFlags::SYMLINK_NOFOLLOW) {
+                Ok(_) => None,
+                Err(_) => Some(false),
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::format_error;
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn descriptor_probe_finds_a_known_live_file_descriptor() {
+        use std::os::unix::fs::MetadataExt;
+
+        let root = tempfile::tempdir().expect("fixture");
+        let path = root.path().join("open");
+        std::fs::write(&path, b"content").expect("fixture file");
+        let file = std::fs::File::open(&path).expect("open fixture");
+        let metadata = file.metadata().expect("open file metadata");
+
+        assert_eq!(
+            super::descriptor_open_for(metadata.dev(), metadata.ino()),
+            Some(true),
+            "the probe must find a descriptor that remains open"
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn descriptor_probe_does_not_block_on_a_fifo_without_writers() {
         use std::os::unix::fs::MetadataExt;
 
         let root = tempfile::tempdir().expect("fixture");
         let path = root.path().join("fifo");
+        #[cfg(target_os = "linux")]
         rustix::fs::mkfifoat(rustix::fs::CWD, &path, rustix::fs::Mode::RUSR).expect("fixture fifo");
+
+        #[cfg(target_os = "macos")]
+        {
+            let status = std::process::Command::new("mkfifo")
+                .arg(&path)
+                .status()
+                .expect("create fixture fifo");
+            assert!(status.success(), "mkfifo command failed: {status}");
+        }
         let fifo = std::fs::File::from(
             rustix::fs::open(
                 &path,
