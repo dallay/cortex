@@ -1,0 +1,77 @@
+load("@crates//:defs.bzl", "aliases", "all_crate_deps", "crate_edition")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "rook_core",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "rook_core",
+    crate_root = "src/lib.rs",
+    edition = crate_edition(),
+    deps = ["//crates/domain/shared-kernel:shared_kernel"] + all_crate_deps(normal = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+)
+
+rust_test(
+    name = "rook_core_unit_test",
+    crate = ":rook_core",
+    aliases = aliases(normal_dev = True, proc_macro_dev = True),
+    edition = crate_edition(),
+    deps = ["//crates/domain/shared-kernel:shared_kernel"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "descriptor_table",
+    crate_name = "descriptor_table",
+    edition = crate_edition(),
+    srcs = ["tests/descriptor_table.rs"],
+    deps = [":rook_core", "//crates/domain/shared-kernel:shared_kernel"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "endpoint_policy",
+    crate_name = "endpoint_policy",
+    edition = crate_edition(),
+    srcs = ["tests/endpoint_policy.rs"],
+    deps = [":rook_core", "//crates/domain/shared-kernel:shared_kernel"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "model_capabilities",
+    crate_name = "model_capabilities",
+    edition = crate_edition(),
+    srcs = ["tests/model_capabilities.rs"],
+    deps = [":rook_core", "//crates/domain/shared-kernel:shared_kernel"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "provider_kind",
+    crate_name = "provider_kind",
+    edition = crate_edition(),
+    srcs = ["tests/provider_kind.rs"],
+    deps = [":rook_core", "//crates/domain/shared-kernel:shared_kernel"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "quota_tests",
+    crate_name = "quota_tests",
+    edition = crate_edition(),
+    srcs = ["tests/quota_tests.rs"],
+    deps = [":rook_core", "//crates/domain/shared-kernel:shared_kernel"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "stream_validation_error",
+    crate_name = "stream_validation_error",
+    edition = crate_edition(),
+    srcs = ["tests/stream_validation_error.rs"],
+    deps = [":rook_core", "//crates/domain/shared-kernel:shared_kernel"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)

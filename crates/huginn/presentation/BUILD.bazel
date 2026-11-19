@@ -1,0 +1,202 @@
+load("@crates//:defs.bzl", "aliases", "all_crate_deps", "crate_edition")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "huginn_presentation_test_driver",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "huginn_presentation",
+    crate_root = "src/lib.rs",
+    crate_features = ["test-driver"],
+    edition = crate_edition(),
+    deps = ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/plugin-api:huginn_plugin_api', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+)
+
+rust_binary(
+    name = "tui-fixture",
+    srcs = ["tests/support/fixture.rs"],
+    crate_name = "tui_fixture",
+    crate_features = ["test-driver"],
+    edition = crate_edition(),
+    deps = [":huginn_presentation_test_driver", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/plugin-api:huginn_plugin_api", "//crates/huginn/reference-extension:huginn_reference_extension"] + all_crate_deps(normal = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+)
+
+rust_library(
+    name = "huginn_presentation",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "huginn_presentation",
+    crate_root = "src/lib.rs",
+    edition = crate_edition(),
+    deps = ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/plugin-api:huginn_plugin_api', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+)
+
+rust_test(
+    name = "huginn_presentation_unit_test",
+    crate = ":huginn_presentation",
+    aliases = aliases(normal_dev = True, proc_macro_dev = True),
+    edition = crate_edition(),
+    deps = ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/plugin-api:huginn_plugin_api', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "completion",
+    crate_name = "completion",
+    srcs = ['tests/completion.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_presentation"] + ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/plugin-api:huginn_plugin_api', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "conversation",
+    crate_name = "conversation",
+    srcs = ['tests/conversation.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_presentation"] + ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/plugin-api:huginn_plugin_api', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "dispatch_settings",
+    crate_name = "dispatch_settings",
+    srcs = ['tests/dispatch_settings.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_presentation"] + ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/plugin-api:huginn_plugin_api', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "event",
+    crate_name = "event",
+    srcs = ['tests/event.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_presentation"] + ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/plugin-api:huginn_plugin_api', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "extensions",
+    crate_name = "extensions",
+    srcs = ['tests/extensions.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_presentation"] + ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/plugin-api:huginn_plugin_api', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "files",
+    crate_name = "files",
+    srcs = ['tests/files.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_presentation"] + ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/plugin-api:huginn_plugin_api', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "input_parser",
+    crate_name = "input_parser",
+    srcs = ['tests/input_parser.rs'],
+    crate_features = ["test-driver"],
+    edition = crate_edition(),
+    deps = [":huginn_presentation_test_driver"] + ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/plugin-api:huginn_plugin_api', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "overlay",
+    crate_name = "overlay",
+    srcs = ['tests/overlay.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_presentation"] + ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/plugin-api:huginn_plugin_api', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "plugins",
+    crate_name = "plugins",
+    srcs = ['tests/plugins.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_presentation"] + ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/plugin-api:huginn_plugin_api', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "preemption",
+    crate_name = "preemption",
+    srcs = ['tests/preemption.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_presentation"] + ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/plugin-api:huginn_plugin_api', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "provider_search",
+    crate_name = "provider_search",
+    srcs = ['tests/provider_search.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_presentation"] + ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/plugin-api:huginn_plugin_api', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "providers_ui",
+    crate_name = "providers_ui",
+    srcs = ['tests/providers_ui.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_presentation"] + ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/plugin-api:huginn_plugin_api', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "pty",
+    crate_name = "pty",
+    srcs = ['tests/pty.rs', 'tests/support/pty.rs'],
+    env = {"CARGO_BIN_EXE_tui-fixture": "$(execpath :tui-fixture)"},
+    rustc_env = {"CARGO_BIN_EXE_tui-fixture": "_main/crates/huginn/presentation/tui-fixture"},
+    data = [":tui-fixture"],
+    crate_features = ["test-driver"],
+    edition = crate_edition(),
+    deps = [":tui-fixture", ":huginn_presentation_test_driver"] + ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/plugin-api:huginn_plugin_api', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "settings",
+    crate_name = "settings",
+    srcs = ['tests/settings.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_presentation"] + ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/plugin-api:huginn_plugin_api', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "state",
+    crate_name = "state",
+    srcs = ['tests/state.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_presentation"] + ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/plugin-api:huginn_plugin_api', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "status_bar",
+    crate_name = "status_bar",
+    srcs = ['tests/status_bar.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_presentation"] + ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/plugin-api:huginn_plugin_api', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "workflows",
+    crate_name = "workflows",
+    srcs = ['tests/workflows.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_presentation"] + ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/plugin-api:huginn_plugin_api', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
