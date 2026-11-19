@@ -1,0 +1,17 @@
+# Keep local and CI behavior deterministic. Remote services remain opt-in and unconfigured.
+common --enable_bzlmod
+build --announce_rc
+build --verbose_failures
+build --disk_cache=~/.cache/cortex/bazel-disk
+build --repository_cache=~/.cache/cortex/bazel-repository
+
+test --test_output=errors
+
+# The Seatbelt-dependent Huginn tests give their host controls a 4 s budget.
+# Several local tests running at once starve that budget on many-core machines
+# and the suite fails intermittently. Only a handful of targets are local, so
+# serializing them keeps the whole suite stable at a negligible cost.
+test --local_test_jobs=1
+
+# Import local-only overrides without tracking credentials or machine-specific paths.
+try-import %workspace%/.bazelrc.user
