@@ -155,7 +155,40 @@ impl CsrfGuard {
             return CsrfValidation::Mismatch;
         }
 
-        let Ok(token) = URL_SAFE_NO_PAD.decode(cookie) else {
+        self.validate_token_at(cookie, auth_token_cookie, now)
+    }
+
+    /// Return the incoming token when it fully validates for the current context.
+    ///
+    /// Reusing the token keeps the double-submit pair byte-identical, so a
+    /// browser that has not applied the latest `Set-Cookie` yet still sends a
+    /// matching header and cookie. A token that fails validation is never
+    /// reused; a fresh token bound to the current auth cookie is issued
+    /// instead.
+    pub fn token_for_session(
+        &self,
+        incoming_cookie: Option<&str>,
+        auth_token_cookie: Option<&str>,
+    ) -> Result<String, CsrfError> {
+        if let Some(incoming) = incoming_cookie {
+            if let Some(now) = unix_time() {
+                if self.validate_token_at(incoming, auth_token_cookie, now) == CsrfValidation::Valid
+                {
+                    return Ok(incoming.to_string());
+                }
+            }
+        }
+        self.generate_token_for(auth_token_cookie)
+    }
+
+    /// Validate the signature, lifetime, and session binding of a single token.
+    fn validate_token_at(
+        &self,
+        token_value: &str,
+        auth_token_cookie: Option<&str>,
+        now: u64,
+    ) -> CsrfValidation {
+        let Ok(token) = URL_SAFE_NO_PAD.decode(token_value) else {
             return CsrfValidation::Mismatch;
         };
         if token.len() != TOKEN_LEN {

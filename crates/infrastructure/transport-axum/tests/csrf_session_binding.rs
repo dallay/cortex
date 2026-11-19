@@ -430,3 +430,140 @@ async fn logout_leaves_an_anonymous_token() {
     assert_eq!(rejected.status(), StatusCode::FORBIDDEN);
     assert_eq!(response_json(rejected).await["error"], "csrf_mismatch");
 }
+
+/// Log in and return the session cookie value and the session-bound CSRF token.
+async fn login_for_session(app: &Router) -> (String, String) {
+    let pre_login_token = fetch_pre_login_token(app).await;
+    let login = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/login")
+                .header("content-type", "application/json")
+                .header("cookie", format!("csrf_token={pre_login_token}"))
+                .header("x-csrf-token", &pre_login_token)
+                .body(Body::from(r#"{"username":"admin","password":""}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(login.status(), StatusCode::OK);
+
+    let auth_cookie = find_set_cookie(&login, "auth_token")
+        .strip_prefix("auth_token=")
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let csrf_cookie = find_set_cookie(&login, "csrf_token")
+        .strip_prefix("csrf_token=")
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    (auth_cookie, csrf_cookie)
+}
+
+/// Fetch `GET /login` with the given cookies and return the issued token
+/// together with the `Set-Cookie` header.
+async fn fetch_login_token(app: &Router, cookies: &str) -> (String, String) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/login")
+                .header("cookie", cookies)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let set_cookie = find_set_cookie(&response, "csrf_token").to_string();
+    let body = response_json(response).await;
+    let token = body["csrf_token"].as_str().unwrap().to_string();
+    (token, set_cookie)
+}
+
+#[tokio::test]
+async fn login_reuses_a_valid_incoming_csrf_token() {
+    let app = build_app();
+    let token = fetch_pre_login_token(&app).await;
+
+    // The browser sends the cookie it already holds. The server must answer
+    // with the same value so the double-submit pair stays in sync even when
+    // the cookie jar applies the Set-Cookie late (issue #82).
+    let (issued, set_cookie) = fetch_login_token(&app, &format!("csrf_token={token}")).await;
+    assert_eq!(
+        issued, token,
+        "GET /login must reuse a valid incoming token"
+    );
+    assert_eq!(cookie_value(&set_cookie), format!("csrf_token={token}"));
+}
+
+#[tokio::test]
+async fn login_reuses_a_session_bound_token_for_the_same_session() {
+    let app = build_app();
+    let (auth_cookie, csrf_token) = login_for_session(&app).await;
+
+    let (issued, _) = fetch_login_token(
+        &app,
+        &format!("auth_token={auth_cookie}; csrf_token={csrf_token}"),
+    )
+    .await;
+    assert_eq!(
+        issued, csrf_token,
+        "GET /login must reuse a token bound to the current session"
+    );
+}
+
+#[tokio::test]
+async fn login_issues_a_new_token_when_the_incoming_token_is_bound_to_another_session() {
+    let app = build_app();
+    let (_auth_a, csrf_a) = login_for_session(&app).await;
+    let (auth_b, _csrf_b) = login_for_session(&app).await;
+
+    let (issued, _) =
+        fetch_login_token(&app, &format!("auth_token={auth_b}; csrf_token={csrf_a}")).await;
+    assert_ne!(
+        issued, csrf_a,
+        "a token bound to another session must not be reused"
+    );
+
+    // The fresh token works for the session that requested it.
+    let accepted = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/mutation")
+                .header(
+                    "cookie",
+                    format!("auth_token={auth_b}; csrf_token={issued}"),
+                )
+                .header("x-csrf-token", &issued)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(accepted.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn login_issues_a_new_token_when_the_incoming_token_is_tampered() {
+    let app = build_app();
+    let token = fetch_pre_login_token(&app).await;
+    let tampered = format!(
+        "{}{}",
+        &token[..token.len() - 1],
+        if token.ends_with('A') { 'B' } else { 'A' }
+    );
+
+    let (issued, _) = fetch_login_token(&app, &format!("csrf_token={tampered}")).await;
+    assert_ne!(issued, tampered, "a tampered token must not be reused");
+    assert!(!issued.is_empty());
+}

@@ -292,12 +292,15 @@ pub async fn get_me_handler(State(_usecases): State<Arc<RookUsecases>>) -> impl 
     (StatusCode::OK, Json(body)).into_response()
 }
 
-/// GET /login — return a fresh CSRF token for browser clients
+/// GET /login — return a CSRF token for browser clients
 ///
-/// Always generates a new CSRF token rather than reusing the existing one,
-/// ensuring token rotation even on GET requests. Sets csrf_token cookie and
-/// returns the token in the response body. The client must echo this token
-/// back in the X-CSRF-Token header for state-changing requests (POST, PUT, DELETE).
+/// Reuses the incoming `csrf_token` cookie when it fully validates for the
+/// current context (signature, lifetime, and session binding). The pair stays
+/// byte-identical, so a browser that has not applied the latest `Set-Cookie`
+/// yet still sends a matching header and cookie. Otherwise a fresh token bound
+/// to the current session is issued. Sets csrf_token cookie and returns the
+/// token in the response body. The client must echo this token back in the
+/// X-CSRF-Token header for state-changing requests (POST, PUT, DELETE).
 pub async fn get_login_handler(
     State(_usecases): State<Arc<RookUsecases>>,
     Extension(csrf_guard): Extension<Arc<crate::middleware::csrf_guard::CsrfGuard>>,
@@ -305,7 +308,9 @@ pub async fn get_login_handler(
 ) -> impl IntoResponse {
     // Bind the token to the current session when a session cookie is present.
     let auth_token = extract_cookie(&headers, "auth_token");
-    let token = match csrf_guard.generate_token_for(auth_token.as_deref()) {
+    let incoming_csrf = extract_cookie(&headers, "csrf_token");
+    let token = match csrf_guard.token_for_session(incoming_csrf.as_deref(), auth_token.as_deref())
+    {
         Ok(token) => token,
         Err(_) => {
             // RNG failure — preserve any existing incoming CSRF cookie so the
