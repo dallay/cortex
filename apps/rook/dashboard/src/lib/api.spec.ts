@@ -1449,6 +1449,7 @@ describe("Rook mutation deadline", () => {
 	});
 
 	it("dispatches logout after a preceding mutation stalls", async () => {
+		let credentialSignal: AbortSignal | undefined;
 		const fetchMock = vi.fn((url: string, init?: RequestInit) => {
 			if (url === "/login") {
 				return Promise.resolve(
@@ -1459,6 +1460,7 @@ describe("Rook mutation deadline", () => {
 				);
 			}
 			if (url.includes("test-credentials")) {
+				credentialSignal = init?.signal ?? undefined;
 				// A request that never settles until it is aborted.
 				return new Promise<Response>((_resolve, reject) => {
 					init?.signal?.addEventListener("abort", () =>
@@ -1500,6 +1502,7 @@ describe("Rook mutation deadline", () => {
 		const error = await settled;
 		expect(error).toBeInstanceOf(Error);
 		expect((error as Error).message).toContain("aborted after 30000 ms");
+		expect(credentialSignal?.aborted).toBe(true);
 		expect((error as Error).message).toContain(
 			"may still have applied the change",
 		);

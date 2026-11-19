@@ -368,6 +368,9 @@ fn matches_manifest(
     let Ok(file) = existing.open_file(RECEIPT_NAME) else {
         return false;
     };
+    if check_readonly(&file, 0o400).is_err() {
+        return false;
+    }
     let Ok(size) = u64::try_from(expected.len()) else {
         return false;
     };
@@ -377,7 +380,17 @@ fn matches_manifest(
     if checked.as_bytes() != expected {
         return false;
     }
-    verify_files(existing, manifest).is_ok()
+    if verify_files(existing, manifest).is_err() {
+        return false;
+    }
+    manifest.files().iter().all(|artifact| {
+        let Some((folder, _)) = artifact.path().split_once('/') else {
+            return true;
+        };
+        existing
+            .open_subdir(folder)
+            .is_ok_and(|child| check_readonly(&child.directory, 0o500).is_ok())
+    })
 }
 
 fn open_artifact(directory: &ArtifactDir, path: &str) -> Result<File, CacheError> {
@@ -1090,6 +1103,54 @@ mod tests {
             fs::metadata(&target).expect("target metadata").mode() & 0o777,
             0o500,
             "the recovered publication must be frozen"
+        );
+    }
+
+    #[test]
+    fn a_matching_manifest_with_a_writable_receipt_is_never_adopted() {
+        let root = Fixture::new();
+        let stage = complete_stage(&root);
+        let bundle_id = simulate_failed_freeze(&root, &stage);
+        let target = root.0.path().join(&bundle_id);
+        let receipt = target.join(RECEIPT_NAME);
+        let original = fs::read(&receipt).expect("receipt");
+        fs::set_permissions(&receipt, fs::Permissions::from_mode(0o600))
+            .expect("make receipt writable");
+
+        let result = complete_stage(&root).publish();
+        assert!(result.is_err(), "writable receipt must not be adopted");
+        assert_eq!(fs::read(&receipt).expect("preserved receipt"), original);
+        assert_eq!(
+            fs::metadata(&receipt).expect("receipt metadata").mode() & 0o777,
+            0o600,
+            "a rejected receipt must stay untouched"
+        );
+    }
+
+    #[test]
+    fn a_matching_manifest_with_a_writable_pooling_directory_is_never_adopted() {
+        let root = Fixture::new();
+        let stage = complete_stage(&root);
+        let bundle_id = simulate_failed_freeze(&root, &stage);
+        let target = root.0.path().join(&bundle_id);
+        let pooling = target.join("1_Pooling");
+        let original = fs::read(pooling.join("config.json")).expect("pooling artifact");
+        fs::set_permissions(&pooling, fs::Permissions::from_mode(0o700))
+            .expect("make pooling directory writable");
+
+        let result = complete_stage(&root).publish();
+        assert!(
+            result.is_err(),
+            "writable child directory must not be adopted"
+        );
+        assert_eq!(
+            fs::read(pooling.join("config.json")).expect("preserved artifact"),
+            original
+        );
+        assert_eq!(
+            fs::metadata(&pooling).expect("pooling metadata").mode() & 0o777,
+            0o700,
+            "a rejected child directory must stay untouched"
         );
     }
 
