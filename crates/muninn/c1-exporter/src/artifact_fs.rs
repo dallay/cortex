@@ -12,7 +12,7 @@ mod once;
 pub mod recovery;
 #[path = "artifact_staging.rs"]
 pub mod staging;
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::{
     fs::File,
     path::{Component, Path},
@@ -130,6 +130,30 @@ const fn map_errno(error: rustix::io::Errno) -> FsError {
         rustix::io::Errno::LOOP | rustix::io::Errno::NOTDIR => FsError::UnsafeEntry,
         _ => FsError::Io,
     }
+}
+
+/// Makes a directory read-only for its owner and keeps the mode durable.
+///
+/// Freezing a directory that still has to be renamed is not portable: macOS 15
+/// denies renaming a directory whose mode lacks write permission.
+pub(super) fn freeze_directory(directory: &ArtifactDir) -> Result<(), FsError> {
+    directory
+        .directory
+        .set_permissions(std::fs::Permissions::from_mode(0o500))
+        .map_err(|error| {
+            #[cfg(test)]
+            diagnostics::report("freeze.chmod_directory", &error);
+            #[cfg(not(test))]
+            let _ = error;
+            FsError::Io
+        })?;
+    directory.directory.sync_all().map_err(|error| {
+        #[cfg(test)]
+        diagnostics::report("freeze.sync_directory", &error);
+        #[cfg(not(test))]
+        let _ = error;
+        FsError::Io
+    })
 }
 
 #[cfg(test)]

@@ -19,7 +19,7 @@ async fn health_check_returns_warning_on_local_ollama_no_key() {
         .mount(&server)
         .await;
 
-    let provider = OllamaProvider::new(OllamaProviderConfig {
+    let provider = granted_ollama(OllamaProviderConfig {
         id: ProviderId::new("ollama-test"),
         base_url: server.uri(),
         models: vec![ModelId::new("llama3")],
@@ -57,7 +57,7 @@ async fn health_check_does_not_follow_redirects() {
         .mount(&source)
         .await;
 
-    let provider = OllamaProvider::new(OllamaProviderConfig {
+    let provider = granted_ollama(OllamaProviderConfig {
         id: ProviderId::new("ollama-redirect-test"),
         base_url: source.uri(),
         models: vec![ModelId::new("llama3")],
@@ -85,7 +85,7 @@ async fn health_check_returns_warning_on_no_key_with_empty_string() {
         .mount(&server)
         .await;
 
-    let provider = OllamaProvider::new(OllamaProviderConfig {
+    let provider = granted_ollama(OllamaProviderConfig {
         id: ProviderId::new("ollama-test"),
         base_url: server.uri(),
         models: vec![ModelId::new("llama3")],
@@ -117,7 +117,7 @@ async fn health_check_returns_unhealthy_on_5xx() {
         .mount(&server)
         .await;
 
-    let provider = OllamaProvider::new(OllamaProviderConfig {
+    let provider = granted_ollama(OllamaProviderConfig {
         id: ProviderId::new("ollama-test"),
         base_url: server.uri(),
         models: vec![ModelId::new("llama3")],
@@ -166,7 +166,7 @@ async fn health_check_ollama_cloud_healthy_with_valid_api_key() {
         .mount(&server)
         .await;
 
-    let provider = OllamaProvider::new(OllamaProviderConfig {
+    let provider = granted_ollama(OllamaProviderConfig {
         id: ProviderId::new("ollama-cloud-test"),
         base_url: server.uri(),
         models: vec![ModelId::new("gpt-oss:20b")],
@@ -207,7 +207,7 @@ async fn health_check_ollama_cloud_unhealthy_with_invalid_api_key() {
         .mount(&server)
         .await;
 
-    let provider = OllamaProvider::new(OllamaProviderConfig {
+    let provider = granted_ollama(OllamaProviderConfig {
         id: ProviderId::new("ollama-cloud-test"),
         base_url: server.uri(),
         models: vec![ModelId::new("gpt-oss:20b")],
@@ -248,7 +248,7 @@ async fn health_check_returns_warning_on_chat_429() {
         .mount(&server)
         .await;
 
-    let provider = OllamaProvider::new(OllamaProviderConfig {
+    let provider = granted_ollama(OllamaProviderConfig {
         id: ProviderId::new("ollama-cloud-test"),
         base_url: server.uri(),
         models: vec![ModelId::new("gpt-oss:20b")],
@@ -299,7 +299,7 @@ async fn health_check_chat_probe_latency_isolated() {
         .mount(&server)
         .await;
 
-    let provider = OllamaProvider::new(OllamaProviderConfig {
+    let provider = granted_ollama(OllamaProviderConfig {
         id: ProviderId::new("ollama-cloud-test"),
         base_url: server.uri(),
         models: vec![ModelId::new("gpt-oss:20b")],
@@ -327,7 +327,7 @@ async fn health_check_chat_probe_latency_isolated() {
 #[tokio::test]
 async fn health_check_returns_unhealthy_on_connection_refused() {
     // Port 1 is reserved and refuses connections — network error path.
-    let provider = OllamaProvider::new(OllamaProviderConfig {
+    let provider = granted_ollama(OllamaProviderConfig {
         id: ProviderId::new("ollama-test"),
         base_url: "http://127.0.0.1:1".to_string(),
         models: vec![ModelId::new("llama3")],
@@ -361,7 +361,7 @@ async fn complete_returns_response_with_token_counts() {
         .mount(&server)
         .await;
 
-    let provider = OllamaProvider::new(OllamaProviderConfig {
+    let provider = granted_ollama(OllamaProviderConfig {
         id: ProviderId::new("ollama-test"),
         base_url: server.uri(),
         models: vec![ModelId::new("llama3")],
@@ -423,7 +423,7 @@ async fn complete_handles_missing_eval_counts() {
         .mount(&server)
         .await;
 
-    let provider = OllamaProvider::new(OllamaProviderConfig {
+    let provider = granted_ollama(OllamaProviderConfig {
         id: ProviderId::new("ollama-test"),
         base_url: server.uri(),
         models: vec![ModelId::new("llama3")],
@@ -498,7 +498,7 @@ async fn complete_preserves_finish_reason_and_structured_tool_calls() {
         .mount(&server)
         .await;
 
-    let provider = OllamaProvider::new(OllamaProviderConfig {
+    let provider = granted_ollama(OllamaProviderConfig {
         id: ProviderId::new("ollama-test"),
         base_url: server.uri(),
         models: vec![ModelId::new("qwen3")],
@@ -575,7 +575,7 @@ async fn complete_returns_error_on_http_failure() {
         .mount(&server)
         .await;
 
-    let provider = OllamaProvider::new(OllamaProviderConfig {
+    let provider = granted_ollama(OllamaProviderConfig {
         id: ProviderId::new("ollama-test"),
         base_url: server.uri(),
         models: vec![ModelId::new("llama3")],
@@ -633,7 +633,7 @@ async fn stream_returns_chunks_from_sse_lines() {
         .mount(&server)
         .await;
 
-    let provider = OllamaProvider::new(OllamaProviderConfig {
+    let provider = granted_ollama(OllamaProviderConfig {
         id: ProviderId::new("ollama-test"),
         base_url: server.uri(),
         models: vec![ModelId::new("llama3")],
@@ -693,7 +693,7 @@ async fn stream_returns_error_on_http_failure() {
         .mount(&server)
         .await;
 
-    let provider = OllamaProvider::new(OllamaProviderConfig {
+    let provider = granted_ollama(OllamaProviderConfig {
         id: ProviderId::new("ollama-test"),
         base_url: server.uri(),
         models: vec![ModelId::new("llama3")],
@@ -753,7 +753,7 @@ async fn stream_handles_single_chunk() {
         .mount(&server)
         .await;
 
-    let provider = OllamaProvider::new(OllamaProviderConfig {
+    let provider = granted_ollama(OllamaProviderConfig {
         id: ProviderId::new("ollama-test"),
         base_url: server.uri(),
         models: vec![ModelId::new("llama3")],
@@ -821,7 +821,7 @@ async fn complete_sends_bearer_header_when_api_key_configured() {
         .mount(&server)
         .await;
 
-    let provider = OllamaProvider::new(OllamaProviderConfig {
+    let provider = granted_ollama(OllamaProviderConfig {
         id: ProviderId::new("ollama-test"),
         base_url: server.uri(),
         models: vec![ModelId::new("llama3")],
@@ -881,7 +881,7 @@ async fn complete_does_not_send_auth_header_when_api_key_is_none() {
         .mount(&server)
         .await;
 
-    let provider = OllamaProvider::new(OllamaProviderConfig {
+    let provider = granted_ollama(OllamaProviderConfig {
         id: ProviderId::new("ollama-test"),
         base_url: server.uri(),
         models: vec![ModelId::new("llama3")],
@@ -943,7 +943,7 @@ async fn complete_does_not_send_auth_header_when_api_key_is_empty() {
         .mount(&server)
         .await;
 
-    let provider = OllamaProvider::new(OllamaProviderConfig {
+    let provider = granted_ollama(OllamaProviderConfig {
         id: ProviderId::new("ollama-test"),
         base_url: server.uri(),
         models: vec![ModelId::new("llama3")],
@@ -1008,7 +1008,7 @@ async fn complete_prefers_tool_calls_over_stop_done_reason() {
         .mount(&server)
         .await;
 
-    let provider = OllamaProvider::new(OllamaProviderConfig {
+    let provider = granted_ollama(OllamaProviderConfig {
         id: ProviderId::new("ollama-test"),
         base_url: server.uri(),
         models: vec![ModelId::new("qwen3")],
@@ -1060,7 +1060,7 @@ async fn stream_terminal_chunk_without_tool_calls_keeps_tool_calls_reason() {
         .mount(&server)
         .await;
 
-    let provider = OllamaProvider::new(OllamaProviderConfig {
+    let provider = granted_ollama(OllamaProviderConfig {
         id: ProviderId::new("ollama-test"),
         base_url: server.uri(),
         models: vec![ModelId::new("qwen3")],
@@ -1106,4 +1106,32 @@ async fn stream_terminal_chunk_without_tool_calls_keeps_tool_calls_reason() {
         chunks[1].finish_reason,
         Some(rook_core::FinishReason::ToolCalls)
     );
+}
+
+// Synthetic loopback servers use ephemeral ports, granted explicitly per fixture.
+fn granted_ollama(config: OllamaProviderConfig) -> anyhow::Result<std::sync::Arc<OllamaProvider>> {
+    let url = reqwest::Url::parse(&config.base_url)?;
+    let policy = rook_core::EndpointPolicy {
+        allowed_origins: vec![url.origin().ascii_serialization()],
+    };
+    OllamaProvider::new_with_endpoint_policy(config, policy)
+}
+
+#[test]
+fn constructor_rejects_ungranted_and_unsafe_destinations() {
+    for endpoint in [
+        "not a URL",
+        "http://10.0.0.5:11434",
+        "http://169.254.169.254",
+        "http://127.0.0.1:4444",
+    ] {
+        let config = OllamaProviderConfig {
+            id: ProviderId::new("ollama-policy-test"),
+            base_url: endpoint.into(),
+            models: vec![],
+            timeout_secs: 1,
+            api_key: None,
+        };
+        assert!(OllamaProvider::new(config).is_err(), "{endpoint}");
+    }
 }

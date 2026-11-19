@@ -217,6 +217,18 @@ impl ModelArtifactStage {
     }
 
     pub fn publish(self) -> Result<VerifiedArtifactCache, CacheError> {
+        self.publish_with_freeze(super::super::freeze_directory)
+    }
+
+    /// Publishes the staged bundle and freezes the published entry.
+    ///
+    /// The freeze callback is a seam: a failure after the rename leaves the
+    /// final-name entry writable, and the next publication of the same manifest
+    /// must recover it.
+    fn publish_with_freeze<F>(self, freeze: F) -> Result<VerifiedArtifactCache, CacheError>
+    where
+        F: FnOnce(&ArtifactDir) -> Result<(), FsError>,
+    {
         self.require_complete()?;
         verify_files(&self.stage.directory, &self.manifest)?;
         let receipt = receipt_bytes(&self.manifest)?;
@@ -255,23 +267,31 @@ impl ModelArtifactStage {
             sync_file(&file).map_err(CacheError::Filesystem)?;
         }
         {
-            // macOS refuses to rename a directory that still holds an open
-            // descriptor below it, so the frozen child closes before publication.
+            // The child directory is never renamed, so freezing it before
+            // publication keeps its contents immutable from the moment the
+            // bundle becomes visible.
             let child = self
                 .stage
                 .directory
                 .open_subdir("1_Pooling")
                 .map_err(CacheError::Filesystem)?;
-            freeze_directory(&child)?;
+            super::super::freeze_directory(&child).map_err(CacheError::Filesystem)?;
         }
-        freeze_directory(&self.stage.directory)?;
+        // The staged directory cannot be frozen before the rename: macOS 15
+        // denies renaming a directory whose mode lacks write permission. The
+        // published entry is frozen right after the rename instead.
+        let manifest = self.manifest;
+        let expected = receipt;
+        let digest = bundle_id.clone();
         let directory = self
             .stage
-            .publish_directory(&bundle_id)
+            .publish_frozen_directory_with(&bundle_id, freeze, |existing| {
+                matches_manifest(existing, &manifest, &expected, &digest)
+            })
             .map_err(CacheError::Filesystem)?;
         Ok(VerifiedArtifactCache {
             directory,
-            manifest: self.manifest,
+            manifest,
             bundle_id,
         })
     }
@@ -334,6 +354,45 @@ fn receipt_bytes(manifest: &PinnedMiniLmManifest) -> Result<Vec<u8>, CacheError>
     .map_err(|_| CacheError::ReceiptMismatch)
 }
 
+/// Reports whether an existing final-name entry is exactly the requested
+/// manifest: its receipt bytes must match the expected receipt and every
+/// artifact must still match the pinned manifest.
+///
+/// A failure to verify is never an adoption: the entry is left untouched.
+fn matches_manifest(
+    existing: &ArtifactDir,
+    manifest: &PinnedMiniLmManifest,
+    expected: &[u8],
+    digest: &str,
+) -> bool {
+    let Ok(file) = existing.open_file(RECEIPT_NAME) else {
+        return false;
+    };
+    if check_readonly(&file, 0o400).is_err() {
+        return false;
+    }
+    let Ok(size) = u64::try_from(expected.len()) else {
+        return false;
+    };
+    let Ok(checked) = crate::artifacts::load_verified(&file, size, digest) else {
+        return false;
+    };
+    if checked.as_bytes() != expected {
+        return false;
+    }
+    if verify_files(existing, manifest).is_err() {
+        return false;
+    }
+    manifest.files().iter().all(|artifact| {
+        let Some((folder, _)) = artifact.path().split_once('/') else {
+            return true;
+        };
+        existing
+            .open_subdir(folder)
+            .is_ok_and(|child| check_readonly(&child.directory, 0o500).is_ok())
+    })
+}
+
 fn open_artifact(directory: &ArtifactDir, path: &str) -> Result<File, CacheError> {
     match path.split_once('/') {
         Some((folder, name)) => directory
@@ -386,26 +445,6 @@ fn open_readonly_artifact(directory: &ArtifactDir, path: &str) -> Result<File, C
     };
     check_readonly(&file, 0o400)?;
     Ok(file)
-}
-
-fn freeze_directory(directory: &ArtifactDir) -> Result<(), CacheError> {
-    directory
-        .directory
-        .set_permissions(std::fs::Permissions::from_mode(0o500))
-        .map_err(|error| {
-            #[cfg(test)]
-            super::super::diagnostics::report("freeze.chmod_directory", &error);
-            #[cfg(not(test))]
-            let _ = error;
-            CacheError::Filesystem(FsError::Io)
-        })?;
-    directory.directory.sync_all().map_err(|error| {
-        #[cfg(test)]
-        super::super::diagnostics::report("freeze.sync_directory", &error);
-        #[cfg(not(test))]
-        let _ = error;
-        CacheError::Filesystem(FsError::Io)
-    })
 }
 
 fn create_new(directory: &ArtifactDir, name: &str) -> Result<File, FsError> {
@@ -586,16 +625,7 @@ mod tests {
     fn publication_keeps_no_descriptor_open_inside_the_renamed_directory() {
         let root = Fixture::new();
         let stage = complete_stage(&root);
-        let staged = fs::read_dir(root.0.path())
-            .expect("fixture entries")
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .find(|path| {
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| name.starts_with(".stage-"))
-            })
-            .expect("staged directory");
+        let staged = staged_path(&root);
         let pooling = fs::metadata(staged.join("1_Pooling")).expect("pooling metadata");
         let (device, inode) = (pooling.dev(), pooling.ino());
         let open_during_rename = Arc::new(AtomicBool::new(false));
@@ -612,6 +642,48 @@ mod tests {
             !open_during_rename.load(Ordering::SeqCst),
             "publication must not rename a directory that keeps descriptors open inside it"
         );
+    }
+
+    /// macOS 15 denies renaming a directory whose mode lacks write permission,
+    /// so the staged directory must stay writable until the rename completes and
+    /// the published directory is frozen afterwards.
+    #[test]
+    fn publication_keeps_the_staged_directory_writable_until_the_rename() {
+        let root = Fixture::new();
+        let stage = complete_stage(&root);
+        let staged = staged_path(&root);
+        let writable_at_rename = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&writable_at_rename);
+        let _guard = super::super::super::diagnostics::set_pre_rename_probe(move || {
+            let mode = fs::metadata(&staged)
+                .map(|metadata| metadata.mode() & 0o777)
+                .unwrap_or(0);
+            observed.store(mode & 0o200 != 0, Ordering::SeqCst);
+        });
+        let cache = stage.publish().expect("publication");
+        assert!(
+            writable_at_rename.load(Ordering::SeqCst),
+            "the staged directory must still be writable when it is renamed"
+        );
+        let published = root.0.path().join(cache.bundle_id());
+        assert_eq!(
+            published.metadata().expect("published mode").mode() & 0o777,
+            0o500,
+            "the published directory must be frozen after the rename"
+        );
+    }
+
+    fn staged_path(root: &Fixture) -> std::path::PathBuf {
+        fs::read_dir(root.0.path())
+            .expect("fixture entries")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(".stage-"))
+            })
+            .expect("staged directory")
     }
 
     fn complete_stage(root: &Fixture) -> ModelArtifactStage {
@@ -946,6 +1018,168 @@ mod tests {
             Err(CacheError::Poisoned)
         ));
         assert!(matches!(stage.publish(), Err(CacheError::Poisoned)));
+    }
+
+    /// Reproduces a publication whose freeze failed after the rename: the
+    /// final-name entry exists, holds the exact manifest content, and is still
+    /// writable because the freeze never completed.
+    fn simulate_failed_freeze(root: &Fixture, stage: &ModelArtifactStage) -> String {
+        let manifest = PinnedMiniLmManifest::synthetic_for_tests();
+        let receipt = receipt_bytes(&manifest).expect("receipt");
+        let bundle_id = format!("{:x}", Sha256::digest(&receipt));
+        let staged = &stage.stage.directory;
+        {
+            let mut file = create_new(staged, RECEIPT_NAME).expect("receipt file");
+            file.write_all(&receipt).expect("receipt bytes");
+            file.rewind().expect("receipt rewind");
+            file.set_permissions(fs::Permissions::from_mode(0o400))
+                .expect("receipt mode");
+            file.sync_all().expect("receipt sync");
+        }
+        let child = staged.open_subdir("1_Pooling").expect("child");
+        super::super::super::freeze_directory(&child).expect("child freeze");
+        fs::rename(
+            root.0.path().join(&stage.stage.source_name),
+            root.0.path().join(&bundle_id),
+        )
+        .expect("publication rename");
+        bundle_id
+    }
+
+    #[test]
+    fn a_failed_freeze_after_the_rename_is_recovered_by_the_next_publication() {
+        let root = Fixture::new();
+        let stage = complete_stage(&root);
+        let bundle_id = simulate_failed_freeze(&root, &stage);
+        let target = root.0.path().join(&bundle_id);
+        assert!(target.is_dir());
+        assert_eq!(
+            fs::metadata(&target).expect("target metadata").mode() & 0o777,
+            0o700,
+            "a failed freeze leaves the published entry writable"
+        );
+        let cache = complete_stage(&root)
+            .publish()
+            .expect("recovered publication");
+        assert_eq!(cache.bundle_id(), bundle_id);
+        assert_eq!(
+            fs::metadata(&target).expect("target metadata").mode() & 0o777,
+            0o500,
+            "the recovered publication must be frozen"
+        );
+        assert_eq!(
+            cache
+                .read_artifact("config.json")
+                .expect("verified buffer")
+                .into_bytes(),
+            b"abc"
+        );
+    }
+
+    /// The publication seam injects a freeze failure after the rename: the
+    /// final-name entry exists and is still writable.
+    #[test]
+    fn an_injected_freeze_failure_leaves_a_writable_entry_that_the_next_publication_recovers() {
+        let root = Fixture::new();
+        let result = complete_stage(&root).publish_with_freeze(|_| Err(FsError::Io));
+        assert!(matches!(
+            result,
+            Err(CacheError::Filesystem(FsError::OutcomeUnknown))
+        ));
+        let manifest = PinnedMiniLmManifest::synthetic_for_tests();
+        let receipt = receipt_bytes(&manifest).expect("receipt");
+        let bundle_id = format!("{:x}", Sha256::digest(&receipt));
+        let target = root.0.path().join(&bundle_id);
+        assert_eq!(
+            fs::metadata(&target).expect("target metadata").mode() & 0o777,
+            0o700,
+            "the failed freeze left the published entry writable"
+        );
+        let cache = complete_stage(&root)
+            .publish()
+            .expect("recovered publication");
+        assert_eq!(cache.bundle_id(), bundle_id);
+        assert_eq!(
+            fs::metadata(&target).expect("target metadata").mode() & 0o777,
+            0o500,
+            "the recovered publication must be frozen"
+        );
+    }
+
+    #[test]
+    fn a_matching_manifest_with_a_writable_receipt_is_never_adopted() {
+        let root = Fixture::new();
+        let stage = complete_stage(&root);
+        let bundle_id = simulate_failed_freeze(&root, &stage);
+        let target = root.0.path().join(&bundle_id);
+        let receipt = target.join(RECEIPT_NAME);
+        let original = fs::read(&receipt).expect("receipt");
+        fs::set_permissions(&receipt, fs::Permissions::from_mode(0o600))
+            .expect("make receipt writable");
+
+        let result = complete_stage(&root).publish();
+        assert!(result.is_err(), "writable receipt must not be adopted");
+        assert_eq!(fs::read(&receipt).expect("preserved receipt"), original);
+        assert_eq!(
+            fs::metadata(&receipt).expect("receipt metadata").mode() & 0o777,
+            0o600,
+            "a rejected receipt must stay untouched"
+        );
+    }
+
+    #[test]
+    fn a_matching_manifest_with_a_writable_pooling_directory_is_never_adopted() {
+        let root = Fixture::new();
+        let stage = complete_stage(&root);
+        let bundle_id = simulate_failed_freeze(&root, &stage);
+        let target = root.0.path().join(&bundle_id);
+        let pooling = target.join("1_Pooling");
+        let original = fs::read(pooling.join("config.json")).expect("pooling artifact");
+        fs::set_permissions(&pooling, fs::Permissions::from_mode(0o700))
+            .expect("make pooling directory writable");
+
+        let result = complete_stage(&root).publish();
+        assert!(
+            result.is_err(),
+            "writable child directory must not be adopted"
+        );
+        assert_eq!(
+            fs::read(pooling.join("config.json")).expect("preserved artifact"),
+            original
+        );
+        assert_eq!(
+            fs::metadata(&pooling).expect("pooling metadata").mode() & 0o777,
+            0o700,
+            "a rejected child directory must stay untouched"
+        );
+    }
+
+    #[test]
+    fn a_mismatched_existing_entry_is_never_adopted() {
+        let root = Fixture::new();
+        let manifest = PinnedMiniLmManifest::synthetic_for_tests();
+        let receipt = receipt_bytes(&manifest).expect("receipt");
+        let bundle_id = format!("{:x}", Sha256::digest(&receipt));
+        let target = root.0.path().join(&bundle_id);
+        fs::create_dir(&target).expect("fixture entry");
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o700)).expect("entry mode");
+        fs::write(target.join(RECEIPT_NAME), b"foreign").expect("foreign receipt");
+        fs::set_permissions(target.join(RECEIPT_NAME), fs::Permissions::from_mode(0o400))
+            .expect("foreign receipt mode");
+        let result = complete_stage(&root).publish();
+        assert!(matches!(
+            result,
+            Err(CacheError::Filesystem(FsError::AlreadyExists))
+        ));
+        assert_eq!(
+            fs::metadata(&target).expect("target metadata").mode() & 0o777,
+            0o700,
+            "a mismatched entry must stay untouched"
+        );
+        assert_eq!(
+            fs::read(target.join(RECEIPT_NAME)).expect("foreign receipt"),
+            b"foreign"
+        );
     }
 
     #[test]

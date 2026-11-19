@@ -295,10 +295,14 @@ allow_env_fallback = false
 When `enabled = true`, Rook resolves the hash secret in the following priority order:
 
 1. **`API_KEY_HASH_SECRET`** environment variable (production / Docker — always use this).
-2. **`api_key_secret.key`** next to the database — auto-generated and persisted on first run.
-3. **Transient in-memory secret** — for `:memory:` or `file::memory:` targets that cannot persist files.
+2. **`api_key_secret.key`** next to the database — auto-generated and persisted on first run. Used only when `API_KEY_HASH_SECRET` is undefined or blank.
+3. **Transient in-memory secret** — for `:memory:` or `file::memory:` targets that cannot persist files. Used only when `API_KEY_HASH_SECRET` is undefined or blank.
 
-Production deployments **must** set `API_KEY_HASH_SECRET` via environment variable so the secret is not stored on disk and survives restarts. The `allow_env_fallback` option also permits the legacy `CLIENT_API_KEYS` fallback for local compatibility only.
+A defined but blank `API_KEY_HASH_SECRET` does not win this order: Rook trims the value and, when nothing remains, continues with the `api_key_secret.key` or transient secret.
+
+Production deployments **must** set `API_KEY_HASH_SECRET` via environment variable so the secret is not stored on disk and survives restarts. The value must contain at least 32 bytes; generate it with a cryptographically secure random generator, because length alone does not prove entropy. For example, use `openssl rand -hex 32`. The `allow_env_fallback` option also permits the legacy `CLIENT_API_KEYS` fallback for local compatibility only.
+
+Rook resolves the same secret for CSRF token signing, whether or not `auth.api_keys.enabled` is set. The CSRF signing key is a separate, domain-separated HMAC derivation of that secret, so the secret itself never signs CSRF tokens. As a result, `api_key_secret.key` is created next to the database on first run even when client API key auth is disabled, and in-memory targets always use a transient secret. Replicas that share the same sessions database must also share the secret; see [Deployment](deployment.md).
 
 ### CLI: seed-admin
 
@@ -317,7 +321,7 @@ elsewhere. Set `API_KEY_HASH_SECRET` to pin the API key hash secret. Use this fo
 
 ```bash
 ROOK_CONFIG=dev/test-configs/rook.toml \
-API_KEY_HASH_SECRET="your-secret" \
+API_KEY_HASH_SECRET="$(openssl rand -hex 32)" \
 ROOK_SEED_PASSWORD="admin123" \
 rook seed-admin
 ```
@@ -599,7 +603,7 @@ Rook validates config on startup:
 
 - `db_path` must be writable (directory must exist; file is created on first write)
 - If `provider_crud.enabled = true`, `ENCRYPTION_PASSPHRASE` and `ENCRYPTION_SALT` must be set
-- If `auth.api_keys.enabled = true`, `API_KEY_HASH_SECRET` must be set
+- `API_KEY_HASH_SECRET` must contain at least 32 bytes when set; Rook rejects shorter values during startup. Production deployments should set it using cryptographically secure random bytes.
 
 There is no minimum provider requirement at startup — the registry starts empty and is populated from the database via `refresh_registry()`. If no connections exist in the database, Rook will return 503 for all routing requests until connections are added via the CRUD API.
 
@@ -633,7 +637,7 @@ There is no minimum provider requirement at startup — the registry starts empt
      -p 3773:3773 \
      -v $(pwd)/dev/test-configs/rook-e2e.toml:/app/rook.toml:ro \
      -e ROOK_CONFIG=/app/rook.toml \
-     -e API_KEY_HASH_SECRET="test-secret" \
+     -e API_KEY_HASH_SECRET="$(openssl rand -hex 32)" \
      rook:e2e
 
    # Seed admin password

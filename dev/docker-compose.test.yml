@@ -29,7 +29,7 @@ services:
     environment:
       - RUST_LOG=info
       - RUST_BACKTRACE=1
-      - API_KEY_HASH_SECRET=test-secret-for-dev-only-do-not-use-in-production
+      - API_KEY_HASH_SECRET=cortex-test-api-key-secret-000000000000000000000000000000
       - ENCRYPTION_PASSPHRASE=test-encryption-passphrase-for-e2e-tests-only
       - ENCRYPTION_SALT=St7xmpfwUTbsXGBHIlYjvg
     volumes:

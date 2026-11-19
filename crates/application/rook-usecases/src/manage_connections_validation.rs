@@ -55,14 +55,26 @@ pub(super) fn validate_provider_config(
         }
         EndpointValidation::AzureHost => validate_azure_endpoint(provider, config),
         EndpointValidation::None => {
-            if let Some(base_url) = config.base_url.as_deref() {
-                if reqwest::Url::parse(base_url)
-                    .ok()
-                    .and_then(|url| url.host_str().map(is_cloud_metadata_host))
-                    .unwrap_or(false)
-                {
-                    return Err(ValidationError::CloudMetadataEndpointNotAllowed);
-                }
+            let base_url = config
+                .base_url
+                .as_deref()
+                .unwrap_or(provider.default_base_url);
+            let url = reqwest::Url::parse(base_url).map_err(|_| ValidationError::InvalidBaseUrl)?;
+            if url.host_str().is_some_and(is_cloud_metadata_host) {
+                return Err(ValidationError::CloudMetadataEndpointNotAllowed);
+            }
+            if url.host_str().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || !matches!(url.scheme(), "http" | "https")
+            {
+                return Err(ValidationError::InvalidBaseUrl);
+            }
+            if provider.protocol == Protocol::OllamaNative {
+                endpoint_policy
+                    .for_ollama()
+                    .validate_url(&url)
+                    .map_err(|_| ValidationError::InvalidBaseUrl)?;
             }
             Ok(())
         }
