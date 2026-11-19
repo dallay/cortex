@@ -53,11 +53,18 @@ the parent sync makes the new name durable. Freezing before the rename cannot wo
 on macOS 15, and freezing after the parent sync would let a crash expose a
 writable published directory under a durable name.
 
-The interval between the rename and the freeze keeps the staged directory writable
-for its owner only. The artifact contents are already immutable at that point: the
-artifact files are `0o400` and the `1_Pooling` child directory is `0o500`. Every
-reopen re-verifies the receipt and the artifact digests, so a modified bundle is
-rejected instead of trusted.
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:417d21557b00c6e6be816f2475c740543e5ae0cacdf5c1fb32d35bdf87612384 -->
+
+The interval between the rename and the freeze keeps the root directory writable
+for its owner only. The artifact files are read-only (`0o400`), and the `1_Pooling`
+child directory is `0o500`, but the owner can replace top-level artifacts during
+this interval. Reopening the cache verifies the receipt and all artifact digests;
+reading an artifact checks its digest again. These checks detect replacements with
+different content; they do not prevent replacement.
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 Keep this test-only instrumentation for platform regressions. To remove it, remove
 `artifact_diagnostics.rs`, its `cfg(test)` module declaration and the matching
