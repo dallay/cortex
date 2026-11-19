@@ -1,3 +1,6 @@
+#[path = "support/runfiles.rs"]
+mod runfiles;
+
 use async_trait::async_trait;
 use axum::{http::StatusCode, response::IntoResponse, routing::post, Json, Router};
 use futures::StreamExt;
@@ -185,10 +188,15 @@ fn mcp_config(marker: &std::path::Path) -> ServerConfig {
     ServerConfig {
         name: "fixture".into(),
         command: "python3".into(),
-        args: vec![format!(
-            "{}/tests/fixtures/mcp_server.py",
-            env!("CARGO_MANIFEST_DIR")
-        )],
+        args: vec![runfiles::resolve(
+            "_main/crates/huginn/runtime/tests/fixtures/mcp_server.py",
+            std::path::Path::new(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/mcp_server.py"
+            )),
+        )
+        .display()
+        .to_string()],
         env: BTreeMap::from([("MARKER".into(), marker.display().to_string())]),
         env_from: BTreeMap::new(),
     }

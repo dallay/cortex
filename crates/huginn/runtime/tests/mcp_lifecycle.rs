@@ -10,6 +10,9 @@ use huginn_runtime::{
 use serde_json::json;
 use std::collections::BTreeMap;
 
+#[path = "support/runfiles.rs"]
+mod runfiles;
+
 struct Allow;
 #[async_trait]
 impl ApprovalPolicy for Allow {
@@ -25,10 +28,15 @@ fn mcp_config(marker: &std::path::Path) -> ServerConfig {
     ServerConfig {
         name: "fixture".into(),
         command: "python3".into(),
-        args: vec![format!(
-            "{}/tests/fixtures/mcp_server.py",
-            env!("CARGO_MANIFEST_DIR")
-        )],
+        args: vec![runfiles::resolve(
+            "_main/crates/huginn/runtime/tests/fixtures/mcp_server.py",
+            std::path::Path::new(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/mcp_server.py"
+            )),
+        )
+        .display()
+        .to_string()],
         env: BTreeMap::from([("MARKER".into(), marker.display().to_string())]),
         env_from: BTreeMap::new(),
     }

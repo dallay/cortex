@@ -1,0 +1,41 @@
+load("@crates//:defs.bzl", "aliases", "all_crate_deps", "crate_edition")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "huginn_reference_extension",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "huginn_reference_extension",
+    crate_root = "src/lib.rs",
+    edition = crate_edition(),
+    deps = ['//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+)
+
+rust_test(
+    name = "huginn_reference_extension_unit_test",
+    crate = ":huginn_reference_extension",
+    aliases = aliases(normal_dev = True, proc_macro_dev = True),
+    edition = crate_edition(),
+    deps = ['//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "approval",
+    crate_name = "approval",
+    srcs = ['tests/approval.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_reference_extension", "//crates/huginn/core:huginn_core"] + ['//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "smoke",
+    crate_name = "smoke",
+    srcs = ['tests/smoke.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_reference_extension", "//crates/huginn/core:huginn_core"] + ['//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)

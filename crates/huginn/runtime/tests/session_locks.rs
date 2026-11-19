@@ -1,3 +1,6 @@
+#[path = "support/runfiles.rs"]
+mod runfiles;
+
 use fs2::FileExt;
 use huginn_core::AgentError;
 use huginn_runtime::sessions::SqliteSessions;
@@ -10,14 +13,17 @@ use uuid::Uuid;
 fn spawn_legacy_protocol_holder(id: Uuid) -> (Child, tempfile::TempDir) {
     let ready_dir = tempfile::tempdir().expect("temporary synchronization directory");
     let ready_path = ready_dir.path().join("ready");
-    let child = Command::new(env!("CARGO_BIN_EXE_session_lock_holder"))
-        .arg(id.as_hyphenated().to_string())
-        .arg(&ready_path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .expect("spawn lock holder");
+    let child = Command::new(runfiles::resolve(
+        "_main/crates/huginn/runtime/session_lock_holder",
+        std::path::Path::new(env!("CARGO_BIN_EXE_session_lock_holder")),
+    ))
+    .arg(id.as_hyphenated().to_string())
+    .arg(&ready_path)
+    .stdin(Stdio::piped())
+    .stdout(Stdio::null())
+    .stderr(Stdio::inherit())
+    .spawn()
+    .expect("spawn lock holder");
     let deadline = Instant::now() + Duration::from_secs(5);
     while !ready_path.exists() {
         assert!(

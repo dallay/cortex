@@ -4,6 +4,9 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+#[path = "support/binary_path.rs"]
+mod binary_path;
+
 #[test]
 fn two_huginn_processes_contend_for_same_session_but_not_other_sessions() {
     let directory = tempfile::tempdir().expect("test directory");
@@ -47,7 +50,7 @@ fn two_huginn_processes_contend_for_same_session_but_not_other_sessions() {
             pixel_height: 0,
         })
         .expect("open owner PTY");
-    let mut owner_command = CommandBuilder::new(env!("CARGO_BIN_EXE_huginn"));
+    let mut owner_command = CommandBuilder::new(binary_path::huginn());
     owner_command.args(["--provider", "mock", "--workspace"]);
     owner_command.arg(workspace.path());
     owner_command.arg("--db");

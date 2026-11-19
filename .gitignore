@@ -1,5 +1,14 @@
 # === Rust ===
 /target/
+
+# === Bazel ===
+/bazel-*
+/.bazelrc.user
+
+# === Python tooling ===
+__pycache__/
+*.pyc
+
 /tmp/
 tmp
 /.playwright-mcp/

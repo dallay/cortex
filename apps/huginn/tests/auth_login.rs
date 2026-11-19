@@ -6,6 +6,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "support/binary_path.rs"]
+mod binary_path;
+
 fn login(script: &[(&str, &[u8])]) -> (portable_pty::ExitStatus, String, tempfile::TempDir) {
     let data = tempfile::tempdir().unwrap();
     let pair = native_pty_system()
@@ -16,7 +19,7 @@ fn login(script: &[(&str, &[u8])]) -> (portable_pty::ExitStatus, String, tempfil
             pixel_height: 0,
         })
         .unwrap();
-    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_huginn"));
+    let mut command = CommandBuilder::new(binary_path::huginn());
     command.args([
         "--db",
         data.path().join("sessions.db").to_str().unwrap(),

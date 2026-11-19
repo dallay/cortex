@@ -1,6 +1,10 @@
 #![cfg(unix)]
 #[path = "../../../crates/huginn/presentation/tests/support/pty.rs"]
 mod support;
+
+#[path = "support/binary_path.rs"]
+mod binary_path;
+
 use portable_pty::CommandBuilder;
 use std::{
     io::Write,
@@ -12,7 +16,7 @@ use support::Pty;
 const TUI_READY_FOOTER: &str = "Huginn — Enter sends / Shift+Enter (if supported) / /help";
 
 fn command(workspace: &Path, db: &Path) -> CommandBuilder {
-    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_huginn"));
+    let mut command = CommandBuilder::new(binary_path::huginn());
     command.args(["--provider", "mock", "--workspace"]);
     command.arg(workspace);
     command.arg("--db");
@@ -176,7 +180,7 @@ fn first_run_opens_tui_without_configured_model() {
     let workspace = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();
     let db = data.path().join("sessions.db");
-    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_huginn"));
+    let mut command = CommandBuilder::new(binary_path::huginn());
     command.args(["--workspace"]);
     command.arg(workspace.path());
     command.args(["--db"]);
@@ -349,7 +353,7 @@ fn provider_onboarding_search_cancel_and_resize_restore_terminal() {
     let home = tempfile::tempdir().unwrap();
     let workspace = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();
-    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_huginn"));
+    let mut command = CommandBuilder::new(binary_path::huginn());
     command.arg("--workspace");
     command.arg(workspace.path());
     command.arg("--db");

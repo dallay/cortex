@@ -71,11 +71,26 @@ fn set_modify_other_keys(enabled: bool) -> std::io::Result<()> {
         {
             return Ok(());
         }
-        std::io::stdout().write_all(b"\x1b[>4;2m")?;
-    } else if MODIFY_OTHER_KEYS_ACTIVE.swap(false, Ordering::SeqCst) {
-        std::io::stdout().write_all(b"\x1b[>4;0m")?;
+    } else if !MODIFY_OTHER_KEYS_ACTIVE.swap(false, Ordering::SeqCst) {
+        return Ok(());
     }
-    Ok(())
+    let mut stdout = std::io::stdout();
+    write_modify_other_keys(&mut stdout, enabled)
+}
+
+/// Writes the `modifyOtherKeys` sequence that turns the mode on or off.
+///
+/// stdout is line buffered and the sequence carries no newline, so the bytes
+/// would stay in the buffer until a later redraw flushed them. The terminal
+/// then learned about the mode change late, or never when no redraw followed.
+#[cfg(unix)]
+fn write_modify_other_keys(writer: &mut impl Write, enabled: bool) -> std::io::Result<()> {
+    if enabled {
+        writer.write_all(b"\x1b[>4;2m")?;
+    } else {
+        writer.write_all(b"\x1b[>4;0m")?;
+    }
+    writer.flush()
 }
 
 #[cfg(unix)]
@@ -2039,6 +2054,47 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect();
         (text, terminal.backend().cursor_position())
+    }
+
+    /// Records the bytes written and how many times the writer was flushed.
+    #[cfg(unix)]
+    #[derive(Default)]
+    struct RecordingWriter {
+        bytes: Vec<u8>,
+        flushes: usize,
+    }
+
+    #[cfg(unix)]
+    impl Write for RecordingWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.bytes.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.flushes += 1;
+            Ok(())
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn modify_other_keys_sequences_match_the_terminal_protocol() {
+        let mut enabled = RecordingWriter::default();
+        write_modify_other_keys(&mut enabled, true).unwrap();
+        assert_eq!(enabled.bytes, b"\x1b[>4;2m");
+        assert_eq!(
+            enabled.flushes, 1,
+            "the mode change must reach the terminal now"
+        );
+
+        let mut disabled = RecordingWriter::default();
+        write_modify_other_keys(&mut disabled, false).unwrap();
+        assert_eq!(disabled.bytes, b"\x1b[>4;0m");
+        assert_eq!(
+            disabled.flushes, 1,
+            "the mode change must reach the terminal now"
+        );
     }
 
     #[test]

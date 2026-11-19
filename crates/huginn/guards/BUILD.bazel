@@ -1,0 +1,68 @@
+load("@crates//:defs.bzl", "aliases", "all_crate_deps", "crate_edition")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "huginn_guards",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "huginn_guards",
+    crate_root = "src/lib.rs",
+    edition = crate_edition(),
+    deps = ['//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+)
+
+rust_test(
+    name = "huginn_guards_unit_test",
+    crate = ":huginn_guards",
+    aliases = aliases(normal_dev = True, proc_macro_dev = True),
+    edition = crate_edition(),
+    deps = ['//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "configuration",
+    crate_name = "configuration",
+    srcs = ['tests/configuration.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_guards"] + ['//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "mixed_shell_policy",
+    crate_name = "mixed_shell_policy",
+    srcs = ['tests/mixed_shell_policy.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_guards"] + ['//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "plugin",
+    crate_name = "plugin",
+    srcs = ['tests/plugin.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_guards"] + ['//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "policy",
+    crate_name = "policy",
+    srcs = ['tests/policy.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_guards"] + ['//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "shell_policy",
+    crate_name = "shell_policy",
+    srcs = ['tests/shell_policy.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_guards"] + ['//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
