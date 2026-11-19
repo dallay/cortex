@@ -52,19 +52,35 @@ pub(super) fn descriptor_open_for(device: u64, inode: u64) -> Option<bool> {
 
     // A single descriptor for the directory keeps every lookup relative to it,
     // so no path is ever built from a directory entry name.
-    let descriptors = rustix::fs::open(
+    let descriptors = match rustix::fs::open(
         directory,
         rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::DIRECTORY | rustix::fs::OFlags::CLOEXEC,
         rustix::fs::Mode::empty(),
-    )
-    .ok()?;
+    ) {
+        Ok(descriptors) => descriptors,
+        Err(error) => {
+            report("descriptor.open_directory", &std::io::Error::from(error));
+            return None;
+        }
+    };
 
     // Snapshot the slot names before resolving them. Resolving a slot reopens a
     // descriptor, and the descriptor directory lists descriptors as they live.
-    let mut slots = Vec::new();
-    for entry in std::fs::read_dir(directory).ok()? {
-        let Ok(entry) = entry else {
+    let entries = match std::fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) => {
+            report("descriptor.read_directory", &error);
             return None;
+        }
+    };
+    let mut slots = Vec::new();
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                report("descriptor.read_entry", &error);
+                return None;
+            }
         };
         let name = entry.file_name();
         // The descriptor directory only holds decimal slot names. Rebuilding the
@@ -122,7 +138,16 @@ fn slot_matches(
                     return None;
                 }
             };
-            let reopened_device = u64::try_from(reopened.st_dev).ok()?;
+            let reopened_device = match u64::try_from(reopened.st_dev) {
+                Ok(device) => device,
+                Err(_) => {
+                    report(
+                        "descriptor.device_conversion",
+                        &std::io::Error::other("negative device identifier"),
+                    );
+                    return None;
+                }
+            };
             Some(reopened_device == device && reopened.st_ino == inode)
         }
         // The slot cannot be reopened, for example because it is write-only, so
