@@ -69,33 +69,6 @@ TARGET_EXCLUSIONS: dict[tuple[str, str], str] = {
         "dependencies are not vendored by crate_universe, so the target cannot "
         "be built under Bazel."
     ),
-    ("apps/rook", "build-script-build"): (
-        "The Cargo build script shells out to the pnpm dashboard build (vite). "
-        "Bazel does not model the Node dashboard build step; the embedded "
-        "dashboard assets are supplied as compile data instead."
-    ),
-    ("apps/rook", "dotenv_startup"): (
-        "The integration test clears the child environment and changes the child "
-        "working directory before launching CARGO_BIN_EXE_rook. Cargo supplies an "
-        "absolute executable path, but Bazel's portable runfiles path is relative "
-        "to the test runfiles directory. Supporting this target requires a "
-        "runfiles-aware test helper or test-source change, which is outside the "
-        "permitted BUILD-only changes."
-    ),
-    ("crates/huginn/runtime", "wasm_outline"): (
-        "The test requires the non-default `experimental-wasm` feature, which "
-        "activates the optional `wasmtime` dependency. The workspace-generated "
-        "@crates repository omits that crate because no default Cargo target "
-        "activates the feature, so modeling this target requires feature-aware "
-        "crate_universe generation in MODULE.bazel."
-    ),
-    ("crates/huginn/runtime", "wasm_output_validation"): (
-        "The test requires the non-default `experimental-wasm` feature, which "
-        "activates the optional `wasmtime` dependency. The workspace-generated "
-        "@crates repository omits that crate because no default Cargo target "
-        "activates the feature, so modeling this target requires feature-aware "
-        "crate_universe generation in MODULE.bazel."
-    ),
 }
 
 # Package specific compile data that cannot be discovered from the sources.
@@ -866,7 +839,7 @@ def build_plan(
 
         if has_unit_tests(library_sources):
             unit_deps = deps_expression(
-                normal_workspace + dev_workspace,
+                sorted(set(normal_workspace + dev_workspace)),
                 "all_crate_deps(normal = True, normal_dev = True)",
             )
             unit_test_name = f"{crate}_unit_test"
@@ -983,8 +956,10 @@ def build_plan(
             target_name = assigned_names[cargo_name]
             binaries = cargo_bin_executables(cargo_target, assigned_names)
             test_deps = deps_expression(
-                [f":{variant_name}"] + normal_workspace + dev_workspace
-                + [f":{bazel_name}" for _, bazel_name in binaries],
+                sorted(set(
+                    [f":{variant_name}"] + normal_workspace + dev_workspace
+                    + [f":{bazel_name}" for _, bazel_name in binaries]
+                )),
                 "all_crate_deps(normal = True, normal_dev = True)",
             )
             attributes = {
@@ -1035,6 +1010,7 @@ def build_plan(
                 # Cargo links a binary and an example against the library of
                 # the same package.
                 binary_dependencies.append(f":{library_name}")
+            binary_dependencies = sorted(set(binary_dependencies))
             binary_deps = deps_expression(binary_dependencies, normal_selector)
             if plan.target("build_script") is not None:
                 binary_deps = deps_expression(
@@ -1064,7 +1040,7 @@ def build_plan(
                 # unit tests of the binary run as part of `cargo test`.
                 unit_test_name = f"{target_name}_test"
                 unit_test_deps = deps_expression(
-                    binary_dependencies + dev_workspace,
+                    sorted(set(binary_dependencies + dev_workspace)),
                     "all_crate_deps(normal = True, normal_dev = True)",
                 )
                 unit_test_attributes: dict[str, Any] = {

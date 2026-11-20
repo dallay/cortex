@@ -1,9 +1,36 @@
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 package(default_visibility = ["//visibility:public"])
 
 # The Rust binary embeds the built dashboard through rust-embed, so the
 # compiled assets must be available as Bazel inputs.
+#
+# The dashboard build is non-hermetic: it executes Vite through the pnpm
+# toolchain installed in the source tree. Bazel tracks the source inputs
+# (TypeScript, config, etc.) and triggers a rebuild when they change, but
+# the actual build command runs outside the sandbox.
+#
+# To build the dashboard before compiling Rook, run:
+#   bazel run //apps/rook/dashboard:build
+sh_binary(
+    name = "build",
+    srcs = ["bazel/build_dashboard.sh"],
+    data = [
+        "bazel/lib.sh",
+    ],
+    visibility = ["//apps/rook:__subpackages__"],
+    tags = [
+        "no-sandbox",
+        "non-hermetic",
+        "requires-node-modules",
+        "requires-pnpm",
+    ],
+)
+
+# Filegroup that collects the built dashboard assets from the source tree.
+# The `build` target must be executed (or `pnpm --filter @dallay/rook-dashboard exec vite build`)
+# before this target can provide non-empty outputs.
 filegroup(
     name = "dist",
     srcs = glob(
