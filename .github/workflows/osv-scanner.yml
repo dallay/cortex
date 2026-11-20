@@ -45,18 +45,13 @@ jobs:
       # lockfiles in a Rust/Node.js monorepo.
       scan-args: |-
         -r
-        --skip-git
         ./
   scan-pull-request:
     if: ${{ github.event_name == 'pull_request' }}
     uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@32d3cd482bdadfb38b186c0ad1b031902d55d932" # v2.7.1
     with:
-      # Scan the entire repository, skipping git history for faster execution.
-      # OSV-Scanner natively detects Cargo.lock, pnpm-lock.yaml, and other
-      # lockfiles in a Rust/Node.js monorepo.
       scan-args: |-
         -r
-        --skip-git
         ./
 
   scan-merge-group:
@@ -76,7 +71,6 @@ jobs:
             --format=json
             --output=old-results.json
             -r
-            --skip-git
             ./source
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -91,7 +85,6 @@ jobs:
             --format=json
             --output=new-results.json
             -r
-            --skip-git
             ./source
       # Scanner failures and vulnerability findings both return nonzero.
       # Require results from both scans before comparing them.
