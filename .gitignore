@@ -94,6 +94,13 @@ Thumbs.db
 .github/instructions/huginn.instructions.md.bak
 .github/instructions/rook.instructions.md
 .github/instructions/rook.instructions.md.bak
+.junie/
+.junie/AGENTS.md
+.junie/AGENTS.md.bak
+.junie/commands
+.junie/commands.bak
+.junie/skills
+.junie/skills.bak
 .opencode/command
 .opencode/command.bak
 .opencode/command/
