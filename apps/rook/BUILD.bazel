@@ -21,6 +21,7 @@ cargo_build_script(
     deps = all_crate_deps(build = True, build_proc_macro = True),
     proc_macro_deps = all_crate_deps(build_proc_macro = True),
     rustc_env = {"CARGO_PKG_VERSION": "0.0.1"},
+    data = ["//apps/rook/dashboard:dist"],
 )
 
 rust_library(

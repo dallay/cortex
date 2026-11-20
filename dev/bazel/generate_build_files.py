@@ -792,20 +792,23 @@ def build_plan(
     if build_script_target is not None and (directory, str(build_script_target["name"])) not in exclusions:
         build_script_name = "build_script"
         build_deps = deps_expression(build_workspace, "all_crate_deps(build = True, build_proc_macro = True)")
+        build_script_attributes: dict[str, Any] = {
+            "name": build_script_name,
+            "srcs": [relative_src_path(build_script_target, directory, root)],
+            "crate_name": "build_script_build",
+            "edition": Raw("crate_edition()"),
+            "pkg_name": crate_name(name),
+            "deps": Raw(build_deps),
+            "proc_macro_deps": Raw("all_crate_deps(build_proc_macro = True)"),
+            "rustc_env": {"CARGO_PKG_VERSION": str(package.get("version", "0.0.0"))},
+        }
+        extra_compile_data = PACKAGE_EXTRA_COMPILE_DATA.get(directory, [])
+        if extra_compile_data:
+            build_script_attributes["data"] = extra_compile_data
         plan.targets.append(TargetPlan(
             name=build_script_name,
             rule="cargo_build_script",
-            attributes={
-                "name": build_script_name,
-                "srcs": [relative_src_path(build_script_target, directory, root)],
-                "crate_name": "build_script_build",
-                **({"data": ["//apps/rook/dashboard:dist"]} if directory == "apps/rook" else {}),
-                "edition": Raw("crate_edition()"),
-                "pkg_name": crate_name(name),
-                "deps": Raw(build_deps),
-                "proc_macro_deps": Raw("all_crate_deps(build_proc_macro = True)"),
-                "rustc_env": {"CARGO_PKG_VERSION": str(package.get("version", "0.0.0"))},
-            },
+            attributes=build_script_attributes,
             cargo_target=str(build_script_target["name"]),
             kinds=target_kinds(build_script_target),
         ))
