@@ -153,6 +153,30 @@ type = "symlink-contents"
 pattern = "*"
 
 # -----------------------------------------------------------------------------
+# Junie
+# -----------------------------------------------------------------------------
+[agents.junie]
+enabled = true
+description = "Junie - JetBrains AI coding agent"
+
+[agents.junie.targets.instructions]
+source = "AGENTS.md"
+destination = ".junie/AGENTS.md"
+type = "symlink"
+
+[agents.junie.targets.skills]
+source = "skills"
+destination = ".junie/skills"
+type = "symlink-contents"
+pattern = "*"
+
+[agents.junie.targets.commands]
+source = "command"
+destination = ".junie/commands"
+type = "symlink-contents"
+pattern = "*"
+
+# -----------------------------------------------------------------------------
 # Root AGENTS.md
 # -----------------------------------------------------------------------------
 [agents.root]
