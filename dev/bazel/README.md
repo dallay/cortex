@@ -130,18 +130,19 @@ older than the version the tooling supports.
 `python3 dev/bazel/check_inventory.py` reports the current state:
 
 ```text
-Inventory coverage: 263/264 mapped; 1 reviewed exclusions.
+Inventory coverage: 264/264 mapped; 0 reviewed exclusions.
 ```
 
-- 157 non-Huginn Cargo targets: 156 map to verified Bazel labels and 1 carries a reviewed exclusion.
-- 107 Huginn Cargo targets, including `apps/huginn`: 107 map to Bazel labels and none carry reviewed
-  exclusions.
+- 157 non-Huginn Cargo targets: all map to Bazel labels.
+- 107 Huginn Cargo targets, including `apps/huginn`: all map to Bazel labels.
 
-The excluded targets are:
-
-| Cargo target | Reason |
-| --- | --- |
-| `crates/muninn/c1-exporter` `export_minilm_c1` | The binary requires the non-default `cpu-f32` feature, whose optional `candle-*`, `safetensors`, and `tokenizers` dependencies are not vendored by `crate_universe`. |
+`crates/muninn/c1-exporter:export_minilm_c1` is modeled with a dedicated
+`muninn_c1_exporter_cpu_f32` library variant. The variant enables `cpu-f32` and links the five
+optional dependencies only for the feature-enabled target. Validation on macOS ARM64:
+`bazel build //crates/muninn/c1-exporter:export_minilm_c1 --lockfile_mode=error` and
+`cargo build --locked -p muninn-c1-exporter --features cpu-f32 --bin export_minilm_c1` both pass.
+The separate Bazel target `export_minilm_c1_test` also builds successfully. This does not claim
+runtime or artifact parity for the exporter.
 
 The root `BUILD.bazel` now exports `dev/muninn/fixtures/**`. The generator detects those exported
 root-package files and adds their labels as compile data. The `c1-exporter` unit-test target has the
@@ -177,9 +178,8 @@ The remaining differences are known and reviewed:
 - Doc-tests are not modeled. `rules_rust` has no doc-test support, so the 3 doc-tests in
   `crates/muninn/observability` and the 3 doc-tests in `crates/infrastructure/providers-core` run
   under Cargo only.
-- The excluded targets listed above account for the remaining difference of 1 test case: the
-  `apps/rook` `dotenv_startup` integration test. The `crates/muninn/c1-exporter` `export_minilm_c1`
-  binary carries no test case of its own.
+- The `apps/rook` `dotenv_startup` integration test remains the known difference of 1 test case.
+  The `crates/muninn/c1-exporter` `export_minilm_c1` binary carries no test case of its own.
 
 This measures Cargo package/target declaration inventory only. It does not establish feature,
 build-script, platform, artifact, or runtime test parity. `cargo metadata --no-deps` does not

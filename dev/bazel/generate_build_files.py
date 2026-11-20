@@ -62,14 +62,7 @@ DEFAULT_EXCLUDED_PREFIXES: tuple[str, ...] = ()
 
 # Cargo targets that cannot be modeled as Bazel targets. Each entry records a
 # precise, reviewed reason; nothing is ever dropped silently.
-TARGET_EXCLUSIONS: dict[tuple[str, str], str] = {
-    ("crates/muninn/c1-exporter", "export_minilm_c1"): (
-        "The binary requires the non-default `cpu-f32` feature whose optional "
-        "candle-core/candle-nn/candle-transformers/safetensors/tokenizers "
-        "dependencies are not vendored by crate_universe, so the target cannot "
-        "be built under Bazel."
-    ),
-}
+TARGET_EXCLUSIONS: dict[tuple[str, str], str] = {}
 
 # Package specific compile data that cannot be discovered from the sources.
 PACKAGE_EXTRA_COMPILE_DATA: dict[str, list[str]] = {
@@ -274,18 +267,22 @@ def enabled_features(package: dict[str, Any], extra: list[str] | None = None) ->
 
 
 def optional_dependencies_enabled(package: dict[str, Any], extra: list[str] | None = None) -> set[str]:
-    """Return the optional dependency names enabled by the effective features."""
+    """Return optional dependencies enabled by default and extra features."""
     features = package.get("features") or {}
     enabled: set[str] = set()
+    visited: set[str] = set()
     pending = list(features.get("default", [])) + list(extra or [])
     while pending:
         entry = pending.pop()
         if entry.startswith("dep:"):
-            enabled.add(entry.removeprefix("dep:"))
+            enabled.add(crate_name(entry.removeprefix("dep:")))
             continue
         if "/" in entry:
-            enabled.add(entry.partition("/")[0])
+            enabled.add(crate_name(entry.partition("/")[0]))
             continue
+        if entry in visited:
+            continue
+        visited.add(entry)
         pending.extend(features.get(entry, []))
     return enabled
 
@@ -925,10 +922,22 @@ def build_plan(
             variant_features = sorted(set(features) | set(required))
             variant_optional = optional_dependencies_enabled(package, required)
             variant_workspace = workspace_labels(package, ("normal",), index, variant_optional, root)
-            variant_deps = deps_expression(variant_workspace, "all_crate_deps(normal = True)")
+            optional_external = sorted(
+                f"@crates//{dependency['name']}-{str(dependency['req']).removeprefix('=')}"
+                for dependency in package_dependencies(package, "normal")
+                if dependency.get("optional")
+                and crate_name(str(dependency["name"])) in variant_optional
+                and not is_path_dependency(dependency)
+                and str(dependency.get("req", "")).startswith("=")
+            )
+            variant_deps = deps_expression(
+                variant_workspace + optional_external,
+                "all_crate_deps(normal = True)",
+            )
             if plan.target("build_script") is not None:
                 variant_deps = deps_expression(
-                    variant_workspace + [":build_script"], "all_crate_deps(normal = True)"
+                    variant_workspace + optional_external + [":build_script"],
+                    "all_crate_deps(normal = True)",
                 )
             variant_attributes: dict[str, Any] = {
                 "name": variant_name,
@@ -936,8 +945,13 @@ def build_plan(
                 "crate_name": crate,
                 "crate_root": relative_src_path(library, directory, root) if library else "src/lib.rs",
             }
-            if compile_data:
-                variant_attributes["compile_data"] = compile_data_expression(compile_data)
+            variant_target_sources = binary_source_paths(cargo_target)
+            variant_compile_data, _ = compile_data_labels(directory, variant_target_sources, root)
+            variant_compile_data = sorted(
+                set(variant_compile_data) | set(PACKAGE_EXTRA_COMPILE_DATA.get(directory, []))
+            )
+            if variant_compile_data:
+                variant_attributes["compile_data"] = compile_data_expression(variant_compile_data)
             variant_attributes["crate_features"] = variant_features
             variant_attributes["edition"] = Raw("crate_edition()")
             variant_attributes["deps"] = Raw(variant_deps)
@@ -1006,7 +1020,9 @@ def build_plan(
                 else "all_crate_deps(proc_macro = True)"
             )
             binary_dependencies = list(normal_workspace)
-            if plan.target(library_name) is not None:
+            if plan.target(variant_name) is not None:
+                binary_dependencies.append(f":{variant_name}")
+            elif plan.target(library_name) is not None:
                 # Cargo links a binary and an example against the library of
                 # the same package.
                 binary_dependencies.append(f":{library_name}")
@@ -1021,6 +1037,8 @@ def build_plan(
                 "srcs": binary_sources(cargo_target, directory, root),
                 "crate_name": crate_name(cargo_name),
             }
+            if target_compile_data:
+                attributes["compile_data"] = compile_data_expression(target_compile_data)
             if required:
                 attributes["crate_features"] = sorted(set(features) | set(required))
             attributes["edition"] = Raw("crate_edition()")

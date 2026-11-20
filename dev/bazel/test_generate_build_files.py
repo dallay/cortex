@@ -143,6 +143,43 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(lib.attributes["crate_name"], "demo")
         self.assertEqual(lib.attributes["crate_root"], "src/lib.rs")
 
+    def test_workspace_path_dependencies_are_deduplicated_when_also_in_dev_dependencies(self):
+        library = package(
+            name="demo-lib",
+            directory="crates/demo-lib",
+            targets=[target("demo_lib", ["lib"], "/repo/crates/demo-lib/src/lib.rs")],
+        )
+        dependency = {
+            "name": "demo-lib",
+            "req": "*",
+            "optional": False,
+            "uses_default_features": True,
+            "features": [],
+            "path": "/repo/crates/demo-lib",
+        }
+        consumer = package(
+            name="demo",
+            directory="crates/demo",
+            dependencies=[
+                {**dependency, "kind": None},
+                {**dependency, "kind": "dev"},
+            ],
+            targets=[
+                target("demo", ["lib"], "/repo/crates/demo/src/lib.rs"),
+                target("endpoint_resolver", ["test"], "/repo/crates/demo/tests/endpoint_resolver.rs", crate_types=["bin"]),
+            ],
+        )
+        plans, _ = self.plan(
+            [library, consumer],
+            {"crates/demo/src/lib.rs": "#[cfg(test)]\\nmod tests {}\\n"},
+        )
+        consumer_plan = next(plan for plan in plans if plan.directory == "crates/demo")
+        unit_test = self.targets_by_name(consumer_plan)["demo_unit_test"]
+        integration_test = self.targets_by_name(consumer_plan)["endpoint_resolver"]
+        expected = '"//crates/demo-lib:demo_lib"'
+        self.assertEqual(unit_test.attributes["deps"].count(expected), 1)
+        self.assertEqual(integration_test.attributes["deps"].count(expected), 1)
+
     def test_workspace_path_dependencies_become_explicit_labels(self):
         library = package(
             name="demo-lib",
@@ -395,6 +432,29 @@ class GeneratorTests(unittest.TestCase):
         lib = self.targets_by_name(plans[0])["demo"]
         self.assertNotIn("crate_features", lib.attributes)
 
+    def test_required_feature_variant_includes_enabled_external_optional_dependencies(self):
+        packages = [package(
+            features={"cpu-f32": ["dep:candle-core"]},
+            dependencies=[{
+                "name": "candle-core",
+                "req": "=0.11.0",
+                "kind": None,
+                "optional": True,
+                "uses_default_features": False,
+                "features": [],
+            }],
+            targets=[
+                target("demo", ["lib"], "/repo/crates/demo/src/lib.rs"),
+                target("hooked", ["bin"], "/repo/crates/demo/src/main.rs",
+                       crate_types=["bin"], required_features=["cpu-f32"]),
+            ],
+        )]
+        plans, _ = self.plan(packages)
+        targets = self.targets_by_name(plans[0])
+        self.assertIn('"@crates//candle-core-0.11.0"', targets["demo_cpu_f32"].attributes["deps"])
+        self.assertNotIn('"@crates//candle-core-0.11.0"', targets["demo"].attributes["deps"])
+        self.assertIn(":demo_cpu_f32", targets["hooked"].attributes["deps"])
+
     def test_required_features_produce_a_feature_variant_library(self):
         packages = [package(features={"test-hooks": []}, targets=[
             target("demo", ["lib"], "/repo/crates/demo/src/lib.rs"),
@@ -464,7 +524,10 @@ class GeneratorTests(unittest.TestCase):
                 crate_types=["bin"],
             ),
         ])]
-        plans, _ = self.plan(packages)
+        exclusions = {
+            ("crates/huginn/runtime", "wasm_outline"): "The experimental-wasm test is not supported here."
+        }
+        plans, _ = self.plan(packages, exclude_targets=exclusions)
         entries = generator.inventory_entries(plans[0])
         self.assertEqual(len(entries), 1)
         self.assertNotIn("label", entries[0])

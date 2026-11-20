@@ -25,7 +25,7 @@ rust_test(
     crate_name = "provider",
     srcs = ["tests/provider.rs"],
     edition = crate_edition(),
-    deps = [":providers_anthropic", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/providers-core:providers_core", "//crates/infrastructure/sse-stream:sse_stream"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/providers-core:providers_core", "//crates/infrastructure/sse-stream:sse_stream", ":providers_anthropic"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -34,6 +34,6 @@ rust_test(
     crate_name = "quota_headers",
     srcs = ["tests/quota_headers.rs"],
     edition = crate_edition(),
-    deps = [":providers_anthropic", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/providers-core:providers_core", "//crates/infrastructure/sse-stream:sse_stream"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/providers-core:providers_core", "//crates/infrastructure/sse-stream:sse_stream", ":providers_anthropic"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )

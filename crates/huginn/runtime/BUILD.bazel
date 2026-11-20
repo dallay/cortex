@@ -260,7 +260,32 @@ rust_test(
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
-# Excluded: `experimental-wasm` activates optional `wasmtime`, which the current
-# workspace-generated @crates repository omits because no default Cargo target
-# activates that feature. Modeling these tests requires feature-aware crate-universe
-# generation in MODULE.bazel, outside this BUILD-only scope.
+rust_library(
+    name = "huginn_runtime_experimental_wasm",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "huginn_runtime",
+    crate_root = "src/lib.rs",
+    crate_features = ["experimental-wasm"],
+    compile_data = ["//crates/huginn/plugin-api:wit/experimental-rust-outline/outline.wit"],
+    edition = crate_edition(),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/guards:huginn_guards", "@crates//:wasmtime"] + all_crate_deps(normal = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+)
+
+rust_test(
+    name = "wasm_outline",
+    crate_name = "wasm_outline",
+    srcs = ["tests/wasm_outline.rs"],
+    edition = crate_edition(),
+    deps = [":huginn_runtime_experimental_wasm", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/guards:huginn_guards"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "wasm_output_validation",
+    crate_name = "wasm_output_validation",
+    srcs = ["tests/wasm_output_validation.rs"],
+    edition = crate_edition(),
+    deps = [":huginn_runtime_experimental_wasm", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/guards:huginn_guards"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
