@@ -28,6 +28,8 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
+  # Required by the reusable scanners for SARIF uploads.
+  actions: read
   # Require writing security events to upload SARIF file to security tab
   security-events: write
   # Read commit contents
@@ -36,7 +38,7 @@ permissions:
 jobs:
   scan-scheduled:
     if: ${{ github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
-    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@6bc832ee85d316ab9aeccf71929026841bd0e1ee" # v2.7.1
+    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@32d3cd482bdadfb38b186c0ad1b031902d55d932" # v2.7.1
     with:
       # Scan the entire repository, skipping git history for faster execution.
       # OSV-Scanner natively detects Cargo.lock, pnpm-lock.yaml, and other
@@ -45,14 +47,88 @@ jobs:
         -r
         --skip-git
         ./
+  scan-pull-request:
+    if: ${{ github.event_name == 'pull_request' }}
+    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@32d3cd482bdadfb38b186c0ad1b031902d55d932" # v2.7.1
+    with:
+      # Scan the entire repository, skipping git history for faster execution.
+      # OSV-Scanner natively detects Cargo.lock, pnpm-lock.yaml, and other
+      # lockfiles in a Rust/Node.js monorepo.
+      scan-args: |-
+        -r
+        --skip-git
+        ./
+
+  scan-merge-group:
+    if: ${{ github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.merge_group.base_sha }}
+          path: source
+          persist-credentials: false
+      - name: Scan merge-group base
+        uses: google/osv-scanner-action/osv-scanner-action@32d3cd482bdadfb38b186c0ad1b031902d55d932 # v2.7.1
+        continue-on-error: true
+        with:
+          scan-args: |-
+            --format=json
+            --output=old-results.json
+            -r
+            --skip-git
+            ./source
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.merge_group.head_sha }}
+          path: source
+          persist-credentials: false
+      - name: Scan merge-group head
+        uses: google/osv-scanner-action/osv-scanner-action@32d3cd482bdadfb38b186c0ad1b031902d55d932 # v2.7.1
+        continue-on-error: true
+        with:
+          scan-args: |-
+            --format=json
+            --output=new-results.json
+            -r
+            --skip-git
+            ./source
+      # Scanner failures and vulnerability findings both return nonzero.
+      # Require results from both scans before comparing them.
+      - name: Require completed scans
+        run: |
+          test -s old-results.json
+          test -s new-results.json
+      - name: Compare merge-group results
+        uses: google/osv-scanner-action/osv-reporter-action@32d3cd482bdadfb38b186c0ad1b031902d55d932 # v2.7.1
+        with:
+          scan-args: |-
+            --old=old-results.json
+            --new=new-results.json
+            --output=results.sarif
+            --gh-annotations=true
+            --fail-on-vuln=true
+      - name: Upload merge-group results
+        if: ${{ !cancelled() && hashFiles('results.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          sarif_file: results.sarif
+
+  # Retain the check name exposed by the original reusable PR workflow.
   scan-pr:
-    if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
-    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@6bc832ee85d316ab9aeccf71929026841bd0e1ee" # v2.7.1
-    with:
-      # Scan the entire repository, skipping git history for faster execution.
-      # OSV-Scanner natively detects Cargo.lock, pnpm-lock.yaml, and other
-      # lockfiles in a Rust/Node.js monorepo.
-      scan-args: |-
-        -r
-        --skip-git
-        ./
+    name: scan-pr / osv-scan
+    if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
+    needs: [scan-pull-request, scan-merge-group]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful comparison
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_RESULT: ${{ needs.scan-pull-request.result }}
+          MERGE_RESULT: ${{ needs.scan-merge-group.result }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            test "$PR_RESULT" = "success"
+          else
+            test "$MERGE_RESULT" = "success"
+          fi
