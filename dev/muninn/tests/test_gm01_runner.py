@@ -54,6 +54,20 @@ class ProvenanceTests(unittest.TestCase):
         self.assertFalse(any(k.startswith(('NAM', 'NEO4J', 'OPENAI')) or 'PROXY' in k
                              for k in env))
 
+    def test_diagnostic_log_is_published_only_to_reserved_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            private = root / 'private.log'
+            private.write_text('private diagnostic\\n')
+            evidence = root / 'evidence'
+            evidence.mkdir(mode=0o700)
+
+            runner.publish_diagnostic_logs(evidence, private)
+
+            published = evidence / 'private.log'
+            self.assertEqual(published.read_text(), 'private diagnostic\\n')
+            self.assertEqual(published.stat().st_mode & 0o777, 0o600)
+
     def test_evidence_directory_is_exclusive(self):
         with tempfile.TemporaryDirectory() as root:
             target = Path(root) / 'new'
@@ -63,6 +77,32 @@ class ProvenanceTests(unittest.TestCase):
 
 
 class IsolationTests(unittest.TestCase):
+    def test_compose_build_failure_writes_bounded_private_diagnostics(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            log = Path(temporary) / 'build.log'
+            with patch.object(runner.subprocess, 'run', return_value=Mock(
+                    returncode=1, stdout='compiler error\n', stderr='Build failed\n')) as run:
+                result = runner.compose_run(Path(temporary) / 'compose.yaml',
+                                            'muninn-gm01-deadbeef', 'build', 'capture',
+                                            diagnostic_log=log)
+            self.assertEqual(result, 1)
+            self.assertEqual(log.read_text(), 'compiler error\n')
+            self.assertEqual(log.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(run.call_args.kwargs['stdout'], runner.subprocess.PIPE)
+
+    def test_capture_failure_writes_bounded_private_compose_diagnostics(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            log = Path(temporary) / 'capture.log'
+            with patch.object(runner.subprocess, 'run', return_value=Mock(
+                    returncode=1, stdout='capture failed\\n', stderr='ignored')) as run:
+                result = runner.compose_run(Path(temporary) / 'compose.yaml',
+                                            'muninn-gm01-deadbeef', 'up', 'capture',
+                                            diagnostic_log=log)
+            self.assertEqual(result, 1)
+            self.assertEqual(log.read_text(), 'capture failed\\n')
+            self.assertEqual(log.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(run.call_args.kwargs['stdout'], runner.subprocess.PIPE)
+
     def test_database_descriptor_has_only_internal_dns_and_no_docker_lifecycle(self):
         database = runner.Database('bolt://rust-db:7687', 'private')
         self.assertEqual(database.uri, 'bolt://rust-db:7687')

@@ -38,6 +38,7 @@ PYTHON_IMAGE = ('python:3.13.18-slim@sha256:'
 TARGET_SOURCE_DIRS = (
     'apps/muninn/src',
     'crates/muninn/core/src',
+    'crates/muninn/mcp/src',
     'crates/muninn/application/src',
     'crates/muninn/neo4j/src',
     'crates/muninn/providers/src',
@@ -401,14 +402,29 @@ def compose_command(compose_path, project, *arguments):
             '-p', project, *arguments]
 
 
-def compose_run(compose_path, project, *arguments):
+def compose_run(compose_path, project, *arguments, diagnostic_log=None):
+    capture_output = diagnostic_log is not None
     try:
-        result = subprocess.run(compose_command(compose_path, project, *arguments),
-                                env=docker_env(), stdin=subprocess.DEVNULL,
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                check=False, timeout=3600)
+        result = subprocess.run(
+            compose_command(compose_path, project, *arguments),
+            env=docker_env(), stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE if capture_output else subprocess.DEVNULL,
+            stderr=subprocess.STDOUT if capture_output else subprocess.DEVNULL,
+            check=False, timeout=3600, text=capture_output)
     except (OSError, subprocess.SubprocessError):
         raise RuntimeError('Operación Compose fallida') from None
+    if diagnostic_log is not None:
+        path = Path(diagnostic_log)
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            output = getattr(result, 'stdout', None) or getattr(result, 'stderr', None) or ''
+            encoded = output.encode('utf-8', errors='replace')[:1_000_000]
+            with os.fdopen(descriptor, 'wb') as stream:
+                descriptor = -1
+                stream.write(encoded)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
     return result.returncode
 
 
@@ -786,6 +802,23 @@ def save(path, value):
         stream.write('\n')
 
 
+def publish_diagnostic_logs(evidence, *logs):
+    """Copy private Compose diagnostics only after the capture has stopped."""
+    for source in logs:
+        source = Path(source)
+        if source.is_symlink() or not source.is_file():
+            continue
+        destination = Path(evidence) / source.name
+        descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with source.open('rb') as input_stream, os.fdopen(descriptor, 'wb') as output_stream:
+                descriptor = -1
+                shutil.copyfileobj(input_stream, output_stream, length=65536)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+
+
 def empty_manifest():
     return {'h1_acceptance': 'not_established', 'status': 'incomplete',
             'reference_commit': PIN, 'stage': 'host_prepare'}
@@ -809,7 +842,7 @@ def _write_blocked_manifest(evidence, manifest, error):
         captured['orchestration_stage'] = manifest.get('stage', 'host_prepare')
         captured['orchestration_error_type'] = type(error).__name__
         for key in ('capture_image', 'neo4j_image', 'cleanup_status', 'cleanup_error_type',
-                    'cleanup_warning', 'compose_diagnostics'):
+                    'cleanup_warning', 'compose_diagnostics', 'diagnostic_logs'):
             if key in manifest:
                 captured[key] = manifest[key]
         value = captured
@@ -866,7 +899,10 @@ async def run(source, evidence):
                     manifest['stage'] = 'inspect_neo4j_image'
                     manifest['neo4j_image'] = inspect_neo4j_image()
                     manifest['stage'] = 'build_image'
-                    if compose_run(compose_path, project, 'build', '--pull', 'capture') != 0:
+                    build_log = private / 'build.log'
+                    if compose_run(compose_path, project, 'build', '--pull', 'capture',
+                                   diagnostic_log=build_log) != 0:
+                        publish_diagnostic_logs(evidence, build_log)
                         raise RuntimeError('Build de imagen fallido')
                     expected_sources = json.loads(
                         (context / 'build-provenance.json').read_text())['sources']
@@ -875,9 +911,14 @@ async def run(source, evidence):
                     manifest['stage'] = 'inspect_capture_image'
                     manifest['capture_image'] = inspect_capture_image(project)
                     manifest['stage'] = 'compose_up'
+                    capture_log = private / 'capture.log'
                     result = compose_run(compose_path, project, 'up', '--pull', 'never',
                                          '--no-build', '--abort-on-container-exit',
-                                         '--exit-code-from', 'capture')
+                                         '--exit-code-from', 'capture',
+                                         diagnostic_log=capture_log)
+                    publish_diagnostic_logs(evidence, capture_log)
+                    if capture_log.is_file():
+                        manifest['diagnostic_logs'] = ['capture.log']
                     if result != 0:
                         try:
                             manifest['compose_diagnostics'] = inspect_compose_project(project)

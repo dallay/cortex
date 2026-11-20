@@ -59,8 +59,8 @@ class ReviewTests(unittest.TestCase):
             if command[:3] == ['docker', 'image', 'inspect']:
                 if command[-1] == runner.NEO4J_IMAGE:
                     return SimpleNamespace(returncode=neo4j_inspect_returncode,
-                                           stdout=neo4j_inspect_output)
-                return SimpleNamespace(returncode=0, stdout=image_inspect_output)
+                                           stdout=neo4j_inspect_output, stderr='')
+                return SimpleNamespace(returncode=0, stdout=image_inspect_output, stderr='')
             compose_path = Path(command[command.index('-f') + 1])
             compose_text = compose_path.read_text()
             for secret_path in re.findall(r'    file: "([^"]+)"', compose_text):
@@ -72,7 +72,10 @@ class ReviewTests(unittest.TestCase):
                 )
             stage = next((name for name in ('config', 'build', 'up', 'down')
                           if name in command), None)
+            if options.get('diagnostic_log') is not None:
+                Path(options['diagnostic_log']).write_text('compose output\\n')
             if stage == 'up':
+                self.evidence_at_up = tuple(path.name for path in evidence.iterdir())
                 manifest = runner.empty_manifest()
                 manifest.update(status='captured', comparison='pass', capture_marker='preserve')
                 runner.save(evidence / 'manifest.json', manifest)
@@ -80,8 +83,8 @@ class ReviewTests(unittest.TestCase):
                     or isinstance(fail_stage, (tuple, list, set)) and stage in fail_stage):
                 if isinstance(fail_stage, (tuple, list, set)) and stage == 'down':
                     raise ValueError('cleanup secret-marker')
-                return SimpleNamespace(returncode=1)
-            return SimpleNamespace(returncode=0)
+                return SimpleNamespace(returncode=1, stdout='', stderr='')
+            return SimpleNamespace(returncode=0, stdout='', stderr='')
 
         with patch.object(runner, 'prepare_reference', return_value=Path('/verified/src')), \
              patch.object(runner, 'stage_build_context', side_effect=lambda *args: context), \
@@ -284,6 +287,13 @@ class ReviewTests(unittest.TestCase):
                              ['down', '--volumes', '--remove-orphans'])
             self.assertNotIn('cleanup secret-marker', json.dumps(manifest))
             self.assertNotIn('Limpieza Compose fallida', json.dumps(manifest))
+
+    def test_compose_diagnostic_logs_do_not_pollute_container_evidence_mount(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._run_host_with_mock_compose(root)
+            self.assertNotIn('build.log', self.evidence_at_up)
+            self.assertNotIn('capture.log', self.evidence_at_up)
 
     def test_up_failure_blocks_and_preserves_capture_and_inspected_image(self):
         with tempfile.TemporaryDirectory() as temporary:
