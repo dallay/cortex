@@ -1,3 +1,5 @@
+#[path = "runfiles.rs"]
+mod runfiles;
 use std::path::PathBuf;
 
 pub fn fixture(body: &str, output: &str) -> (tempfile::TempDir, PathBuf) {
@@ -22,8 +24,12 @@ pub fn fixture(body: &str, output: &str) -> (tempfile::TempDir, PathBuf) {
     );
     let mut module = wat::parse_str(module).unwrap();
     let mut resolve = wit_parser::Resolve::default();
-    let wit = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let cargo_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../plugin-api/wit/experimental-rust-outline");
+    let wit = runfiles::resolve(
+        "_main/crates/huginn/plugin-api/wit/experimental-rust-outline",
+        &cargo_path,
+    );
     let (package, _) = resolve.push_dir(wit).unwrap();
     let world = resolve
         .select_world(&[package], Some("rust-outline"))

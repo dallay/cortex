@@ -949,7 +949,18 @@ def build_plan(
                 "crate_name": crate,
                 "crate_root": relative_src_path(library, directory, root) if library else "src/lib.rs",
             }
-            variant_target_sources = binary_source_paths(cargo_target)
+            variant_target_sources = [
+                source for source in sources
+                if source.is_relative_to(root / directory / "src")
+            ]
+            variant_gated = feature_gated_sources(
+                Path(str(library["src_path"])).resolve() if library else None,
+                variant_target_sources,
+                set(variant_features),
+            )
+            variant_target_sources = [
+                source for source in variant_target_sources if source not in variant_gated
+            ]
             variant_compile_data, _ = compile_data_labels(directory, variant_target_sources, root)
             variant_compile_data = sorted(
                 set(variant_compile_data) | set(PACKAGE_EXTRA_COMPILE_DATA.get(directory, []))
@@ -1043,7 +1054,7 @@ def build_plan(
             }
             if target_compile_data:
                 attributes["compile_data"] = compile_data_expression(target_compile_data)
-            if required:
+            if features or required:
                 attributes["crate_features"] = sorted(set(features) | set(required))
             attributes["edition"] = Raw("crate_edition()")
             attributes["deps"] = Raw(binary_deps)
@@ -1073,7 +1084,7 @@ def build_plan(
                 }
                 if target_compile_data:
                     unit_test_attributes["compile_data"] = compile_data_expression(target_compile_data)
-                if required:
+                if features or required:
                     unit_test_attributes["crate_features"] = sorted(set(features) | set(required))
                 unit_test_attributes["edition"] = Raw("crate_edition()")
                 unit_test_attributes["deps"] = Raw(unit_test_deps)

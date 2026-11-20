@@ -36,7 +36,7 @@ rust_library(
     srcs = glob(["src/**/*.rs"]),
     crate_name = "muninn_c1_exporter",
     crate_root = "src/lib.rs",
-    compile_data = ["//:dev/muninn/fixtures/artifact-lock.json"],
+    compile_data = ["//:dev/muninn/fixtures/artifact-lock.json", "//:dev/muninn/fixtures/minilm-c1-contract-cases.json", "//:dev/muninn/fixtures/minilm-c1-identity-golden.json", "tests/fixtures/minilm-config.json", "tests/fixtures/minilm-tokenizer-reference.json"],
     crate_features = ["cpu-f32"],
     edition = crate_edition(),
     deps = ["@crates//candle-core-0.11.0", "@crates//candle-nn-0.11.0", "@crates//candle-transformers-0.11.0", "@crates//safetensors-0.8.0", "@crates//tokenizers-0.22.2"] + all_crate_deps(normal = True),

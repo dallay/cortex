@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+mod support;
 use std::process::Command;
 
 #[test]
@@ -10,19 +10,7 @@ fn malformed_dotenv_does_not_disclose_input() {
 
     // Resolve the relative CARGO_BIN_EXE_rook path to an absolute path before
     // current_dir changes the child's working directory.
-    let rook_bin = {
-        let binary = env!("CARGO_BIN_EXE_rook");
-        if PathBuf::from(binary).is_absolute() {
-            PathBuf::from(binary)
-        } else {
-            let root = std::env::var("TEST_SRCDIR")
-                .ok()
-                .map(PathBuf::from)
-                .or_else(|| std::env::var("RUNFILES_DIR").ok().map(PathBuf::from))
-                .unwrap_or_else(|| std::env::current_dir().unwrap());
-            root.join(binary)
-        }
-    };
+    let rook_bin = support::binary_path::rook();
 
     // Stop at config loading after dotenv processing; no server or database is started.
     let result = Command::new(&rook_bin)

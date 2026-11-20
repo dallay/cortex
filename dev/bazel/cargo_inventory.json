@@ -162,6 +162,13 @@
       "target": "banner_tests"
     },
     {
+      "kinds": "test",
+      "label": "//apps/rook:binary_path_resolution",
+      "manifest": "apps/rook/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/rook#0.0.1",
+      "target": "binary_path_resolution"
+    },
+    {
       "kinds": "custom-build",
       "label": "//apps/rook:build_script",
       "manifest": "apps/rook/Cargo.toml",

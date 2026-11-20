@@ -478,6 +478,54 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(targets["demo_test_hooks"].attributes["crate_features"], ["test-hooks"])
         self.assertIn(":demo_test_hooks", targets["hooked"].attributes["deps"])
 
+    def test_variant_library_keeps_its_own_embedded_data(self):
+        packages = [package(features={"extra": []}, targets=[
+            target("demo", ["lib"], "/repo/crates/demo/src/lib.rs"),
+            target("hooked", ["test"], "/repo/crates/demo/tests/hooked.rs",
+                   required_features=["extra"]),
+        ])]
+        plans, _ = self.plan(packages, files={
+            "crates/demo/src/lib.rs": 'const DATA: &str = include_str!("data.txt");',
+            "crates/demo/src/data.txt": "embedded",
+            "crates/demo/tests/hooked.rs": "#[test] fn works() {}",
+        })
+        targets = self.targets_by_name(plans[0])
+        self.assertIn("src/data.txt", str(targets["demo_extra"].attributes["compile_data"]))
+        self.assertNotIn("compile_data", targets["hooked"].attributes)
+
+    def test_variant_library_uses_enabled_library_modules_only(self):
+        packages = [package(features={"extra": [], "other": []}, targets=[
+            target("demo", ["lib"], "/repo/crates/demo/src/lib.rs"),
+            target("hooked", ["test"], "/repo/crates/demo/tests/hooked.rs",
+                   required_features=["extra"]),
+        ])]
+        plans, _ = self.plan(packages, files={
+            "crates/demo/src/lib.rs": '#[cfg(feature = "extra")]\nmod extra;\n#[cfg(feature = "other")]\nmod other;',
+            "crates/demo/src/extra.rs": 'const DATA: &str = include_str!("enabled.txt");',
+            "crates/demo/src/other.rs": 'const DATA: &str = include_str!("disabled.txt");',
+            "crates/demo/src/enabled.txt": "enabled",
+            "crates/demo/src/disabled.txt": "disabled",
+            "crates/demo/tests/hooked.rs": 'const DATA: &str = include_str!("test.txt");',
+            "crates/demo/tests/test.txt": "test data",
+        })
+        targets = self.targets_by_name(plans[0])
+        data = str(targets["demo_extra"].attributes["compile_data"])
+        self.assertIn("src/enabled.txt", data)
+        self.assertNotIn("disabled.txt", data)
+        self.assertNotIn("test.txt", data)
+        self.assertIn("tests/test.txt", str(targets["hooked"].attributes["compile_data"]))
+
+    def test_binary_and_harness_enable_default_features(self):
+        packages = [package(features={"default": ["extra"], "extra": []}, targets=[
+            target("demo", ["bin"], "/repo/crates/demo/src/main.rs"),
+        ])]
+        plans, _ = self.plan(packages, files={
+            "crates/demo/src/main.rs": "#[cfg(test)] mod tests {} fn main() {}",
+        })
+        targets = self.targets_by_name(plans[0])
+        self.assertEqual(targets["demo"].attributes["crate_features"], ["extra"])
+        self.assertEqual(targets["demo_test"].attributes["crate_features"], ["extra"])
+
     # -- build scripts ----------------------------------------------------
 
     def test_custom_build_target_produces_a_cargo_build_script(self):

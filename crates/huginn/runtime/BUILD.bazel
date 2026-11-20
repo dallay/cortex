@@ -275,7 +275,28 @@ rust_library(
 rust_test(
     name = "wasm_outline",
     crate_name = "wasm_outline",
-    srcs = ["tests/wasm_outline.rs"],
+    srcs = [
+        "tests/wasm_outline.rs",
+        "tests/support/wasm_adversary.rs",
+        "tests/support/runfiles.rs",
+        "tests/support/wasm_component.rs",
+    ],
+    crate_root = "tests/wasm_outline.rs",
+    crate_features = ["experimental-wasm"],
+    # The independent guest build uses the source Cargo workspace and host Rust.
+    # Run with Cargo on PATH and rustup target add wasm32-unknown-unknown.
+    # Resolve the manifest symlink to the full workspace; nested Cargo inputs
+    # are outside Bazel, so always rerun this local integration test.
+    data = [
+        "//:Cargo.toml",
+        "//crates/huginn/plugin-api:wit/experimental-rust-outline/outline.wit",
+    ],
+    env = {"HUGINN_CARGO_MANIFEST": "$(rootpath //:Cargo.toml)"},
+    env_inherit = ["PATH", "HOME", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"],
+    rustc_env = {"CARGO": "cargo"},
+    tags = ["external", "no-sandbox", "requires-cargo", "requires-wasm32-target"],
+    local = True,
+    timeout = "long",
     edition = crate_edition(),
     deps = [":huginn_runtime_experimental_wasm", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/guards:huginn_guards"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
@@ -284,7 +305,14 @@ rust_test(
 rust_test(
     name = "wasm_output_validation",
     crate_name = "wasm_output_validation",
-    srcs = ["tests/wasm_output_validation.rs"],
+    srcs = [
+        "tests/wasm_output_validation.rs",
+        "tests/support/wasm_adversary.rs",
+        "tests/support/runfiles.rs",
+    ],
+    crate_root = "tests/wasm_output_validation.rs",
+    crate_features = ["experimental-wasm"],
+    data = ["//crates/huginn/plugin-api:wit/experimental-rust-outline/outline.wit"],
     edition = crate_edition(),
     deps = [":huginn_runtime_experimental_wasm", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/guards:huginn_guards"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
