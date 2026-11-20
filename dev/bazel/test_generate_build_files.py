@@ -7,6 +7,7 @@ build scripts, embedded data files, and deterministic output.
 
 import importlib.util
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +15,7 @@ from pathlib import Path
 SCRIPT = Path(__file__).with_name("generate_build_files.py")
 spec = importlib.util.spec_from_file_location("generate_build_files", SCRIPT)
 generator = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = generator
 spec.loader.exec_module(generator)
 
 
@@ -121,6 +123,15 @@ class GeneratorTests(unittest.TestCase):
 
     def targets_by_name(self, plan):
         return {target_plan.name: target_plan for target_plan in plan.targets}
+
+    def test_rook_build_script_receives_dashboard_distribution(self):
+        packages = [package(name="rook", directory="apps/rook", targets=[
+            target("rook", ["lib"], "/repo/apps/rook/src/lib.rs"),
+            target("build-script-build", ["custom-build"], "/repo/apps/rook/build.rs"),
+        ])]
+        plans, _ = self.plan(packages)
+        build_script = self.targets_by_name(plans[0])["build_script"]
+        self.assertEqual(build_script.attributes["data"], ["//apps/rook/dashboard:dist"])
 
     # -- naming ----------------------------------------------------------
 

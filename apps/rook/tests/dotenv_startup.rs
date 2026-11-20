@@ -8,7 +8,10 @@ fn malformed_dotenv_does_not_disclose_input() {
     std::fs::write(&env_path, format!("KEY=\"{marker}\n")).unwrap();
 
     // Stop at config loading after dotenv processing; no server or database is started.
-    let result = Command::new(env!("CARGO_BIN_EXE_rook"))
+    let binary = std::env::current_dir()
+        .unwrap()
+        .join(env!("CARGO_BIN_EXE_rook"));
+    let result = Command::new(binary)
         .args(["seed-admin", "--config"])
         .arg(dir.path().join("missing.toml"))
         .env_clear()

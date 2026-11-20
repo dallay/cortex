@@ -7,9 +7,8 @@ package(default_visibility = ["//visibility:public"])
 # compiled assets must be available as Bazel inputs.
 #
 # The dashboard build is non-hermetic: it executes Vite through the pnpm
-# toolchain installed in the source tree. Bazel tracks the source inputs
-# (TypeScript, config, etc.) and triggers a rebuild when they change, but
-# the actual build command runs outside the sandbox.
+# toolchain installed in the source tree. Dashboard sources are not tracked;
+# rerun the build after source changes. The build command runs outside the sandbox.
 #
 # To build the dashboard before compiling Rook, run:
 #   bazel run //apps/rook/dashboard:build

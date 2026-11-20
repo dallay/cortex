@@ -15,6 +15,7 @@ cargo_build_script(
     name = "build_script",
     srcs = ["build.rs"],
     crate_name = "build_script_build",
+    data = ["//apps/rook/dashboard:dist"],
     edition = crate_edition(),
     pkg_name = "rook",
     deps = all_crate_deps(build = True, build_proc_macro = True),

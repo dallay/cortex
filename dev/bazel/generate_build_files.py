@@ -799,6 +799,7 @@ def build_plan(
                 "name": build_script_name,
                 "srcs": [relative_src_path(build_script_target, directory, root)],
                 "crate_name": "build_script_build",
+                **({"data": ["//apps/rook/dashboard:dist"]} if directory == "apps/rook" else {}),
                 "edition": Raw("crate_edition()"),
                 "pkg_name": crate_name(name),
                 "deps": Raw(build_deps),
