@@ -37,7 +37,7 @@ bytes = "1"
 libc = "0.2"
 rusqlite.workspace = true
 uuid.workspace = true
-rmcp = { version = "=3.9.0", default-features = false, features = ["client", "transport-child-process"] }
+rmcp = { version = "=3.11.0", default-features = false, features = ["client", "transport-child-process"] }
 similar = "3"
 fs2 = "0.4"
 process-wrap = { version = "10", features = ["tokio1", "process-group", "kill-on-drop"] }
@@ -71,7 +71,7 @@ axum.workspace = true
 tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring", "tls12"] }
 rcgen = "=0.14.10"
 muninn-mcp = { path = "../../muninn/mcp" }
-rmcp = { version = "=3.9.0", default-features = false, features = ["client", "transport-async-rw"] }
+rmcp = { version = "=3.11.0", default-features = false, features = ["client", "transport-async-rw"] }
 
 [lints]
 workspace = true
