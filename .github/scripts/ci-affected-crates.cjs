@@ -192,7 +192,7 @@ function main() {
   const cwd = process.cwd();
   let plan;
   try {
-    const {base, head} = process.env;
+    const {BASE: base, HEAD: head} = process.env;
     const paths = changedPathsFromDiff(base, head, cwd);
     plan = resolveAffected(paths, null, cwd);
     if (plan.mode !== 'docs-only') {

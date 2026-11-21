@@ -34,7 +34,7 @@ rust_test(
     crate_name = "bridge_router",
     srcs = ["tests/bridge_router.rs"],
     edition = crate_edition(),
-    deps = [":muninn_bridge", "//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_bridge"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -43,7 +43,7 @@ rust_test(
     crate_name = "context",
     srcs = ["tests/context.rs"],
     edition = crate_edition(),
-    deps = [":muninn_bridge", "//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_bridge"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -52,6 +52,6 @@ rust_test(
     crate_name = "enrichment",
     srcs = ["tests/enrichment.rs"],
     edition = crate_edition(),
-    deps = [":muninn_bridge", "//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_bridge"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )

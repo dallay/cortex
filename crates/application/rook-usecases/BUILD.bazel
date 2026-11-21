@@ -34,7 +34,7 @@ rust_test(
     crate_name = "api_key_provider_validation",
     srcs = ["tests/api_key_provider_validation.rs"],
     edition = crate_edition(),
-    deps = [":rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support", ":rook_usecases"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -43,7 +43,7 @@ rust_test(
     crate_name = "capability_eligibility",
     srcs = ["tests/capability_eligibility.rs", "tests/common/mod.rs"],
     edition = crate_edition(),
-    deps = [":rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support", ":rook_usecases"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -52,7 +52,7 @@ rust_test(
     crate_name = "estimate_cost",
     srcs = ["tests/estimate_cost.rs"],
     edition = crate_edition(),
-    deps = [":rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support", ":rook_usecases"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -61,7 +61,7 @@ rust_test(
     crate_name = "health_check_test",
     srcs = ["tests/health_check_test.rs"],
     edition = crate_edition(),
-    deps = [":rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support", ":rook_usecases"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -70,7 +70,7 @@ rust_test(
     crate_name = "manage_connections_test_credentials",
     srcs = ["tests/manage_connections_test_credentials.rs"],
     edition = crate_edition(),
-    deps = [":rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support", ":rook_usecases"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -79,7 +79,7 @@ rust_test(
     crate_name = "manage_providers_test",
     srcs = ["tests/manage_providers_test.rs"],
     edition = crate_edition(),
-    deps = [":rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support", ":rook_usecases"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -88,7 +88,7 @@ rust_test(
     crate_name = "oauth_flows",
     srcs = ["tests/oauth_flows.rs"],
     edition = crate_edition(),
-    deps = [":rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support", ":rook_usecases"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -97,7 +97,16 @@ rust_test(
     crate_name = "oauth_tokens",
     srcs = ["tests/oauth_tokens.rs"],
     edition = crate_edition(),
-    deps = [":rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support", ":rook_usecases"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "ollama_grant_workflow",
+    crate_name = "ollama_grant_workflow",
+    srcs = ["tests/ollama_grant_workflow.rs"],
+    edition = crate_edition(),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support", ":rook_usecases"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -106,7 +115,7 @@ rust_test(
     crate_name = "openai_compatible_connections",
     srcs = ["tests/common/mod.rs", "tests/openai_compatible_connections.rs"],
     edition = crate_edition(),
-    deps = [":rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support", ":rook_usecases"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -115,7 +124,7 @@ rust_test(
     crate_name = "policy_regression",
     srcs = ["tests/common/mod.rs", "tests/policy_regression.rs"],
     edition = crate_edition(),
-    deps = [":rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support", ":rook_usecases"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -124,7 +133,7 @@ rust_test(
     crate_name = "policy_test",
     srcs = ["tests/policy_test.rs"],
     edition = crate_edition(),
-    deps = [":rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support", ":rook_usecases"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -133,7 +142,7 @@ rust_test(
     crate_name = "retry_loop_tests",
     srcs = ["tests/common/mod.rs", "tests/retry_loop_tests.rs"],
     edition = crate_edition(),
-    deps = [":rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support", ":rook_usecases"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -142,7 +151,7 @@ rust_test(
     crate_name = "route_attempt_lifecycle",
     srcs = ["tests/common/mod.rs", "tests/route_attempt_lifecycle.rs"],
     edition = crate_edition(),
-    deps = [":rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support", ":rook_usecases"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -151,7 +160,7 @@ rust_test(
     crate_name = "route_request_restrictions",
     srcs = ["tests/common/mod.rs", "tests/route_request_restrictions.rs"],
     edition = crate_edition(),
-    deps = [":rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support", ":rook_usecases"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -160,7 +169,7 @@ rust_test(
     crate_name = "route_request_telemetry_test",
     srcs = ["tests/route_request_telemetry_test.rs"],
     edition = crate_edition(),
-    deps = [":rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support", ":rook_usecases"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -169,7 +178,7 @@ rust_test(
     crate_name = "router_circuit_states",
     srcs = ["tests/router_circuit_states.rs"],
     edition = crate_edition(),
-    deps = [":rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support", ":rook_usecases"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -178,6 +187,6 @@ rust_test(
     crate_name = "scoring_test",
     srcs = ["tests/scoring_test.rs"],
     edition = crate_edition(),
-    deps = [":rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/observability:observability", "//crates/test-support:cortex_test_support", ":rook_usecases"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )

@@ -64,7 +64,14 @@ pub fn component() -> PathBuf {
     static COMPONENT: OnceLock<PathBuf> = OnceLock::new();
     COMPONENT
         .get_or_init(|| {
-            let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            let root = match std::env::var_os("HUGINN_CARGO_MANIFEST") {
+                Some(manifest) => std::fs::canonicalize(manifest)
+                    .expect("Cargo workspace manifest")
+                    .parent()
+                    .unwrap()
+                    .to_path_buf(),
+                None => PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+            };
             let root = root
                 .ancestors()
                 .find(|path| path.join("rust-toolchain.toml").is_file())

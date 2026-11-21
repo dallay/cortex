@@ -17,7 +17,6 @@ jobs:
   bazel-test-linux:
     name: Bazel test (Linux, advisory)
     runs-on: ubuntu-latest
-    continue-on-error: true
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -53,6 +52,18 @@ jobs:
         if: steps.affected.outputs.mode != 'docs-only'
         with:
           bazelisk-cache: true
+      - name: Run Bazel tooling tests
+        if: steps.affected.outputs.mode != 'docs-only'
+        run: python3 -m unittest dev.bazel.test_check_inventory dev.bazel.test_generate_build_files
+      - name: Check generated Bazel files
+        if: steps.affected.outputs.mode != 'docs-only'
+        run: python3 dev/bazel/generate_build_files.py --check
+      - name: Check Bazel inventory
+        if: steps.affected.outputs.mode != 'docs-only'
+        run: python3 dev/bazel/check_inventory.py
+      - name: Validate Bazel module lockfile
+        if: steps.affected.outputs.mode != 'docs-only'
+        run: bazel mod deps --lockfile_mode=error
       - name: Run Bazel test suite
         if: steps.affected.outputs.mode != 'docs-only'
         run: bazel test //... --lockfile_mode=error --test_output=summary

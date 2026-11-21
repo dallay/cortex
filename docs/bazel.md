@@ -10,9 +10,11 @@ The Bazel workflow is advisory: it reports status, and a failure in it does not 
 ## Prerequisites
 
 Install Bazelisk and run `bazel` from the repository root. The checked-in `.bazelversion` selects
-Bazel 9.3.2. Bazel downloads the pinned Rust toolchain and resolves Rust crates from the root
-`Cargo.toml` and `Cargo.lock` through `rules_rust` and Crate Universe. The generated
-`MODULE.bazel.lock` pins Bazel modules and extension resolution.
+Bazel 9.3.2. Bazel downloads the pinned Rust toolchain and resolves Rust crates from
+`Cargo.Bazel.lock` through `rules_rust` and Crate Universe. While `Cargo.lock` remains the
+authoritative lockfile for Cargo workflows, `Cargo.Bazel.lock` is authoritative for Bazel and
+enables non-default optional features (such as `wasmtime`) without altering the standard Cargo
+dependency graph. The generated `MODULE.bazel.lock` pins Bazel modules and extension resolution.
 
 The dashboard targets delegate dependency management to pnpm, so `node_modules` must exist before
 those targets run. They carry the `manual` tag, which keeps them out of `//...` wildcard expansion:
@@ -52,7 +54,7 @@ are never overwritten.
 The declared inventory is tracked in `dev/bazel/cargo_inventory.json`: every Cargo target has
 either an explicit Bazel label or a reviewed exclusion reason. All 43 workspace packages now have
 a generated or hand-tuned `BUILD.bazel`, including the Huginn CLI and its tests. The inventory
-maps 256 of 261 Cargo targets; the remaining 5 have reviewed exclusions. `dev/bazel/README.md`
+maps 264 of 265 Cargo targets; the remaining 1 has a reviewed exclusion. `dev/bazel/README.md`
 documents the mapping rules, current coverage, and the limits of the measured comparison against
 Cargo.
 

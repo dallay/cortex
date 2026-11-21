@@ -69,33 +69,6 @@ TARGET_EXCLUSIONS: dict[tuple[str, str], str] = {
         "dependencies are not vendored by crate_universe, so the target cannot "
         "be built under Bazel."
     ),
-    ("apps/rook", "build-script-build"): (
-        "The Cargo build script shells out to the pnpm dashboard build (vite). "
-        "Bazel does not model the Node dashboard build step; the embedded "
-        "dashboard assets are supplied as compile data instead."
-    ),
-    ("apps/rook", "dotenv_startup"): (
-        "The integration test clears the child environment and changes the child "
-        "working directory before launching CARGO_BIN_EXE_rook. Cargo supplies an "
-        "absolute executable path, but Bazel's portable runfiles path is relative "
-        "to the test runfiles directory. Supporting this target requires a "
-        "runfiles-aware test helper or test-source change, which is outside the "
-        "permitted BUILD-only changes."
-    ),
-    ("crates/huginn/runtime", "wasm_outline"): (
-        "The test requires the non-default `experimental-wasm` feature, which "
-        "activates the optional `wasmtime` dependency. The workspace-generated "
-        "@crates repository omits that crate because no default Cargo target "
-        "activates the feature, so modeling this target requires feature-aware "
-        "crate_universe generation in MODULE.bazel."
-    ),
-    ("crates/huginn/runtime", "wasm_output_validation"): (
-        "The test requires the non-default `experimental-wasm` feature, which "
-        "activates the optional `wasmtime` dependency. The workspace-generated "
-        "@crates repository omits that crate because no default Cargo target "
-        "activates the feature, so modeling this target requires feature-aware "
-        "crate_universe generation in MODULE.bazel."
-    ),
 }
 
 # Package specific compile data that cannot be discovered from the sources.
@@ -301,18 +274,22 @@ def enabled_features(package: dict[str, Any], extra: list[str] | None = None) ->
 
 
 def optional_dependencies_enabled(package: dict[str, Any], extra: list[str] | None = None) -> set[str]:
-    """Return the optional dependency names enabled by the effective features."""
+    """Return optional dependencies enabled by default and extra features."""
     features = package.get("features") or {}
     enabled: set[str] = set()
+    visited: set[str] = set()
     pending = list(features.get("default", [])) + list(extra or [])
     while pending:
         entry = pending.pop()
         if entry.startswith("dep:"):
-            enabled.add(entry.removeprefix("dep:"))
+            enabled.add(crate_name(entry.removeprefix("dep:")))
             continue
         if "/" in entry:
-            enabled.add(entry.partition("/")[0])
+            enabled.add(crate_name(entry.partition("/")[0]))
             continue
+        if entry in visited:
+            continue
+        visited.add(entry)
         pending.extend(features.get(entry, []))
     return enabled
 
@@ -393,6 +370,66 @@ def sandbox_tags_for(directory: str, target_name: str) -> list[str]:
     return []
 
 
+def evaluate_cfg_expression(expr: str, enabled: set[str]) -> bool | None:
+    """Evaluate a Rust cfg(...) expression against enabled Cargo features.
+
+    Returns True if satisfied, False if not satisfied, or None if ambiguous/unknown.
+    When ambiguous, the conservative choice is not to exclude sources.
+    """
+    expr = expr.strip()
+    if expr.startswith("#[") and expr.endswith("]"):
+        expr = expr[2:-1].strip()
+    if expr.startswith("cfg(") and expr.endswith(")"):
+        expr = expr[4:-1].strip()
+
+    def split_args(s: str) -> list[str]:
+        args: list[str] = []
+        depth = 0
+        current: list[str] = []
+        for char in s:
+            if char in "([":
+                depth += 1
+            elif char in ")]":
+                depth -= 1
+            elif char == "," and depth == 0:
+                arg = "".join(current).strip()
+                if arg:
+                    args.append(arg)
+                current = []
+                continue
+            current.append(char)
+        last = "".join(current).strip()
+        if last:
+            args.append(last)
+        return args
+
+    def evaluate(s: str) -> bool | None:
+        s = s.strip()
+        m = FEATURE_ATTRIBUTE_RE.fullmatch(s)
+        if m:
+            return m.group(1) in enabled
+        if s.startswith("all(") and s.endswith(")"):
+            results = [evaluate(p) for p in split_args(s[4:-1])]
+            if any(r is False for r in results):
+                return False
+            if all(r is True for r in results):
+                return True
+            return None
+        if s.startswith("any(") and s.endswith(")"):
+            results = [evaluate(p) for p in split_args(s[4:-1])]
+            if any(r is True for r in results):
+                return True
+            if all(r is False for r in results):
+                return False
+            return None
+        if s.startswith("not(") and s.endswith(")"):
+            res = evaluate(s[4:-1])
+            return not res if res is not None else None
+        return None
+
+    return evaluate(expr)
+
+
 def feature_gated_sources(
     crate_root: Path | None,
     sources: list[Path],
@@ -402,6 +439,8 @@ def feature_gated_sources(
 
     A module declared behind `#[cfg(feature = "...")]` is not compiled when the
     feature is off, so the files it embeds are not compile inputs either.
+    Composite predicates (`any`, `all`, `not`) are evaluated; if the outcome is
+    ambiguous or unknown, the conservative default is not to exclude the source.
     """
     if crate_root is None or not crate_root.is_file():
         return set()
@@ -418,7 +457,7 @@ def feature_gated_sources(
             attribute_lines.append(stripped)
             if not stripped.endswith("]"):
                 continue
-            pending = [" ".join(attribute_lines)]
+            pending.append(" ".join(attribute_lines))
             attribute_lines = []
             continue
         attribute_lines = []
@@ -427,13 +466,10 @@ def feature_gated_sources(
             pending = []
             continue
         module = match.group("module")
-        gated = [
-            feature
-            for attribute in pending
-            for feature in FEATURE_ATTRIBUTE_RE.findall(attribute)
-            if feature not in enabled
-        ]
-        if gated:
+        # Each cfg attribute is conjunctive; one false predicate disables the module.
+        # Unknown predicates do not exclude sources from compile_data.
+        is_gated = any(evaluate_cfg_expression(attr, enabled) is False for attr in pending)
+        if is_gated:
             for source in sources:
                 if source.parent.name == module or source.stem == module:
                     excluded.add(source)
@@ -822,19 +858,23 @@ def build_plan(
     if build_script_target is not None and (directory, str(build_script_target["name"])) not in exclusions:
         build_script_name = "build_script"
         build_deps = deps_expression(build_workspace, "all_crate_deps(build = True, build_proc_macro = True)")
+        build_script_attributes: dict[str, Any] = {
+            "name": build_script_name,
+            "srcs": [relative_src_path(build_script_target, directory, root)],
+            "crate_name": "build_script_build",
+            "edition": Raw("crate_edition()"),
+            "pkg_name": crate_name(name),
+            "deps": Raw(build_deps),
+            "proc_macro_deps": Raw("all_crate_deps(build_proc_macro = True)"),
+            "rustc_env": {"CARGO_PKG_VERSION": str(package.get("version", "0.0.0"))},
+        }
+        extra_compile_data = PACKAGE_EXTRA_COMPILE_DATA.get(directory, [])
+        if extra_compile_data:
+            build_script_attributes["data"] = extra_compile_data
         plan.targets.append(TargetPlan(
             name=build_script_name,
             rule="cargo_build_script",
-            attributes={
-                "name": build_script_name,
-                "srcs": [relative_src_path(build_script_target, directory, root)],
-                "crate_name": "build_script_build",
-                "edition": Raw("crate_edition()"),
-                "pkg_name": crate_name(name),
-                "deps": Raw(build_deps),
-                "proc_macro_deps": Raw("all_crate_deps(build_proc_macro = True)"),
-                "rustc_env": {"CARGO_PKG_VERSION": str(package.get("version", "0.0.0"))},
-            },
+            attributes=build_script_attributes,
             cargo_target=str(build_script_target["name"]),
             kinds=target_kinds(build_script_target),
         ))
@@ -866,7 +906,7 @@ def build_plan(
 
         if has_unit_tests(library_sources):
             unit_deps = deps_expression(
-                normal_workspace + dev_workspace,
+                sorted(set(normal_workspace + dev_workspace)),
                 "all_crate_deps(normal = True, normal_dev = True)",
             )
             unit_test_name = f"{crate}_unit_test"
@@ -952,10 +992,22 @@ def build_plan(
             variant_features = sorted(set(features) | set(required))
             variant_optional = optional_dependencies_enabled(package, required)
             variant_workspace = workspace_labels(package, ("normal",), index, variant_optional, root)
-            variant_deps = deps_expression(variant_workspace, "all_crate_deps(normal = True)")
+            optional_external = sorted(
+                f"@crates//{dependency['name']}-{str(dependency['req']).removeprefix('=')}"
+                for dependency in package_dependencies(package, "normal")
+                if dependency.get("optional")
+                and crate_name(str(dependency["name"])) in variant_optional
+                and not is_path_dependency(dependency)
+                and str(dependency.get("req", "")).startswith("=")
+            )
+            variant_deps = deps_expression(
+                variant_workspace + optional_external,
+                "all_crate_deps(normal = True)",
+            )
             if plan.target("build_script") is not None:
                 variant_deps = deps_expression(
-                    variant_workspace + [":build_script"], "all_crate_deps(normal = True)"
+                    variant_workspace + optional_external + [":build_script"],
+                    "all_crate_deps(normal = True)",
                 )
             variant_attributes: dict[str, Any] = {
                 "name": variant_name,
@@ -963,8 +1015,24 @@ def build_plan(
                 "crate_name": crate,
                 "crate_root": relative_src_path(library, directory, root) if library else "src/lib.rs",
             }
-            if compile_data:
-                variant_attributes["compile_data"] = compile_data_expression(compile_data)
+            variant_target_sources = [
+                source for source in sources
+                if source.is_relative_to(root / directory / "src")
+            ]
+            variant_gated = feature_gated_sources(
+                Path(str(library["src_path"])).resolve() if library else None,
+                variant_target_sources,
+                set(variant_features),
+            )
+            variant_target_sources = [
+                source for source in variant_target_sources if source not in variant_gated
+            ]
+            variant_compile_data, _ = compile_data_labels(directory, variant_target_sources, root)
+            variant_compile_data = sorted(
+                set(variant_compile_data) | set(PACKAGE_EXTRA_COMPILE_DATA.get(directory, []))
+            )
+            if variant_compile_data:
+                variant_attributes["compile_data"] = compile_data_expression(variant_compile_data)
             variant_attributes["crate_features"] = variant_features
             variant_attributes["edition"] = Raw("crate_edition()")
             variant_attributes["deps"] = Raw(variant_deps)
@@ -983,8 +1051,10 @@ def build_plan(
             target_name = assigned_names[cargo_name]
             binaries = cargo_bin_executables(cargo_target, assigned_names)
             test_deps = deps_expression(
-                [f":{variant_name}"] + normal_workspace + dev_workspace
-                + [f":{bazel_name}" for _, bazel_name in binaries],
+                sorted(set(
+                    [f":{variant_name}"] + normal_workspace + dev_workspace
+                    + [f":{bazel_name}" for _, bazel_name in binaries]
+                )),
                 "all_crate_deps(normal = True, normal_dev = True)",
             )
             attributes = {
@@ -1031,10 +1101,13 @@ def build_plan(
                 else "all_crate_deps(proc_macro = True)"
             )
             binary_dependencies = list(normal_workspace)
-            if plan.target(library_name) is not None:
+            if plan.target(variant_name) is not None:
+                binary_dependencies.append(f":{variant_name}")
+            elif plan.target(library_name) is not None:
                 # Cargo links a binary and an example against the library of
                 # the same package.
                 binary_dependencies.append(f":{library_name}")
+            binary_dependencies = sorted(set(binary_dependencies))
             binary_deps = deps_expression(binary_dependencies, normal_selector)
             if plan.target("build_script") is not None:
                 binary_deps = deps_expression(
@@ -1045,7 +1118,9 @@ def build_plan(
                 "srcs": binary_sources(cargo_target, directory, root),
                 "crate_name": crate_name(cargo_name),
             }
-            if required:
+            if target_compile_data:
+                attributes["compile_data"] = compile_data_expression(target_compile_data)
+            if features or required:
                 attributes["crate_features"] = sorted(set(features) | set(required))
             attributes["edition"] = Raw("crate_edition()")
             attributes["deps"] = Raw(binary_deps)
@@ -1064,7 +1139,7 @@ def build_plan(
                 # unit tests of the binary run as part of `cargo test`.
                 unit_test_name = f"{target_name}_test"
                 unit_test_deps = deps_expression(
-                    binary_dependencies + dev_workspace,
+                    sorted(set(binary_dependencies + dev_workspace)),
                     "all_crate_deps(normal = True, normal_dev = True)",
                 )
                 unit_test_attributes: dict[str, Any] = {
@@ -1075,7 +1150,7 @@ def build_plan(
                 }
                 if target_compile_data:
                     unit_test_attributes["compile_data"] = compile_data_expression(target_compile_data)
-                if required:
+                if features or required:
                     unit_test_attributes["crate_features"] = sorted(set(features) | set(required))
                 unit_test_attributes["edition"] = Raw("crate_edition()")
                 unit_test_attributes["deps"] = Raw(unit_test_deps)

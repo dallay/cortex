@@ -34,7 +34,7 @@ rust_test(
     crate_name = "reasoning_recorder",
     srcs = ["tests/reasoning_recorder.rs"],
     edition = crate_edition(),
-    deps = [":muninn_application", "//crates/muninn/core:muninn_core"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/muninn/core:muninn_core", ":muninn_application"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -43,6 +43,6 @@ rust_test(
     crate_name = "short_term_flows",
     srcs = ["tests/short_term_flows.rs"],
     edition = crate_edition(),
-    deps = [":muninn_application", "//crates/muninn/core:muninn_core"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/muninn/core:muninn_core", ":muninn_application"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )

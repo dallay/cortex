@@ -25,7 +25,7 @@ rust_test(
     crate_name = "error_mapping_tests",
     srcs = ["tests/error_mapping_tests.rs"],
     edition = crate_edition(),
-    deps = [":providers_openai", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/providers-core:providers_core", "//crates/infrastructure/sse-stream:sse_stream"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/providers-core:providers_core", "//crates/infrastructure/sse-stream:sse_stream", ":providers_openai"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -34,7 +34,7 @@ rust_test(
     crate_name = "groq_behavior",
     srcs = ["tests/groq_behavior.rs"],
     edition = crate_edition(),
-    deps = [":providers_openai", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/providers-core:providers_core", "//crates/infrastructure/sse-stream:sse_stream"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/providers-core:providers_core", "//crates/infrastructure/sse-stream:sse_stream", ":providers_openai"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -43,7 +43,7 @@ rust_test(
     crate_name = "groq_descriptor_adapter",
     srcs = ["tests/groq_descriptor_adapter.rs"],
     edition = crate_edition(),
-    deps = [":providers_openai", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/providers-core:providers_core", "//crates/infrastructure/sse-stream:sse_stream"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/providers-core:providers_core", "//crates/infrastructure/sse-stream:sse_stream", ":providers_openai"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -52,7 +52,7 @@ rust_test(
     crate_name = "oauth_retry",
     srcs = ["tests/oauth_retry.rs"],
     edition = crate_edition(),
-    deps = [":providers_openai", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/providers-core:providers_core", "//crates/infrastructure/sse-stream:sse_stream"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/providers-core:providers_core", "//crates/infrastructure/sse-stream:sse_stream", ":providers_openai"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -61,7 +61,7 @@ rust_test(
     crate_name = "openai_compatible_wire",
     srcs = ["tests/openai_compatible_wire.rs"],
     edition = crate_edition(),
-    deps = [":providers_openai", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/providers-core:providers_core", "//crates/infrastructure/sse-stream:sse_stream"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/providers-core:providers_core", "//crates/infrastructure/sse-stream:sse_stream", ":providers_openai"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -70,7 +70,7 @@ rust_test(
     crate_name = "provider",
     srcs = ["tests/provider.rs"],
     edition = crate_edition(),
-    deps = [":providers_openai", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/providers-core:providers_core", "//crates/infrastructure/sse-stream:sse_stream"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/providers-core:providers_core", "//crates/infrastructure/sse-stream:sse_stream", ":providers_openai"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -79,6 +79,6 @@ rust_test(
     crate_name = "quota_headers",
     srcs = ["tests/quota_headers.rs"],
     edition = crate_edition(),
-    deps = [":providers_openai", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/providers-core:providers_core", "//crates/infrastructure/sse-stream:sse_stream"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/providers-core:providers_core", "//crates/infrastructure/sse-stream:sse_stream", ":providers_openai"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
