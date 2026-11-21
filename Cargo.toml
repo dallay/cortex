@@ -46,6 +46,8 @@ members = [
   "crates/muninn/observability",
 ]
 
+[patch.crates-io]
+candle-core = { path = "third_party/candle-core" }
 
 [workspace.package]
 version = "0.0.1"

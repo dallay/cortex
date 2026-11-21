@@ -1,5 +1,0 @@
-filegroup(
-    name = "candle_core_patch",
-    srcs = ["cortex-zip9.patch"],
-    visibility = ["//visibility:public"],
-)
