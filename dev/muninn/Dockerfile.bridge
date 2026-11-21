@@ -1,4 +1,4 @@
-FROM rust:1.99.1-slim@sha256:b8e062b1c3a80183df83d9ba187cadd2b5ab84bc78d453dbfeb2fccd5f982247 AS builder
+FROM rust:1.100.0-slim@sha256:6f14b2b4b278ec0d50aa1d69541c304ce0f95e0f6268487aa9924af1c2e9aebe AS builder
 USER 1000:1000
 ENV CARGO_HOME=/tmp/cargo CARGO_TARGET_DIR=/tmp/target CARGO_NET_OFFLINE=true
 ARG MUNINN_BRIDGE_FEATURES=""
@@ -28,7 +28,7 @@ RUN if [ "$MUNINN_BRIDGE_FEATURES" = "h5-diagnostic" ]; then \
 RUN cargo test --offline --locked --manifest-path dev/muninn/bridge/Cargo.toml --example prepare_minilm --no-run \
     && find /tmp/target/debug/examples -type f -executable -name 'prepare_minilm-*' -exec cp {} /tmp/muninn-prepare-tests \;
 
-FROM python:3.13.18-slim@sha256:76baad6037690d6e8c4397fbcaef17bca6f19eecef822b708fe8fa3417d30bb5
+FROM python:3.15.2-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928
 COPY --from=builder /tmp/target/debug/muninn-bridge-spike /usr/local/bin/muninn-bridge-spike
 COPY --from=builder /tmp/muninn-storage-tests /usr/local/bin/muninn-storage-tests
 COPY --from=builder /tmp/muninn-prepare-tests /usr/local/bin/muninn-prepare-tests

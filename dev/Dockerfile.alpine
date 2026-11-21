@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM rust:1.100-alpine@sha256:de1e0058543a81ed7b046629167db587c67a94bdf37cce14eb27f0ec83baaffb AS builder
+FROM rust:1.100-alpine@sha256:8d0e82abfdf9a38071e07cabc5afba4ddbe077631a80e4e742a760c38beadc33 AS builder
 
 WORKDIR /app
 
@@ -26,7 +26,7 @@ COPY crates crates
 RUN cargo build --bin rook 2>&1
 
 # Stage 2: Minimal runtime
-FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
+FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 
 WORKDIR /app
 
