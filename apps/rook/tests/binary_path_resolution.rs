@@ -1,99 +1,39 @@
 #[path = "support/binary_path.rs"]
 mod binary_path;
 use binary_path::resolve;
-use std::ffi::OsString;
-use std::fs;
 use std::path::{Path, PathBuf};
-
-fn lookup(pairs: Vec<(&str, OsString)>) -> impl Fn(&str) -> Option<OsString> {
-    let pairs: Vec<(String, OsString)> = pairs
-        .into_iter()
-        .map(|(key, value)| (key.to_owned(), value))
-        .collect();
-    move |name| {
-        pairs
-            .iter()
-            .find(|(key, _)| key == name)
-            .map(|(_, value)| value.clone())
-    }
-}
-
-fn create(path: &Path) {
-    fs::create_dir_all(path.parent().expect("parent")).expect("directory");
-    fs::write(path, b"").expect("file");
-}
 
 #[test]
 fn absolute_cargo_path_is_preserved() {
     let binary = Path::new("/cargo/target/debug/rook");
-    assert_eq!(resolve(binary, |_| None), binary);
+    assert_eq!(resolve(binary, Path::new("/trusted/workspace")), binary);
 }
 
 #[test]
-fn runfiles_dir_resolves_binary_inside_test_workspace() {
-    let root = tempfile::tempdir().unwrap();
-    let binary = root.path().join("_main/apps/rook/rook_bin");
-    create(&binary);
-    let resolved = resolve(
-        Path::new("apps/rook/rook_bin"),
-        lookup(vec![("RUNFILES_DIR", root.path().as_os_str().to_owned())]),
-    );
-    assert_eq!(resolved, binary);
+fn relative_binary_is_resolved_under_the_explicit_workspace_root() {
+    let root = Path::new("/trusted/runfiles");
+    let resolved = resolve(Path::new("apps/rook/rook_bin"), root);
+    assert_eq!(resolved, root.join("apps/rook/rook_bin"));
 }
 
 #[test]
-fn test_srcdir_uses_test_workspace_and_workspace_root_fallback() {
-    let root = tempfile::tempdir().unwrap();
-    let binary = root.path().join("cortex/apps/rook/rook_bin");
-    create(&binary);
-    let resolved = resolve(
-        Path::new("apps/rook/rook_bin"),
-        lookup(vec![
-            ("TEST_SRCDIR", root.path().as_os_str().to_owned()),
-            ("TEST_WORKSPACE", OsString::from("cortex")),
-        ]),
-    );
-    assert_eq!(resolved, binary);
-
-    let workspace_root = tempfile::tempdir().unwrap();
-    let binary = workspace_root.path().join("apps/rook/rook_bin");
-    create(&binary);
-    let resolved = resolve(
-        Path::new("apps/rook/rook_bin"),
-        lookup(vec![
-            ("TEST_SRCDIR", workspace_root.path().as_os_str().to_owned()),
-            ("TEST_WORKSPACE", OsString::from("cortex")),
-        ]),
-    );
-    assert_eq!(resolved, binary);
-}
-
-#[test]
-fn unresolved_relative_path_is_returned_unchanged() {
+fn relative_binary_path_is_joined_to_the_workspace_root() {
     let binary = Path::new("apps/rook/rook_bin");
-    assert_eq!(resolve(binary, |_| None), PathBuf::from(binary));
+    assert_eq!(
+        resolve(binary, Path::new("/trusted/workspace")),
+        PathBuf::from("/trusted/workspace/apps/rook/rook_bin")
+    );
 }
 
 #[test]
 fn initial_working_directory_resolves_relative_binary() {
-    let root = tempfile::tempdir().unwrap();
-    let binary = root.path().join("apps/rook/rook_bin");
-    create(&binary);
-    assert_eq!(
-        resolve(
-            Path::new("apps/rook/rook_bin"),
-            lookup(vec![(
-                "TEST_INITIAL_WORKING_DIR",
-                root.path().as_os_str().to_owned()
-            ),])
-        ),
-        binary
-    );
+    let root = Path::new("/trusted/test-workspace");
+    let binary = root.join("apps/rook/rook_bin");
+    assert_eq!(resolve(Path::new("apps/rook/rook_bin"), root), binary);
 }
 
 #[test]
 fn configured_rook_binary_exists() {
-    // CodeQL cannot infer the resolved test binary path is trusted in this test-only assertion.
-    // codeql[rust/path-injection]
-    assert!(binary_path::rook().is_file());
+    let binary = binary_path::rook();
+    assert!(binary.is_file(), "configured test binary must exist");
 }
