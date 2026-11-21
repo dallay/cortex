@@ -49,7 +49,7 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm --filter @dallay/rook-dashboard run build
 
-      - uses: bazel-contrib/setup-bazel@e1614ab8b64f375e8e1d6885bc7d47f72e8bd0b1 # 0.19.2
+      - uses: bazel-contrib/setup-bazel@f34d6a05eae3c24acab7fa54587492daeaeffdab # 0.19.2
         if: steps.affected.outputs.mode != 'docs-only'
         with:
           bazelisk-cache: true
