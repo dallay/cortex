@@ -62,7 +62,14 @@ DEFAULT_EXCLUDED_PREFIXES: tuple[str, ...] = ()
 
 # Cargo targets that cannot be modeled as Bazel targets. Each entry records a
 # precise, reviewed reason; nothing is ever dropped silently.
-TARGET_EXCLUSIONS: dict[tuple[str, str], str] = {}
+TARGET_EXCLUSIONS: dict[tuple[str, str], str] = {
+    ("crates/muninn/c1-exporter", "export_minilm_c1"): (
+        "The binary requires the non-default `cpu-f32` feature whose optional "
+        "candle-core/candle-nn/candle-transformers/safetensors/tokenizers "
+        "dependencies are not vendored by crate_universe, so the target cannot "
+        "be built under Bazel."
+    ),
+}
 
 # Package specific compile data that cannot be discovered from the sources.
 PACKAGE_EXTRA_COMPILE_DATA: dict[str, list[str]] = {

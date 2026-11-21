@@ -23,36 +23,6 @@ crate.spec(
     features = ["anyhow", "async", "component-model", "cranelift", "runtime", "std"],
     repositories = ["crates"],
 )
-crate.spec(
-    package = "candle-core",
-    version = "=0.11.0",
-    default_features = False,
-    repositories = ["crates"],
-)
-crate.spec(
-    package = "candle-nn",
-    version = "=0.11.0",
-    default_features = False,
-    repositories = ["crates"],
-)
-crate.spec(
-    package = "candle-transformers",
-    version = "=0.11.0",
-    default_features = False,
-    repositories = ["crates"],
-)
-crate.spec(
-    package = "safetensors",
-    version = "=0.8.0",
-    repositories = ["crates"],
-)
-crate.spec(
-    package = "tokenizers",
-    version = "=0.22.2",
-    default_features = False,
-    features = ["onig"],
-    repositories = ["crates"],
-)
 crate.from_cargo(
     name = "crates",
     cargo_lockfile = "//:Cargo.Bazel.lock",

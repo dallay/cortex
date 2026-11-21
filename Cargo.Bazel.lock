@@ -1744,11 +1744,6 @@ dependencies = [
 name = "direct-cargo-bazel-deps"
 version = "0.0.1"
 dependencies = [
- "candle-core",
- "candle-nn",
- "candle-transformers",
- "safetensors",
- "tokenizers",
  "wasmtime",
 ]
 

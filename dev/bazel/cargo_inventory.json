@@ -1611,8 +1611,8 @@
       "target": "muninn_bridge"
     },
     {
+      "exclusion": "The binary requires the non-default `cpu-f32` feature whose optional candle-core/candle-nn/candle-transformers/safetensors/tokenizers dependencies are not vendored by crate_universe, so the target cannot be built under Bazel.",
       "kinds": "bin",
-      "label": "//crates/muninn/c1-exporter:export_minilm_c1",
       "manifest": "crates/muninn/c1-exporter/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/muninn/c1-exporter#muninn-c1-exporter@0.0.1",
       "target": "export_minilm_c1"
