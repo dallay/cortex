@@ -335,60 +335,6 @@ mod tests {
             )
             .expect("write-only descriptor"),
         );
-        use std::os::fd::AsRawFd;
-
-        let target_slot = descriptor.as_raw_fd();
-        let descriptor_names = std::fs::read_dir("/dev/fd")
-            .expect("read descriptor directory")
-            .filter_map(Result::ok)
-            .filter_map(|entry| entry.file_name().to_string_lossy().parse::<i32>().ok())
-            .collect::<Vec<_>>();
-        let slot_name = target_slot.to_string();
-        let slot_stat = {
-            let descriptor_dir = rustix::fs::open(
-                "/dev/fd",
-                rustix::fs::OFlags::RDONLY
-                    | rustix::fs::OFlags::DIRECTORY
-                    | rustix::fs::OFlags::CLOEXEC,
-                rustix::fs::Mode::empty(),
-            )
-            .expect("open descriptor directory");
-            rustix::fs::statat(&descriptor_dir, &slot_name, rustix::fs::AtFlags::empty())
-        };
-        eprintln!(
-            "[c1-fs-test] operation=descriptor.target_probe fd={target_slot} listed={} target_dev={} target_ino={} statat={:?}",
-            descriptor_names.contains(&target_slot),
-            metadata.dev(),
-            metadata.ino(),
-            slot_stat.as_ref().map(|stat| (stat.st_dev, stat.st_ino)),
-        );
-        let descriptor_dir = rustix::fs::open(
-            "/dev/fd",
-            rustix::fs::OFlags::RDONLY
-                | rustix::fs::OFlags::DIRECTORY
-                | rustix::fs::OFlags::CLOEXEC,
-            rustix::fs::Mode::empty(),
-        )
-        .expect("open descriptor directory for reopen probes");
-        for access in [rustix::fs::OFlags::RDONLY, rustix::fs::OFlags::WRONLY] {
-            match rustix::fs::openat(
-                &descriptor_dir,
-                &slot_name,
-                access | rustix::fs::OFlags::NONBLOCK | rustix::fs::OFlags::CLOEXEC,
-                rustix::fs::Mode::empty(),
-            ) {
-                Ok(reopened) => {
-                    let stat = rustix::fs::fstat(&reopened);
-                    eprintln!(
-                        "[c1-fs-test] operation=descriptor.target_reopen access={access:?} fstat={:?}",
-                        stat.as_ref().map(|stat| (stat.st_dev, stat.st_ino)),
-                    );
-                }
-                Err(error) => eprintln!(
-                    "[c1-fs-test] operation=descriptor.target_reopen access={access:?} errno={error:?}"
-                ),
-            }
-        }
         assert_eq!(
             super::descriptor_open_for(metadata.dev(), metadata.ino()),
             Some(true),
