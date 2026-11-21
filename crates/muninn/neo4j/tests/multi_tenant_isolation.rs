@@ -24,17 +24,21 @@ struct DockerFixture {
     container_id: Option<String>,
     pub uri: String,
     pub password: String,
+    vector_dimensions: usize,
 }
 
 impl DockerFixture {
     fn start() -> Self {
         if let Ok(uri) = std::env::var("MUNINN_FIXTURE_URI") {
             let password = std::env::var("MUNINN_FIXTURE_PASSWORD").unwrap_or_default();
-            eprintln!("[BOLT-03-03] Using existing Neo4j fixture at {}", uri);
+            // CI's shared Neo4j fixture uses the production embedding dimension.
+            let vector_dimensions = 1536;
+            eprintln!("[BOLT-03-03] Using existing Neo4j fixture");
             return Self {
                 container_id: None,
                 uri,
                 password,
+                vector_dimensions,
             };
         }
 
@@ -66,31 +70,30 @@ impl DockerFixture {
         // Immediately delete temp auth file to protect credentials
         let _ = std::fs::remove_file(&env_file);
 
-        assert!(
-            output.status.success(),
-            "docker run failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        assert!(output.status.success(), "docker run failed");
 
         let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        assert!(
+            (12..=64).contains(&container_id.len())
+                && container_id.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "docker returned an invalid container identifier"
+        );
 
         let port_output = Command::new("docker")
             .args(["port", &container_id, "7687/tcp"])
             .output()
             .expect("failed to get docker port");
 
-        assert!(
-            port_output.status.success(),
-            "docker port failed: {}",
-            String::from_utf8_lossy(&port_output.stderr)
-        );
+        assert!(port_output.status.success(), "docker port failed");
 
         let port_str = String::from_utf8_lossy(&port_output.stdout);
         let port = port_str
             .trim()
             .rsplit(':')
             .next()
-            .expect("valid port output");
+            .and_then(|port| port.parse::<u16>().ok())
+            .filter(|port| *port != 0)
+            .expect("docker returned an invalid published port");
         let uri = format!("bolt://127.0.0.1:{port}");
         eprintln!(
             "[BOLT-03-03] Container {} running at 127.0.0.1:{}",
@@ -101,6 +104,7 @@ impl DockerFixture {
             container_id: Some(container_id),
             uri,
             password,
+            vector_dimensions: 3,
         }
     }
 }
@@ -145,9 +149,12 @@ async fn test_bolt_03_03_multi_tenant_isolation_across_three_tiers() {
 
     let client = wait_for_neo4j(&config).await;
 
-    // Apply SchemaManager::setup_all with vector dimension 3
-    eprintln!("[BOLT-03-03] Applying SchemaManager::setup_all with 3 dimensions...");
-    let schema_mgr = SchemaManager::new(&client, 3);
+    // Match the existing fixture's managed vector index configuration.
+    let vector_dimensions = fixture.vector_dimensions;
+    eprintln!(
+        "[BOLT-03-03] Applying SchemaManager::setup_all with {vector_dimensions} dimensions..."
+    );
+    let schema_mgr = SchemaManager::new(&client, vector_dimensions);
     schema_mgr
         .setup_all()
         .await
@@ -175,9 +182,11 @@ async fn test_bolt_03_03_multi_tenant_isolation_across_three_tiers() {
     let session_beta = format!("session-beta-{}", Uuid::new_v4());
 
     let embedding_model = "test:embedding-model:v1";
-    let embedding_identity = EmbeddingIdentity::new(embedding_model, 3).expect("valid identity");
-    // Shared identical embedding vector: tests that vector search NEVER leaks across tenants
-    let shared_vector = vec![1.0, 0.0, 0.0];
+    let embedding_identity =
+        EmbeddingIdentity::new(embedding_model, vector_dimensions).expect("valid identity");
+    // Shared identical embedding vector: tests that vector search NEVER leaks across tenants.
+    let mut shared_vector = vec![0.0; vector_dimensions];
+    shared_vector[0] = 1.0;
 
     // =========================================================================
     // 1. Populate full data for tenant-alpha

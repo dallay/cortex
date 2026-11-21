@@ -24,17 +24,21 @@ struct DockerFixture {
     container_id: Option<String>,
     pub uri: String,
     pub password: String,
+    vector_dimensions: usize,
 }
 
 impl DockerFixture {
     fn start() -> Self {
         if let Ok(uri) = std::env::var("MUNINN_FIXTURE_URI") {
             let password = std::env::var("MUNINN_FIXTURE_PASSWORD").unwrap_or_default();
-            eprintln!("[BOLT-07] Using existing Neo4j fixture at {}", uri);
+            // CI's shared Neo4j fixture uses the production embedding dimension.
+            let vector_dimensions = 1536;
+            eprintln!("[BOLT-07] Using existing Neo4j fixture");
             return Self {
                 container_id: None,
                 uri,
                 password,
+                vector_dimensions,
             };
         }
 
@@ -67,31 +71,30 @@ impl DockerFixture {
         // Immediately delete temp auth file to protect credentials
         let _ = std::fs::remove_file(&env_file);
 
-        assert!(
-            output.status.success(),
-            "docker run failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        assert!(output.status.success(), "docker run failed");
 
         let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        assert!(
+            (12..=64).contains(&container_id.len())
+                && container_id.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "docker returned an invalid container identifier"
+        );
 
         let port_output = Command::new("docker")
             .args(["port", &container_id, "7687/tcp"])
             .output()
             .expect("failed to get docker port");
 
-        assert!(
-            port_output.status.success(),
-            "docker port failed: {}",
-            String::from_utf8_lossy(&port_output.stderr)
-        );
+        assert!(port_output.status.success(), "docker port failed");
 
         let port_str = String::from_utf8_lossy(&port_output.stdout);
         let port = port_str
             .trim()
             .rsplit(':')
             .next()
-            .expect("valid port output");
+            .and_then(|port| port.parse::<u16>().ok())
+            .filter(|port| *port != 0)
+            .expect("docker returned an invalid published port");
         let uri = format!("bolt://127.0.0.1:{port}");
         eprintln!(
             "[BOLT-07] Container {} running at 127.0.0.1:{}",
@@ -102,6 +105,7 @@ impl DockerFixture {
             container_id: Some(container_id),
             uri,
             password,
+            vector_dimensions: 3,
         }
     }
 }
@@ -160,9 +164,9 @@ async fn test_bolt_07_preference_relationships_about_and_applies_to() {
 
     let client = wait_for_neo4j(&config).await;
 
-    // Apply SchemaManager::setup_all with vector dimension 3
+    // Match the existing fixture's managed vector index configuration.
     eprintln!("[BOLT-07] Applying SchemaManager::setup_all...");
-    let schema_mgr = SchemaManager::new(&client, 3);
+    let schema_mgr = SchemaManager::new(&client, fixture.vector_dimensions);
     schema_mgr
         .setup_all()
         .await
