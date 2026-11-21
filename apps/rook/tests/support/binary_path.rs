@@ -7,14 +7,23 @@ pub fn rook() -> PathBuf {
     resolve(Path::new(BINARY), |name| std::env::var_os(name))
 }
 
+/// Returns true if the path contains no `..` components, preventing path traversal.
+fn is_safe_path(path: &Path) -> bool {
+    path.components()
+        .all(|c| c != std::path::Component::ParentDir)
+}
+
 pub(crate) fn resolve(binary: &Path, env: impl Fn(&str) -> Option<OsString>) -> PathBuf {
     if binary.is_absolute() {
         return binary.to_path_buf();
     }
     if let Some(root) = env("TEST_INITIAL_WORKING_DIR") {
-        let candidate = PathBuf::from(root).join(binary);
-        if candidate.exists() {
-            return candidate;
+        let root_path = PathBuf::from(root);
+        if is_safe_path(&root_path) {
+            let candidate = root_path.join(binary);
+            if candidate.exists() {
+                return candidate;
+            }
         }
     }
     let workspace = env("TEST_WORKSPACE").unwrap_or_else(|| OsString::from("_main"));
@@ -22,8 +31,14 @@ pub(crate) fn resolve(binary: &Path, env: impl Fn(&str) -> Option<OsString>) -> 
         let Some(root) = env(key) else {
             continue;
         };
-        let root = PathBuf::from(root);
-        for candidate in [root.join(&workspace).join(binary), root.join(binary)] {
+        let root_path = PathBuf::from(root);
+        if !is_safe_path(&root_path) {
+            continue;
+        }
+        for candidate in [
+            root_path.join(&workspace).join(binary),
+            root_path.join(binary),
+        ] {
             if candidate.exists() {
                 return candidate;
             }
