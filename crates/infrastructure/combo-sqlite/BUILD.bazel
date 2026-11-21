@@ -34,6 +34,6 @@ rust_test(
     crate_name = "combo_alias",
     srcs = ["tests/combo_alias.rs"],
     edition = crate_edition(),
-    deps = [":combo_sqlite", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/db-migration:db_migration"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/db-migration:db_migration", ":combo_sqlite"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )

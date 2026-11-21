@@ -7,6 +7,7 @@ build scripts, embedded data files, and deterministic output.
 
 import importlib.util
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +15,7 @@ from pathlib import Path
 SCRIPT = Path(__file__).with_name("generate_build_files.py")
 spec = importlib.util.spec_from_file_location("generate_build_files", SCRIPT)
 generator = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = generator
 spec.loader.exec_module(generator)
 
 
@@ -122,6 +124,15 @@ class GeneratorTests(unittest.TestCase):
     def targets_by_name(self, plan):
         return {target_plan.name: target_plan for target_plan in plan.targets}
 
+    def test_rook_build_script_receives_dashboard_distribution(self):
+        packages = [package(name="rook", directory="apps/rook", targets=[
+            target("rook", ["lib"], "/repo/apps/rook/src/lib.rs"),
+            target("build-script-build", ["custom-build"], "/repo/apps/rook/build.rs"),
+        ])]
+        plans, _ = self.plan(packages)
+        build_script = self.targets_by_name(plans[0])["build_script"]
+        self.assertEqual(build_script.attributes["data"], ["//apps/rook/dashboard:dist"])
+
     # -- naming ----------------------------------------------------------
 
     def test_crate_name_normalizes_dashes(self):
@@ -142,6 +153,43 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(lib.rule, "rust_library")
         self.assertEqual(lib.attributes["crate_name"], "demo")
         self.assertEqual(lib.attributes["crate_root"], "src/lib.rs")
+
+    def test_workspace_path_dependencies_are_deduplicated_when_also_in_dev_dependencies(self):
+        library = package(
+            name="demo-lib",
+            directory="crates/demo-lib",
+            targets=[target("demo_lib", ["lib"], "/repo/crates/demo-lib/src/lib.rs")],
+        )
+        dependency = {
+            "name": "demo-lib",
+            "req": "*",
+            "optional": False,
+            "uses_default_features": True,
+            "features": [],
+            "path": "/repo/crates/demo-lib",
+        }
+        consumer = package(
+            name="demo",
+            directory="crates/demo",
+            dependencies=[
+                {**dependency, "kind": None},
+                {**dependency, "kind": "dev"},
+            ],
+            targets=[
+                target("demo", ["lib"], "/repo/crates/demo/src/lib.rs"),
+                target("endpoint_resolver", ["test"], "/repo/crates/demo/tests/endpoint_resolver.rs", crate_types=["bin"]),
+            ],
+        )
+        plans, _ = self.plan(
+            [library, consumer],
+            {"crates/demo/src/lib.rs": "#[cfg(test)]\\nmod tests {}\\n"},
+        )
+        consumer_plan = next(plan for plan in plans if plan.directory == "crates/demo")
+        unit_test = self.targets_by_name(consumer_plan)["demo_unit_test"]
+        integration_test = self.targets_by_name(consumer_plan)["endpoint_resolver"]
+        expected = '"//crates/demo-lib:demo_lib"'
+        self.assertEqual(unit_test.attributes["deps"].count(expected), 1)
+        self.assertEqual(integration_test.attributes["deps"].count(expected), 1)
 
     def test_workspace_path_dependencies_become_explicit_labels(self):
         library = package(
@@ -395,6 +443,29 @@ class GeneratorTests(unittest.TestCase):
         lib = self.targets_by_name(plans[0])["demo"]
         self.assertNotIn("crate_features", lib.attributes)
 
+    def test_required_feature_variant_includes_enabled_external_optional_dependencies(self):
+        packages = [package(
+            features={"cpu-f32": ["dep:candle-core"]},
+            dependencies=[{
+                "name": "candle-core",
+                "req": "=0.11.0",
+                "kind": None,
+                "optional": True,
+                "uses_default_features": False,
+                "features": [],
+            }],
+            targets=[
+                target("demo", ["lib"], "/repo/crates/demo/src/lib.rs"),
+                target("hooked", ["bin"], "/repo/crates/demo/src/main.rs",
+                       crate_types=["bin"], required_features=["cpu-f32"]),
+            ],
+        )]
+        plans, _ = self.plan(packages)
+        targets = self.targets_by_name(plans[0])
+        self.assertIn('"@crates//candle-core-0.11.0"', targets["demo_cpu_f32"].attributes["deps"])
+        self.assertNotIn('"@crates//candle-core-0.11.0"', targets["demo"].attributes["deps"])
+        self.assertIn(":demo_cpu_f32", targets["hooked"].attributes["deps"])
+
     def test_required_features_produce_a_feature_variant_library(self):
         packages = [package(features={"test-hooks": []}, targets=[
             target("demo", ["lib"], "/repo/crates/demo/src/lib.rs"),
@@ -406,6 +477,88 @@ class GeneratorTests(unittest.TestCase):
         self.assertIn("demo_test_hooks", targets)
         self.assertEqual(targets["demo_test_hooks"].attributes["crate_features"], ["test-hooks"])
         self.assertIn(":demo_test_hooks", targets["hooked"].attributes["deps"])
+
+    def test_variant_library_keeps_its_own_embedded_data(self):
+        packages = [package(features={"extra": []}, targets=[
+            target("demo", ["lib"], "/repo/crates/demo/src/lib.rs"),
+            target("hooked", ["test"], "/repo/crates/demo/tests/hooked.rs",
+                   required_features=["extra"]),
+        ])]
+        plans, _ = self.plan(packages, files={
+            "crates/demo/src/lib.rs": 'const DATA: &str = include_str!("data.txt");',
+            "crates/demo/src/data.txt": "embedded",
+            "crates/demo/tests/hooked.rs": "#[test] fn works() {}",
+        })
+        targets = self.targets_by_name(plans[0])
+        self.assertIn("src/data.txt", str(targets["demo_extra"].attributes["compile_data"]))
+        self.assertNotIn("compile_data", targets["hooked"].attributes)
+
+    def test_variant_library_uses_enabled_library_modules_only(self):
+        packages = [package(features={"extra": [], "other": []}, targets=[
+            target("demo", ["lib"], "/repo/crates/demo/src/lib.rs"),
+            target("hooked", ["test"], "/repo/crates/demo/tests/hooked.rs",
+                   required_features=["extra"]),
+        ])]
+        plans, _ = self.plan(packages, files={
+            "crates/demo/src/lib.rs": '#[cfg(feature = "extra")]\nmod extra;\n#[cfg(feature = "other")]\nmod other;',
+            "crates/demo/src/extra.rs": 'const DATA: &str = include_str!("enabled.txt");',
+            "crates/demo/src/other.rs": 'const DATA: &str = include_str!("disabled.txt");',
+            "crates/demo/src/enabled.txt": "enabled",
+            "crates/demo/src/disabled.txt": "disabled",
+            "crates/demo/tests/hooked.rs": 'const DATA: &str = include_str!("test.txt");',
+            "crates/demo/tests/test.txt": "test data",
+        })
+        targets = self.targets_by_name(plans[0])
+        data = str(targets["demo_extra"].attributes["compile_data"])
+        self.assertIn("src/enabled.txt", data)
+        self.assertNotIn("disabled.txt", data)
+        self.assertNotIn("test.txt", data)
+        self.assertIn("tests/test.txt", str(targets["hooked"].attributes["compile_data"]))
+
+    def test_binary_and_harness_enable_default_features(self):
+        packages = [package(features={"default": ["extra"], "extra": []}, targets=[
+            target("demo", ["bin"], "/repo/crates/demo/src/main.rs"),
+        ])]
+        plans, _ = self.plan(packages, files={
+            "crates/demo/src/main.rs": "#[cfg(test)] mod tests {} fn main() {}",
+        })
+        targets = self.targets_by_name(plans[0])
+        self.assertEqual(targets["demo"].attributes["crate_features"], ["extra"])
+        self.assertEqual(targets["demo_test"].attributes["crate_features"], ["extra"])
+
+    def test_evaluate_cfg_expression_handles_composites(self):
+        eval_cfg = generator.evaluate_cfg_expression
+        self.assertTrue(eval_cfg('cfg(feature = "a")', {"a"}))
+        self.assertFalse(eval_cfg('cfg(feature = "a")', set()))
+        self.assertTrue(eval_cfg('cfg(any(feature = "a", feature = "b"))', {"a"}))
+        self.assertTrue(eval_cfg('cfg(any(feature = "a", feature = "b"))', {"b"}))
+        self.assertFalse(eval_cfg('cfg(any(feature = "a", feature = "b"))', set()))
+        self.assertTrue(eval_cfg('cfg(all(feature = "a", feature = "b"))', {"a", "b"}))
+        self.assertFalse(eval_cfg('cfg(all(feature = "a", feature = "b"))', {"a"}))
+        self.assertTrue(eval_cfg('cfg(not(feature = "a"))', set()))
+        self.assertFalse(eval_cfg('cfg(not(feature = "a"))', {"a"}))
+        self.assertIsNone(eval_cfg('cfg(target_os = "linux")', set()))
+
+    def test_feature_gated_sources_conservative_on_composite_cfg(self):
+        packages = [package(features={"extra": [], "other": []}, targets=[
+            target("demo", ["lib"], "/repo/crates/demo/src/lib.rs"),
+            target("hooked", ["test"], "/repo/crates/demo/tests/hooked.rs",
+                   required_features=["extra"]),
+        ])]
+        plans, _ = self.plan(packages, files={
+            "crates/demo/src/lib.rs": '#[cfg(any(feature = "extra", feature = "other"))]\nmod shared;\n#[cfg(all(feature = "extra", feature = "other"))]\nmod both;',
+            "crates/demo/src/shared.rs": 'const DATA: &str = include_str!("shared.txt");',
+            "crates/demo/src/both.rs": 'const DATA: &str = include_str!("both.txt");',
+            "crates/demo/src/shared.txt": "shared",
+            "crates/demo/src/both.txt": "both",
+            "crates/demo/tests/hooked.rs": 'fn main() {}',
+        })
+        targets = self.targets_by_name(plans[0])
+        data = str(targets["demo_extra"].attributes["compile_data"])
+        # shared has feature "extra" enabled, so it must not be excluded
+        self.assertIn("src/shared.txt", data)
+        # both requires "other" which is disabled, so it must be excluded
+        self.assertNotIn("both.txt", data)
 
     # -- build scripts ----------------------------------------------------
 
@@ -464,7 +617,10 @@ class GeneratorTests(unittest.TestCase):
                 crate_types=["bin"],
             ),
         ])]
-        plans, _ = self.plan(packages)
+        exclusions = {
+            ("crates/huginn/runtime", "wasm_outline"): "The experimental-wasm test is not supported here."
+        }
+        plans, _ = self.plan(packages, exclude_targets=exclusions)
         entries = generator.inventory_entries(plans[0])
         self.assertEqual(len(entries), 1)
         self.assertNotIn("label", entries[0])

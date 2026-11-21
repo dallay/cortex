@@ -16,9 +16,16 @@ use_repo(rust, "rust_toolchains")
 register_toolchains("@rust_toolchains//:all")
 
 crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+crate.spec(
+    package = "wasmtime",
+    version = "=50.0.2",
+    default_features = False,
+    features = ["anyhow", "async", "component-model", "cranelift", "runtime", "std"],
+    repositories = ["crates"],
+)
 crate.from_cargo(
     name = "crates",
-    cargo_lockfile = "//:Cargo.lock",
+    cargo_lockfile = "//:Cargo.Bazel.lock",
     manifests = ["//:Cargo.toml"],
 )
 use_repo(crate, "crates")

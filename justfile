@@ -127,6 +127,7 @@ huginn-wasm-build:
 huginn-wasm-test:
     cargo test --locked -p huginn-rust-outline-component
     cargo test --locked -p huginn-runtime --features experimental-wasm --test wasm_outline
+    cargo test --locked -p huginn-runtime --features experimental-wasm --test wasm_output_validation
     cargo test --locked -p huginn --features experimental-wasm --test wasm_outline
     just huginn-architecture
 

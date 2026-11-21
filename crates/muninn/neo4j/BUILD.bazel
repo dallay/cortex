@@ -25,7 +25,7 @@ rust_test(
     crate = ":muninn_neo4j",
     aliases = aliases(normal_dev = True, proc_macro_dev = True),
     edition = crate_edition(),
-    deps = ["//crates/muninn/core:muninn_core", "//crates/muninn/application:muninn_application"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -34,7 +34,7 @@ rust_test(
     crate_name = "ann_fallback",
     srcs = ["tests/ann_fallback.rs"],
     edition = crate_edition(),
-    deps = [":muninn_neo4j", "//crates/muninn/core:muninn_core", "//crates/muninn/application:muninn_application"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_neo4j"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -43,7 +43,7 @@ rust_test(
     crate_name = "cross_memory_edges",
     srcs = ["tests/cross_memory_edges.rs"],
     edition = crate_edition(),
-    deps = [":muninn_neo4j", "//crates/muninn/core:muninn_core", "//crates/muninn/application:muninn_application"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_neo4j"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -52,7 +52,7 @@ rust_test(
     crate_name = "entity_enrichment",
     srcs = ["tests/entity_enrichment.rs"],
     edition = crate_edition(),
-    deps = [":muninn_neo4j", "//crates/muninn/core:muninn_core", "//crates/muninn/application:muninn_application"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_neo4j"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -61,7 +61,7 @@ rust_test(
     crate_name = "entity_resolution",
     srcs = ["tests/entity_resolution.rs"],
     edition = crate_edition(),
-    deps = [":muninn_neo4j", "//crates/muninn/core:muninn_core", "//crates/muninn/application:muninn_application"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_neo4j"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -70,7 +70,7 @@ rust_test(
     crate_name = "exact_bound",
     srcs = ["tests/exact_bound.rs"],
     edition = crate_edition(),
-    deps = [":muninn_neo4j", "//crates/muninn/core:muninn_core", "//crates/muninn/application:muninn_application"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_neo4j"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -79,7 +79,7 @@ rust_test(
     crate_name = "extraction_mentions",
     srcs = ["tests/extraction_mentions.rs"],
     edition = crate_edition(),
-    deps = [":muninn_neo4j", "//crates/muninn/core:muninn_core", "//crates/muninn/application:muninn_application"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_neo4j"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -88,7 +88,7 @@ rust_test(
     crate_name = "long_term_isolation_deletion",
     srcs = ["tests/long_term_isolation_deletion.rs"],
     edition = crate_edition(),
-    deps = [":muninn_neo4j", "//crates/muninn/core:muninn_core", "//crates/muninn/application:muninn_application"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_neo4j"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -97,7 +97,7 @@ rust_test(
     crate_name = "long_term_lifecycle",
     srcs = ["tests/long_term_lifecycle.rs"],
     edition = crate_edition(),
-    deps = [":muninn_neo4j", "//crates/muninn/core:muninn_core", "//crates/muninn/application:muninn_application"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_neo4j"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -106,7 +106,7 @@ rust_test(
     crate_name = "observations",
     srcs = ["tests/observations.rs"],
     edition = crate_edition(),
-    deps = [":muninn_neo4j", "//crates/muninn/core:muninn_core", "//crates/muninn/application:muninn_application"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_neo4j"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -115,7 +115,7 @@ rust_test(
     crate_name = "owner_namespace",
     srcs = ["tests/owner_namespace.rs"],
     edition = crate_edition(),
-    deps = [":muninn_neo4j", "//crates/muninn/core:muninn_core", "//crates/muninn/application:muninn_application"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_neo4j"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -124,7 +124,7 @@ rust_test(
     crate_name = "preference_atomic",
     srcs = ["tests/preference_atomic.rs"],
     edition = crate_edition(),
-    deps = [":muninn_neo4j", "//crates/muninn/core:muninn_core", "//crates/muninn/application:muninn_application"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_neo4j"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -133,7 +133,7 @@ rust_test(
     crate_name = "preference_filters",
     srcs = ["tests/preference_filters.rs"],
     edition = crate_edition(),
-    deps = [":muninn_neo4j", "//crates/muninn/core:muninn_core", "//crates/muninn/application:muninn_application"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_neo4j"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -142,7 +142,7 @@ rust_test(
     crate_name = "preference_superseded",
     srcs = ["tests/preference_superseded.rs"],
     edition = crate_edition(),
-    deps = [":muninn_neo4j", "//crates/muninn/core:muninn_core", "//crates/muninn/application:muninn_application"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_neo4j"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -152,7 +152,7 @@ rust_test(
     srcs = ["tests/reasoning_execution.rs"],
     compile_data = ["//:dev/muninn/fixtures/gm08-v1.json"],
     edition = crate_edition(),
-    deps = [":muninn_neo4j", "//crates/muninn/core:muninn_core", "//crates/muninn/application:muninn_application"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_neo4j"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -161,7 +161,7 @@ rust_test(
     crate_name = "reasoning_owner_scope",
     srcs = ["tests/reasoning_owner_scope.rs"],
     edition = crate_edition(),
-    deps = [":muninn_neo4j", "//crates/muninn/core:muninn_core", "//crates/muninn/application:muninn_application"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_neo4j"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -170,7 +170,7 @@ rust_test(
     crate_name = "schema_migrations",
     srcs = ["tests/schema_migrations.rs"],
     edition = crate_edition(),
-    deps = [":muninn_neo4j", "//crates/muninn/core:muninn_core", "//crates/muninn/application:muninn_application"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_neo4j"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -179,7 +179,7 @@ rust_test(
     crate_name = "schema_non_vector",
     srcs = ["tests/schema_non_vector.rs"],
     edition = crate_edition(),
-    deps = [":muninn_neo4j", "//crates/muninn/core:muninn_core", "//crates/muninn/application:muninn_application"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_neo4j"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -188,6 +188,6 @@ rust_test(
     crate_name = "schema_vectors",
     srcs = ["tests/schema_vectors.rs"],
     edition = crate_edition(),
-    deps = [":muninn_neo4j", "//crates/muninn/core:muninn_core", "//crates/muninn/application:muninn_application"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_neo4j"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )

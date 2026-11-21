@@ -5,7 +5,7 @@ compares the declared Cargo workspace inventory with explicit Bazel target mappi
 exclusions. A matching package/target count is not evidence of coverage.
 
 Cargo metadata is the source of truth for package and declared-target inventory. The current
-workspace has 43 packages and 261 declared targets.
+workspace has 43 packages and 265 declared targets.
 
 ```sh
 cargo metadata --locked --no-deps --format-version 1
@@ -130,21 +130,17 @@ older than the version the tooling supports.
 `python3 dev/bazel/check_inventory.py` reports the current state:
 
 ```text
-Inventory coverage: 256/261 mapped; 5 reviewed exclusions.
+Inventory coverage: 264/265 mapped; 1 reviewed exclusions.
 ```
 
-- 154 non-Huginn Cargo targets: 151 map to verified Bazel labels and 3 carry reviewed exclusions.
-- 107 Huginn Cargo targets, including `apps/huginn`: 105 map to Bazel labels and 2 carry reviewed
+- 157 non-Huginn Cargo targets: 156 map to verified Bazel labels and 1 carries a reviewed exclusion.
+- 107 Huginn Cargo targets, including `apps/huginn`: 107 map to Bazel labels and none carry reviewed
   exclusions.
 
 The excluded targets are:
 
 | Cargo target | Reason |
 | --- | --- |
-| `apps/rook` `build-script-build` | The build script shells out to the pnpm dashboard build. Bazel does not model the Node build step; the dashboard assets are supplied as compile data instead. |
-| `apps/rook` `dotenv_startup` | The test clears the child environment and changes the child working directory before it launches `CARGO_BIN_EXE_rook`. Cargo supplies an absolute executable path; Bazel can only supply a runfiles-relative path, which the test cannot resolve from another working directory. |
-| `crates/huginn/runtime` `wasm_outline` | The test requires the non-default `experimental-wasm` feature, which activates the optional `wasmtime` dependency. The generated `@crates` repository omits that crate because no default Cargo target activates the feature, so modeling the target requires feature-aware `crate_universe` generation in `MODULE.bazel`. |
-| `crates/huginn/runtime` `wasm_output_validation` | Same reason as `wasm_outline`: the test requires `experimental-wasm` and `wasmtime` is not vendored. |
 | `crates/muninn/c1-exporter` `export_minilm_c1` | The binary requires the non-default `cpu-f32` feature, whose optional `candle-*`, `safetensors`, and `tokenizers` dependencies are not vendored by `crate_universe`. |
 
 The root `BUILD.bazel` now exports `dev/muninn/fixtures/**`. The generator detects those exported

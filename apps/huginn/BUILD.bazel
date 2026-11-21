@@ -17,7 +17,7 @@ rust_library(
     crate_root = "src/lib.rs",
     crate_features = ["reference-extension"],
     edition = crate_edition(),
-    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/runtime:huginn_runtime"] + all_crate_deps(normal = True),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/reference-extension:huginn_reference_extension", "//crates/huginn/runtime:huginn_runtime"] + all_crate_deps(normal = True),
     proc_macro_deps = all_crate_deps(proc_macro = True),
 )
 
@@ -26,7 +26,7 @@ rust_test(
     crate = ":huginn",
     aliases = aliases(normal_dev = True, proc_macro_dev = True),
     edition = crate_edition(),
-    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/runtime:huginn_runtime", "//crates/huginn/plugin-api:huginn_plugin_api"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/plugin-api:huginn_plugin_api", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/reference-extension:huginn_reference_extension", "//crates/huginn/runtime:huginn_runtime"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -34,8 +34,9 @@ rust_binary(
     name = "huginn_bin",
     srcs = ["src/auth.rs", "src/main.rs", "src/prompts.rs", "src/terminal.rs"],
     crate_name = "huginn",
+    crate_features = ["reference-extension"],
     edition = crate_edition(),
-    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/runtime:huginn_runtime", ":huginn"] + all_crate_deps(normal = True),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/reference-extension:huginn_reference_extension", "//crates/huginn/runtime:huginn_runtime", ":huginn"] + all_crate_deps(normal = True),
     proc_macro_deps = all_crate_deps(proc_macro = True),
 )
 
@@ -44,8 +45,9 @@ rust_test(
     srcs = ["src/auth.rs", "src/main.rs", "src/prompts.rs", "src/terminal.rs"],
     crate_name = "huginn_test",
     crate_root = "src/main.rs",
+    crate_features = ["reference-extension"],
     edition = crate_edition(),
-    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/runtime:huginn_runtime", ":huginn", "//crates/huginn/plugin-api:huginn_plugin_api"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/plugin-api:huginn_plugin_api", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/reference-extension:huginn_reference_extension", "//crates/huginn/runtime:huginn_runtime", ":huginn"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -54,7 +56,7 @@ rust_test(
     crate_name = "auth_login",
     srcs = ["tests/auth_login.rs", "tests/support/binary_path.rs"],
     edition = crate_edition(),
-    deps = [":huginn", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/runtime:huginn_runtime", "//crates/huginn/plugin-api:huginn_plugin_api", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/plugin-api:huginn_plugin_api", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/reference-extension:huginn_reference_extension", "//crates/huginn/runtime:huginn_runtime", ":huginn", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
     env = {"CARGO_BIN_EXE_huginn": "$(execpath :huginn_bin)"},
     rustc_env = {"CARGO_BIN_EXE_huginn": "apps/huginn/huginn_bin"},
@@ -65,7 +67,7 @@ rust_test(
     crate_name = "banner_tests",
     srcs = ["tests/banner_tests.rs"],
     edition = crate_edition(),
-    deps = [":huginn", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/runtime:huginn_runtime", "//crates/huginn/plugin-api:huginn_plugin_api"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/plugin-api:huginn_plugin_api", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/reference-extension:huginn_reference_extension", "//crates/huginn/runtime:huginn_runtime", ":huginn"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -74,7 +76,7 @@ rust_test(
     crate_name = "cli",
     srcs = ["tests/cli.rs", "tests/support/binary_path.rs"],
     edition = crate_edition(),
-    deps = [":huginn", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/runtime:huginn_runtime", "//crates/huginn/plugin-api:huginn_plugin_api", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/plugin-api:huginn_plugin_api", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/reference-extension:huginn_reference_extension", "//crates/huginn/runtime:huginn_runtime", ":huginn", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
     env = {"CARGO_BIN_EXE_huginn": "$(execpath :huginn_bin)"},
     rustc_env = {"CARGO_BIN_EXE_huginn": "apps/huginn/huginn_bin"},
@@ -85,7 +87,7 @@ rust_test(
     crate_name = "config_compat",
     srcs = ["tests/config_compat.rs"],
     edition = crate_edition(),
-    deps = [":huginn", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/runtime:huginn_runtime", "//crates/huginn/plugin-api:huginn_plugin_api", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/plugin-api:huginn_plugin_api", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/reference-extension:huginn_reference_extension", "//crates/huginn/runtime:huginn_runtime", ":huginn", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
     env = {"CARGO_BIN_EXE_huginn": "$(execpath :huginn_bin)"},
     rustc_env = {"CARGO_BIN_EXE_huginn": "apps/huginn/huginn_bin"},
@@ -96,7 +98,7 @@ rust_test(
     crate_name = "config_resolution",
     srcs = ["tests/config_resolution.rs"],
     edition = crate_edition(),
-    deps = [":huginn", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/runtime:huginn_runtime", "//crates/huginn/plugin-api:huginn_plugin_api"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/plugin-api:huginn_plugin_api", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/reference-extension:huginn_reference_extension", "//crates/huginn/runtime:huginn_runtime", ":huginn"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -105,7 +107,7 @@ rust_test(
     crate_name = "guardrails",
     srcs = ["tests/guardrails.rs"],
     edition = crate_edition(),
-    deps = [":huginn", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/runtime:huginn_runtime", "//crates/huginn/plugin-api:huginn_plugin_api", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/plugin-api:huginn_plugin_api", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/reference-extension:huginn_reference_extension", "//crates/huginn/runtime:huginn_runtime", ":huginn", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
     env = {"CARGO_BIN_EXE_huginn": "$(execpath :huginn_bin)"},
     rustc_env = {"CARGO_BIN_EXE_huginn": "apps/huginn/huginn_bin"},
@@ -116,7 +118,7 @@ rust_test(
     crate_name = "legacy_lock_interop",
     srcs = ["tests/legacy_lock_interop.rs", "tests/support/binary_path.rs"],
     edition = crate_edition(),
-    deps = [":huginn", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/runtime:huginn_runtime", "//crates/huginn/plugin-api:huginn_plugin_api", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/plugin-api:huginn_plugin_api", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/reference-extension:huginn_reference_extension", "//crates/huginn/runtime:huginn_runtime", ":huginn", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
     env = {"CARGO_BIN_EXE_huginn": "$(execpath :huginn_bin)"},
     rustc_env = {"CARGO_BIN_EXE_huginn": "apps/huginn/huginn_bin"},
@@ -127,7 +129,7 @@ rust_test(
     crate_name = "prompt_templates",
     srcs = ["tests/prompt_templates.rs"],
     edition = crate_edition(),
-    deps = [":huginn", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/runtime:huginn_runtime", "//crates/huginn/plugin-api:huginn_plugin_api", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/plugin-api:huginn_plugin_api", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/reference-extension:huginn_reference_extension", "//crates/huginn/runtime:huginn_runtime", ":huginn", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
     env = {"CARGO_BIN_EXE_huginn": "$(execpath :huginn_bin)"},
     rustc_env = {"CARGO_BIN_EXE_huginn": "apps/huginn/huginn_bin"},
@@ -138,7 +140,7 @@ rust_test(
     crate_name = "providers_flow",
     srcs = ["tests/providers_flow.rs"],
     edition = crate_edition(),
-    deps = [":huginn", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/runtime:huginn_runtime", "//crates/huginn/plugin-api:huginn_plugin_api"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/plugin-api:huginn_plugin_api", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/reference-extension:huginn_reference_extension", "//crates/huginn/runtime:huginn_runtime", ":huginn"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -147,7 +149,7 @@ rust_test(
     crate_name = "providers_recovery",
     srcs = ["tests/providers_recovery.rs"],
     edition = crate_edition(),
-    deps = [":huginn", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/runtime:huginn_runtime", "//crates/huginn/plugin-api:huginn_plugin_api", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/plugin-api:huginn_plugin_api", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/reference-extension:huginn_reference_extension", "//crates/huginn/runtime:huginn_runtime", ":huginn", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
     env = {"CARGO_BIN_EXE_huginn": "$(execpath :huginn_bin)"},
     rustc_env = {"CARGO_BIN_EXE_huginn": "apps/huginn/huginn_bin"},
@@ -158,7 +160,7 @@ rust_test(
     crate_name = "session_ownership",
     srcs = ["tests/session_ownership.rs", "tests/support/binary_path.rs"],
     edition = crate_edition(),
-    deps = [":huginn", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/runtime:huginn_runtime", "//crates/huginn/plugin-api:huginn_plugin_api", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/plugin-api:huginn_plugin_api", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/reference-extension:huginn_reference_extension", "//crates/huginn/runtime:huginn_runtime", ":huginn", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
     env = {"CARGO_BIN_EXE_huginn": "$(execpath :huginn_bin)"},
     rustc_env = {"CARGO_BIN_EXE_huginn": "apps/huginn/huginn_bin"},
@@ -169,7 +171,7 @@ rust_test(
     crate_name = "skill_completion",
     srcs = ["tests/skill_completion.rs"],
     edition = crate_edition(),
-    deps = [":huginn", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/runtime:huginn_runtime", "//crates/huginn/plugin-api:huginn_plugin_api"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/plugin-api:huginn_plugin_api", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/reference-extension:huginn_reference_extension", "//crates/huginn/runtime:huginn_runtime", ":huginn"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -178,7 +180,7 @@ rust_test(
     crate_name = "skill_invocation",
     srcs = ["tests/skill_invocation.rs"],
     edition = crate_edition(),
-    deps = [":huginn", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/runtime:huginn_runtime", "//crates/huginn/plugin-api:huginn_plugin_api", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/plugin-api:huginn_plugin_api", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/reference-extension:huginn_reference_extension", "//crates/huginn/runtime:huginn_runtime", ":huginn", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
     env = {"CARGO_BIN_EXE_huginn": "$(execpath :huginn_bin)"},
     rustc_env = {"CARGO_BIN_EXE_huginn": "apps/huginn/huginn_bin"},
@@ -189,7 +191,7 @@ rust_test(
     crate_name = "skills_acceptance",
     srcs = ["tests/skills_acceptance.rs"],
     edition = crate_edition(),
-    deps = [":huginn", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/runtime:huginn_runtime", "//crates/huginn/plugin-api:huginn_plugin_api", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/plugin-api:huginn_plugin_api", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/reference-extension:huginn_reference_extension", "//crates/huginn/runtime:huginn_runtime", ":huginn", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
     env = {"CARGO_BIN_EXE_huginn": "$(execpath :huginn_bin)"},
     rustc_env = {"CARGO_BIN_EXE_huginn": "apps/huginn/huginn_bin"},
@@ -200,7 +202,7 @@ rust_test(
     crate_name = "skills_cli",
     srcs = ["tests/skills_cli.rs"],
     edition = crate_edition(),
-    deps = [":huginn", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/runtime:huginn_runtime", "//crates/huginn/plugin-api:huginn_plugin_api", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/plugin-api:huginn_plugin_api", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/reference-extension:huginn_reference_extension", "//crates/huginn/runtime:huginn_runtime", ":huginn", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
     env = {"CARGO_BIN_EXE_huginn": "$(execpath :huginn_bin)"},
     rustc_env = {"CARGO_BIN_EXE_huginn": "apps/huginn/huginn_bin"},
@@ -215,7 +217,7 @@ rust_test(
         "tests/tui.rs",
     ],
     edition = crate_edition(),
-    deps = [":huginn", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/runtime:huginn_runtime", "//crates/huginn/plugin-api:huginn_plugin_api", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/plugin-api:huginn_plugin_api", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/reference-extension:huginn_reference_extension", "//crates/huginn/runtime:huginn_runtime", ":huginn", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
     env = {"CARGO_BIN_EXE_huginn": "$(execpath :huginn_bin)"},
     rustc_env = {"CARGO_BIN_EXE_huginn": "apps/huginn/huginn_bin"},
@@ -226,7 +228,7 @@ rust_test(
     crate_name = "ui_settings",
     srcs = ["tests/ui_settings.rs"],
     edition = crate_edition(),
-    deps = [":huginn", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/runtime:huginn_runtime", "//crates/huginn/plugin-api:huginn_plugin_api"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/plugin-api:huginn_plugin_api", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/reference-extension:huginn_reference_extension", "//crates/huginn/runtime:huginn_runtime", ":huginn"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -235,7 +237,7 @@ rust_test(
     crate_name = "wasm_outline",
     srcs = ["//crates/huginn/runtime:tests/support/wasm_component.rs", "tests/wasm_outline.rs"],
     edition = crate_edition(),
-    deps = [":huginn", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/runtime:huginn_runtime", "//crates/huginn/plugin-api:huginn_plugin_api", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/plugin-api:huginn_plugin_api", "//crates/huginn/presentation:huginn_presentation", "//crates/huginn/reference-extension:huginn_reference_extension", "//crates/huginn/runtime:huginn_runtime", ":huginn", ":huginn_bin"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
     env = {"CARGO_BIN_EXE_huginn": "$(execpath :huginn_bin)"},
     rustc_env = {"CARGO_BIN_EXE_huginn": "apps/huginn/huginn_bin"},
