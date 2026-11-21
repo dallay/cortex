@@ -93,5 +93,7 @@ fn initial_working_directory_resolves_relative_binary() {
 
 #[test]
 fn configured_rook_binary_exists() {
+    // CodeQL cannot infer the resolved test binary path is trusted in this test-only assertion.
+    // codeql[rust/path-injection]
     assert!(binary_path::rook().is_file());
 }

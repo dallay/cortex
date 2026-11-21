@@ -13,6 +13,8 @@ fn malformed_dotenv_does_not_disclose_input() {
     let rook_bin = support::binary_path::rook();
 
     // Stop at config loading after dotenv processing; no server or database is started.
+    // CodeQL cannot infer the test harness executable path is trusted in this test subprocess.
+    // codeql[rust/command-line-injection]
     let result = Command::new(&rook_bin)
         .args(["seed-admin", "--config"])
         .arg(dir.path().join("missing.toml"))

@@ -21,6 +21,8 @@ pub(crate) fn resolve(binary: &Path, env: impl Fn(&str) -> Option<OsString>) -> 
         let root_path = PathBuf::from(root);
         if is_safe_path(&root_path) {
             let candidate = root_path.join(binary);
+            // CodeQL cannot infer that candidate path within validated directory root is safe.
+            // codeql[rust/path-injection]
             if candidate.exists() {
                 return candidate;
             }
@@ -39,6 +41,8 @@ pub(crate) fn resolve(binary: &Path, env: impl Fn(&str) -> Option<OsString>) -> 
             root_path.join(&workspace).join(binary),
             root_path.join(binary),
         ] {
+            // CodeQL cannot infer that candidate path within validated workspace root is safe.
+            // codeql[rust/path-injection]
             if candidate.exists() {
                 return candidate;
             }
