@@ -162,8 +162,15 @@
       "target": "banner_tests"
     },
     {
-      "exclusion": "The Cargo build script shells out to the pnpm dashboard build (vite). Bazel does not model the Node dashboard build step; the embedded dashboard assets are supplied as compile data instead.",
+      "kinds": "test",
+      "label": "//apps/rook:binary_path_resolution",
+      "manifest": "apps/rook/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/rook#0.0.1",
+      "target": "binary_path_resolution"
+    },
+    {
       "kinds": "custom-build",
+      "label": "//apps/rook:build_script",
       "manifest": "apps/rook/Cargo.toml",
       "package_id": "path+file://<workspace>/apps/rook#0.0.1",
       "target": "build-script-build"
@@ -204,8 +211,8 @@
       "target": "di_tests"
     },
     {
-      "exclusion": "The integration test clears the child environment and changes the child working directory before launching CARGO_BIN_EXE_rook. Cargo supplies an absolute executable path, but Bazel's portable runfiles path is relative to the test runfiles directory. Supporting this target requires a runfiles-aware test helper or test-source change, which is outside the permitted BUILD-only changes.",
       "kinds": "test",
+      "label": "//apps/rook:dotenv_startup",
       "manifest": "apps/rook/Cargo.toml",
       "package_id": "path+file://<workspace>/apps/rook#0.0.1",
       "target": "dotenv_startup"
@@ -300,6 +307,13 @@
       "manifest": "crates/application/rook-usecases/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/application/rook-usecases#0.0.1",
       "target": "oauth_tokens"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/application/rook-usecases:ollama_grant_workflow",
+      "manifest": "crates/application/rook-usecases/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/application/rook-usecases#0.0.1",
+      "target": "ollama_grant_workflow"
     },
     {
       "kinds": "test",
@@ -1016,15 +1030,15 @@
       "target": "verify_ollama"
     },
     {
-      "exclusion": "The test requires the non-default `experimental-wasm` feature, which activates the optional `wasmtime` dependency. The workspace-generated @crates repository omits that crate because no default Cargo target activates the feature, so modeling this target requires feature-aware crate_universe generation in MODULE.bazel.",
       "kinds": "test",
+      "label": "//crates/huginn/runtime:wasm_outline",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "wasm_outline"
     },
     {
-      "exclusion": "The test requires the non-default `experimental-wasm` feature, which activates the optional `wasmtime` dependency. The workspace-generated @crates repository omits that crate because no default Cargo target activates the feature, so modeling this target requires feature-aware crate_universe generation in MODULE.bazel.",
       "kinds": "test",
+      "label": "//crates/huginn/runtime:wasm_output_validation",
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "wasm_output_validation"
@@ -1196,6 +1210,13 @@
       "manifest": "crates/infrastructure/providers-anthropic/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/infrastructure/providers-anthropic#0.0.1",
       "target": "quota_headers"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/providers-core:endpoint_resolver",
+      "manifest": "crates/infrastructure/providers-core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/providers-core#0.0.1",
+      "target": "endpoint_resolver"
     },
     {
       "kinds": "lib",
@@ -1430,6 +1451,13 @@
     },
     {
       "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:logout_response",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "logout_response"
+    },
+    {
+      "kinds": "test",
       "label": "//crates/infrastructure/transport-axum:oauth_routes",
       "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
@@ -1583,8 +1611,8 @@
       "target": "muninn_bridge"
     },
     {
-      "exclusion": "The binary requires the non-default `cpu-f32` feature whose optional candle-core/candle-nn/candle-transformers/safetensors/tokenizers dependencies are not vendored by crate_universe, so the target cannot be built under Bazel.",
       "kinds": "bin",
+      "label": "//crates/muninn/c1-exporter:export_minilm_c1",
       "manifest": "crates/muninn/c1-exporter/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/muninn/c1-exporter#muninn-c1-exporter@0.0.1",
       "target": "export_minilm_c1"

@@ -56,8 +56,8 @@ function runScript({base, head, git, cargo} = {}) {
         PATH: `${bin}:${process.env.PATH}`,
         GITHUB_OUTPUT: output,
         GITHUB_STEP_SUMMARY: join(dir, 'summary'),
-        base: base ?? '',
-        head: head ?? '',
+        BASE: base ?? '',
+        HEAD: head ?? '',
       },
     });
     assert.equal(result.status, 0, result.stderr);
@@ -94,8 +94,17 @@ describe('Bazel advisory workflow contract', () => {
   it('skips Bazel steps only when the classifier returns exactly docs-only', () => {
     const workflow = readFileSync(join(__dirname, '../workflows/bazel.yml'), 'utf8');
     const stepConditions = [...workflow.matchAll(/if: steps\.affected\.outputs\.mode != 'docs-only'/g)];
-    assert.equal(stepConditions.length, 5, 'all setup/build/test steps must retain the conservative condition');
-    assert.match(workflow, /continue-on-error: true/);
+    assert.equal(stepConditions.length, 9, 'all Bazel setup/check/test steps must retain the conservative condition');
+    assert.match(workflow, /BASE: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.event\.before \}\}/);
+    assert.match(workflow, /HEAD: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/);
+    assert.doesNotMatch(workflow, /continue-on-error:\s*true/);
+    assert.match(workflow, /name: Bazel \(non-blocking\)/);
+    assert.match(workflow, /name: Bazel test \(Linux, advisory\)/);
+    assert.match(workflow, /bazel mod deps --lockfile_mode=error/);
+    assert.match(workflow, /python3 dev\/bazel\/generate_build_files\.py --check/);
+    assert.match(workflow, /python3 dev\/bazel\/check_inventory\.py/);
+    assert.match(workflow, /python3 -m unittest dev\.bazel\.test_check_inventory dev\.bazel\.test_generate_build_files/);
+    assert.match(workflow, /bazel test \/\/\.\.\. --lockfile_mode=error/);
     assert.doesNotMatch(workflow, /paths-ignore:/);
   });
 });
@@ -197,6 +206,18 @@ describe('affected crate executable contract', () => {
   it('writes workspace fallback for workflow_dispatch with an invalid head', () => {
     const result = runScript({base: validBase});
     assert.equal(result.output, 'mode=workspace\n');
+  });
+
+  it('classifies a synthetic package diff using the real BASE and HEAD environment contract', () => {
+    const result = runScript({
+      base: validBase,
+      head: validHead,
+      git: 'test "$1" = diff && test "$5" = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb || exit 2; printf "M\\0crates/isolated/src/lib.rs\\0"',
+      cargo: `printf '%s' '${JSON.stringify(metadata)}' | sed "s|/repo|$PWD|g"`,
+    });
+    assert.equal(result.output, 'mode=packages\n');
+    assert.match(result.stdout, /\*\*Mode:\*\* packages/);
+    assert.match(result.stdout, /\*\*Plan:\*\* isolated/);
   });
 
   it('never classifies a git diff failure as docs-only', () => {

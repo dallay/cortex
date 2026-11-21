@@ -1,3 +1,4 @@
+mod support;
 use std::process::Command;
 
 #[test]
@@ -7,8 +8,14 @@ fn malformed_dotenv_does_not_disclose_input() {
     let marker = "synthetic-private-value";
     std::fs::write(&env_path, format!("KEY=\"{marker}\n")).unwrap();
 
+    // Resolve the relative CARGO_BIN_EXE_rook path to an absolute path before
+    // current_dir changes the child's working directory.
+    let rook_bin = support::binary_path::rook();
+
     // Stop at config loading after dotenv processing; no server or database is started.
-    let result = Command::new(env!("CARGO_BIN_EXE_rook"))
+    // CodeQL cannot infer the test harness executable path is trusted in this test subprocess.
+    // codeql[rust/command-line-injection]
+    let result = Command::new(&rook_bin)
         .args(["seed-admin", "--config"])
         .arg(dir.path().join("missing.toml"))
         .env_clear()

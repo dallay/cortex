@@ -25,7 +25,7 @@ rust_test(
     crate = ":transport_axum",
     aliases = aliases(normal_dev = True, proc_macro_dev = True),
     edition = crate_edition(),
-    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -34,7 +34,7 @@ rust_test(
     crate_name = "alias_api",
     srcs = ["tests/alias_api.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -43,7 +43,7 @@ rust_test(
     crate_name = "api_key_handlers_test",
     srcs = ["tests/api_key_handlers_test.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -52,7 +52,7 @@ rust_test(
     crate_name = "api_key_routes",
     srcs = ["tests/api_key_routes.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -61,7 +61,7 @@ rust_test(
     crate_name = "api_models_dto",
     srcs = ["tests/api_models_dto.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -70,7 +70,7 @@ rust_test(
     crate_name = "auth_cookie_security",
     srcs = ["tests/auth_cookie_security.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -79,7 +79,7 @@ rust_test(
     crate_name = "auth_integration_tests",
     srcs = ["tests/auth_integration_tests.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -88,7 +88,7 @@ rust_test(
     crate_name = "bootstrap_routes",
     srcs = ["tests/bootstrap_routes.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -97,7 +97,7 @@ rust_test(
     crate_name = "cache_routes",
     srcs = ["tests/cache_routes.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -106,7 +106,7 @@ rust_test(
     crate_name = "capability_contract",
     srcs = ["tests/capability_contract.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -115,7 +115,7 @@ rust_test(
     crate_name = "client_ip_rate_limit",
     srcs = ["tests/client_ip_rate_limit.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -124,7 +124,7 @@ rust_test(
     crate_name = "csrf_session_binding",
     srcs = ["tests/csrf_session_binding.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -133,7 +133,7 @@ rust_test(
     crate_name = "format_translation_integration",
     srcs = ["tests/format_translation_integration.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -147,7 +147,7 @@ rust_test(
         "tests/gateway_e2e/responses_routes.rs",
     ],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -156,7 +156,7 @@ rust_test(
     crate_name = "gateway_perf",
     srcs = ["tests/gateway_perf.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -165,7 +165,16 @@ rust_test(
     crate_name = "health_circuit_visibility",
     srcs = ["tests/health_circuit_visibility.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "logout_response",
+    crate_name = "logout_response",
+    srcs = ["tests/logout_response.rs"],
+    edition = crate_edition(),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -174,7 +183,7 @@ rust_test(
     crate_name = "oauth_routes",
     srcs = ["tests/oauth_routes.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -183,7 +192,7 @@ rust_test(
     crate_name = "openai_compatible_contract",
     srcs = ["tests/openai_compatible_contract.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -192,7 +201,7 @@ rust_test(
     crate_name = "openai_tool_stream_round_trip",
     srcs = ["tests/openai_tool_stream_round_trip.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -201,7 +210,7 @@ rust_test(
     crate_name = "provider_dto_test",
     srcs = ["tests/provider_dto_test.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -210,7 +219,7 @@ rust_test(
     crate_name = "provider_quota_routes",
     srcs = ["tests/provider_quota_routes.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -219,7 +228,7 @@ rust_test(
     crate_name = "provider_routes",
     srcs = ["tests/provider_routes.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -228,7 +237,7 @@ rust_test(
     crate_name = "provider_routes_test",
     srcs = ["tests/provider_routes_test.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -237,7 +246,7 @@ rust_test(
     crate_name = "resilience_handlers_test",
     srcs = ["tests/resilience_handlers_test.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -246,7 +255,7 @@ rust_test(
     crate_name = "responses_contract",
     srcs = ["tests/responses_contract.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -255,7 +264,7 @@ rust_test(
     crate_name = "stream_encoding_regression",
     srcs = ["tests/stream_encoding_regression.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -264,7 +273,7 @@ rust_test(
     crate_name = "telemetry_endpoints_test",
     srcs = ["tests/telemetry_endpoints_test.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -273,7 +282,7 @@ rust_test(
     crate_name = "usage_handlers",
     srcs = ["tests/usage_handlers.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -282,7 +291,7 @@ rust_test(
     crate_name = "usage_query",
     srcs = ["tests/usage_query.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -291,6 +300,6 @@ rust_test(
     crate_name = "usage_routes",
     srcs = ["tests/usage_routes.rs"],
     edition = crate_edition(),
-    deps = [":transport_axum", "//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )

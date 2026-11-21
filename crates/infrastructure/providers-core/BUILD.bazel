@@ -30,11 +30,20 @@ rust_test(
 )
 
 rust_test(
+    name = "endpoint_resolver",
+    crate_name = "endpoint_resolver",
+    srcs = ["tests/endpoint_resolver.rs"],
+    edition = crate_edition(),
+    deps = ["//crates/domain/rook-core:rook_core", ":providers_core"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
     name = "rate_limit",
     crate_name = "rate_limit",
     srcs = ["tests/rate_limit.rs"],
     edition = crate_edition(),
-    deps = [":providers_core", "//crates/domain/rook-core:rook_core"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", ":providers_core"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 
@@ -43,6 +52,6 @@ rust_test(
     crate_name = "tool_id",
     srcs = ["tests/tool_id.rs"],
     edition = crate_edition(),
-    deps = [":providers_core", "//crates/domain/rook-core:rook_core"] + all_crate_deps(normal = True, normal_dev = True),
+    deps = ["//crates/domain/rook-core:rook_core", ":providers_core"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
