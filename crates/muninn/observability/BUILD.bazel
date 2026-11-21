@@ -28,3 +28,30 @@ rust_test(
     deps = all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
+
+rust_test(
+    name = "global_tracer_default",
+    crate_name = "global_tracer_default",
+    srcs = ["tests/global_tracer_default.rs"],
+    edition = crate_edition(),
+    deps = [":muninn_observability"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "global_tracer_replacement",
+    crate_name = "global_tracer_replacement",
+    srcs = ["tests/global_tracer_replacement.rs"],
+    edition = crate_edition(),
+    deps = [":muninn_observability"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "init_tracing_subscriber",
+    crate_name = "init_tracing_subscriber",
+    srcs = ["tests/init_tracing_subscriber.rs"],
+    edition = crate_edition(),
+    deps = [":muninn_observability"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)

@@ -105,44 +105,45 @@ impl<'a> SchemaManager<'a> {
         // Initialize outside the lock transaction so a crash leaves an explicit
         // retryable v0 marker. MERGE is protected by the verified unique key.
         self.run("MERGE (s:MuninnSchema {id: 'product'}) ON CREATE SET s.version = 0, s.state = 'ready', s.revision = 0").await?;
+        // Read-only validations run before the lock transaction. They inspect
+        // existing schema objects without modifying them, so they are safe to
+        // execute concurrently and do not need to hold the serialization lock.
+        self.validate_non_vector_definitions(true).await?;
+        self.validate_existing_vector_dimensions().await?;
         let coordinator = self.client.schema_coordinator().await?;
         let mut transaction = coordinator
             .start_txn()
             .await
             .map_err(|e| MemoryError::storage(e.to_string()))?;
-        let result = async {
-            // Direct property dependency acquires the exclusive node write lock
-            // BEFORE reading. All cooperating migrators retain it until commit.
-            let mut stream = transaction.execute(neo4rs::query(
-                "MATCH (s:MuninnSchema {id: 'product'}) SET s.revision = coalesce(s.revision, 0) + 1 RETURN properties(s) AS marker"
-            )).await.map_err(|e| MemoryError::storage(e.to_string()))?;
-            let row = stream.next(transaction.handle()).await.map_err(|e| MemoryError::storage(e.to_string()))?
-                .ok_or_else(|| MemoryError::storage("Muninn schema marker disappeared"))?;
-            let marker = to_json(&column(&row, "marker")?);
-            crate::migrations::validate_marker(&marker)?;
-            drop(stream);
-            self.validate_non_vector_definitions(true).await?;
-            self.validate_existing_vector_dimensions().await?;
-            self.setup_objects().await?;
-            transaction.run(neo4rs::query(
-                "MATCH (s:MuninnSchema {id: 'product'}) SET s.version = $version, s.state = 'ready'"
-            ).param("version", crate::migrations::SCHEMA_VERSION)).await.map_err(|e| MemoryError::storage(e.to_string()))?;
-            Ok(())
-        }.await;
-        match result {
-            Ok(()) => transaction
-                .commit()
-                .await
-                .map_err(|e| MemoryError::storage(e.to_string())),
-            Err(error) => {
-                transaction.rollback().await.map_err(|e| {
-                    MemoryError::storage(format!(
-                        "schema failure: {error}; lock rollback failed: {e}"
-                    ))
-                })?;
-                Err(error)
-            }
-        }
+        // Direct property dependency acquires the exclusive node write lock
+        // BEFORE reading. All cooperating migrators retain it until commit.
+        let mut stream = transaction.execute(neo4rs::query(
+            "MATCH (s:MuninnSchema {id: 'product'}) SET s.revision = coalesce(s.revision, 0) + 1 RETURN properties(s) AS marker"
+        )).await.map_err(|e| MemoryError::storage(e.to_string()))?;
+        let row = stream
+            .next(transaction.handle())
+            .await
+            .map_err(|e| MemoryError::storage(e.to_string()))?
+            .ok_or_else(|| MemoryError::storage("Muninn schema marker disappeared"))?;
+        let marker = to_json(&column(&row, "marker")?);
+        crate::migrations::validate_marker(&marker)?;
+        drop(stream);
+        // Update the version and commit the lock transaction before running DDL.
+        // The marker validation above gates DDL creation: a bad version or state
+        // fails here, before any schema objects are created. The DDL operations
+        // themselves are idempotent (IF NOT EXISTS) and run via autocommit, so
+        // they do not need to hold the serialization lock.
+        transaction.run(neo4rs::query(
+            "MATCH (s:MuninnSchema {id: 'product'}) SET s.version = $version, s.state = 'ready'"
+        ).param("version", crate::migrations::SCHEMA_VERSION)).await.map_err(|e| MemoryError::storage(e.to_string()))?;
+        transaction
+            .commit()
+            .await
+            .map_err(|e| MemoryError::storage(e.to_string()))?;
+        // Create all schema objects after releasing the lock. These are
+        // idempotent autocommit operations that do not require the transaction.
+        self.setup_objects().await?;
+        Ok(())
     }
 
     async fn setup_objects(&self) -> MemoryResult<()> {
@@ -728,5 +729,28 @@ mod vector_metadata_tests {
         // but validate_vector_indexes requires ONLINE
         let err = validate_vector_indexes(&rows, 384).unwrap_err();
         assert!(err.to_string().contains("is not ONLINE"));
+    }
+
+    /// Regression: setup_all must reject a corrupted schema marker before creating
+    /// any DDL objects. The marker validation is the gate that prevents DDL when
+    /// the version is too new or the state is not "ready". This test verifies the
+    /// validate_marker contract that setup_all relies on for this guarantee.
+    #[test]
+    fn marker_validation_gates_ddl_creation() {
+        // Future version must reject — setup_all fails before setup_objects()
+        let future_version = json!({"version": 3, "state": "ready", "revision": 1});
+        assert!(crate::migrations::validate_marker(&future_version).is_err());
+
+        // Migrating state must reject — setup_all fails before setup_objects()
+        let migrating_state = json!({"version": 1, "state": "migrating", "revision": 1});
+        assert!(crate::migrations::validate_marker(&migrating_state).is_err());
+
+        // Valid initial state must pass — setup_all proceeds to setup_objects()
+        let initial = json!({"version": 0, "state": "ready", "revision": 0});
+        assert!(crate::migrations::validate_marker(&initial).is_ok());
+
+        // Valid current state must pass
+        let current = json!({"version": 2, "state": "ready", "revision": 5});
+        assert!(crate::migrations::validate_marker(&current).is_ok());
     }
 }

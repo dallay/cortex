@@ -28,3 +28,21 @@ rust_test(
     deps = all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
+
+rust_test(
+    name = "extraction",
+    crate_name = "extraction",
+    srcs = ["tests/extraction.rs"],
+    edition = crate_edition(),
+    deps = [":muninn_core"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "resolution",
+    crate_name = "resolution",
+    srcs = ["tests/resolution.rs"],
+    edition = crate_edition(),
+    deps = [":muninn_core"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)

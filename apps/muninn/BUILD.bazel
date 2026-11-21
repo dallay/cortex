@@ -28,3 +28,14 @@ rust_test(
     deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/bridge:muninn_bridge", "//crates/muninn/core:muninn_core", "//crates/muninn/mcp:muninn_mcp", "//crates/muninn/neo4j:muninn_neo4j", "//crates/muninn/observability:muninn_observability", "//crates/muninn/ontology:muninn_ontology", "//crates/muninn/providers:muninn_providers"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
+
+rust_test(
+    name = "cli",
+    crate_name = "cli",
+    srcs = ["tests/cli.rs"],
+    edition = crate_edition(),
+    deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/bridge:muninn_bridge", "//crates/muninn/core:muninn_core", "//crates/muninn/mcp:muninn_mcp", "//crates/muninn/neo4j:muninn_neo4j", "//crates/muninn/observability:muninn_observability", "//crates/muninn/ontology:muninn_ontology", "//crates/muninn/providers:muninn_providers", ":muninn"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+    env = {"CARGO_BIN_EXE_muninn": "$(execpath :muninn)"},
+    rustc_env = {"CARGO_BIN_EXE_muninn": "apps/muninn/muninn"},
+)
