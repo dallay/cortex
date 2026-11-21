@@ -23,11 +23,9 @@ crate.spec(
     features = ["anyhow", "async", "component-model", "cranelift", "runtime", "std"],
     repositories = ["crates"],
 )
-crate.spec(
-    package = "candle-core",
-    version = "=0.11.0",
-    default_features = False,
-    repositories = ["crates"],
+crate.annotation(
+    crate = "candle-core",
+    patches = ["//third_party:candle_core_patch"],
 )
 crate.spec(
     package = "candle-nn",
