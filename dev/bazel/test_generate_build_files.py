@@ -526,6 +526,40 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(targets["demo"].attributes["crate_features"], ["extra"])
         self.assertEqual(targets["demo_test"].attributes["crate_features"], ["extra"])
 
+    def test_evaluate_cfg_expression_handles_composites(self):
+        eval_cfg = generator.evaluate_cfg_expression
+        self.assertTrue(eval_cfg('cfg(feature = "a")', {"a"}))
+        self.assertFalse(eval_cfg('cfg(feature = "a")', set()))
+        self.assertTrue(eval_cfg('cfg(any(feature = "a", feature = "b"))', {"a"}))
+        self.assertTrue(eval_cfg('cfg(any(feature = "a", feature = "b"))', {"b"}))
+        self.assertFalse(eval_cfg('cfg(any(feature = "a", feature = "b"))', set()))
+        self.assertTrue(eval_cfg('cfg(all(feature = "a", feature = "b"))', {"a", "b"}))
+        self.assertFalse(eval_cfg('cfg(all(feature = "a", feature = "b"))', {"a"}))
+        self.assertTrue(eval_cfg('cfg(not(feature = "a"))', set()))
+        self.assertFalse(eval_cfg('cfg(not(feature = "a"))', {"a"}))
+        self.assertIsNone(eval_cfg('cfg(target_os = "linux")', set()))
+
+    def test_feature_gated_sources_conservative_on_composite_cfg(self):
+        packages = [package(features={"extra": [], "other": []}, targets=[
+            target("demo", ["lib"], "/repo/crates/demo/src/lib.rs"),
+            target("hooked", ["test"], "/repo/crates/demo/tests/hooked.rs",
+                   required_features=["extra"]),
+        ])]
+        plans, _ = self.plan(packages, files={
+            "crates/demo/src/lib.rs": '#[cfg(any(feature = "extra", feature = "other"))]\nmod shared;\n#[cfg(all(feature = "extra", feature = "other"))]\nmod both;',
+            "crates/demo/src/shared.rs": 'const DATA: &str = include_str!("shared.txt");',
+            "crates/demo/src/both.rs": 'const DATA: &str = include_str!("both.txt");',
+            "crates/demo/src/shared.txt": "shared",
+            "crates/demo/src/both.txt": "both",
+            "crates/demo/tests/hooked.rs": 'fn main() {}',
+        })
+        targets = self.targets_by_name(plans[0])
+        data = str(targets["demo_extra"].attributes["compile_data"])
+        # shared has feature "extra" enabled, so it must not be excluded
+        self.assertIn("src/shared.txt", data)
+        # both requires "other" which is disabled, so it must be excluded
+        self.assertNotIn("both.txt", data)
+
     # -- build scripts ----------------------------------------------------
 
     def test_custom_build_target_produces_a_cargo_build_script(self):

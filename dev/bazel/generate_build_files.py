@@ -370,6 +370,66 @@ def sandbox_tags_for(directory: str, target_name: str) -> list[str]:
     return []
 
 
+def evaluate_cfg_expression(expr: str, enabled: set[str]) -> bool | None:
+    """Evaluate a Rust cfg(...) expression against enabled Cargo features.
+
+    Returns True if satisfied, False if not satisfied, or None if ambiguous/unknown.
+    When ambiguous, the conservative choice is not to exclude sources.
+    """
+    expr = expr.strip()
+    if expr.startswith("#[") and expr.endswith("]"):
+        expr = expr[2:-1].strip()
+    if expr.startswith("cfg(") and expr.endswith(")"):
+        expr = expr[4:-1].strip()
+
+    def split_args(s: str) -> list[str]:
+        args: list[str] = []
+        depth = 0
+        current: list[str] = []
+        for char in s:
+            if char in "([":
+                depth += 1
+            elif char in ")]":
+                depth -= 1
+            elif char == "," and depth == 0:
+                arg = "".join(current).strip()
+                if arg:
+                    args.append(arg)
+                current = []
+                continue
+            current.append(char)
+        last = "".join(current).strip()
+        if last:
+            args.append(last)
+        return args
+
+    def evaluate(s: str) -> bool | None:
+        s = s.strip()
+        m = FEATURE_ATTRIBUTE_RE.fullmatch(s)
+        if m:
+            return m.group(1) in enabled
+        if s.startswith("all(") and s.endswith(")"):
+            results = [evaluate(p) for p in split_args(s[4:-1])]
+            if any(r is False for r in results):
+                return False
+            if all(r is True for r in results):
+                return True
+            return None
+        if s.startswith("any(") and s.endswith(")"):
+            results = [evaluate(p) for p in split_args(s[4:-1])]
+            if any(r is True for r in results):
+                return True
+            if all(r is False for r in results):
+                return False
+            return None
+        if s.startswith("not(") and s.endswith(")"):
+            res = evaluate(s[4:-1])
+            return not res if res is not None else None
+        return None
+
+    return evaluate(expr)
+
+
 def feature_gated_sources(
     crate_root: Path | None,
     sources: list[Path],
@@ -379,6 +439,8 @@ def feature_gated_sources(
 
     A module declared behind `#[cfg(feature = "...")]` is not compiled when the
     feature is off, so the files it embeds are not compile inputs either.
+    Composite predicates (`any`, `all`, `not`) are evaluated; if the outcome is
+    ambiguous or unknown, the conservative default is not to exclude the source.
     """
     if crate_root is None or not crate_root.is_file():
         return set()
@@ -395,7 +457,7 @@ def feature_gated_sources(
             attribute_lines.append(stripped)
             if not stripped.endswith("]"):
                 continue
-            pending = [" ".join(attribute_lines)]
+            pending.append(" ".join(attribute_lines))
             attribute_lines = []
             continue
         attribute_lines = []
@@ -404,13 +466,10 @@ def feature_gated_sources(
             pending = []
             continue
         module = match.group("module")
-        gated = [
-            feature
-            for attribute in pending
-            for feature in FEATURE_ATTRIBUTE_RE.findall(attribute)
-            if feature not in enabled
-        ]
-        if gated:
+        # Each cfg attribute is conjunctive; one false predicate disables the module.
+        # Unknown predicates do not exclude sources from compile_data.
+        is_gated = any(evaluate_cfg_expression(attr, enabled) is False for attr in pending)
+        if is_gated:
             for source in sources:
                 if source.parent.name == module or source.stem == module:
                     excluded.add(source)

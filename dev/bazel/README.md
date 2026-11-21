@@ -5,7 +5,7 @@ compares the declared Cargo workspace inventory with explicit Bazel target mappi
 exclusions. A matching package/target count is not evidence of coverage.
 
 Cargo metadata is the source of truth for package and declared-target inventory. The current
-workspace has 43 packages and 264 declared targets.
+workspace has 43 packages and 265 declared targets.
 
 ```sh
 cargo metadata --locked --no-deps --format-version 1
