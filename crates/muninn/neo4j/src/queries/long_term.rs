@@ -822,6 +822,15 @@ ORDER BY f.confidence DESC, f.created_at DESC
 LIMIT $limit
 ";
 
+/// Report matched targets so the caller can roll back if any are absent.
+pub const LINK_FACT_ABOUT_ENTITIES: &str = "
+MATCH (f:Fact {id: $fact_id})
+UNWIND $entity_ids AS entity_id
+MATCH (e:Entity {id: entity_id})
+MERGE (f)-[:ABOUT]->(e)
+RETURN collect(DISTINCT e.id) AS targets
+";
+
 #[cfg(test)]
 mod tests {
     use super::*;

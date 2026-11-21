@@ -6,7 +6,7 @@
 #
 # Vocabulario: PASS, FAIL, BLOCKED, IMPLEMENTED_UNVERIFIED, APPROVED_DEVIATION, UNVERIFIABLE
 #
-# Last updated: 2026-11-19
+# Last updated: 2026-11-20
 # Commit: c17ac76e306fbfa588916d411acac83e52d24fe5
 # TCK pin (normative): b6c72c36bb7486881b87053ee1610f2caf972fb6
 # TCK pin (historical): e60b410f1046dc21db50f9aba48e171dc8a9b5a1
@@ -14,7 +14,7 @@
 ---
 metadata:
   version: "1.0"
-  generated_at: "2026-11-19"
+  generated_at: "2026-11-20"
   commit: "c17ac76e306fbfa588916d411acac83e52d24fe5"
   tck_pin_normative: "b6c72c36bb7486881b87053ee1610f2caf972fb6"
   tck_pin_historical: "e60b410f1046dc21db50f9aba48e171dc8a9b5a1"
@@ -222,13 +222,15 @@ schema:
     evidence: "docs/muninn/README.md"
     notes: "Validated adoption, single-writer coordination, and non-destructive retries on isolated Neo4j."
   vectors:
-    status: IMPLEMENTED_UNVERIFIED
+    status: PASS
     test: "crates/muninn/neo4j/tests/schema_vectors.rs"
-    notes: "Test exists but no execution receipt against current commit."
+    cases: 2
+    notes: "Verified 2026-11-20: vector_schema_is_idempotent_and_rejects_wrong_dimensions + concurrent_schema_setup_requires_equivalent_schema. Neo4j 5.26.32 community."
   non_vector:
-    status: IMPLEMENTED_UNVERIFIED
+    status: PASS
     test: "crates/muninn/neo4j/tests/schema_non_vector.rs"
-    notes: "Test exists but no execution receipt against current commit."
+    cases: 1
+    notes: "Verified 2026-11-20: clean scenario PASS. Added missing preference_write_lock constraint to expected list. Neo4j 5.26.32 community."
 
 # =============================================================================
 # Isolation and Security
@@ -236,17 +238,20 @@ schema:
 
 isolation:
   owner_namespace:
-    status: IMPLEMENTED_UNVERIFIED
+    status: PASS
     test: "crates/muninn/neo4j/tests/owner_namespace.rs"
-    notes: "Test exists but no execution receipt against current commit."
+    cases: 3
+    notes: "Verified 2026-11-20: owner_namespace_lifecycle + guarded_mutation_rolls_back_on_conflict + operation_key_replays_and_rejects_conflicts. Neo4j 5.26.32 community."
   long_term_isolation_deletion:
-    status: IMPLEMENTED_UNVERIFIED
+    status: PASS
     test: "crates/muninn/neo4j/tests/long_term_isolation_deletion.rs"
-    notes: "Test exists but no execution receipt against current commit."
+    cases: 1
+    notes: "Verified 2026-11-20: long_term_user_isolation_and_entity_deletion_semantics. Neo4j 5.26.32 community."
   reasoning_owner_scope:
-    status: IMPLEMENTED_UNVERIFIED
+    status: PASS
     test: "crates/muninn/neo4j/tests/reasoning_owner_scope.rs"
-    notes: "Test exists but no execution receipt against current commit."
+    cases: 1
+    notes: "Verified 2026-11-20: reasoning_owner_scope_real_adapter. Requires MUNINN_REASONING_ISOLATED_TEST=1. Neo4j 5.26.32 community."
   multi_owner_negative:
     status: BLOCKED
     notes: "No end-to-end multi-owner negative test evidence."
@@ -255,11 +260,34 @@ isolation:
 # Summary
 # =============================================================================
 
+bolt_targeted:
+  durability_reconnect:
+    status: PASS
+    capability: BOLT-01-03
+    evidence: ".agents/rpi/plan/tasks/muninn-bolt-durability-evidence/"
+    notes: "Integration test crates/muninn/neo4j/tests/durability_reconnect.rs against isolated Neo4j 5.26. Verifies persistence and full identity across ShortTerm, LongTerm, and Reasoning tiers upon total disconnect and reconnect."
+  owner_isolation:
+    status: PASS
+    capability: BOLT-03-03
+    evidence: ".agents/rpi/plan/tasks/muninn-bolt-isolation-evidence/"
+    notes: "Integration test crates/muninn/neo4j/tests/multi_tenant_isolation.rs against isolated Neo4j 5.26. Verifies zero cross-tenant leakage in reads/vector searches, safe rejection of cross-tenant mutations, and total integrity across ShortTerm, LongTerm, and Reasoning tiers."
+  fact_about:
+    status: PASS
+    capability: BOLT-07-07
+    evidence: ".agents/rpi/plan/tasks/muninn-bolt-fact-about-20261121/"
+    notes: "Focused verification on the recorded worktree diff: three bridge tests and one isolated Neo4j integration test. Does not certify the full TCK or concurrent deduplication."
+  preference_relationships:
+    status: PASS
+    capability: BOLT-07-05, BOLT-07-06
+    evidence: ".agents/rpi/plan/tasks/muninn-bolt-preference-evidence/"
+    notes: "Integration test crates/muninn/neo4j/tests/preference_relationships.rs against isolated Neo4j 5.26. Verifies BOLT-07-05 (ABOUT normative edge shape, direction, idempotency, missing entity rejection) and BOLT-07-06 (APPLIES_TO observable edge, co-existence with ABOUT, and filtered reading get_preferences_for / preferences_for_filtered)."
+
+# Counts of explicit status entries across the registry, not Bolt capabilities.
 summary:
-  total_pass: 6
+  total_pass: 18
   total_fail: 1
-  total_blocked: 4
-  total_implemented_unverified: 8
+  total_blocked: 3
+  total_implemented_unverified: 2
   total_unverifiable: 12
   claim: |
     Muninn reaches Bronze with product verification and GM-01 with authorized

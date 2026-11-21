@@ -213,7 +213,13 @@ oculto por un agregado (aislamiento, pérdida de datos o integridad del grafo).
   no hay efectos laterales. Los dos recibos TCK nuevos no validan estos
   escenarios ni deciden su inclusión definitiva.
 
-## Discrepancias abiertas de contrato
+## Discrepancias de referencia y política de aceptación
+
+Política aprobada: el borrado encadenado se evalúa contra el TCK, sin replicar
+el fallo observado del upstream. Para preferencias, `ABOUT` (TCK) y el
+comportamiento público asociado con `APPLIES_TO` (Bolt) requieren evidencia
+independiente. La relación `ABOUT` de hechos se verifica por separado. La
+política no modifica aserciones ni da por aprobados los criterios.
 
 ### Borrado de mensajes encadenados
 
@@ -249,8 +255,9 @@ Gold18 pasa [`test_preference_stored_alongside_entity`][case-pref], pero ese
 caso solo comprueba el texto de la preferencia creada; no inspecciona aristas.
 El caso de hechos comprueba la referencia por nombre, no una arista `ABOUT`.
 Antes de aceptar esta capacidad, separar preferencia y hecho, escritura y
-lectura, opción por defecto y explícita, e inspeccionar el grafo. Queda por
-acordar qué comportamiento se compara; no se registra un fallo de Muninn.
+lectura, opción por defecto y explícita, e inspeccionar el grafo según la
+política aprobada. La verificación sigue pendiente; no se registra un fallo
+de Muninn.
 
 ## Integraciones: verificación aparte
 
@@ -269,8 +276,8 @@ acordar qué comportamiento se compara; no se registra un fallo de Muninn.
 
 ## Siguiente decisión
 
-Revisar los límites de los grupos, los criterios críticos y las dos
-discrepancias antes de fijar el universo elegible. Para cada criterio aprobado
+Aplicar la política aprobada para las dos discrepancias y revisar los límites
+de los grupos y los criterios críticos antes de fijar el universo elegible. Para cada criterio aprobado
 para evaluación, conservar pin, binario, entorno, datos de entrada, caso y
 resultado, con retorno público y estado antes/después cuando corresponda.
 Este hito no ejecuta builds ni pruebas de producto ni modifica el registro

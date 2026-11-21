@@ -1,0 +1,162 @@
+operation,backend,classification,capability_ids,rationale
+client.__aenter__,bolt,alias,BOLT-01-01,Delega en connect y retorna el cliente.
+client.__aexit__,bolt,alias,BOLT-01-01;BOLT-08-04,Delega en close al salir del contexto.
+client.__init__,bolt,componente,BOLT-01-01;BOLT-01-05,Configura el backend y guarda los proveedores y el override de ontología; no abre Bolt.
+client.auth,bolt,sentinela,,Devuelve _NamsUnsupported; el acceso al accesor no equivale a una llamada autenticada.
+client.auth.create_api_key,bolt,rechazo_resolver_atributo,,El sentinela rechaza resolver create_api_key con NotSupportedError; no se invoca una operación de API keys o tokens. El payload histórico etiqueta backend=nams incluso cuando el cliente usa Bolt.
+client.auth.list_api_keys,bolt,rechazo_resolver_atributo,,El sentinela rechaza resolver list_api_keys con NotSupportedError; no se invoca una operación de API keys o tokens. El payload histórico etiqueta backend=nams incluso cuando el cliente usa Bolt.
+client.auth.refresh_access_token,bolt,rechazo_resolver_atributo,,El sentinela rechaza resolver refresh_access_token con NotSupportedError; no se invoca una operación de API keys o tokens. El payload histórico etiqueta backend=nams incluso cuando el cliente usa Bolt.
+client.auth.reveal_api_key,bolt,rechazo_resolver_atributo,,El sentinela rechaza resolver reveal_api_key con NotSupportedError; no se invoca una operación de API keys o tokens. El payload histórico etiqueta backend=nams incluso cuando el cliente usa Bolt.
+client.auth.revoke_api_key,bolt,rechazo_resolver_atributo,,El sentinela rechaza resolver revoke_api_key con NotSupportedError; no se invoca una operación de API keys o tokens. El payload histórico etiqueta backend=nams incluso cuando el cliente usa Bolt.
+client.auth.rotate_api_key,bolt,rechazo_resolver_atributo,,El sentinela rechaza resolver rotate_api_key con NotSupportedError; no se invoca una operación de API keys o tokens. El payload histórico etiqueta backend=nams incluso cuando el cliente usa Bolt.
+client.backend,bolt,componente,BOLT-01-01,Expone el backend configurado; no verifica que el driver esté conectado.
+client.buffered,bolt,componente,BOLT-08-04,Accesor al escritor; antes de inicializarlo no hay escritor disponible.
+client.buffered.errors,bolt,componente,BOLT-08-04,Copia de errores de escrituras en segundo plano desde el arranque del escritor.
+client.buffered.flush,bolt,componente,BOLT-08-04,Espera a que el escritor procese la cola; no garantiza que no haya errores.
+client.buffered.is_buffered,bolt,componente,BOLT-08-04,"Indica el modo configurado, no que haya escrituras pendientes."
+client.buffered.pending,bolt,componente,BOLT-08-04,"Devuelve tamaño de cola en espera, no el conjunto de escrituras en curso."
+client.buffered.stop,bolt,componente,BOLT-08-04,Drena y detiene el escritor; un envío posterior al mismo escritor se rechaza.
+client.buffered.submit,bolt,resultado,BOLT-08-04,En modo sync escribe en línea; en modo buffered encola con contrapresión.
+client.buffered.wait_for_pending,bolt,alias,BOLT-08-04,Delega en buffered.flush.
+client.close,bolt,resultado,BOLT-01-01;BOLT-01-03;BOLT-08-04,"Drena el escritor, detiene enriquecimiento y cierra el driver; algunos accesores conservan sus referencias."
+client.connect,bolt,resultado,BOLT-01-01;BOLT-01-02;BOLT-01-03;BOLT-01-05,Abre Bolt y configura la sesión del cliente; la secuencia de reconexión usa lecturas como observación.
+client.consolidation,bolt,componente,BOLT-08-05;BOLT-08-08;BOLT-08-09;BOLT-08-10;BOLT-08-11,Accesor al servicio de consolidación inicializado por Bolt.
+client.consolidation.archive_expired_conversations,bolt,resultado,BOLT-08-10,"Requiere TTL explícito; selecciona conversaciones antiguas y, al aplicar, las marca sin borrarlas."
+client.consolidation.dedupe_entities,bolt,resultado,BOLT-08-05,Selecciona pares automáticamente; al aplicar crea SAME_AS auto_consolidated y registra la ejecución sin fusionar nodos.
+client.consolidation.detect_superseded_preferences,bolt,resultado,BOLT-08-09,Selecciona pares por similitud; el filtro de usuario ancla old. Al aplicar escribe sustituciones e informe.
+client.consolidation.record_read_audit,bolt,resultado,BOLT-08-11,Crea auditoría a petición y la enlaza a un usuario cuando se proporciona.
+client.consolidation.summarize_long_traces,bolt,resultado,BOLT-08-08,Selecciona y marca trazas pendientes de resumen; no genera el texto del resumen.
+client.eval,bolt,componente,BOLT-08-07,Accesor al evaluador inicializado por Bolt.
+client.eval.run,bolt,resultado,BOLT-08-07,Ejecuta dimensiones y devuelve informe de evaluación; no es una puntuación de paridad.
+client.flush,bolt,componente,BOLT-08-04,"Delega en buffered.flush cuando existe el escritor, si no no hace nada."
+client.get_context,bolt,resultado,BOLT-06-06,Combina secciones de memorias seleccionadas.
+client.get_graph,bolt,resultado,BOLT-07-24,"Serializa vista de nodos y aristas por memoria, sesión, tiempo y opciones de salida."
+client.get_locations,bolt,resultado,BOLT-08-13,"Proyecta ubicaciones y conversaciones vía EXTRACTED_FROM, con filtro opcional de sesión."
+client.get_stats,bolt,resultado,BOLT-08-12,"Agrega conteos por tipo de memoria, no estadísticas de un extractor o una herramienta."
+client.graph,bolt,no_resuelto,,Proxy público deprecado de Neo4jClient; no equivale a query.cypher. Decidir contrato y permisos del reenvío abierto.
+client.is_connected,bolt,componente,BOLT-01-01,"Indicador del estado de conexión, no una operación de escritura."
+client.is_nams,bolt,componente,BOLT-01-01,"Predicado del backend configurado; false en Bolt, no prueba conexión."
+client.long_term,bolt,componente,BOLT-04-01,"Accesor al servicio de largo plazo; comprueba su inicialización, no consulta ni muta por sí mismo. ID de referencia del grupo."
+client.long_term.add,bolt,variante,BOLT-04-01,"Adapta contenido a add_entity y solo devuelve Entity; verificar defaults, retorno y kwargs propios del wrapper."
+client.long_term.add_entity,bolt,resultado,BOLT-04-01,Alta y resolución de identidad; devuelve entidad y resultado de deduplicación.
+client.long_term.add_fact,bolt,resultado,BOLT-04-04,Alta escalar con referencias por nombre; no demuestra ABOUT para hechos.
+client.long_term.add_preference,bolt,resultado,BOLT-04-03;BOLT-07-06,Alta escalar y opción de escribir APPLIES_TO; no demuestra ABOUT.
+client.long_term.add_relationship,bolt,resultado,BOLT-07-01,Escribe relación tipada y dirigida entre dos entidades.
+client.long_term.client,bolt,no_resuelto,,"BaseMemory devuelve el Neo4jClient subyacente. Acordar contrato y permisos del reenvío abierto, no equipararlo a Cypher de solo lectura."
+client.long_term.delete_entity_provenance,bolt,resultado,BOLT-07-18,Retira enlaces EXTRACTED_FROM y EXTRACTED_BY y devuelve un conteo.
+client.long_term.embedder,bolt,integracion,,Accesor de BaseMemory al objeto proveedor embedder configurado o None; el contrato del proveedor se valida aparte de su efecto Bolt.
+client.long_term.expand_graph,bolt,sin_binding,,Declarada solo en la clase NAMS; no hay implementación en la clase enlazada a Bolt. get_graph y el recorrido de vecinos son contratos distintos.
+client.long_term.extractor,bolt,integracion,,Accesor de BaseMemory al objeto proveedor extractor configurado o None; el contrato del proveedor se valida aparte de su efecto Bolt.
+client.long_term.find_potential_duplicates,bolt,resultado,BOLT-07-19,"Lista candidatos para revisión, sin fusionarlos."
+client.long_term.geocode_locations,bolt,resultado,BOLT-08-15,Selecciona ubicaciones sin coordenadas y persiste resultados del proveedor; no utiliza skip_existing.
+client.long_term.get_context,bolt,componente,BOLT-06-06,Construye la sección de largo plazo del contexto compuesto; verificar también como llamada directa.
+client.long_term.get_deduplication_stats,bolt,resultado,BOLT-07-22,"Agrega totales, fusiones, relaciones SAME_AS y pendientes."
+client.long_term.get_entities_by_extractor,bolt,resultado,BOLT-07-15,"Enumera entidades por EXTRACTED_BY y nombre, con límite y metadatos."
+client.long_term.get_entities_from_message,bolt,resultado,BOLT-07-11,Lee EXTRACTED_FROM en sentido inverso con metadatos de procedencia.
+client.long_term.get_entity_by_name,bolt,resultado,BOLT-04-02,Recupera por nombre sin selector de tipo.
+client.long_term.get_entity_history,bolt,rechazo,,Lanza NotSupportedError para historial alojado; no es una lectura vacía.
+client.long_term.get_entity_provenance,bolt,resultado,BOLT-07-14,"Devuelve mensajes y extractores, no una cadena de razonamiento Platinum."
+client.long_term.get_entity_relationships,bolt,resultado,BOLT-04-05,Proyecta relaciones de entidad con opciones propias de consulta; no escribe.
+client.long_term.get_extraction_stats,bolt,resultado,BOLT-07-17,"Agrega entidades, mensajes fuente y nombres de extractores, no solo una sesión."
+client.long_term.get_extractor_stats,bolt,resultado,BOLT-07-25,"Agrega métricas por extractor, incluida confianza media; no es el agregado global."
+client.long_term.get_facts_about,bolt,resultado,BOLT-04-04,Filtra por sujeto; no recorre ABOUT.
+client.long_term.get_location_coordinates,bolt,resultado,BOLT-08-14,Lee coordenadas por ID o devuelve None.
+client.long_term.get_preferences_by_category,bolt,resultado,BOLT-04-03,"Enumera preferencias por categoría, sin buscar por similitud."
+client.long_term.get_preferences_for,bolt,resultado,BOLT-04-03;BOLT-07-06;BOLT-07-23;BOLT-03-03,"Filtra por usuario, vigencia y, si se solicita, APPLIES_TO; observa los efectos de sustitución al variar as_of. Sirve como ruta para verificar el contrato de ámbito del producto, no como prueba de autorización upstream."
+client.long_term.get_related_entities,bolt,resultado,BOLT-04-05,"Recorre vecinos desde una entidad, no crea aristas."
+client.long_term.get_same_as_cluster,bolt,resultado,BOLT-07-21,Lee el grupo SAME_AS e incluye la propia entidad si existe.
+client.long_term.link_entity_to_extractor,bolt,resultado,BOLT-07-13,Registra el extractor si hace falta y crea EXTRACTED_BY.
+client.long_term.link_entity_to_message,bolt,resultado,BOLT-07-10,Crea EXTRACTED_FROM de entidad a mensaje; no MENTIONS.
+client.long_term.list_extractors,bolt,resultado,BOLT-07-16,Enumera registros de extractores y sus conteos en el grafo.
+client.long_term.merge_duplicate_entities,bolt,resultado,BOLT-07-02,"Conserva destino, marca origen y copia sus aristas; no elimina físicamente el origen."
+client.long_term.register_extractor,bolt,resultado,BOLT-07-12,"Crea o actualiza metadatos persistidos de extractor por nombre, sin instalar proveedor."
+client.long_term.review_duplicate,bolt,resultado,BOLT-07-20;BOLT-07-02,Actualiza estado SAME_AS; la confirmación delega en la fusión antes de marcar estado.
+client.long_term.search,bolt,alias,BOLT-06-02,Delega en search_entities y reenvía kwargs.
+client.long_term.search_entities,bolt,resultado,BOLT-06-02,Busca entidades por similitud con sus filtros y límites.
+client.long_term.search_facts,bolt,resultado,BOLT-06-04,"Busca hechos por similitud, no por igualdad de sujeto."
+client.long_term.search_locations_in_bounding_box,bolt,resultado,BOLT-08-03,Selecciona puntos por rectángulo; distingue de la consulta radial.
+client.long_term.search_locations_near,bolt,resultado,BOLT-08-03,Selecciona puntos por radio e informa distancia.
+client.long_term.search_preferences,bolt,resultado,BOLT-06-03,"Busca preferencias por similitud y filtros, no consulta escalar."
+client.long_term.set_entity_feedback,bolt,rechazo,,Lanza NotSupportedError para feedback alojado; no realiza actualización Bolt.
+client.long_term.supersede_preference,bolt,resultado,BOLT-07-23,Crea SUPERSEDED_BY y cierra vigencia del antecedente sin sobrescribirla en repetición.
+client.long_term.wait_for_extraction,bolt,retorno_constante,,"Devuelve True inmediatamente, sin sondeo remoto ni prueba de que se extrajo algo."
+client.ontology,bolt,componente,BOLT-01-07;BOLT-01-12,Expone BoltOntology al conectarse; los métodos del almacén tienen filas propias.
+client.ontology.activate,bolt,resultado,BOLT-01-11,Vincula una revisión existente como activa en la base.
+client.ontology.clone,bolt,variante,BOLT-01-09,Usa plantilla y nombre libre para crear nueva ontología; comparte inserción inicial con create.
+client.ontology.create,bolt,resultado,BOLT-01-09,Valida documento y modo y crea primera revisión no activa.
+client.ontology.delete,bolt,resultado,BOLT-01-13,"Borra ontología persistida, revisiones y trabajos asociados; rechaza plantillas."
+client.ontology.diff,bolt,resultado,BOLT-01-15,"Compara dos revisiones, incluido cambio de modo cuando difiere."
+client.ontology.get,bolt,resultado,BOLT-01-08,"Lee documento y revisiones por ID, incluidas plantillas sintéticas."
+client.ontology.get_active,bolt,resultado,BOLT-01-12;BOLT-01-05,Lee el binding activo y sus metadatos; cuando falta no aplica por sí mismo el fallback del cliente.
+client.ontology.get_migration,bolt,resultado,BOLT-01-17,Relee el trabajo persistido por ID; nunca pone en marcha una migración.
+client.ontology.import_,bolt,resultado,BOLT-01-14,Convierte contenido inline en borrador sin persistir; URL y formatos de conversión alojada se rechazan.
+client.ontology.list,bolt,resultado,BOLT-01-07,Lista plantillas y registros persistidos con el resumen de revisión y actividad.
+client.ontology.migrate,bolt,resultado,BOLT-01-16,Aplica mapeos de etiquetas de forma síncrona; incluso dry_run persiste un trabajo y batch_size no controla la ejecución.
+client.ontology.update,bolt,resultado,BOLT-01-10,Añade revisión inmutable y no cambia qué versión está activa.
+client.ontology_document,bolt,componente,BOLT-01-05,"Expone el documento efectivo resuelto para la sesión del cliente, no consulta la revisión activa en cada acceso."
+client.query,bolt,componente,BOLT-01-06,"Accesor al wrapper BoltCypherQuery, distinto del driver abierto."
+client.query.cypher,bolt,resultado,BOLT-01-06,Devuelve filas Bolt para consulta con parámetros y rechaza escrituras en su interfaz pública.
+client.reasoning,bolt,componente,BOLT-05-01,Accesor al servicio de razonamiento; comprueba inicialización. ID de referencia del grupo.
+client.reasoning.add,bolt,variante,BOLT-05-02,Valida trace_id y traduce el contenido a thought antes de llamar a add_step.
+client.reasoning.add_step,bolt,resultado,BOLT-05-02,Crea paso y lo agrega en secuencia a su traza.
+client.reasoning.client,bolt,no_resuelto,,"BaseMemory devuelve el Neo4jClient subyacente. Acordar contrato y permisos del reenvío abierto, no equipararlo a Cypher de solo lectura."
+client.reasoning.complete_trace,bolt,resultado,BOLT-05-01,"Registra el resultado, éxito o fallo y cierre."
+client.reasoning.embedder,bolt,integracion,,Accesor de BaseMemory al objeto proveedor embedder configurado o None; el contrato del proveedor se valida aparte de su efecto Bolt.
+client.reasoning.extractor,bolt,integracion,,Accesor de BaseMemory al objeto proveedor extractor configurado o None; el contrato del proveedor se valida aparte de su efecto Bolt.
+client.reasoning.get_context,bolt,componente,BOLT-06-06,Construye la sección de razonamiento del contexto compuesto; verificar también como llamada directa.
+client.reasoning.get_session_traces,bolt,alias,BOLT-05-05,Llama a list_traces con filtro de sesión y defaults propios.
+client.reasoning.get_similar_traces,bolt,resultado,BOLT-06-05,"Busca trazas por similitud de tarea, no pasos por pensamiento."
+client.reasoning.get_tool_stats,bolt,resultado,BOLT-05-06,Devuelve agregados por herramienta en objetos ToolStats.
+client.reasoning.get_tool_usage_stats,bolt,variante,BOLT-05-06,Comparte GET_TOOL_STATS pero proyecta dict por nombre con objetos Tool; no es alias de retorno idéntico.
+client.reasoning.get_trace,bolt,alias,BOLT-05-04,Delega en get_trace_with_steps por ID.
+client.reasoning.get_trace_with_steps,bolt,resultado,BOLT-05-04,Lee la traza con sus pasos y llamadas.
+client.reasoning.link_trace_to_message,bolt,resultado,BOLT-07-04,Escribe INITIATED_BY de traza a mensaje.
+client.reasoning.list_traces,bolt,resultado,BOLT-05-05,Lista trazas y aplica filtro de sesión cuando se proporciona.
+client.reasoning.migrate_tool_stats,bolt,resultado,BOLT-05-07,Reconstruye agregados desde llamadas históricas; devuelve mapa de conteos por herramienta.
+client.reasoning.on_tool_call_recorded,bolt,resultado,BOLT-05-08,Registra callback local; record_tool_call lo notifica tras persistir la llamada y sus enlaces solicitados.
+client.reasoning.record_tool_call,bolt,resultado,BOLT-05-03;BOLT-05-08;BOLT-05-09;BOLT-07-08;BOLT-07-09,"Registra llamada y, según opciones, notifica, actualiza observación y escribe TRIGGERED_BY o TOUCHED."
+client.reasoning.search,bolt,retorno_constante,,Devuelve [] sin consulta ni delegación; search_steps sí consulta y tiene su propio ID.
+client.reasoning.search_steps,bolt,resultado,BOLT-06-07,"Busca pasos por vector y proyecta campos de la traza padre, con filtro de éxito opcional."
+client.reasoning.start_trace,bolt,resultado,BOLT-05-01,Inicia la traza con su identidad y sesión.
+client.schema,bolt,componente,BOLT-01-02;BOLT-01-04;BOLT-08-06,Expone SchemaManager configurado; no ejecuta DDL al acceder.
+client.schema.adopt_existing_graph,bolt,resultado,BOLT-08-06,Adopta un grafo previo con informe y simulación; no es instalación de esquema nuevo.
+client.schema.drop_all,bolt,resultado,BOLT-01-04,Retira índices y restricciones reconocidos por nombre; no borra registros de memoria.
+client.schema.get_schema_info,bolt,componente,BOLT-01-02,Expone restricciones e índices para observar el estado de la instalación.
+client.schema.setup_all,bolt,resultado,BOLT-01-02,"Instala restricciones, índices y ejecuta backfills del esquema administrado."
+client.schema.setup_constraints,bolt,componente,BOLT-01-02,Instala el subconjunto de restricciones que usa setup_all.
+client.schema.setup_indexes,bolt,componente,BOLT-01-02,Instala índices no vectoriales que usa setup_all.
+client.schema.setup_point_indexes,bolt,componente,BOLT-01-02,Instala el índice espacial; componente de setup_all.
+client.schema.setup_vector_indexes,bolt,componente,BOLT-01-02,Instala índices vectoriales administrados; componente de setup_all.
+client.schema.validate_vector_index_dimensions,bolt,componente,BOLT-01-02,Verifica dimensiones existentes; no equivale a instalar índices.
+client.short_term,bolt,componente,BOLT-02-01,Accesor al servicio de corto plazo; comprueba inicialización. ID de referencia del grupo.
+client.short_term.add,bolt,variante,BOLT-02-01;BOLT-02-02;BOLT-02-03,Wrapper de add_message con defaults de sesión y rol; verificar su reenvío de kwargs por separado.
+client.short_term.add_message,bolt,resultado,BOLT-02-01;BOLT-02-02;BOLT-02-03;BOLT-07-03,"Resuelve conversación, almacena mensaje y encadena. La opción explícita o la extracción materializan MENTIONS."
+client.short_term.add_messages_batch,bolt,resultado,BOLT-02-05,"Graba por lotes configurables, con opciones de embeddings y extracción."
+client.short_term.bulk_add_messages,bolt,alias,BOLT-02-05,Delega en add_messages_batch y reenvía kwargs; no es el límite de 100 del backend alojado.
+client.short_term.clear_session,bolt,resultado,BOLT-03-02,Limpia datos de la sesión solicitada.
+client.short_term.client,bolt,no_resuelto,,"BaseMemory devuelve el Neo4jClient subyacente. Acordar contrato y permisos del reenvío abierto, no equipararlo a Cypher de solo lectura."
+client.short_term.create_conversation,bolt,resultado,BOLT-02-01,Asegura conversación por sesión y devuelve su lectura.
+client.short_term.delete_message,bolt,resultado,BOLT-03-01;BOLT-03-03,"Realiza borrado individual; el requisito normativo de reparación no se deduce del escritor upstream. Sirve como ruta para verificar el contrato de ámbito del producto, no como prueba de autorización upstream."
+client.short_term.embedder,bolt,integracion,,Accesor de BaseMemory al objeto proveedor embedder configurado o None; el contrato del proveedor se valida aparte de su efecto Bolt.
+client.short_term.extract_entities_from_session,bolt,resultado,BOLT-08-01;BOLT-07-03,Selecciona mensajes y realiza extracción con proveedor configurado; MENTIONS es una aserción separada.
+client.short_term.extractor,bolt,integracion,,Accesor de BaseMemory al objeto proveedor extractor configurado o None; el contrato del proveedor se valida aparte de su efecto Bolt.
+client.short_term.generate_embeddings_batch,bolt,resultado,BOLT-06-08,Rellena vectores persistidos de mensajes sin embedding de la sesión.
+client.short_term.get_context,bolt,componente,BOLT-06-06,Construye la sección de corto plazo del contexto compuesto; verificar también como llamada directa.
+client.short_term.get_conversation,bolt,resultado,BOLT-01-03;BOLT-02-01;BOLT-02-02;BOLT-02-03;BOLT-03-01;BOLT-03-03,"Lee identidad y secuencia; se usa también para observar durabilidad y efectos del borrado. Sirve como ruta para verificar el contrato de ámbito del producto, no como prueba de autorización upstream."
+client.short_term.get_conversation_summary,bolt,resultado,BOLT-08-02,Calcula una proyección de la sesión y devuelve ConversationSummary sin persistir el resumen.
+client.short_term.get_extraction_status,bolt,sin_binding,,Declarada solo en la clase NAMS; no hay implementación Bolt de seguimiento de trabajo de extracción.
+client.short_term.get_observations,bolt,rechazo,,Lanza NotSupportedError para observaciones alojadas.
+client.short_term.get_reflections,bolt,rechazo,,Lanza NotSupportedError para reflexiones alojadas.
+client.short_term.list_conversations,bolt,resultado,BOLT-02-06,"Lista metadatos de conversación por fecha de actualización, con límite y filtro opcional de usuario."
+client.short_term.list_sessions,bolt,resultado,BOLT-02-04;BOLT-03-01,Enumera sesiones activas con conteos; observa también efectos del borrado.
+client.short_term.migrate_message_links,bolt,resultado,BOLT-02-07,Reconstruye FIRST_MESSAGE y NEXT_MESSAGE para conversaciones anteriores y devuelve conteo por conversación.
+client.short_term.search,bolt,alias,BOLT-06-01,Delega en search_messages y reenvía kwargs.
+client.short_term.search_messages,bolt,resultado,BOLT-06-01;BOLT-03-03,"Busca por similitud de mensaje con filtros y límite propios. Sirve como ruta para verificar el contrato de ámbito del producto, no como prueba de autorización upstream."
+client.users,bolt,componente,BOLT-04-06;BOLT-04-07;BOLT-04-08,Accesor a UserMemory; no autentica ni ejecuta operaciones de usuario al acceder.
+client.users.get_user,bolt,resultado,BOLT-04-07,Busca usuario por identifier y devuelve None si falta.
+client.users.list_users,bolt,resultado,BOLT-04-08,Enumera usuarios en orden de creación descendente y con límite.
+client.users.upsert_user,bolt,resultado,BOLT-04-06,"Crea o actualiza por identifier, conserva ID y devuelve atributos."
+client.validation_mode,bolt,componente,BOLT-01-05,Expone el modo efectivo resuelto para el cliente; no lee cada vez el binding activo.
+client.wait_for_pending,bolt,alias,BOLT-08-04,Delega en client.flush.
+client.write_errors,bolt,componente,BOLT-08-04,"Expone buffered.errors con lista vacía sin escritor, incluido después de close."
+connect,bolt,variante,BOLT-01-01,"Fábrica asíncrona de contexto que construye el cliente, conecta y asegura close; conserva su contrato de argumentos."

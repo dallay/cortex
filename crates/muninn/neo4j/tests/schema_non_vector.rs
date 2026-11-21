@@ -38,6 +38,7 @@ const EXPECTED_CONSTRAINTS: &[(&str, &str, &[&str])] = &[
     ("observation_id", "Observation", &["id"]),
     ("entity_id", "Entity", &["id"]),
     ("preference_id", "Preference", &["id"]),
+    ("preference_write_lock", "PreferenceWriteLock", &["id"]),
     ("fact_id", "Fact", &["id"]),
     ("reasoning_trace_id", "ReasoningTrace", &["id"]),
     ("reasoning_step_id", "ReasoningStep", &["id"]),

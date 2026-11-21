@@ -106,6 +106,34 @@ async fn transaction_rows(
     Ok(rows)
 }
 
+fn fact_params(fact: &Fact) -> Params {
+    vec![
+        ("id", id_param(fact.id)),
+        ("subject", fact.subject.as_str().into()),
+        ("predicate", fact.predicate.as_str().into()),
+        ("object", fact.object.as_str().into()),
+        ("confidence", fact.confidence.into()),
+        ("embedding", opt_vector(fact.embedding.as_deref())),
+        (
+            "valid_from",
+            opt_string(fact.valid_from.map(|ts| ts.to_rfc3339()).as_deref()),
+        ),
+        (
+            "valid_until",
+            opt_string(fact.valid_until.map(|ts| ts.to_rfc3339()).as_deref()),
+        ),
+        ("metadata", metadata_param(&fact.metadata)),
+    ]
+}
+
+fn fact_update_params(id: Uuid, confidence: f64, object: &str) -> Params {
+    vec![
+        ("id", id_param(id)),
+        ("confidence", confidence.into()),
+        ("object", object.into()),
+    ]
+}
+
 fn preference_params(record: &Preference) -> Params {
     vec![
         ("id", id_param(record.id)),
@@ -434,6 +462,62 @@ impl Neo4jLongTermStore {
                 txn.commit().await.map_err(|e| {
                     MemoryError::storage(format!("preference commit failed; outcome unknown: {e}"))
                 })?;
+                Ok(stored)
+            }
+            Err(error) => {
+                txn.rollback()
+                    .await
+                    .map_err(|e| MemoryError::storage(e.to_string()))?;
+                Err(error)
+            }
+        }
+    }
+
+    async fn write_fact_with_about(
+        &self,
+        statement: &str,
+        params: Params,
+        fact_id: Uuid,
+        about: &[Uuid],
+    ) -> MemoryResult<Fact> {
+        let entity_ids: std::collections::BTreeSet<_> = about.iter().map(Uuid::to_string).collect();
+        let mut txn = self.client.start_txn().await?;
+        let result = async {
+            let rows = transaction_rows(&mut txn, statement, params).await?;
+            let row = rows
+                .first()
+                .ok_or_else(|| MemoryError::not_found(format!("fact {fact_id}")))?;
+            let stored = fact_from_value(&column(row, "f")?)?;
+            let rows = transaction_rows(
+                &mut txn,
+                q::LINK_FACT_ABOUT_ENTITIES,
+                vec![
+                    ("fact_id", id_param(fact_id)),
+                    (
+                        "entity_ids",
+                        entity_ids.iter().cloned().collect::<Vec<_>>().into(),
+                    ),
+                ],
+            )
+            .await?;
+            let targets: std::collections::BTreeSet<_> = rows
+                .first()
+                .ok_or_else(|| MemoryError::storage("missing fact ABOUT result"))?
+                .get::<Vec<String>>("targets")
+                .map_err(|error| MemoryError::storage(error.to_string()))?
+                .into_iter()
+                .collect();
+            if let Some(missing) = entity_ids.difference(&targets).next() {
+                return Err(MemoryError::not_found(format!("entity {missing}")));
+            }
+            Ok(stored)
+        }
+        .await;
+        match result {
+            Ok(stored) => {
+                txn.commit()
+                    .await
+                    .map_err(|e| MemoryError::storage(e.to_string()))?;
                 Ok(stored)
             }
             Err(error) => {
@@ -1240,26 +1324,7 @@ impl LongTermStore for Neo4jLongTermStore {
     async fn create_fact(&self, fact: &Fact) -> MemoryResult<Fact> {
         let rows = self
             .client
-            .execute(
-                q::CREATE_FACT,
-                vec![
-                    ("id", id_param(fact.id)),
-                    ("subject", fact.subject.as_str().into()),
-                    ("predicate", fact.predicate.as_str().into()),
-                    ("object", fact.object.as_str().into()),
-                    ("confidence", fact.confidence.into()),
-                    ("embedding", opt_vector(fact.embedding.as_deref())),
-                    (
-                        "valid_from",
-                        opt_string(fact.valid_from.map(|ts| ts.to_rfc3339()).as_deref()),
-                    ),
-                    (
-                        "valid_until",
-                        opt_string(fact.valid_until.map(|ts| ts.to_rfc3339()).as_deref()),
-                    ),
-                    ("metadata", metadata_param(&fact.metadata)),
-                ],
-            )
+            .execute(q::CREATE_FACT, fact_params(fact))
             .await?;
         let row = rows
             .first()
@@ -1296,11 +1361,7 @@ impl LongTermStore for Neo4jLongTermStore {
         self.client
             .execute(
                 q::UPDATE_FACT_CONFIDENCE,
-                vec![
-                    ("id", id_param(id)),
-                    ("confidence", confidence.into()),
-                    ("object", object.into()),
-                ],
+                fact_update_params(id, confidence, object),
             )
             .await
             .map(|_| ())
@@ -1340,6 +1401,37 @@ impl LongTermStore for Neo4jLongTermStore {
         rows.iter()
             .map(|row| fact_from_value(&column(row, "f")?))
             .collect()
+    }
+
+    async fn create_fact_with_about(&self, fact: &Fact, about: &[Uuid]) -> MemoryResult<Fact> {
+        if about.is_empty() {
+            return self.create_fact(fact).await;
+        }
+        let mut stored = self
+            .write_fact_with_about(q::CREATE_FACT, fact_params(fact), fact.id, about)
+            .await?;
+        stored.metadata = fact.metadata.clone();
+        Ok(stored)
+    }
+
+    async fn update_fact_with_about(
+        &self,
+        id: Uuid,
+        confidence: f64,
+        object: &str,
+        about: &[Uuid],
+    ) -> MemoryResult<()> {
+        if about.is_empty() {
+            return self.update_fact_confidence(id, confidence, object).await;
+        }
+        self.write_fact_with_about(
+            q::UPDATE_FACT_CONFIDENCE,
+            fact_update_params(id, confidence, object),
+            id,
+            about,
+        )
+        .await
+        .map(|_| ())
     }
 }
 
