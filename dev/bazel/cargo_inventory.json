@@ -141,6 +141,13 @@
       "target": "wasm_outline"
     },
     {
+      "kinds": "test",
+      "label": "//apps/muninn:cli",
+      "manifest": "apps/muninn/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/muninn#0.0.1",
+      "target": "cli"
+    },
+    {
       "kinds": "bin",
       "label": "//apps/muninn:muninn",
       "manifest": "apps/muninn/Cargo.toml",
@@ -167,6 +174,13 @@
       "manifest": "apps/rook/Cargo.toml",
       "package_id": "path+file://<workspace>/apps/rook#0.0.1",
       "target": "binary_path_resolution"
+    },
+    {
+      "kinds": "test",
+      "label": "//apps/rook:bootstrap_banner",
+      "manifest": "apps/rook/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/rook#0.0.1",
+      "target": "bootstrap_banner"
     },
     {
       "kinds": "custom-build",
@@ -209,6 +223,13 @@
       "manifest": "apps/rook/Cargo.toml",
       "package_id": "path+file://<workspace>/apps/rook#0.0.1",
       "target": "di_tests"
+    },
+    {
+      "kinds": "test",
+      "label": "//apps/rook:dotenv_isolation",
+      "manifest": "apps/rook/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/rook#0.0.1",
+      "target": "dotenv_isolation"
     },
     {
       "kinds": "test",
@@ -405,6 +426,20 @@
       "manifest": "crates/domain/rook-core/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/domain/rook-core#0.0.1",
       "target": "model_capabilities"
+    },
+    {
+      "exclusion": "The hand-tuned rook-core BUILD.bazel does not define this Cargo test target; it remains excluded from Bazel until a reviewed BUILD rule is added.",
+      "kinds": "test",
+      "manifest": "crates/domain/rook-core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/domain/rook-core#0.0.1",
+      "target": "probes"
+    },
+    {
+      "exclusion": "The hand-tuned rook-core BUILD.bazel does not define this Cargo test target; it remains excluded from Bazel until a reviewed BUILD rule is added.",
+      "kinds": "test",
+      "manifest": "crates/domain/rook-core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/domain/rook-core#0.0.1",
+      "target": "provider_descriptor"
     },
     {
       "kinds": "test",
@@ -1072,11 +1107,25 @@
       "target": "audit_combo_connection"
     },
     {
+      "kinds": "test",
+      "label": "//crates/infrastructure/audit-sqlite:audit_record",
+      "manifest": "crates/infrastructure/audit-sqlite/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/audit-sqlite#0.0.1",
+      "target": "audit_record"
+    },
+    {
       "kinds": "lib",
       "label": "//crates/infrastructure/audit-sqlite:audit_sqlite",
       "manifest": "crates/infrastructure/audit-sqlite/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/infrastructure/audit-sqlite#0.0.1",
       "target": "audit_sqlite"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/infrastructure/audit-sqlite:quota_row_mapping",
+      "manifest": "crates/infrastructure/audit-sqlite/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/audit-sqlite#0.0.1",
+      "target": "quota_row_mapping"
     },
     {
       "kinds": "lib",
@@ -1556,10 +1605,31 @@
     },
     {
       "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:usage_query_validation",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "usage_query_validation"
+    },
+    {
+      "kinds": "test",
       "label": "//crates/infrastructure/transport-axum:usage_routes",
       "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
       "target": "usage_routes"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/application:conversation_summary",
+      "manifest": "crates/muninn/application/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/application#muninn-application@0.0.1",
+      "target": "conversation_summary"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/application:entity_resolution",
+      "manifest": "crates/muninn/application/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/application#muninn-application@0.0.1",
+      "target": "entity_resolution"
     },
     {
       "kinds": "lib",
@@ -1625,11 +1695,25 @@
       "target": "muninn_c1_exporter"
     },
     {
+      "kinds": "test",
+      "label": "//crates/muninn/core:extraction",
+      "manifest": "crates/muninn/core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/core#muninn-core@0.0.1",
+      "target": "extraction"
+    },
+    {
       "kinds": "lib",
       "label": "//crates/muninn/core:muninn_core",
       "manifest": "crates/muninn/core/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/muninn/core#muninn-core@0.0.1",
       "target": "muninn_core"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/core:resolution",
+      "manifest": "crates/muninn/core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/core#muninn-core@0.0.1",
+      "target": "resolution"
     },
     {
       "kinds": "test",
@@ -1675,6 +1759,13 @@
     },
     {
       "kinds": "test",
+      "label": "//crates/muninn/mcp:prompts",
+      "manifest": "crates/muninn/mcp/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/mcp#muninn-mcp@0.0.1",
+      "target": "prompts"
+    },
+    {
+      "kinds": "test",
       "label": "//crates/muninn/mcp:protocol",
       "manifest": "crates/muninn/mcp/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/muninn/mcp#muninn-mcp@0.0.1",
@@ -1686,6 +1777,20 @@
       "manifest": "crates/muninn/mcp/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/muninn/mcp#muninn-mcp@0.0.1",
       "target": "registry"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/mcp:requests",
+      "manifest": "crates/muninn/mcp/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/mcp#muninn-mcp@0.0.1",
+      "target": "requests"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/mcp:resources",
+      "manifest": "crates/muninn/mcp/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/mcp#muninn-mcp@0.0.1",
+      "target": "resources"
     },
     {
       "kinds": "test",
@@ -1703,10 +1808,24 @@
     },
     {
       "kinds": "test",
+      "label": "//crates/muninn/neo4j:bolt",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "bolt"
+    },
+    {
+      "kinds": "test",
       "label": "//crates/muninn/neo4j:cross_memory_edges",
       "manifest": "crates/muninn/neo4j/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
       "target": "cross_memory_edges"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/neo4j:durability_reconnect",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "durability_reconnect"
     },
     {
       "kinds": "test",
@@ -1738,6 +1857,13 @@
     },
     {
       "kinds": "test",
+      "label": "//crates/muninn/neo4j:local_operator",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "local_operator"
+    },
+    {
+      "kinds": "test",
       "label": "//crates/muninn/neo4j:long_term_isolation_deletion",
       "manifest": "crates/muninn/neo4j/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
@@ -1749,6 +1875,13 @@
       "manifest": "crates/muninn/neo4j/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
       "target": "long_term_lifecycle"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/neo4j:multi_tenant_isolation",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "multi_tenant_isolation"
     },
     {
       "kinds": "lib",
@@ -1784,6 +1917,13 @@
       "manifest": "crates/muninn/neo4j/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
       "target": "preference_filters"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/neo4j:preference_relationships",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "preference_relationships"
     },
     {
       "kinds": "test",
@@ -1826,6 +1966,27 @@
       "manifest": "crates/muninn/neo4j/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
       "target": "schema_vectors"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/observability:global_tracer_default",
+      "manifest": "crates/muninn/observability/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/observability#muninn-observability@0.0.1",
+      "target": "global_tracer_default"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/observability:global_tracer_replacement",
+      "manifest": "crates/muninn/observability/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/observability#muninn-observability@0.0.1",
+      "target": "global_tracer_replacement"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/muninn/observability:init_tracing_subscriber",
+      "manifest": "crates/muninn/observability/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/observability#muninn-observability@0.0.1",
+      "target": "init_tracing_subscriber"
     },
     {
       "kinds": "lib",

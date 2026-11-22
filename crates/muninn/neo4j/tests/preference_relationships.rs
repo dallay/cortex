@@ -47,7 +47,7 @@ impl DockerFixture {
         let env_body = format!(
             "NEO4J_AUTH=neo4j/{password}\n\
              NEO4J_dbms_security_auth__minimum__password__length=4\n\
-             NEO4J_db_transaction_timeout=10s\n\
+             NEO4J_db_transaction_timeout=5s\n\
              NEO4J_db_lock_acquisition_timeout=5s\n\
              NEO4J_db_transaction_monitor_check_interval=1s\n"
         );
