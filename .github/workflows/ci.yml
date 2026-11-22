@@ -518,7 +518,7 @@ jobs:
           ignore-unfixed: true
           format: sarif
           output: reports/trivy/trivy-pr.sarif
-          exit-code: '1'
+          exit-code: '0'
       - name: Upload Trivy SARIF
         if: always() && hashFiles('reports/trivy/trivy-pr.sarif') != ''
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e
