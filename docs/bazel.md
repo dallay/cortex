@@ -16,12 +16,9 @@ authoritative lockfile for Cargo workflows, `Cargo.Bazel.lock` is authoritative 
 enables non-default optional features (such as `wasmtime`) without altering the standard Cargo
 dependency graph. The generated `MODULE.bazel.lock` pins Bazel modules and extension resolution.
 
-The dashboard targets delegate dependency management to pnpm, so `node_modules` must exist before
-those targets run. They carry the `manual` tag, which keeps them out of `//...` wildcard expansion:
-
-```sh
-just dashboard-install
-```
+The dashboard is built hermetically by Bazel using Vite 7 (Rollup-based). Dependencies are
+resolved from `pnpm-lock.yaml` through `npm_translate_lock`, and the build runs in the Bazel
+sandbox. Dashboard tests (vitest, typecheck) are part of `//...` expansion with no `manual` tag.
 
 ## Commands
 
@@ -60,6 +57,10 @@ Cargo.
 
 ## Boundaries
 
+- Seatbelt tests on Huginn runtime are `local` and `exclusive`. They drop
+  Bazel's darwin-sandbox so `/usr/bin/sandbox-exec` can run, and they do not
+  overlap other tests. The rest of the suite may run in parallel; do not restore
+  `--local_test_jobs=1` (that flag serializes every local test).
 - No remote cache or remote execution is configured.
 - CI and release workflows still use their existing Cargo, pnpm, and Docker commands. The
   `Bazel (non-blocking)` workflow is advisory and never participates in the required checks.
@@ -68,6 +69,7 @@ Cargo.
   declaration inventory and the recorded test run; it does not establish feature, build-script,
   artifact, or platform parity.
 - Doc-tests are not modeled, because `rules_rust` has no doc-test support.
-- The dashboard targets are not hermetic: they run `pnpm` against the source tree.
+- The dashboard is hermetic: Vite 7 (Rollup-based) builds in the Bazel sandbox with
+  dependencies resolved from `pnpm-lock.yaml`. Local dev still uses pnpm.
 - Expand targets only after comparing features, build scripts, generated inputs, test inventory,
   runtime resources and platform support against the existing build.

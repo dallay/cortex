@@ -34,19 +34,8 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: node .github/scripts/ci-affected-crates.cjs
 
-      # Rook embeds the existing pnpm-built dashboard assets in its Rust binary.
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
-        if: steps.affected.outputs.mode != 'docs-only'
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        if: steps.affected.outputs.mode != 'docs-only'
-        with:
-          node-version: 26
-          cache: pnpm
-      - name: Build dashboard assets
-        if: steps.affected.outputs.mode != 'docs-only'
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm --filter @dallay/rook-dashboard run build
+      # The dashboard is now built hermetically by Bazel (Vite 7 + Rollup).
+      # No pnpm install or pnpm build step is needed.
 
       - uses: bazel-contrib/setup-bazel@e1614ab8b64f375e8e1d6885bc7d47f72e8bd0b1 # 0.19.2
         if: steps.affected.outputs.mode != 'docs-only'

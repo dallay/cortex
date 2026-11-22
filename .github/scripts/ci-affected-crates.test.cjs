@@ -94,7 +94,7 @@ describe('Bazel advisory workflow contract', () => {
   it('skips Bazel steps only when the classifier returns exactly docs-only', () => {
     const workflow = readFileSync(join(__dirname, '../workflows/bazel.yml'), 'utf8');
     const stepConditions = [...workflow.matchAll(/if: steps\.affected\.outputs\.mode != 'docs-only'/g)];
-    assert.equal(stepConditions.length, 9, 'all Bazel setup/check/test steps must retain the conservative condition');
+    assert.equal(stepConditions.length, 6, 'all Bazel setup/check/test steps must retain the conservative condition');
     assert.match(workflow, /BASE: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.event\.before \}\}/);
     assert.match(workflow, /HEAD: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/);
     assert.doesNotMatch(workflow, /continue-on-error:\s*true/);

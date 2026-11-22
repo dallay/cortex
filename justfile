@@ -12,14 +12,12 @@ bazel-build-core:
 bazel-test-core:
     bazel test //crates/huginn/core:all --lockfile_mode=error
 
-# Build every target modeled across the workspace; needs the dashboard dependencies installed with pnpm.
+# Build every target modeled across the workspace (including the dashboard, hermetically).
 bazel-build:
-    pnpm --filter @dallay/rook-dashboard run build
     bazel build //... --lockfile_mode=error
 
-# Run the full Bazel suite without cached results; needs the dashboard dependencies installed with pnpm.
+# Run the full Bazel suite without cached results (including dashboard tests, hermetically).
 bazel-test:
-    pnpm --filter @dallay/rook-dashboard run build
     bazel test //... --nocache_test_results --lockfile_mode=error --test_output=summary
 
 # === Colors ===

@@ -124,6 +124,8 @@ older than the version the tooling supports.
   does not export stays excluded and is reported.
 - A test target listed in `NO_SANDBOX_TARGETS` receives the `no-sandbox` tag when the sandbox would
   distort the behavior under test.
+- Huginn Seatbelt tests listed in `SEATBELT_TEST_TARGETS` are hand-tuned with `local = True` and
+  the `exclusive` tag. They must not be serialized through `--local_test_jobs=1`.
 
 ## Coverage state
 
