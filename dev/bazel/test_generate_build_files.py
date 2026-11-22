@@ -626,6 +626,38 @@ class GeneratorTests(unittest.TestCase):
         self.assertNotIn("label", entries[0])
         self.assertIn("experimental-wasm", entries[0]["exclusion"])
 
+    def test_rook_core_inventory_regeneration_preserves_reviewed_exclusions(self):
+        directory = "crates/domain/rook-core"
+        packages = [package(name="rook-core", directory=directory, targets=[
+            target("rook_core", ["lib"], f"/repo/{directory}/src/lib.rs"),
+            *[
+                target(name, ["test"], f"/repo/{directory}/tests/{name}.rs", crate_types=["bin"])
+                for name in ("probes", "provider_descriptor", "provider_kind")
+            ],
+        ])]
+        build_file = 'rust_test(\n    name = "provider_kind",\n)\n'
+        fixture = self.fixture(packages, {f"{directory}/BUILD.bazel": build_file})
+        metadata = fixture.root / "metadata.json"
+        metadata.write_text(json.dumps(fixture.metadata()))
+        inventory = fixture.root / "inventory.json"
+        args = ["--root", str(fixture.root), "--metadata", str(metadata), "--inventory", str(inventory)]
+
+        self.assertEqual(generator.main(args), 0)
+        first = inventory.read_text()
+        self.assertEqual(generator.main(args), 0)
+        self.assertEqual(inventory.read_text(), first)
+        self.assertEqual((fixture.root / directory / "BUILD.bazel").read_text(), build_file)
+
+        entries = {entry["target"]: entry for entry in json.loads(first)["entries"]}
+        reason = (
+            "The hand-tuned rook-core BUILD.bazel does not define this Cargo test target; "
+            "it remains excluded from Bazel until a reviewed BUILD rule is added."
+        )
+        for name in ("probes", "provider_descriptor"):
+            self.assertEqual(entries[name]["exclusion"], reason)
+            self.assertNotIn("label", entries[name])
+        self.assertEqual(entries["provider_kind"]["label"], f"//{directory}:provider_kind")
+
     def test_included_files_become_compile_data(self):
         packages = [package()]
         fixture = self.fixture(packages, {
