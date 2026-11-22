@@ -1,0 +1,303 @@
+# Muninn TCK and Differential Coverage Registry
+#
+# This file is the living coverage registry for Muninn's functional parity
+# with neo4j-labs/agent-memory. It is NOT a static inventory — each entry
+# requires execution evidence against the declared commit and fixture.
+#
+# Vocabulario: PASS, FAIL, BLOCKED, IMPLEMENTED_UNVERIFIED, APPROVED_DEVIATION, UNVERIFIABLE
+#
+# Last updated: 2026-11-20
+# Commit: c17ac76e306fbfa588916d411acac83e52d24fe5
+# TCK pin (normative): b6c72c36bb7486881b87053ee1610f2caf972fb6
+# TCK pin (historical): e60b410f1046dc21db50f9aba48e171dc8a9b5a1
+
+---
+metadata:
+  version: "1.0"
+  generated_at: "2026-11-20"
+  commit: "c17ac76e306fbfa588916d411acac83e52d24fe5"
+  tck_pin_normative: "b6c72c36bb7486881b87053ee1610f2caf972fb6"
+  tck_pin_historical: "e60b410f1046dc21db50f9aba48e171dc8a9b5a1"
+  oracle_pin: "9d45af5529ecb5f2fe352013468a11087f3163d4"
+  neo4j_version: "5.26.32"
+  rust_toolchain: "1.100"
+
+# =============================================================================
+# TCK Tiers
+# =============================================================================
+
+tiers:
+  bronze:
+    status: PASS
+    collected: 93
+    passed: 93
+    failed: 0
+    skipped: 0
+    evidence: "docs/muninn/README.md"
+    notes: "Verified against Muninn product. Adapter Bronze 93/93 does NOT demonstrate native Bronze."
+
+  silver:
+    status: IMPLEMENTED_UNVERIFIED
+    collected: 67
+    passed_adapter: 64
+    failed_adapter: 3
+    passed_product: null
+    evidence: "docs/muninn/reference-tck.md"
+    notes: "Adapter results only. LLM extractor determinista no reproduce estructuras esperadas. Product execution pending."
+
+  gold:
+    status: IMPLEMENTED_UNVERIFIED
+    collected: 18
+    passed_adapter: 9
+    failed_adapter: 6
+    skipped_adapter: 3
+    passed_product: null
+    evidence: "docs/muninn/reference-tck.md"
+    notes: "Adapter results only. Relationships between entities and selected-message clearing differ. Product execution pending."
+
+  platinum:
+    status: UNVERIFIABLE
+    collected: 11
+    skipped: 11
+    evidence: "docs/muninn/reference-tck.md"
+    notes: "Skips: PostgreSQL pgvector (5), NAMS/GenAI (4), framework integrations (2). Not passes."
+
+# =============================================================================
+# Native Delete Profile
+# =============================================================================
+
+native_delete:
+  status: FAIL
+  selected: 13
+  passed: 1
+  failed: 12
+  evidence: "docs/muninn/reference-tck.md"
+  notes: "delete_message does not remove node in these scenarios. Two consecutive WHERE clauses; method catches exception and returns False. Oracle not changed to conceal discrepancy."
+
+# =============================================================================
+# Differential Gaps (GM-01 through GM-12)
+# =============================================================================
+
+differentials:
+  gm01:
+    name: "Conversation lifecycle"
+    status: PASS
+    cases: 61
+    deviations:
+      - id: "GM01-DEV-001"
+        documented_in: "docs/muninn/gm01-deviations.md"
+      - id: "GM01-DEV-002"
+        documented_in: "docs/muninn/gm01-deviations.md"
+    evidence: "docs/muninn/gm01-acceptance.md"
+    notes: "Differential comparison pass, zero errors, with authorized deviations."
+
+  gm02:
+    name: "Extraction"
+    status: UNVERIFIABLE
+    evidence: null
+    notes: "No execution evidence available."
+
+  gm03:
+    name: "Resolution/deduplication"
+    status: UNVERIFIABLE
+    evidence: null
+    notes: "No execution evidence available."
+
+  gm04:
+    name: "Extraction"
+    status: UNVERIFIABLE
+    evidence: null
+    notes: "No execution evidence available."
+
+  gm05:
+    name: "Retrieval/context"
+    status: UNVERIFIABLE
+    evidence: null
+    notes: "No execution evidence available. GM-05 runner exists but no product receipt."
+
+  gm06:
+    name: "Enrichment"
+    status: UNVERIFIABLE
+    evidence: null
+    notes: "No execution evidence available."
+
+  gm07:
+    name: "Retrieval/context"
+    status: UNVERIFIABLE
+    evidence: null
+    notes: "No execution evidence available."
+
+  gm08:
+    name: "Execution memory"
+    status: PASS
+    evidence: "docs/muninn/h3-execution-memory.md"
+    notes: "T5 live checks passed: GM08 paired differential pass with zero field diffs, Silver29 passed, native execution target passed."
+
+  gm09:
+    name: "Buffering/consolidation"
+    status: UNVERIFIABLE
+    evidence: null
+    notes: "No execution evidence available."
+
+  gm10:
+    name: "Schema adoption"
+    status: UNVERIFIABLE
+    evidence: null
+    notes: "No execution evidence available."
+
+  gm11:
+    name: "Multi-owner"
+    status: UNVERIFIABLE
+    evidence: null
+    notes: "No execution evidence available."
+
+  gm12:
+    name: "MCP"
+    status: UNVERIFIABLE
+    evidence: null
+    notes: "No execution evidence available."
+
+# =============================================================================
+# Search and Embeddings
+# =============================================================================
+
+search:
+  exact:
+    status: PASS
+    capacity: 10000
+    client_budget_seconds: 5
+    evidence: "docs/muninn/README.md"
+    notes: "Capped at 10,000 candidates with explicit capacity error and 5-second client budget."
+
+  ann:
+    status: BLOCKED
+    evidence: "docs/muninn/retrieval-h5-ann-exact-blocker.md"
+    notes: "Scoping predicates not supported in Neo4j 5.26. Maintaining ANN out of scope rather than post-filtering globally."
+
+embeddings:
+  minilm:
+    status: PASS
+    dimensions: 384
+    consistency: "batch/single verified"
+    evidence: "docs/muninn/README.md"
+    notes: "Normalized 384-dimension vectors, batch/single consistency."
+
+  c1_provenance:
+    status: BLOCKED
+    evidence: "docs/muninn/README.md"
+    notes: "Deferred until integration. No protected main."
+
+# =============================================================================
+# MCP Discovery
+# =============================================================================
+
+mcp:
+  discovery:
+    core:
+      status: PASS
+      tools: 6
+      transports: ["stdio", "HTTP"]
+      evidence: "docs/muninn/reference-mcp.md"
+    extended_no_backend:
+      status: PASS
+      tools: 16
+      transports: ["stdio", "HTTP"]
+      evidence: "docs/muninn/reference-mcp.md"
+    extended_nams_offline:
+      status: PASS
+      tools: 20
+      transports: ["stdio", "HTTP"]
+      evidence: "docs/muninn/reference-mcp.md"
+  invocation:
+    status: UNVERIFIABLE
+    notes: "tools/call, real authentication, search, graph mutation, and LLMs remain pending."
+
+# =============================================================================
+# Schema and Migrations
+# =============================================================================
+
+schema:
+  v1_migrations:
+    status: PASS
+    evidence: "docs/muninn/README.md"
+    notes: "Validated adoption, single-writer coordination, and non-destructive retries on isolated Neo4j."
+  vectors:
+    status: PASS
+    test: "crates/muninn/neo4j/tests/schema_vectors.rs"
+    cases: 2
+    notes: "Verified 2026-11-20: vector_schema_is_idempotent_and_rejects_wrong_dimensions + concurrent_schema_setup_requires_equivalent_schema. Neo4j 5.26.32 community."
+  non_vector:
+    status: PASS
+    test: "crates/muninn/neo4j/tests/schema_non_vector.rs"
+    cases: 1
+    notes: "Verified 2026-11-20: clean scenario PASS. Added missing preference_write_lock constraint to expected list. Neo4j 5.26.32 community."
+
+# =============================================================================
+# Isolation and Security
+# =============================================================================
+
+isolation:
+  owner_namespace:
+    status: PASS
+    test: "crates/muninn/neo4j/tests/owner_namespace.rs"
+    cases: 3
+    notes: "Verified 2026-11-20: owner_namespace_lifecycle + guarded_mutation_rolls_back_on_conflict + operation_key_replays_and_rejects_conflicts. Neo4j 5.26.32 community."
+  long_term_isolation_deletion:
+    status: PASS
+    test: "crates/muninn/neo4j/tests/long_term_isolation_deletion.rs"
+    cases: 1
+    notes: "Verified 2026-11-20: long_term_user_isolation_and_entity_deletion_semantics. Neo4j 5.26.32 community."
+  reasoning_owner_scope:
+    status: PASS
+    test: "crates/muninn/neo4j/tests/reasoning_owner_scope.rs"
+    cases: 1
+    notes: "Verified 2026-11-20: reasoning_owner_scope_real_adapter. Requires MUNINN_REASONING_ISOLATED_TEST=1. Neo4j 5.26.32 community."
+  multi_owner_negative:
+    status: BLOCKED
+    notes: "No end-to-end multi-owner negative test evidence."
+
+# =============================================================================
+# Summary
+# =============================================================================
+
+bolt_targeted:
+  durability_reconnect:
+    status: PASS
+    capability: BOLT-01-03
+    evidence: ".agents/rpi/plan/tasks/muninn-bolt-durability-evidence/"
+    notes: "Integration test crates/muninn/neo4j/tests/durability_reconnect.rs against isolated Neo4j 5.26. Verifies persistence and full identity across ShortTerm, LongTerm, and Reasoning tiers upon total disconnect and reconnect."
+  owner_isolation:
+    status: PASS
+    capability: BOLT-03-03
+    evidence: ".agents/rpi/plan/tasks/muninn-bolt-isolation-evidence/"
+    notes: "Integration test crates/muninn/neo4j/tests/multi_tenant_isolation.rs against isolated Neo4j 5.26. Verifies zero cross-tenant leakage in reads/vector searches, safe rejection of cross-tenant mutations, and total integrity across ShortTerm, LongTerm, and Reasoning tiers."
+  fact_about:
+    status: PASS
+    capability: BOLT-07-07
+    evidence: ".agents/rpi/plan/tasks/muninn-bolt-fact-about-20261121/"
+    notes: "Focused verification on the recorded worktree diff: three bridge tests and one isolated Neo4j integration test. Does not certify the full TCK or concurrent deduplication."
+  preference_relationships:
+    status: PASS
+    capability: BOLT-07-05, BOLT-07-06
+    evidence: ".agents/rpi/plan/tasks/muninn-bolt-preference-evidence/"
+    notes: "Integration test crates/muninn/neo4j/tests/preference_relationships.rs against isolated Neo4j 5.26. Verifies BOLT-07-05 (ABOUT normative edge shape, direction, idempotency, missing entity rejection) and BOLT-07-06 (APPLIES_TO observable edge, co-existence with ABOUT, and filtered reading get_preferences_for / preferences_for_filtered)."
+
+# Counts of explicit status entries across the registry, not Bolt capabilities.
+summary:
+  total_pass: 18
+  total_fail: 1
+  total_blocked: 3
+  total_implemented_unverified: 2
+  total_unverifiable: 12
+  claim: |
+    Muninn reaches Bronze with product verification and GM-01 with authorized
+    deviations for experimental local use with Neo4j Community 5.26.32,
+    EXACT search, and MiniLM local inference. No parity with Silver, Gold,
+    Platinum, ANN, multi-owner, or hosted integrations is claimed.
+  next_steps:
+    - "Task 4: Complete multi-owner isolation evidence"
+    - "Task 5: Complete data lifecycle and resilience evidence"
+    - "Task 6: Resolve ANN and encoder acceptance"
+    - "Task 7: Execute TCK tiers against current commit"
+    - "Task 8: Verify MCP invocation and Huginn integration"
+    - "Task 9: Complete operational and security release checklist"

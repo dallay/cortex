@@ -31,6 +31,9 @@ class BuildContextTests(unittest.TestCase):
                 'apps/muninn/src/payload.json': '{"current":true}\n',
                 'crates/muninn/core/Cargo.toml': '[package]\nname="muninn-core"\n',
                 'crates/muninn/core/src/lib.rs': 'pub fn current() {}\n',
+                'crates/muninn/mcp/Cargo.toml': '[package]\nname="muninn-mcp"\n',
+                'crates/muninn/mcp/src/lib.rs': 'const REGISTRY: &str = include_str!("../registry/core.json");\n',
+                'crates/muninn/mcp/registry/core.json': '{"tools":[]}\n',
                 'third_party/candle-core/Cargo.toml': '[package]\nname="candle-core"\n',
                 '.agents/rpi/plan/tasks/muninn-h1-delivery/evidence/old.json': '{"historical":true}\n',
                 'target/debug/muninn': 'Mach-O must not enter the context',
@@ -43,7 +46,9 @@ class BuildContextTests(unittest.TestCase):
             hashes = runner.source_hashes(root)
 
             self.assertIn('apps/muninn/src/payload.json', hashes)
+            self.assertIn('crates/muninn/mcp/registry/core.json', hashes)
             self.assertEqual(hashes['apps/muninn/src/payload.json'],
+
                              hashlib.sha256(b'{"current":true}\n').hexdigest())
             self.assertIn('Cargo.lock', hashes)
             self.assertIn('rust-toolchain.toml', hashes)

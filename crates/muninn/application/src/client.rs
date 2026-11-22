@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use muninn_core::ports::{Embedder, LongTermStore, ReasoningStore, ShortTermStore};
 use muninn_core::query::CypherQuery;
+use muninn_core::{MemoryError, MemoryResult};
 
+use crate::local_operator::{LocalOperator, LocalOperatorView};
 use crate::long_term::LongTermMemory;
 use crate::reasoning::ReasoningMemory;
 use crate::short_term::ShortTermMemory;
@@ -30,6 +32,8 @@ pub struct MemoryClient {
     long_term: LongTermMemory,
     reasoning: ReasoningMemory,
     cypher_query: Option<Arc<dyn CypherQuery>>,
+    local_operator_owner: Option<String>,
+    local_operator_writes: bool,
 }
 
 impl MemoryClient {
@@ -70,6 +74,8 @@ impl MemoryClient {
             ),
             reasoning: ReasoningMemory::new(ports.reasoning, ports.embedder, options.multi_tenant),
             cypher_query: ports.cypher_query,
+            local_operator_owner: None,
+            local_operator_writes: writes,
         };
         let mut ingestion = ingestion;
         if writes {
@@ -101,6 +107,37 @@ impl MemoryClient {
     pub fn with_geocoding(mut self, service: Arc<crate::enrichment::GeocodingService>) -> Self {
         self.long_term = self.long_term.clone().with_geocoding(service);
         self
+    }
+
+    /// Enable the in-process operator for a fixed, authorized owner at the
+    /// trusted composition root. This does not grant writes to a read-only client.
+    pub fn with_local_operator(mut self, trusted_owner: &str) -> MemoryResult<Self> {
+        if self.local_operator_owner.is_some() {
+            return Err(MemoryError::invalid(
+                "local operator owner is already bound",
+            ));
+        }
+        if trusted_owner.trim().is_empty() {
+            return Err(MemoryError::invalid(
+                "local operator owner must not be blank",
+            ));
+        }
+        self.local_operator_owner = Some(trusted_owner.to_owned());
+        Ok(self)
+    }
+
+    /// Typed local operator access; disabled by default.
+    pub fn graph(&self) -> MemoryResult<LocalOperator<'_>> {
+        let owner = self
+            .local_operator_owner
+            .as_deref()
+            .ok_or_else(|| MemoryError::NotSupported("local operator is disabled".into()))?;
+        Ok(LocalOperator::new(self, owner, self.local_operator_writes))
+    }
+
+    /// Restricted view of the three local operator entry points.
+    pub const fn local_operator(&self) -> LocalOperatorView<'_> {
+        LocalOperatorView::new(self)
     }
 
     pub const fn short_term(&self) -> &ShortTermMemory {

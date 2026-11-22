@@ -37,3 +37,21 @@ rust_test(
     deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/db-migration:db_migration", ":audit_sqlite"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
+
+rust_test(
+    name = "audit_record",
+    crate_name = "audit_record",
+    srcs = ["tests/audit_record.rs"],
+    edition = crate_edition(),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/db-migration:db_migration", ":audit_sqlite"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "quota_row_mapping",
+    crate_name = "quota_row_mapping",
+    srcs = ["tests/quota_row_mapping.rs"],
+    edition = crate_edition(),
+    deps = ["//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/db-migration:db_migration", ":audit_sqlite"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)

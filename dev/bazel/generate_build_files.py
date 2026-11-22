@@ -63,6 +63,14 @@ DEFAULT_EXCLUDED_PREFIXES: tuple[str, ...] = ()
 # Cargo targets that cannot be modeled as Bazel targets. Each entry records a
 # precise, reviewed reason; nothing is ever dropped silently.
 TARGET_EXCLUSIONS: dict[tuple[str, str], str] = {
+    ("crates/domain/rook-core", "probes"): (
+        "The hand-tuned rook-core BUILD.bazel does not define this Cargo test target; "
+        "it remains excluded from Bazel until a reviewed BUILD rule is added."
+    ),
+    ("crates/domain/rook-core", "provider_descriptor"): (
+        "The hand-tuned rook-core BUILD.bazel does not define this Cargo test target; "
+        "it remains excluded from Bazel until a reviewed BUILD rule is added."
+    ),
     ("crates/muninn/c1-exporter", "export_minilm_c1"): (
         "The binary requires the non-default `cpu-f32` feature whose optional "
         "candle-core/candle-nn/candle-transformers/safetensors/tokenizers "

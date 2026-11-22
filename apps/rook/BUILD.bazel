@@ -97,6 +97,16 @@ rust_test(
 )
 
 rust_test(
+    name = "bootstrap_banner",
+    crate_name = "bootstrap_banner",
+    srcs = ["tests/bootstrap_banner.rs"],
+    compile_data = ["//apps/rook/dashboard:dist"],
+    edition = crate_edition(),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/alias-sqlite:alias_sqlite", "//crates/infrastructure/audit-sqlite:audit_sqlite", "//crates/infrastructure/auth-sqlite:auth_sqlite", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/combo-sqlite:combo_sqlite", "//crates/infrastructure/db-migration:db_migration", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/observability:observability", "//crates/infrastructure/provider-sqlite:provider_sqlite", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-gemini:providers_gemini", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/infrastructure/transport-axum:transport_axum", "//crates/test-support:cortex_test_support", ":rook"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
     name = "cache_e2e",
     crate_name = "cache_e2e",
     srcs = ["tests/cache_e2e.rs"],
@@ -140,6 +150,16 @@ rust_test(
     name = "di_tests",
     crate_name = "di_tests",
     srcs = ["tests/di_tests.rs"],
+    compile_data = ["//apps/rook/dashboard:dist"],
+    edition = crate_edition(),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/alias-sqlite:alias_sqlite", "//crates/infrastructure/audit-sqlite:audit_sqlite", "//crates/infrastructure/auth-sqlite:auth_sqlite", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/combo-sqlite:combo_sqlite", "//crates/infrastructure/db-migration:db_migration", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/observability:observability", "//crates/infrastructure/provider-sqlite:provider_sqlite", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-gemini:providers_gemini", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/infrastructure/transport-axum:transport_axum", "//crates/test-support:cortex_test_support", ":rook"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "dotenv_isolation",
+    crate_name = "dotenv_isolation",
+    srcs = ["tests/dotenv_isolation.rs"],
     compile_data = ["//apps/rook/dashboard:dist"],
     edition = crate_edition(),
     deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/alias-sqlite:alias_sqlite", "//crates/infrastructure/audit-sqlite:audit_sqlite", "//crates/infrastructure/auth-sqlite:auth_sqlite", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/combo-sqlite:combo_sqlite", "//crates/infrastructure/db-migration:db_migration", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/observability:observability", "//crates/infrastructure/provider-sqlite:provider_sqlite", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-gemini:providers_gemini", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/infrastructure/transport-axum:transport_axum", "//crates/test-support:cortex_test_support", ":rook"] + all_crate_deps(normal = True, normal_dev = True),

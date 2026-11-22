@@ -666,6 +666,28 @@ pub trait LongTermStore: Send + Sync {
     ) -> MemoryResult<Vec<Scored<Fact>>>;
 
     async fn facts_by_subject(&self, subject: &str, limit: i64) -> MemoryResult<Vec<Fact>>;
+
+    /// Create the fact and all `(:Fact)-[:ABOUT]->(:Entity)` edges atomically.
+    async fn create_fact_with_about(&self, fact: &Fact, about: &[Uuid]) -> MemoryResult<Fact> {
+        if !about.is_empty() {
+            return Err(MemoryError::NotSupported("atomic fact ABOUT".into()));
+        }
+        self.create_fact(fact).await
+    }
+
+    /// Update a duplicate and merge its requested edges in the same write.
+    async fn update_fact_with_about(
+        &self,
+        id: Uuid,
+        confidence: f64,
+        object: &str,
+        about: &[Uuid],
+    ) -> MemoryResult<()> {
+        if !about.is_empty() {
+            return Err(MemoryError::NotSupported("atomic fact ABOUT".into()));
+        }
+        self.update_fact_confidence(id, confidence, object).await
+    }
 }
 
 /// Persistence port for reasoning (trace, step, tool-call and hosted

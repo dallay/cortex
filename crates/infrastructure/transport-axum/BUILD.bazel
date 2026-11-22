@@ -296,6 +296,15 @@ rust_test(
 )
 
 rust_test(
+    name = "usage_query_validation",
+    crate_name = "usage_query_validation",
+    srcs = ["tests/usage_query_validation.rs"],
+    edition = crate_edition(),
+    deps = ["//crates/application/rook-usecases:rook_usecases", "//crates/domain/rook-core:rook_core", "//crates/domain/shared-kernel:shared_kernel", "//crates/infrastructure/cache-memory:cache_memory", "//crates/infrastructure/encryption-inmemory:encryption_inmemory", "//crates/infrastructure/models-catalog:models_catalog", "//crates/infrastructure/providers-anthropic:providers_anthropic", "//crates/infrastructure/providers-ollama:providers_ollama", "//crates/infrastructure/providers-openai:providers_openai", "//crates/test-support:cortex_test_support", ":transport_axum"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
     name = "usage_routes",
     crate_name = "usage_routes",
     srcs = ["tests/usage_routes.rs"],

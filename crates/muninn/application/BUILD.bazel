@@ -30,6 +30,24 @@ rust_test(
 )
 
 rust_test(
+    name = "conversation_summary",
+    crate_name = "conversation_summary",
+    srcs = ["tests/conversation_summary.rs"],
+    edition = crate_edition(),
+    deps = ["//crates/muninn/core:muninn_core", ":muninn_application"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "entity_resolution",
+    crate_name = "entity_resolution",
+    srcs = ["tests/entity_resolution.rs"],
+    edition = crate_edition(),
+    deps = ["//crates/muninn/core:muninn_core", ":muninn_application"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
     name = "reasoning_recorder",
     crate_name = "reasoning_recorder",
     srcs = ["tests/reasoning_recorder.rs"],

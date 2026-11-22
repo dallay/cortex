@@ -246,6 +246,7 @@ async fn add_fact(state: &BridgeState, args: &Args) -> BridgeResult {
         confidence: args.opt_f64("confidence")?.unwrap_or(1.0),
         valid_from: args.opt_datetime("valid_from")?,
         valid_until: args.opt_datetime("valid_until")?,
+        about_entities: args.uuid_list("about_entities")?,
         ..muninn_application::AddFactOptions::default()
     };
     let fact = state

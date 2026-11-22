@@ -17,6 +17,7 @@ uuid.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 muninn-application = { path = "../application" }
 
 [lints]

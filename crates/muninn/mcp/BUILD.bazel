@@ -76,6 +76,15 @@ rust_test(
 )
 
 rust_test(
+    name = "prompts",
+    crate_name = "prompts",
+    srcs = ["tests/prompts.rs"],
+    edition = crate_edition(),
+    deps = [":muninn_mcp"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
     name = "protocol",
     crate_name = "protocol",
     srcs = ["tests/common/mod.rs", "tests/protocol.rs"],
@@ -89,6 +98,24 @@ rust_test(
     crate_name = "registry",
     srcs = ["tests/common/mod.rs", "tests/registry.rs"],
     compile_data = ["registry/core.json", "registry/extended-platinum.json", "registry/extended.json"],
+    edition = crate_edition(),
+    deps = [":muninn_mcp"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "requests",
+    crate_name = "requests",
+    srcs = ["tests/common/mod.rs", "tests/requests.rs"],
+    edition = crate_edition(),
+    deps = [":muninn_mcp"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "resources",
+    crate_name = "resources",
+    srcs = ["tests/resources.rs"],
     edition = crate_edition(),
     deps = [":muninn_mcp"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),

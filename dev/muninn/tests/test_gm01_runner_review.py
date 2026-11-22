@@ -59,8 +59,8 @@ class ReviewTests(unittest.TestCase):
             if command[:3] == ['docker', 'image', 'inspect']:
                 if command[-1] == runner.NEO4J_IMAGE:
                     return SimpleNamespace(returncode=neo4j_inspect_returncode,
-                                           stdout=neo4j_inspect_output)
-                return SimpleNamespace(returncode=0, stdout=image_inspect_output)
+                                           stdout=neo4j_inspect_output, stderr='')
+                return SimpleNamespace(returncode=0, stdout=image_inspect_output, stderr='')
             compose_path = Path(command[command.index('-f') + 1])
             compose_text = compose_path.read_text()
             for secret_path in re.findall(r'    file: "([^"]+)"', compose_text):
@@ -72,7 +72,11 @@ class ReviewTests(unittest.TestCase):
                 )
             stage = next((name for name in ('config', 'build', 'up', 'down')
                           if name in command), None)
+            if fail_stage == f'timeout-{stage}':
+                options['stdout'].write(b'partial output')
+                raise runner.subprocess.TimeoutExpired(command, 3600)
             if stage == 'up':
+                self.evidence_at_up = tuple(path.name for path in evidence.iterdir())
                 manifest = runner.empty_manifest()
                 manifest.update(status='captured', comparison='pass', capture_marker='preserve')
                 runner.save(evidence / 'manifest.json', manifest)
@@ -80,8 +84,8 @@ class ReviewTests(unittest.TestCase):
                     or isinstance(fail_stage, (tuple, list, set)) and stage in fail_stage):
                 if isinstance(fail_stage, (tuple, list, set)) and stage == 'down':
                     raise ValueError('cleanup secret-marker')
-                return SimpleNamespace(returncode=1)
-            return SimpleNamespace(returncode=0)
+                return SimpleNamespace(returncode=1, stdout='', stderr='')
+            return SimpleNamespace(returncode=0, stdout='', stderr='')
 
         with patch.object(runner, 'prepare_reference', return_value=Path('/verified/src')), \
              patch.object(runner, 'stage_build_context', side_effect=lambda *args: context), \
@@ -128,10 +132,24 @@ class ReviewTests(unittest.TestCase):
             self.assertIn('--pull', commands[4])
             self.assertEqual(commands[4][commands[4].index('--pull') + 1], 'never')
             manifest = json.loads((evidence / 'manifest.json').read_text())
+            self.assertEqual(manifest['diagnostic_logs'], ['capture.log'])
             self.assertEqual(manifest['neo4j_image'], {
                 'reference': runner.NEO4J_IMAGE,
                 'id': self.NEO4J_IMAGE_ID,
             })
+
+    def test_timeouts_publish_partial_log_before_scoped_cleanup(self):
+        for stage, log in [('up', 'capture.log'), ('build', 'build.log')]:
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                with self.assertRaises(RuntimeError):
+                    self._run_host_with_mock_compose(root, fail_stage=f'timeout-{stage}')
+                evidence = root / 'evidence'
+                self.assertEqual((evidence / log).read_bytes(), b'partial output')
+                manifest = json.loads((evidence / 'manifest.json').read_text())
+                self.assertEqual(manifest.get('orchestration_error_type', manifest.get('error_type')), 'TimeoutExpired')
+                self.assertEqual(manifest['diagnostic_logs'], [log])
+                self.assertIn('down', self.last_commands[-1])
 
     def test_missing_or_malformed_neo4j_id_blocks_before_build_and_up(self):
         cases = (
@@ -284,6 +302,13 @@ class ReviewTests(unittest.TestCase):
                              ['down', '--volumes', '--remove-orphans'])
             self.assertNotIn('cleanup secret-marker', json.dumps(manifest))
             self.assertNotIn('Limpieza Compose fallida', json.dumps(manifest))
+
+    def test_compose_diagnostic_logs_do_not_pollute_container_evidence_mount(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._run_host_with_mock_compose(root)
+            self.assertNotIn('build.log', self.evidence_at_up)
+            self.assertNotIn('capture.log', self.evidence_at_up)
 
     def test_up_failure_blocks_and_preserves_capture_and_inspected_image(self):
         with tempfile.TemporaryDirectory() as temporary:

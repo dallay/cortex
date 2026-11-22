@@ -5,6 +5,7 @@ pub mod config;
 pub mod dashboard;
 pub mod di;
 pub mod server;
+pub mod startup;
 pub mod usage_retention;
 
 // Public DI surface

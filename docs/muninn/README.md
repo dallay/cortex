@@ -26,6 +26,7 @@ policy, or acceptance gates.
 - [TCK baseline and adapter mediation](reference-tck.md).
 - [MCP discovery by profile and transport](reference-mcp.md).
 - [API by backend and artifact references](reference-api-artifacts.md).
+- [Opt-in local Rust operator access](local-operator.md).
 - [First Rust Bronze and verified persistence](../../.agents/rpi/plan/tasks/muninn-h1-delivery/rust-spike.md).
 - [Source attribution and licenses](NOTICE.md).
 

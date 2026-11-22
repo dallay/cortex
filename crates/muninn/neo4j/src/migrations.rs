@@ -7,8 +7,11 @@ pub const SCHEMA_VERSION: i64 = 2;
 
 pub fn validate_marker(marker: &Value) -> MemoryResult<()> {
     let version = marker.get("version").and_then(Value::as_i64);
+    let state = marker.get("state").and_then(Value::as_str);
+    // Accept 'ready' (normal) or 'migration_in_progress' (stale lock from a
+    // crashed initializer — the new holder may take over and complete DDL).
     if !matches!(version, Some(0..=SCHEMA_VERSION))
-        || marker.get("state").and_then(Value::as_str) != Some("ready")
+        || !matches!(state, Some("ready") | Some("migration_in_progress"))
     {
         return Err(MemoryError::storage(
             "incompatible Muninn schema version or migration state; restore a compatible backup or use a compatible binary; no automatic repair was performed",
@@ -39,6 +42,10 @@ mod tests {
     fn accepts_initial_and_current_versions() {
         for version in [0, 1, 2] {
             assert!(validate_marker(&json!({"version": version, "state": "ready"})).is_ok());
+            assert!(validate_marker(
+                &json!({"version": version, "state": "migration_in_progress"})
+            )
+            .is_ok());
         }
     }
 

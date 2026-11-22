@@ -1921,6 +1921,7 @@ type SameAsRecord = (Uuid, Uuid, f64, String, String);
 #[derive(Default)]
 struct RecordingLongTerm {
     fact: Mutex<Option<Fact>>,
+    fact_about: Mutex<Vec<Uuid>>,
     preference: Mutex<Option<Preference>>,
     applies_to: Mutex<Vec<(Uuid, Uuid)>>,
     about: Mutex<Vec<(Uuid, Uuid)>>,
@@ -2534,6 +2535,10 @@ impl LongTermStore for RecordingLongTerm {
         *self.fact.lock().unwrap() = Some(fact.clone());
         Ok(fact.clone())
     }
+    async fn create_fact_with_about(&self, fact: &Fact, about: &[Uuid]) -> MemoryResult<Fact> {
+        *self.fact_about.lock().unwrap() = about.to_vec();
+        self.create_fact(fact).await
+    }
     async fn find_duplicate_fact(
         &self,
         _: &[f64],
@@ -2619,6 +2624,37 @@ async fn add_fact_forwards_supplied_confidence_and_validity() {
     assert_eq!(fact["confidence"], 0.9);
     assert_eq!(fact["valid_from"], "2026-02-01T00:00:00+00:00");
     assert_eq!(fact["valid_until"], "2026-06-01T00:00:00+00:00");
+}
+
+#[tokio::test]
+async fn add_fact_forwards_about_entities() {
+    let store = Arc::new(RecordingLongTerm::default());
+    let targets = [Uuid::new_v4(), Uuid::new_v4()];
+    let body = serde_json::json!({
+        "subject": "ana", "predicate": "vive_en", "obj": "Madrid",
+        "about_entities": targets,
+    });
+    let status = post(
+        state_with_long_term(store.clone()),
+        "add_fact",
+        &body.to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(*store.fact_about.lock().unwrap(), targets);
+}
+
+#[tokio::test]
+async fn add_fact_validates_about_entities_before_writing() {
+    let store = Arc::new(RecordingLongTerm::default());
+    let status = post(
+        state_with_long_term(store.clone()),
+        "add_fact",
+        r#"{"subject":"ana","predicate":"vive_en","obj":"Madrid","about_entities":["not-a-uuid"]}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(store.fact.lock().unwrap().is_none());
 }
 
 #[tokio::test]
