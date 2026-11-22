@@ -1,5 +1,28 @@
 //! Requires a NEW, empty, disposable fixture. Never target application data.
 use muninn_neo4j::{Neo4jClient, Neo4jConfig, SchemaManager};
+use std::time::Duration;
+
+async fn wait_for_blocked_query(client: &Neo4jClient, fragment: &str) {
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let rows = client
+                .execute(
+                    "SHOW TRANSACTIONS YIELD currentQuery, status \
+                     WHERE currentQuery CONTAINS $fragment AND status STARTS WITH 'Blocked' \
+                     RETURN currentQuery",
+                    vec![("fragment", fragment.into())],
+                )
+                .await
+                .unwrap();
+            if !rows.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("did not observe a blocked query containing {fragment}"));
+}
 
 #[tokio::test]
 #[ignore = "requires an explicitly authorized empty disposable Neo4j fixture"]
@@ -24,12 +47,85 @@ async fn schema_migration_contract() {
         0,
         "fixture must be empty"
     );
-    let bootstrap_other = Neo4jClient::connect(&config).await.unwrap();
-    let initial_a = SchemaManager::new(&client, 384);
-    let initial_b = SchemaManager::new(&bootstrap_other, 384);
-    let (a, b) = tokio::join!(initial_a.setup_all(), initial_b.setup_all());
-    a.unwrap();
-    b.unwrap();
+    client
+        .execute(
+            "CREATE CONSTRAINT muninn_schema_id FOR (s:MuninnSchema) REQUIRE s.id IS UNIQUE",
+            vec![],
+        )
+        .await
+        .unwrap();
+    client
+        .execute(
+            "CREATE (:MuninnSchema {id: 'product', version: 3, state: 'ready', revision: 0})",
+            vec![],
+        )
+        .await
+        .unwrap();
+    async fn schema_names(client: &Neo4jClient) -> Vec<String> {
+        let mut names = Vec::new();
+        for query in ["SHOW INDEXES YIELD name", "SHOW CONSTRAINTS YIELD name"] {
+            names.extend(
+                client
+                    .execute(query, vec![])
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .map(|row| row.get::<String>("name").unwrap()),
+            );
+        }
+        names.sort_unstable();
+        names
+    }
+
+    let before = schema_names(&client).await;
+    let schema = SchemaManager::new(&client, 384);
+    let error = schema.setup_all().await.unwrap_err().to_string();
+    assert!(
+        error.contains("incompatible Muninn schema version"),
+        "{error}"
+    );
+    assert_eq!(schema_names(&client).await, before);
+    client
+        .execute("MATCH (s:MuninnSchema) SET s.version = 0", vec![])
+        .await
+        .unwrap();
+
+    // Lock a product label with an uncommitted schema transaction
+    // to pause the first manager inside DDL.
+    let graph = neo4rs::Graph::new(&config.uri, &config.username, &config.password)
+        .await
+        .unwrap();
+    let mut blocker = graph.start_txn().await.unwrap();
+    blocker
+        .run(neo4rs::query(
+            "CREATE RANGE INDEX schema_gate_fixture FOR (n:ReasoningStep) ON (n.fixture)",
+        ))
+        .await
+        .unwrap();
+    let observer = Neo4jClient::connect(&config).await.unwrap();
+    let competitor_client = Neo4jClient::connect(&config).await.unwrap();
+    let competitor = SchemaManager::new(&competitor_client, 385);
+    let (winner, (loser, ())) = tokio::join!(schema.setup_all(), async {
+        wait_for_blocked_query(&observer, "CREATE CONSTRAINT reasoning_step_id").await;
+        let rows = observer
+            .execute("MATCH (s:MuninnSchema) RETURN s.version AS version", vec![])
+            .await
+            .unwrap();
+        assert_eq!(
+            rows[0].get::<i64>("version").unwrap(),
+            0,
+            "DDL is unfinished"
+        );
+        tokio::join!(competitor.setup_all(), async {
+            // The competing manager must wait before running product DDL.
+            wait_for_blocked_query(&observer, "MuninnSchema").await;
+            blocker.rollback().await.unwrap();
+        })
+    });
+    winner.unwrap();
+    let error = loser.unwrap_err().to_string();
+    assert!(error.contains("vector.dimensions"), "{error}");
+    schema.validate_vector_index_dimensions(384).await.unwrap();
     let rows = client
         .execute(
             "MATCH (s:MuninnSchema {id: 'product'}) RETURN s.version AS version, s.state AS state",
@@ -62,7 +158,7 @@ async fn schema_migration_contract() {
         )
         .await
         .unwrap();
-    assert_eq!(rows[0].get::<i64>("revision").unwrap(), 4);
+    assert_eq!(rows[0].get::<i64>("revision").unwrap(), 3);
 
     // A future or incomplete marker must reject before filling missing DDL.
     client
