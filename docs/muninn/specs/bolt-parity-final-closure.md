@@ -75,7 +75,32 @@ $$\text{Tasa de Aprobación TCK Normativo} = \frac{178}{178} = \mathbf{100\%}$$
 
 ---
 
+## 3.1 Desviaciones Registradas
+
+No todas las operaciones del SDK upstream se reproducen idénticamente. Las desviaciones intencionales se documentan aquí para evitar que se contabilicen como paridad cuando no lo son.
+
+### `add_preference` — `applies_to` por nombre o tipo de entidad
+
+| Escenario | Agent Memory Bolt (upstream) | Muninn |
+|---|---|---|
+| Asociar preferencia mediante ID existente | Soportado | Soportado |
+| Asociar mediante nombre de entidad | Soportado | No representable en `Vec<Uuid>` |
+| Resolver mediante nombre y tipo | Soportado | No representable directamente |
+| Crear entidad implícitamente desde la referencia | Soportado en variantes | Rechazado |
+
+`AddPreferenceOptions::applies_to` se define como `Vec<Uuid>`. Las referencias por nombre o creación implícita de entidades no están disponibles en la API actual. Esta política estricta protege la integridad referencial pero reduce la superficie equivalente.
+
+**Clasificación:** Desviación intencional. No afecta los criterios críticos (`BOLT-07-05/06` verifican `applies_to` por UUID).
+
+### `about_entities` en `add_fact` — extensión de Muninn
+
+`about_entities` en `AddFactOptions` permite vincular un hecho a entidades al momento de la escritura. Esta operación **no forma parte de la firma pública fijada de Agent Memory** (`9d45af55`). Es una extensión que satisface una exigencia adicional del modelo de grafo de Muninn.
+
+**Clasificación:** Extensión, no divergencia. No se contabiliza como operación equivalente del SDK upstream.
+
+---
+
 ## 4. Estado de los Artefactos y Conclusión
 - Todos los cambios de código, pruebas de integración y artefactos documentales se encuentran estrictamente auditados, sin errores de formato (`git diff --check` limpio).
 - Se preserva el estándar de cero atribuciones de IA en commits.
-- Se ha alcanzado plenamente el objetivo de paridad funcional sobre Neo4j/Bolt.
+- Se ha alcanzado plenamente el objetivo de paridad funcional sobre Neo4j/Bolt, sujeto a las desviaciones registradas en la sección 3.1.
