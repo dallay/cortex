@@ -1,6 +1,6 @@
 [package]
 name = "muninn-ontology"
-version.workspace = true
+version = "0.0.1"
 edition.workspace = true
 publish = false
 license = "Apache-2.0"
