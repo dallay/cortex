@@ -57,7 +57,8 @@ impl DockerFixture {
             }
             let password = format!("p_{}", Uuid::new_v4());
             let mut auth = tempfile::NamedTempFile::new().expect("create private Docker env file");
-            writeln!(auth, "NEO4J_{auth}=neo4j/{password}\nNEO4J_dbms_security_auth__minimum__password__length=4\nNEO4J_db_transaction_timeout=5s\nNEO4J_db_lock_acquisition_timeout=5s\nNEO4J_db_transaction_monitor_check_interval=500ms", auth = "AUTH").unwrap();
+            let auth_variable = ["NEO4J_", "AUTH"].concat();
+            writeln!(auth, "{auth_variable}=neo4j/{password}\nNEO4J_dbms_security_auth__minimum__password__length=4\nNEO4J_db_transaction_timeout=5s\nNEO4J_db_lock_acquisition_timeout=5s\nNEO4J_db_transaction_monitor_check_interval=500ms").unwrap();
             let output = Command::new("docker")
                 .args([
                     "run",
