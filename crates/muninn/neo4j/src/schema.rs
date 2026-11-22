@@ -110,19 +110,31 @@ impl<'a> SchemaManager<'a> {
             .start_txn()
             .await
             .map_err(|e| MemoryError::storage(e.to_string()))?;
-        match self.setup_under_lock(&mut transaction).await {
-            Ok(()) => transaction
-                .commit()
-                .await
-                .map_err(|e| MemoryError::storage(e.to_string())),
-            Err(error) => {
-                let _ = transaction.rollback().await;
-                Err(error)
-            }
-        }
+        // Acquire the lock and validate the marker within the transaction.
+        self.acquire_lock_and_validate(&mut transaction).await?;
+        // Mark migration in progress and commit quickly to avoid transaction
+        // timeout. The state flag serializes concurrent initializers even
+        // after the lock releases.
+        transaction.run(neo4rs::query(
+            "MATCH (s:MuninnSchema {id: 'product'}) SET s.version = $version, s.state = 'migration_in_progress'"
+        ).param("version", crate::migrations::SCHEMA_VERSION)).await.map_err(|e| MemoryError::storage(e.to_string()))?;
+        transaction
+            .commit()
+            .await
+            .map_err(|e| MemoryError::storage(e.to_string()))?;
+        // Create all schema objects outside the lock transaction. These are
+        // idempotent autocommit operations. The 'migration_in_progress' state
+        // prevents other processes from starting a concurrent initialization.
+        self.validate_non_vector_definitions(true).await?;
+        self.validate_existing_vector_dimensions().await?;
+        self.setup_objects().await?;
+        // Only mark 'ready' after all schema objects are created and validated.
+        self.run("MATCH (s:MuninnSchema {id: 'product'}) SET s.state = 'ready'")
+            .await?;
+        Ok(())
     }
 
-    async fn setup_under_lock(&self, transaction: &mut neo4rs::Txn) -> MemoryResult<()> {
+    async fn acquire_lock_and_validate(&self, transaction: &mut neo4rs::Txn) -> MemoryResult<()> {
         // Direct property dependency acquires the exclusive node write lock
         // BEFORE reading. All cooperating migrators retain it until commit.
         let mut stream = transaction.execute(neo4rs::query(
@@ -136,15 +148,7 @@ impl<'a> SchemaManager<'a> {
         let marker = to_json(&column(&row, "marker")?);
         crate::migrations::validate_marker(&marker)?;
         drop(stream);
-        // Product DDL uses a separate connection and does not touch the marker
-        // label. Retain its write lock until all DDL and validation finish.
-        self.validate_non_vector_definitions(true).await?;
-        self.validate_existing_vector_dimensions().await?;
-        self.setup_objects().await?;
-
-        transaction.run(neo4rs::query(
-            "MATCH (s:MuninnSchema {id: 'product'}) SET s.version = $version, s.state = 'ready'"
-        ).param("version", crate::migrations::SCHEMA_VERSION)).await.map_err(|e| MemoryError::storage(e.to_string()))
+        Ok(())
     }
 
     async fn setup_objects(&self) -> MemoryResult<()> {
