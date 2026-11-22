@@ -4,11 +4,11 @@
 import { startVitest } from "vitest/node";
 
 const vitest = await startVitest(undefined, ["run"], {
-  root: ".",
-  coverage: { enabled: false },
+	root: ".",
+	coverage: { enabled: false },
 });
 if (!vitest) {
-  process.exit(1);
+	process.exit(1);
 }
 const result = await vitest.exit();
 process.exit(result ? 1 : 0);
