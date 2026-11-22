@@ -49,7 +49,7 @@ impl DockerFixture {
              NEO4J_dbms_security_auth__minimum__password__length=4\n\
              NEO4J_db_transaction_timeout=5s\n\
              NEO4J_db_lock_acquisition_timeout=5s\n\
-             NEO4J_db_transaction_monitor_check_interval=1s\n"
+             NEO4J_db_transaction_monitor_check_interval=500ms\n"
         );
         std::fs::write(&env_file, env_body).expect("failed to write temporary auth env file");
 
