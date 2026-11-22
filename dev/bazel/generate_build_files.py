@@ -88,6 +88,17 @@ NO_SANDBOX_TARGETS: dict[tuple[str, str], str] = {
     ),
 }
 
+# Huginn Seatbelt tests apply /usr/bin/sandbox-exec. They cannot nest inside
+# Bazel's darwin-sandbox (`local = True`) and they share a tight host-control
+# budget, so they carry the `exclusive` tag instead of serializing every test
+# with `--local_test_jobs=1`. These packages are hand-tuned; the generator
+# does not emit the tag.
+SEATBELT_TEST_TARGETS: frozenset[tuple[str, str]] = frozenset({
+    ("crates/huginn/runtime", "approval_resource"),
+    ("crates/huginn/runtime", "coding_workflow"),
+    ("crates/huginn/runtime", "huginn_runtime_unit_test"),
+})
+
 INCLUDE_FILE_RE = re.compile(r"include_(?:str|bytes)!\s*\(\s*\"([^\"]+)\"")
 EMBED_MIGRATIONS_RE = re.compile(r"embed_migrations!\s*\(\s*\"([^\"]+)\"\"?")
 RUST_EMBED_FOLDER_RE = re.compile(r"#\[folder\s*=\s*\"([^\"]+)\"\]")

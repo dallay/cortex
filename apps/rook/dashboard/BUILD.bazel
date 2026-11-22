@@ -1,132 +1,134 @@
-load("@rules_shell//shell:sh_test.bzl", "sh_test")
-load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load("@aspect_rules_js//js:defs.bzl", "js_binary", "js_run_binary", "js_test")
+load("@npm//:defs.bzl", "npm_link_all_packages")
 
 package(default_visibility = ["//visibility:public"])
 
-# The Rust binary embeds the built dashboard through rust-embed, so the
-# compiled assets must be available as Bazel inputs.
-#
-# The dashboard build is non-hermetic: it executes Vite through the pnpm
-# toolchain installed in the source tree. Dashboard sources are not tracked;
-# rerun the build after source changes. The build command runs outside the sandbox.
-#
-# To build the dashboard before compiling Rook, run:
-#   bazel run //apps/rook/dashboard:build
-sh_binary(
-    name = "build",
-    srcs = ["bazel/build_dashboard.sh"],
+# Link all npm packages from pnpm-lock.yaml so they are available as Bazel targets.
+npm_link_all_packages(name = "node_modules")
+
+# Source files for the dashboard
+_DASHBOARD_SRCS = glob(
+    [
+        "src/**/*.ts",
+        "src/**/*.tsx",
+        "src/**/*.vue",
+        "src/**/*.css",
+        "src/**/*.json",
+    ],
+    allow_empty = True,
+)
+
+# Configuration files needed by Vite
+_DASHBOARD_CONFIG = [
+    "index.html",
+    "package.json",
+    "vite.config.ts",
+    "tsconfig.json",
+    "tsconfig.node.json",
+    "env.d.ts",
+]
+
+# Public assets copied to dist/
+_DASHBOARD_PUBLIC = glob(
+    ["public/**"],
+    allow_empty = True,
+)
+
+# All sources and config that Vite needs
+_DASHBOARD_ALL = _DASHBOARD_SRCS + _DASHBOARD_CONFIG + _DASHBOARD_PUBLIC + [
+    ":node_modules",
+    "vite_build_wrapper.mjs",
+]
+
+# ---------------------------------------------------------------------------
+# Vite build — hermetic with Vite 7 (Rollup-based)
+# ---------------------------------------------------------------------------
+
+# Wrapper binary for Vite build. Uses the programmatic API to avoid path
+# conflicts between npm_link_all_packages and js_binary entry points.
+js_binary(
+    name = "vite_bin",
+    entry_point = "vite_build_wrapper.mjs",
     data = [
-        "bazel/lib.sh",
+        ":node_modules/vite",
     ],
-    visibility = ["//apps/rook:__subpackages__"],
-    tags = [
-        "no-sandbox",
-        "non-hermetic",
-        "requires-node-modules",
-        "requires-pnpm",
-    ],
+    visibility = ["//visibility:public"],
 )
 
-# Filegroup that collects the built dashboard assets from the source tree.
-# The `build` target must be executed (or `pnpm --filter @dallay/rook-dashboard exec vite build`)
-# before this target can provide non-empty outputs.
-filegroup(
+# Hermetic Vite build: produces dist/ as a Bazel output.
+js_run_binary(
     name = "dist",
-    srcs = glob(
-        ["dist/**"],
-        allow_empty = True,
-    ),
+    srcs = _DASHBOARD_ALL,
+    args = ["build"],
+    chdir = package_name(),
+    out_dirs = ["dist"],
+    tool = ":vite_bin",
+    visibility = ["//visibility:public"],
 )
 
-# Bazel targets for the dashboard delegate dependency management and execution
-# to pnpm. The root pnpm-lock.yaml stays authoritative: no dashboard lockfile or
-# workspace file is created, and node_modules must be installed beforehand.
-#
-# These targets are not hermetic: they execute inside the source tree because the
-# dashboard toolchain (node_modules) is provided by pnpm, not by Bazel.
+# ---------------------------------------------------------------------------
+# Tests — hermetic, sandboxed, no manual tag
+# ---------------------------------------------------------------------------
 
-sh_test(
+# Vitest unit tests — wrapper avoids path conflicts with npm_link_all_packages
+js_test(
     name = "vitest",
-    srcs = ["bazel/vitest.sh"],
-    data = glob(
-        [
-            "bazel/lib.sh",
-            "package.json",
-            "src/**/*.ts",
-            "src/**/*.tsx",
-            "src/**/*.vue",
-            "src/**/*.json",
-            "vitest.config.ts",
-            "vite.config.ts",
-        ],
-        allow_empty = True,
-    ),
-    local = True,
-    tags = [
-        "manual",
-        "no-sandbox",
-        "non-hermetic",
-        "requires-node-modules",
-        "requires-pnpm",
+    args = ["run"],
+    data = _DASHBOARD_SRCS + _DASHBOARD_CONFIG + [
+        ":node_modules/vitest",
+        ":node_modules/vite",
+        ":node_modules/vue",
+        ":node_modules/jsdom",
+        ":node_modules/@vue/test-utils",
+        "vitest_wrapper.mjs",
     ],
+    entry_point = "vitest_wrapper.mjs",
 )
 
-sh_test(
+# TypeScript type checking with vue-tsc — wrapper avoids path conflicts
+js_test(
     name = "typecheck",
-    srcs = ["bazel/typecheck.sh"],
-    data = glob(
-        [
-            "bazel/lib.sh",
-            "package.json",
-            "src/**/*.ts",
-            "src/**/*.tsx",
-            "src/**/*.vue",
-            "tsconfig.json",
-            "tsconfig.node.json",
-            "env.d.ts",
-        ],
-        allow_empty = True,
-    ),
-    local = True,
-    tags = [
-        "manual",
-        "no-sandbox",
-        "non-hermetic",
-        "requires-node-modules",
-        "requires-pnpm",
+    args = ["--noEmit"],
+    data = _DASHBOARD_SRCS + [
+        "package.json",
+        "tsconfig.json",
+        "tsconfig.node.json",
+        "env.d.ts",
+        "vue_tsc_wrapper.mjs",
+        # Direct dependencies needed for type resolution
+        ":node_modules/vue-tsc",
+        ":node_modules/typescript",
+        ":node_modules/vue",
+        ":node_modules/vue-router",
+        ":node_modules/vue-i18n",
+        ":node_modules/@lucide/vue",
+        ":node_modules/@vueuse/core",
+        ":node_modules/pinia",
+        ":node_modules/vitest",
+        ":node_modules/@vue/test-utils",
+        ":node_modules/zod",
+        ":node_modules/vee-validate",
+        ":node_modules/@vee-validate/zod",
+        ":node_modules/@tanstack/vue-table",
+        ":node_modules/@iconify/vue",
+        ":node_modules/@internationalized/date",
+        ":node_modules/embla-carousel-vue",
+        ":node_modules/reka-ui",
+        ":node_modules/vaul-vue",
+        ":node_modules/vue-input-otp",
+        ":node_modules/vue-sonner",
+        ":node_modules/tailwind-merge",
+        ":node_modules/class-variance-authority",
+        ":node_modules/clsx",
+        ":node_modules/@iconify-json/simple-icons",
+        ":node_modules/vite",
     ],
-)
-
-sh_test(
-    name = "lint",
-    srcs = ["bazel/lint.sh"],
-    data = glob(
-        [
-            "bazel/lib.sh",
-            "biome.json",
-            "package.json",
-            "src/**/*.ts",
-            "src/**/*.tsx",
-            "src/**/*.vue",
-            "src/**/*.json",
-        ],
-        allow_empty = True,
-    ),
-    local = True,
-    tags = [
-        "manual",
-        "no-sandbox",
-        "non-hermetic",
-        "requires-node-modules",
-        "requires-pnpm",
-    ],
+    entry_point = "vue_tsc_wrapper.mjs",
 )
 
 test_suite(
     name = "test_suite",
-    tags = ["manual"],
     tests = [
-        ":lint",
         ":typecheck",
         ":vitest",
     ],

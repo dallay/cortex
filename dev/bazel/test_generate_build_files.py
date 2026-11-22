@@ -732,5 +732,40 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(identities, ["path+file://<workspace>/crates/other#0.0.1"])
 
 
+class LocalTestPolicyTests(unittest.TestCase):
+    """Seatbelt tests serialize only themselves; the rest of the suite may run in parallel."""
+
+    def test_bazelrc_does_not_serialize_every_local_test(self):
+        bazelrc = (generator.ROOT / ".bazelrc").read_text()
+        self.assertNotRegex(
+            bazelrc,
+            r"(?m)^test --local_test_jobs=1\s*$",
+            "local_test_jobs=1 serializes the whole suite under local execution",
+        )
+
+    def test_seatbelt_targets_are_exclusive_and_local(self):
+        build = (generator.ROOT / "crates/huginn/runtime/BUILD.bazel").read_text()
+        found = set()
+        for rule, body in generator.RULE_RE.findall(build):
+            if rule != "rust_test":
+                continue
+            name_match = generator.NAME_RE.search(body)
+            if name_match is None:
+                continue
+            name = name_match.group(1)
+            if ( "crates/huginn/runtime", name) not in generator.SEATBELT_TEST_TARGETS:
+                continue
+            found.add(name)
+            self.assertRegex(body, r"(?m)^    local = True,$", msg=name)
+            self.assertRegex(
+                body,
+                r'(?m)^    tags = \[.*"exclusive".*\],$',
+                msg=name,
+            )
+        expected = {name for directory, name in generator.SEATBELT_TEST_TARGETS
+                    if directory == "crates/huginn/runtime"}
+        self.assertEqual(found, expected)
+
+
 if __name__ == "__main__":
     unittest.main()

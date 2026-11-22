@@ -1,0 +1,6 @@
+"""Repository configuration for Cortex.
+
+Tells Bazel to ignore node_modules directories so they don't interfere with
+the hermetic npm_translate_lock resolution.
+"""
+ignore_directories(["/node_modules"])

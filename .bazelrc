@@ -7,11 +7,10 @@ build --repository_cache=~/.cache/cortex/bazel-repository
 
 test --test_output=errors
 
-# The Seatbelt-dependent Huginn tests give their host controls a 4 s budget.
-# Several local tests running at once starve that budget on many-core machines
-# and the suite fails intermittently. Only a handful of targets are local, so
-# serializing them keeps the whole suite stable at a negligible cost.
-test --local_test_jobs=1
+# Seatbelt tests (`exclusive` + `local = True` on the Huginn runtime targets
+# listed in SEATBELT_TEST_TARGETS) serialize only among themselves. Do not set
+# --local_test_jobs=1: without remote execution that flag serializes the whole
+# suite.
 
 # Import local-only overrides without tracking credentials or machine-specific paths.
 try-import %workspace%/.bazelrc.user

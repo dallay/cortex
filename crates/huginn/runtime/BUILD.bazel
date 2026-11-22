@@ -34,6 +34,7 @@ rust_test(
     # The unit tests cover the macOS Seatbelt shell sandbox, which cannot nest
     # inside Bazel's darwin-sandbox. See the note on :coding_workflow.
     local = True,
+    tags = ["exclusive"],
     # muninn-mcp is a dev-dependency used by src/mcp.rs under #[cfg(test)].
     # The dev-dependency alias resolves to a test-hooks target that this
     # crate does not publish, so the plain crate is wired in explicitly.
@@ -60,6 +61,7 @@ rust_test(
     # The test covers the macOS Seatbelt shell sandbox, which cannot nest
     # inside Bazel's darwin-sandbox. See the note on :coding_workflow.
     local = True,
+    tags = ["exclusive"],
     deps = [":huginn_runtime", '//crates/huginn/core:huginn_core'] + ['//crates/huginn/application:huginn_application', '//crates/huginn/guards:huginn_guards', '//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
@@ -75,8 +77,11 @@ rust_test(
     # ("sandbox-exec: sandbox_apply: Operation not permitted"), so the product
     # sandbox would silently never run and the assertions on the sandboxed
     # command would fail. "local" keeps the product sandbox under test and
-    # only drops Bazel's outer macOS sandbox for this target.
+    # only drops Bazel's outer macOS sandbox for this target. "exclusive"
+    # keeps these Seatbelt cases from overlapping each other or CPU-heavy
+    # local tests, without serializing `bazel test //...`.
     local = True,
+    tags = ["exclusive"],
     deps = [":huginn_runtime", '//crates/huginn/core:huginn_core'] + ['//crates/huginn/application:huginn_application', '//crates/huginn/guards:huginn_guards', '//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
