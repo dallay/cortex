@@ -13,136 +13,21 @@ use muninn_core::ports::{
     TraceRecord,
 };
 use muninn_neo4j::{
-    Neo4jClient, Neo4jConfig, Neo4jLongTermStore, Neo4jReasoningStore, Neo4jShortTermStore,
-    SchemaManager,
+    Neo4jClient, Neo4jLongTermStore, Neo4jReasoningStore, Neo4jShortTermStore, SchemaManager,
 };
 use serde_json::json;
-use std::process::{Command, Stdio};
 use std::time::Duration;
 use uuid::Uuid;
 
-struct DockerFixture {
-    container_id: Option<String>,
-    pub uri: String,
-    pub password: String,
-}
-
-impl DockerFixture {
-    fn start() -> Self {
-        // If external fixture is configured via environment, respect it.
-        if let Ok(uri) = std::env::var("MUNINN_FIXTURE_URI") {
-            let password = std::env::var("MUNINN_FIXTURE_PASSWORD").unwrap_or_default();
-            eprintln!("[BOLT-01-03] Using existing Neo4j fixture at {}", uri);
-            return Self {
-                container_id: None,
-                uri,
-                password,
-            };
-        }
-
-        let password = format!("p_{}", Uuid::new_v4().simple());
-        let env_file = std::env::temp_dir().join(format!("neo4j_auth_{}.env", Uuid::new_v4()));
-        let env_body = format!(
-            "NEO4J_AUTH=neo4j/{password}\n\
-             NEO4J_dbms_security_auth__minimum__password__length=4\n\
-             NEO4J_db_transaction_timeout=10s\n\
-             NEO4J_db_lock_acquisition_timeout=10s\n"
-        );
-        std::fs::write(&env_file, env_body).expect("failed to write temporary auth env file");
-
-        eprintln!("[BOLT-01-03] Spawning isolated neo4j:5.26-community container via loopback...");
-        let output = Command::new("docker")
-            .args([
-                "run",
-                "-d",
-                "--rm",
-                "--publish",
-                "127.0.0.1::7687",
-                "--env-file",
-                env_file.to_str().expect("valid temp env path"),
-                "neo4j:5.26-community",
-            ])
-            .output()
-            .expect("failed to spawn docker run for neo4j");
-
-        // Immediately delete temp auth file to protect credentials
-        let _ = std::fs::remove_file(&env_file);
-
-        assert!(
-            output.status.success(),
-            "docker run failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-
-        let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-        let port_output = Command::new("docker")
-            .args(["port", &container_id, "7687/tcp"])
-            .output()
-            .expect("failed to get docker port");
-
-        assert!(
-            port_output.status.success(),
-            "docker port failed: {}",
-            String::from_utf8_lossy(&port_output.stderr)
-        );
-
-        let port_str = String::from_utf8_lossy(&port_output.stdout);
-        let port = port_str
-            .trim()
-            .rsplit(':')
-            .next()
-            .expect("valid port output");
-        let uri = format!("bolt://127.0.0.1:{port}");
-        eprintln!(
-            "[BOLT-01-03] Container {} running at 127.0.0.1:{}",
-            container_id, port
-        );
-
-        Self {
-            container_id: Some(container_id),
-            uri,
-            password,
-        }
-    }
-}
-
-impl Drop for DockerFixture {
-    fn drop(&mut self) {
-        if let Some(ref container_id) = self.container_id {
-            eprintln!("[BOLT-01-03] Cleaning up container {}...", container_id);
-            let _ = Command::new("docker")
-                .args(["stop", "-t", "2", container_id])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-            eprintln!("[BOLT-01-03] Container cleanup complete.");
-        }
-    }
-}
-
-async fn wait_for_neo4j(config: &Neo4jConfig) -> Neo4jClient {
-    for attempt in 1..=60 {
-        if let Ok(client) = Neo4jClient::connect(config).await {
-            if client.execute("RETURN 1 AS n", vec![]).await.is_ok() {
-                eprintln!("[BOLT-01-03] Neo4j ready after attempt {}", attempt);
-                return client;
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-    panic!("Neo4j did not become ready in 30s");
-}
+#[path = "common/fixture.rs"]
+mod fixture;
+use fixture::DockerFixture;
 
 #[tokio::test]
 async fn test_bolt_01_03_durability_reconnect_across_three_tiers() {
     eprintln!("=== [START] BOLT-01-03 Durability Reconnect Integration Test ===");
-    let fixture = DockerFixture::start();
-    let config = Neo4jConfig {
-        uri: fixture.uri.clone(),
-        username: "neo4j".into(),
-        password: fixture.password.clone(),
-        ..Default::default()
+    let Some(fixture) = DockerFixture::start("MUNINN_FIXTURE_URI") else {
+        return;
     };
 
     let owner_str = "tenant-durability-test";
@@ -307,7 +192,7 @@ async fn test_bolt_01_03_durability_reconnect_across_three_tiers() {
     // Phase A: Connect, setup schema, write data
     eprintln!("[BOLT-01-03] --- Phase A: Initial Connection and Data Population ---");
     {
-        let client_a = wait_for_neo4j(&config).await;
+        let client_a = fixture.connect_fresh().await;
 
         // Verify initial empty state
         let empty_check = client_a
@@ -456,7 +341,7 @@ async fn test_bolt_01_03_durability_reconnect_across_three_tiers() {
     // Phase B: Reconnect with brand new Neo4jClient pointing to the exact same database
     eprintln!("[BOLT-01-03] --- Phase B: Reconnection and Full Verification ---");
     {
-        let client_b = Neo4jClient::connect(&config)
+        let client_b = Neo4jClient::connect(&fixture.config)
             .await
             .expect("reconnecting client_b failed");
         eprintln!("[BOLT-01-03] Fresh Neo4jClient connected successfully.");
@@ -507,6 +392,17 @@ async fn test_bolt_01_03_durability_reconnect_across_three_tiers() {
         // =====================================================================
         eprintln!("[BOLT-01-03] Verifying LongTerm tier via Neo4jLongTermStore...");
         // Entity 1
+        for id in [entity1_id, entity2_id, fact_id, pref_id] {
+            let rows = client_b
+                .execute(
+                    "MATCH (n {id:$id}) RETURN n.created_at IS NOT NULL AS persisted",
+                    vec![("id", id.to_string().into())],
+                )
+                .await
+                .unwrap();
+            assert_eq!(rows.len(), 1);
+            assert!(rows[0].get::<bool>("persisted").unwrap());
+        }
         let e1_opt = long_term_b
             .get_entity(entity1_id)
             .await
@@ -521,7 +417,6 @@ async fn test_bolt_01_03_durability_reconnect_across_three_tiers() {
         assert_eq!(e1.confidence, entity1.confidence);
         assert_eq!(e1.aliases, entity1.aliases);
         assert_eq!(e1.metadata.get("importance"), Some(&json!("high")));
-        assert!(e1.created_at <= Utc::now());
 
         // Entity 2
         let e2_opt = long_term_b
@@ -538,7 +433,6 @@ async fn test_bolt_01_03_durability_reconnect_across_three_tiers() {
         assert_eq!(e2.confidence, entity2.confidence);
         assert_eq!(e2.aliases, entity2.aliases);
         assert_eq!(e2.metadata.get("role"), Some(&json!("replica")));
-        assert!(e2.created_at <= Utc::now());
 
         // Relationship between Entity 1 and Entity 2
         let related = long_term_b
@@ -570,7 +464,6 @@ async fn test_bolt_01_03_durability_reconnect_across_three_tiers() {
         assert_eq!(facts[0].object, fact.object);
         assert_eq!(facts[0].confidence, fact.confidence);
         assert_eq!(facts[0].metadata.get("verified"), Some(&json!(true)));
-        assert!(facts[0].created_at <= Utc::now());
 
         // Preference
         let prefs = long_term_b
@@ -584,7 +477,6 @@ async fn test_bolt_01_03_durability_reconnect_across_three_tiers() {
         assert_eq!(prefs[0].context, preference.context);
         assert_eq!(prefs[0].confidence, preference.confidence);
         assert_eq!(prefs[0].metadata.get("scope"), Some(&json!("monitoring")));
-        assert!(prefs[0].created_at <= Utc::now());
 
         // =====================================================================
         // 3. Verify Reasoning tier via Store APIs
@@ -660,7 +552,7 @@ async fn test_bolt_01_03_durability_reconnect_across_three_tiers() {
         let related_to_rows = client_b
             .execute(
                 "MATCH (e1:Entity {id: $e1})-[r:RELATED_TO]->(e2:Entity {id: $e2}) \
-                 RETURN count(r) AS cnt, r.id AS rel_id, r.type AS rel_type, r.description AS desc",
+                 RETURN r.id AS rel_id, r.type AS rel_type, r.description AS desc",
                 vec![
                     ("e1", entity1_id.to_string().into()),
                     ("e2", entity2_id.to_string().into()),
@@ -668,7 +560,7 @@ async fn test_bolt_01_03_durability_reconnect_across_three_tiers() {
             )
             .await
             .expect("Cypher RELATED_TO query failed");
-        assert_eq!(related_to_rows[0].get::<i64>("cnt").unwrap(), 1);
+        assert_eq!(related_to_rows.len(), 1);
         assert_eq!(
             related_to_rows[0].get::<String>("rel_id").unwrap(),
             rel_id.to_string()
@@ -685,7 +577,7 @@ async fn test_bolt_01_03_durability_reconnect_across_three_tiers() {
         let relates_to_rows = client_b
             .execute(
                 "MATCH (e1:Entity {id: $e1})-[r:RELATES_TO]->(e2:Entity {id: $e2}) \
-                 RETURN count(r) AS cnt, r.id AS rel_id, r.type AS rel_type",
+                 RETURN r.id AS rel_id, r.type AS rel_type",
                 vec![
                     ("e1", entity1_id.to_string().into()),
                     ("e2", entity2_id.to_string().into()),
@@ -693,7 +585,7 @@ async fn test_bolt_01_03_durability_reconnect_across_three_tiers() {
             )
             .await
             .expect("Cypher RELATES_TO query failed");
-        assert_eq!(relates_to_rows[0].get::<i64>("cnt").unwrap(), 1);
+        assert_eq!(relates_to_rows.len(), 1);
         eprintln!("[BOLT-01-03] [PASS] RELATES_TO edge verified between entities");
 
         // 3. ABOUT edges for Fact and Preference
@@ -728,7 +620,7 @@ async fn test_bolt_01_03_durability_reconnect_across_three_tiers() {
         let has_step_rows = client_b
             .execute(
                 "MATCH (t:ReasoningTrace {id: $tid})-[r:HAS_STEP]->(s:ReasoningStep {id: $sid}) \
-                 RETURN count(r) AS cnt, r.order AS step_order",
+                 RETURN r.order AS step_order",
                 vec![
                     ("tid", trace_id.to_string().into()),
                     ("sid", step_id.to_string().into()),
@@ -736,7 +628,7 @@ async fn test_bolt_01_03_durability_reconnect_across_three_tiers() {
             )
             .await
             .expect("Cypher HAS_STEP query failed");
-        assert_eq!(has_step_rows[0].get::<i64>("cnt").unwrap(), 1);
+        assert_eq!(has_step_rows.len(), 1);
         assert_eq!(has_step_rows[0].get::<i64>("step_order").unwrap(), 1);
         eprintln!("[BOLT-01-03] [PASS] HAS_STEP edge verified with order=1");
 

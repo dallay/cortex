@@ -98,7 +98,7 @@ pub fn build_bootstrap_banner(sanitized_token: &str) -> String {
     ];
 
     let max_len = lines.iter().map(|l| l.len()).max().unwrap_or(40);
-    let width = max_len.max(62); // minimum 62 chars wide
+    let width = (max_len + 1).max(62); // minimum 62 chars wide
 
     let border = format!("+{}+", "-".repeat(width));
 
@@ -108,15 +108,7 @@ pub fn build_bootstrap_banner(sanitized_token: &str) -> String {
         format!("|{}{}{}|", " ".repeat(left), text, " ".repeat(pad - left))
     };
 
-    let left_pad = |text: &str| {
-        let pad = width.saturating_sub(text.len());
-        format!(
-            "| {}{}{}|",
-            text,
-            " ".repeat(pad.saturating_sub(1)),
-            " ".repeat(pad.saturating_sub(1))
-        )
-    };
+    let left_pad = |text: &str| format!("| {}{}|", text, " ".repeat(width - text.len() - 1));
 
     format!(
         "{0}\n{1}\n{0}\n{2}\n{3}\n{4}\n{5}\n{6}\n{7}\n{0}",

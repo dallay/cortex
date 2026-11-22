@@ -177,16 +177,21 @@ test-gm01:
     @echo "{{ YELLOW }}Running GM-01 harness tests...{{ RESET }}"
     PYTHONPATH=dev/muninn python3 -m pytest dev/muninn/tests/test_gm01_*.py -v
 
+# Run the three live parity scenarios; each test owns a fresh Neo4j container.
+muninn-bolt-parity:
+    @docker info > /dev/null
+    env -u MUNINN_FIXTURE_URI -u MUNINN_ISOLATION_URI -u MUNINN_PREFERENCES_URI cargo test -p muninn-neo4j --test durability_reconnect --test multi_tenant_isolation --test preference_relationships
+
 # Run the isolated GM-01 Compose capture (requires Docker + Linux arm64)
 # Usage: just run-gm01 /path/to/agent-memory-checkout /path/to/evidence-dir
 run-gm01 reference evidence:
     @echo "{{ YELLOW }}Running GM-01 capture...{{ RESET }}"
-    PYTHONPATH=dev/muninn python3 dev/muninn/gm01_runner.py --reference {{reference}} --evidence {{evidence}}
+    PYTHONPATH=dev/muninn python3 dev/muninn/gm01_runner.py --reference {{quote(reference)}} --evidence {{quote(evidence)}}
 
 # Offline GM-01 differential comparison of two capture files
 # Usage: just diff-gm01 /path/to/reference.json /path/to/rust.json
 diff-gm01 reference candidate:
-    PYTHONPATH=dev/muninn python3 dev/muninn/gm01_differential.py {{reference}} {{candidate}}
+    PYTHONPATH=dev/muninn python3 dev/muninn/gm01_differential.py {{quote(reference)}} {{quote(candidate)}}
 
 # Generate HTML code coverage report with llvm-cov
 coverage:

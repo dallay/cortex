@@ -475,58 +475,73 @@ impl Neo4jLongTermStore {
 
     async fn write_fact_with_about(
         &self,
-        statement: &str,
+        statement: &'static str,
         params: Params,
         fact_id: Uuid,
         about: &[Uuid],
     ) -> MemoryResult<Fact> {
         let entity_ids: std::collections::BTreeSet<_> = about.iter().map(Uuid::to_string).collect();
-        let mut txn = self.client.start_txn().await?;
-        let result = async {
-            let rows = transaction_rows(&mut txn, statement, params).await?;
-            let row = rows
-                .first()
-                .ok_or_else(|| MemoryError::not_found(format!("fact {fact_id}")))?;
-            let stored = fact_from_value(&column(row, "f")?)?;
-            let rows = transaction_rows(
-                &mut txn,
-                q::LINK_FACT_ABOUT_ENTITIES,
-                vec![
-                    ("fact_id", id_param(fact_id)),
-                    (
-                        "entity_ids",
-                        entity_ids.iter().cloned().collect::<Vec<_>>().into(),
-                    ),
-                ],
-            )
-            .await?;
-            let targets: std::collections::BTreeSet<_> = rows
-                .first()
-                .ok_or_else(|| MemoryError::storage("missing fact ABOUT result"))?
-                .get::<Vec<String>>("targets")
-                .map_err(|error| MemoryError::storage(error.to_string()))?
-                .into_iter()
-                .collect();
-            if let Some(missing) = entity_ids.difference(&targets).next() {
-                return Err(MemoryError::not_found(format!("entity {missing}")));
+        let client = self.client.clone();
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        // Finish the in-flight Bolt exchange even when the caller goes away.
+        tokio::spawn(async move {
+            let result = async {
+                let mut txn = client.start_txn().await?;
+                let result = async {
+                    let rows = transaction_rows(&mut txn, statement, params).await?;
+                    let row = rows
+                        .first()
+                        .ok_or_else(|| MemoryError::not_found(format!("fact {fact_id}")))?;
+                    let stored = fact_from_value(&column(row, "f")?)?;
+                    let rows = transaction_rows(
+                        &mut txn,
+                        q::LINK_FACT_ABOUT_ENTITIES,
+                        vec![
+                            ("fact_id", id_param(fact_id)),
+                            (
+                                "entity_ids",
+                                entity_ids.iter().cloned().collect::<Vec<_>>().into(),
+                            ),
+                        ],
+                    )
+                    .await?;
+                    let targets: std::collections::BTreeSet<_> = rows
+                        .first()
+                        .ok_or_else(|| MemoryError::storage("missing fact ABOUT result"))?
+                        .get::<Vec<String>>("targets")
+                        .map_err(|error| MemoryError::storage(error.to_string()))?
+                        .into_iter()
+                        .collect();
+                    if let Some(missing) = entity_ids.difference(&targets).next() {
+                        return Err(MemoryError::not_found(format!("entity {missing}")));
+                    }
+                    if sender.is_closed() {
+                        return Err(MemoryError::storage("fact write cancelled"));
+                    }
+                    Ok(stored)
+                }
+                .await;
+                match result {
+                    Ok(stored) => {
+                        txn.commit()
+                            .await
+                            .map_err(|e| MemoryError::storage(e.to_string()))?;
+                        Ok(stored)
+                    }
+                    Err(error) => {
+                        txn.rollback()
+                            .await
+                            .map_err(|e| MemoryError::storage(e.to_string()))?;
+                        Err(error)
+                    }
+                }
             }
-            Ok(stored)
-        }
-        .await;
-        match result {
-            Ok(stored) => {
-                txn.commit()
-                    .await
-                    .map_err(|e| MemoryError::storage(e.to_string()))?;
-                Ok(stored)
-            }
-            Err(error) => {
-                txn.rollback()
-                    .await
-                    .map_err(|e| MemoryError::storage(e.to_string()))?;
-                Err(error)
-            }
-        }
+            .await;
+            let _ = sender.send(result);
+        });
+        receiver
+            .await
+            .map_err(|_| MemoryError::storage("fact transaction owner stopped"))?
     }
 
     /// Run a vector-index query. A missing index means nothing was embedded
@@ -2090,6 +2105,59 @@ mod preference_lifecycle_tests {
             created_at: Utc::now(),
             metadata: Metadata::new(),
         }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable Neo4j with SHOW TRANSACTIONS"]
+    async fn cancelling_blocked_fact_link_rolls_back() {
+        let writer = connect().await;
+        let observer = connect().await;
+        let target = Uuid::new_v4();
+        observer
+            .execute("CREATE (:Entity {id:$id})", vec![("id", id_param(target))])
+            .await
+            .unwrap();
+        let mut blocker = observer.start_txn().await.unwrap();
+        transaction_rows(
+            &mut blocker,
+            "MATCH (e:Entity {id:$id}) WITH e, e.id AS id DELETE e RETURN id",
+            vec![("id", id_param(target))],
+        )
+        .await
+        .unwrap();
+        let id = Uuid::new_v4();
+        let store = Neo4jLongTermStore::new(writer.clone());
+        let caller = tokio::spawn(async move {
+            let fact = Fact {
+                id,
+                subject: "s".into(),
+                predicate: "p".into(),
+                object: "o".into(),
+                confidence: 1.,
+                embedding: None,
+                valid_from: None,
+                valid_until: None,
+                created_at: Utc::now(),
+                metadata: Metadata::new(),
+            };
+            store.create_fact_with_about(&fact, &[target]).await
+        });
+        blocked(&connect().await, "MERGE (f)-[:ABOUT]").await;
+        caller.abort();
+        assert!(caller.await.unwrap_err().is_cancelled());
+        blocker.rollback().await.unwrap();
+        // The single-connection writer pool is reusable only after cleanup.
+        let rows = tokio::time::timeout(
+            Duration::from_secs(5),
+            writer.execute(
+                "MATCH (f:Fact {id:$id}) RETURN f",
+                vec![("id", id_param(id))],
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(rows.is_empty());
     }
 
     #[tokio::test]

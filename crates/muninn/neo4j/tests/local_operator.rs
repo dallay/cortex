@@ -55,7 +55,7 @@ async fn shared_local_operator_round_trips_over_bolt() {
         username: "neo4j".into(),
         password,
         database: Some("neo4j".into()),
-        ..Default::default()
+        max_connections: 1,
     };
     let client = Neo4jClient::connect(&config).await.unwrap();
     let rows = client
@@ -143,6 +143,65 @@ async fn shared_local_operator_round_trips_over_bolt() {
         .start_trace(SESSION, TASK)
         .await
         .unwrap();
+    // Force a database write error after lookup; the original preference survives.
+    client.execute("CREATE CONSTRAINT operator_test_value FOR (p:Preference) REQUIRE p.preference IS UNIQUE", vec![]).await.unwrap();
+    let error = writer
+        .graph()
+        .unwrap()
+        .add_preference("other category", PREFERENCE)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, muninn_core::MemoryError::Storage(_)),
+        "{error}"
+    );
+    client
+        .execute("DROP CONSTRAINT operator_test_value", vec![])
+        .await
+        .unwrap();
+
+    // Hold the write lock until the operator call is observably blocked on Bolt.
+    let graph = neo4rs::Graph::new(&config.uri, &config.username, &config.password)
+        .await
+        .unwrap();
+    let mut lock = graph.start_txn().await.unwrap();
+    lock.run(neo4rs::query(
+        "MATCH (l:PreferenceWriteLock {id:'preferences'}) SET l.version=l.version+1",
+    ))
+    .await
+    .unwrap();
+    let observer = Neo4jClient::connect(&config).await.unwrap();
+    let pending = memory(&client);
+    let caller = tokio::spawn(async move {
+        pending
+            .graph()
+            .unwrap()
+            .add_preference("cancelled", "cancelled")
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(4), async {
+        loop {
+            let rows = observer.execute("SHOW TRANSACTIONS YIELD currentQuery, status WHERE status STARTS WITH 'Blocked' AND currentQuery CONTAINS 'MERGE (l:PreferenceWriteLock' RETURN status", vec![]).await.unwrap();
+            if !rows.is_empty() { break; }
+            tokio::task::yield_now().await;
+        }
+    }).await.expect("operator must reach the contended write");
+    caller.abort();
+    assert!(caller.await.unwrap_err().is_cancelled());
+    lock.rollback().await.unwrap();
+    // A query on the single writer connection waits for rollback and proves pool reuse.
+    let rows = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        client.execute("MATCH (p:Preference) RETURN p.id AS id", vec![]),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].get::<String>("id").unwrap(),
+        preference.id.to_string()
+    );
     drop(writer);
     drop(client);
 

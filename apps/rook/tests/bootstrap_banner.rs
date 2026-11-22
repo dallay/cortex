@@ -1,11 +1,5 @@
 use rook::startup::build_bootstrap_banner;
 
-/// Characterization test for the exact banner bytes.
-///
-/// The rendered box is not rectangular: the border is 64 columns wide while
-/// the content lines are 79 to 125 columns wide, because `left_pad` pads
-/// both sides of the content instead of only the right one. The expected
-/// string pins the current output so any layout change is deliberate.
 #[test]
 fn bootstrap_banner_renders_the_exact_current_layout() {
     let banner = build_bootstrap_banner("tok-1234");
@@ -15,12 +9,12 @@ fn bootstrap_banner_renders_the_exact_current_layout() {
             "+--------------------------------------------------------------+\n",
             "|                ROOK -- BOOTSTRAP MODE ACTIVE                 |\n",
             "+--------------------------------------------------------------+\n",
-            "| Setup token: tok-1234                                                                                |\n",
-            "|                                                                                                                           |\n",
-            "| Paste it into the dashboard to complete setup.                              |\n",
-            "| To complete setup, open the dashboard at                                          |\n",
-            "| http://localhost:4747                                                                                |\n",
-            "| along with your desired admin password.                                            |\n",
+            "| Setup token: tok-1234                                        |\n",
+            "|                                                              |\n",
+            "| Paste it into the dashboard to complete setup.               |\n",
+            "| To complete setup, open the dashboard at                     |\n",
+            "| http://localhost:4747                                        |\n",
+            "| along with your desired admin password.                      |\n",
             "+--------------------------------------------------------------+"
         )
     );
@@ -41,6 +35,7 @@ fn bootstrap_banner_widens_to_fit_a_long_token() {
     let border = banner.lines().next().expect("the banner has a border");
     // The widest line is "Setup token: <token>", so the box grows with it.
     let widest = "Setup token: ".len() + token.len();
-    assert_eq!(border.len(), widest + 2);
+    assert!(banner.lines().all(|line| line.len() == border.len()));
+    assert_eq!(border.len(), widest + 3);
     assert!(banner.contains(&format!("Setup token: {token}")));
 }

@@ -12,130 +12,14 @@ use muninn_application::{
 use muninn_core::model::Preference;
 use muninn_core::ports::LongTermStore;
 use muninn_neo4j::{
-    Neo4jClient, Neo4jConfig, Neo4jLongTermStore, Neo4jReasoningStore, Neo4jShortTermStore,
-    SchemaManager,
+    Neo4jClient, Neo4jLongTermStore, Neo4jReasoningStore, Neo4jShortTermStore, SchemaManager,
 };
-use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::time::Duration;
 use uuid::Uuid;
 
-struct DockerFixture {
-    container_id: Option<String>,
-    pub uri: String,
-    pub password: String,
-    vector_dimensions: usize,
-}
-
-impl DockerFixture {
-    fn start() -> Self {
-        if let Ok(uri) = std::env::var("MUNINN_FIXTURE_URI") {
-            let password = std::env::var("MUNINN_FIXTURE_PASSWORD").unwrap_or_default();
-            // CI's shared Neo4j fixture uses the production embedding dimension.
-            let vector_dimensions = 1536;
-            eprintln!("[BOLT-07] Using existing Neo4j fixture");
-            return Self {
-                container_id: None,
-                uri,
-                password,
-                vector_dimensions,
-            };
-        }
-
-        let password = format!("p_{}", Uuid::new_v4().simple());
-        let env_file = std::env::temp_dir().join(format!("neo4j_auth_{}.env", Uuid::new_v4()));
-        let env_body = format!(
-            "NEO4J_AUTH=neo4j/{password}\n\
-             NEO4J_dbms_security_auth__minimum__password__length=4\n\
-             NEO4J_db_transaction_timeout=5s\n\
-             NEO4J_db_lock_acquisition_timeout=5s\n\
-             NEO4J_db_transaction_monitor_check_interval=500ms\n"
-        );
-        std::fs::write(&env_file, env_body).expect("failed to write temporary auth env file");
-
-        eprintln!("[BOLT-07] Spawning isolated neo4j:5.26-community container via loopback...");
-        let output = Command::new("docker")
-            .args([
-                "run",
-                "-d",
-                "--rm",
-                "--publish",
-                "127.0.0.1::7687",
-                "--env-file",
-                env_file.to_str().expect("valid temp env path"),
-                "neo4j:5.26-community",
-            ])
-            .output()
-            .expect("failed to spawn docker run for neo4j");
-
-        // Immediately delete temp auth file to protect credentials
-        let _ = std::fs::remove_file(&env_file);
-
-        assert!(output.status.success(), "docker run failed");
-
-        let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        assert!(
-            (12..=64).contains(&container_id.len())
-                && container_id.bytes().all(|byte| byte.is_ascii_hexdigit()),
-            "docker returned an invalid container identifier"
-        );
-
-        let port_output = Command::new("docker")
-            .args(["port", &container_id, "7687/tcp"])
-            .output()
-            .expect("failed to get docker port");
-
-        assert!(port_output.status.success(), "docker port failed");
-
-        let port_str = String::from_utf8_lossy(&port_output.stdout);
-        let port = port_str
-            .trim()
-            .rsplit(':')
-            .next()
-            .and_then(|port| port.parse::<u16>().ok())
-            .filter(|port| *port != 0)
-            .expect("docker returned an invalid published port");
-        let uri = format!("bolt://127.0.0.1:{port}");
-        eprintln!(
-            "[BOLT-07] Container {} running at 127.0.0.1:{}",
-            container_id, port
-        );
-
-        Self {
-            container_id: Some(container_id),
-            uri,
-            password,
-            vector_dimensions: 1536,
-        }
-    }
-}
-
-impl Drop for DockerFixture {
-    fn drop(&mut self) {
-        if let Some(ref container_id) = self.container_id {
-            eprintln!("[BOLT-07] Cleaning up container {}...", container_id);
-            let _ = Command::new("docker")
-                .args(["stop", "-t", "2", container_id])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-            eprintln!("[BOLT-07] Container cleanup complete.");
-        }
-    }
-}
-
-async fn wait_for_neo4j(config: &Neo4jConfig) -> Neo4jClient {
-    for attempt in 1..=60 {
-        if let Ok(client) = Neo4jClient::connect(config).await {
-            if client.execute("RETURN 1 AS n", vec![]).await.is_ok() {
-                eprintln!("[BOLT-07] Neo4j ready after attempt {}", attempt);
-                return client;
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-    panic!("Neo4j did not become ready in 30s");
-}
+#[path = "common/fixture.rs"]
+mod fixture;
+use fixture::DockerFixture;
 
 async fn count_nodes_edges(client: &Neo4jClient) -> (i64, i64) {
     let rows = client
@@ -154,19 +38,15 @@ async fn count_nodes_edges(client: &Neo4jClient) -> (i64, i64) {
 #[tokio::test]
 async fn test_bolt_07_preference_relationships_about_and_applies_to() {
     eprintln!("=== [START] BOLT-07 Preference Relationships (ABOUT & APPLIES_TO) Test ===");
-    let fixture = DockerFixture::start();
-    let config = Neo4jConfig {
-        uri: fixture.uri.clone(),
-        username: "neo4j".into(),
-        password: fixture.password.clone(),
-        ..Default::default()
+    let Some(fixture) = DockerFixture::start("MUNINN_PREFERENCES_URI") else {
+        return;
     };
 
-    let client = wait_for_neo4j(&config).await;
+    let client = fixture.connect_fresh().await;
 
     // Match the existing fixture's managed vector index configuration.
     eprintln!("[BOLT-07] Applying SchemaManager::setup_all...");
-    let schema_mgr = SchemaManager::new(&client, fixture.vector_dimensions);
+    let schema_mgr = SchemaManager::new(&client, 1536);
     schema_mgr
         .setup_all()
         .await
@@ -388,6 +268,18 @@ async fn test_bolt_07_preference_relationships_about_and_applies_to() {
         created_at: Utc::now(),
         metadata: Default::default(),
     };
+    let lock_version = || async {
+        client
+            .execute(
+                "MATCH (l:PreferenceWriteLock {id:'preferences'}) RETURN l.version AS version",
+                vec![],
+            )
+            .await
+            .unwrap()[0]
+            .get::<i64>("version")
+            .unwrap()
+    };
+    let before_version = lock_version().await;
     let store_res = long_term
         .write_preference(
             &orphaned_pref,
@@ -398,9 +290,9 @@ async fn test_bolt_07_preference_relationships_about_and_applies_to() {
         )
         .await;
     assert!(
-        store_res.is_err(),
-        "store.write_preference must fail with missing about entity"
+        matches!(store_res, Err(muninn_core::MemoryError::NotFound(target)) if target == format!("entity {missing_entity_id}"))
     );
+    assert_eq!(lock_version().await, before_version);
     let (nodes_after_store, edges_after_store) = count_nodes_edges(&client).await;
     assert_eq!(
         nodes_after_store, nodes_before_missing,

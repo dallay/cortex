@@ -77,31 +77,17 @@ class ProvenanceTests(unittest.TestCase):
 
 
 class IsolationTests(unittest.TestCase):
-    def test_compose_build_failure_writes_bounded_private_diagnostics(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            log = Path(temporary) / 'build.log'
-            with patch.object(runner.subprocess, 'run', return_value=Mock(
-                    returncode=1, stdout='compiler error\n', stderr='Build failed\n')) as run:
-                result = runner.compose_run(Path(temporary) / 'compose.yaml',
-                                            'muninn-gm01-deadbeef', 'build', 'capture',
-                                            diagnostic_log=log)
-            self.assertEqual(result, 1)
-            self.assertEqual(log.read_text(), 'compiler error\n')
-            self.assertEqual(log.stat().st_mode & 0o777, 0o600)
-            self.assertEqual(run.call_args.kwargs['stdout'], runner.subprocess.PIPE)
-
-    def test_capture_failure_writes_bounded_private_compose_diagnostics(self):
+    def test_compose_drains_oversized_diagnostics(self):
         with tempfile.TemporaryDirectory() as temporary:
             log = Path(temporary) / 'capture.log'
-            with patch.object(runner.subprocess, 'run', return_value=Mock(
-                    returncode=1, stdout='capture failed\\n', stderr='ignored')) as run:
-                result = runner.compose_run(Path(temporary) / 'compose.yaml',
-                                            'muninn-gm01-deadbeef', 'up', 'capture',
+            command = [runner.sys.executable, '-c',
+                       "import sys; sys.stdout.buffer.write(b'x'*2000000); sys.exit(3)"]
+            with patch.object(runner, 'compose_command', return_value=command):
+                result = runner.compose_run('compose.yaml', 'muninn-gm01-deadbeef', 'up',
                                             diagnostic_log=log)
-            self.assertEqual(result, 1)
-            self.assertEqual(log.read_text(), 'capture failed\\n')
+            self.assertEqual(result, 3)
+            self.assertEqual(log.read_bytes(), b'x' * 1_000_000)
             self.assertEqual(log.stat().st_mode & 0o777, 0o600)
-            self.assertEqual(run.call_args.kwargs['stdout'], runner.subprocess.PIPE)
 
     def test_database_descriptor_has_only_internal_dns_and_no_docker_lifecycle(self):
         database = runner.Database('bolt://rust-db:7687', 'private')

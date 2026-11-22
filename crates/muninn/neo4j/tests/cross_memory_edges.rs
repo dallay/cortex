@@ -31,7 +31,7 @@ async fn snapshot(client: &Neo4jClient) -> String {
 
 #[tokio::test]
 #[ignore = "requires a NEW authenticated empty synthetic Neo4j; caller owns teardown"]
-async fn preference_about_edge_shape_idempotency_and_owner_isolation() {
+async fn preference_and_fact_about_edges() {
     assert_eq!(
         std::env::var("MUNINN_CROSS_MEMORY_FRESH_SYNTHETIC").as_deref(),
         Ok("1")
@@ -46,6 +46,7 @@ async fn preference_about_edge_shape_idempotency_and_owner_isolation() {
     .unwrap();
     assert_eq!(snapshot(&client).await, "0:0");
     SchemaManager::new(&client, 2).setup_all().await.unwrap();
+    fact_about_edges(client.clone()).await;
     let long_term = Arc::new(Neo4jLongTermStore::new(client.clone()));
     let memory = MemoryClient::new(
         MemoryPorts {
@@ -169,23 +170,7 @@ impl Embedder for FactEmbedder {
     }
 }
 
-#[tokio::test]
-#[ignore = "requires a NEW authenticated empty synthetic Neo4j; caller owns teardown"]
-async fn fact_about_edge_shape_idempotency_and_missing_entity_rejection() {
-    assert_eq!(
-        std::env::var("MUNINN_CROSS_MEMORY_FRESH_SYNTHETIC").as_deref(),
-        Ok("1")
-    );
-    let client = Neo4jClient::connect(&Neo4jConfig {
-        uri: std::env::var("MUNINN_FIXTURE_URI").expect("fixture URI required"),
-        username: "neo4j".into(),
-        password: std::env::var("MUNINN_FIXTURE_PASSWORD").expect("fixture password required"),
-        ..Default::default()
-    })
-    .await
-    .unwrap();
-    assert_eq!(snapshot(&client).await, "0:0");
-    SchemaManager::new(&client, 2).setup_all().await.unwrap();
+async fn fact_about_edges(client: Neo4jClient) {
     client
         .execute("CALL db.awaitIndexes(60)", vec![])
         .await

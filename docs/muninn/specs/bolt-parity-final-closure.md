@@ -8,12 +8,18 @@
 
 ## 1. Resumen Ejecutivo de Evidencia
 
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:031dcbf6303ca2f0d98fd131f0247d0f718ab50a20a3abc974d32bee83659a40 -->
+
 | Dominio de Verificación | Casos / Criterios | Resultado | Entorno / Recibos |
 |---|---|---|---|
-| **Suite TCK Normativo (`b6c72c36`)** | 178 / 178 casos únicos | **100% PASS** (0 fallos, 0 regresiones) | Neo4j 5.26 Community aislado, hash embeddings. Recibos en `.agents/rpi/plan/tasks/muninn-product-tck-bolt-recheck-BtWbVD/`. |
+| **Suite TCK Normativo (`b6c72c36`)** | 189 recogidos; 178 seleccionados y ejecutados; 11 fuera de selección | **178 PASS**, 0 fallos, 0 omitidos entre los seleccionados | [Reverificación del 22 de noviembre: pin, SHA-256 del binario, imagen y resultado de cada caso](evidence/bolt-tck-2026-11-22.json). Neo4j 5.26 Community, proveedor `hash`. |
 | **Criterios Críticos Contractuales** | 27 / 27 capacidades críticas | **100% VERIFICADO** | Tests dedicados en `crates/muninn/neo4j/tests/` con contenedores efímeros. |
 | **Superficie de Operaciones Bolt** | 161 operaciones mapeadas | **Auditoría completa** | `docs/muninn/specs/bolt-parity-operation-map.csv`. |
-| **Registro de Cobertura (`coverage.yaml`)** | 18 capacidades focalizadas | **18 PASS**, 0 FAIL activos en Bolt | `tests/parity/coverage.yaml`. |
+| **Registro de Cobertura (`coverage.yaml`)** | 36 estados de todo el registro | 18 PASS, 1 FAIL histórico del oráculo (`native_delete`: 1 aprobado, 12 fallidos; no es un fallo actual del producto), 3 BLOCKED, 2 IMPLEMENTED_UNVERIFIED, 12 UNVERIFIABLE | `tests/parity/coverage.yaml`. |
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 ---
 
@@ -57,8 +63,10 @@ De las **161 operaciones** catalogadas en la superficie pública Bolt de Agent M
 - **138 operaciones** corresponden a lógica funcional propia del motor Bolt (resultados, componentes, variantes, alias, retornos constantes). Todas ellas cuentan con respaldo operativo y pasan limpiamente sus tests de integración y la suite TCK (178/178 passed).
 - **23 operaciones** corresponden a:
   - **Accesores al driver sin contrato / proxies deprecados (4):** Resueltos e implementados en Muninn como la fachada local de operador v1 tipada y segura (`client.graph`, `client.*.client`).
-  - **Servicios exclusivos de NAMS / Hosted no aplicables a Bolt (12):** Sentinela de autenticación y claves API (`client.auth.*`), historial alojado (`get_entity_history`, `set_entity_feedback`, `get_observations`, `get_reflections`), y métodos no enlazados en Bolt (`expand_graph`, `get_extraction_status`).
+  - **Servicios exclusivos de NAMS / Hosted no aplicables a Bolt (13):** Sentinela `client.auth` (1) y sus seis operaciones de claves/autenticación, historial alojado (`get_entity_history`, `set_entity_feedback`, `get_observations`, `get_reflections`), y métodos no enlazados en Bolt (`expand_graph`, `get_extraction_status`).
   - **Instancias de Embedders/Extractors externos (6):** Puntos de integración de modelos de lenguaje independientes del almacenamiento en grafo.
+
+Las exclusiones suman 4 + 13 + 6 = 23. Quedan 161 − 23 = 138 operaciones elegibles (85,7 % del mapa). Esta proporción describe la selección, no mide por sí sola su paridad.
 
 ### Cómputo Final de Paridad
 $$\text{Paridad en Criterios Críticos} = \frac{27}{27} = \mathbf{100\%} \quad (\text{Umbral exigido: } 100\%)$$

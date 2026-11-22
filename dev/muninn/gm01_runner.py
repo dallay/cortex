@@ -10,10 +10,12 @@ import os
 from pathlib import Path
 import re
 import secrets
+import select
 import shutil
 import socket
 import subprocess
 import sys
+import threading
 import tempfile
 import time
 import tomllib
@@ -403,29 +405,41 @@ def compose_command(compose_path, project, *arguments):
 
 
 def compose_run(compose_path, project, *arguments, diagnostic_log=None):
-    capture_output = diagnostic_log is not None
-    try:
-        result = subprocess.run(
-            compose_command(compose_path, project, *arguments),
-            env=docker_env(), stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE if capture_output else subprocess.DEVNULL,
-            stderr=subprocess.STDOUT if capture_output else subprocess.DEVNULL,
-            check=False, timeout=3600, text=capture_output)
-    except (OSError, subprocess.SubprocessError):
-        raise RuntimeError('Operación Compose fallida') from None
-    if diagnostic_log is not None:
-        path = Path(diagnostic_log)
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    command = compose_command(compose_path, project, *arguments)
+    options = dict(env=docker_env(), stdin=subprocess.DEVNULL, check=False, timeout=3600)
+    if diagnostic_log is None:
         try:
-            output = getattr(result, 'stdout', None) or getattr(result, 'stderr', None) or ''
-            encoded = output.encode('utf-8', errors='replace')[:1_000_000]
-            with os.fdopen(descriptor, 'wb') as stream:
-                descriptor = -1
-                stream.write(encoded)
+            return subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                  **options).returncode
+        except (OSError, subprocess.SubprocessError):
+            raise RuntimeError('Operación Compose fallida') from None
+
+    with os.fdopen(os.open(diagnostic_log, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as log:
+        reader, writer = os.pipe()
+        retained = bytearray()
+        finished = threading.Event()
+
+        def drain():
+            with os.fdopen(reader, 'rb', buffering=0) as stream:
+                while True:
+                    if select.select([stream], [], [], 0.1)[0]:
+                        chunk = stream.read(65536)
+                        if not chunk:
+                            break
+                        retained.extend(chunk[:1_000_000 - len(retained)])
+                    elif finished.is_set() and not select.select([stream], [], [], 0)[0]:
+                        break
+
+        thread = threading.Thread(target=drain)
+        thread.start()
+        try:
+            with os.fdopen(writer, 'wb') as output:
+                return subprocess.run(command, stdout=output, stderr=subprocess.STDOUT,
+                                      **options).returncode
         finally:
-            if descriptor >= 0:
-                os.close(descriptor)
-    return result.returncode
+            finished.set()
+            thread.join()
+            log.write(retained)
 
 
 def inspect_capture_image(project):
@@ -536,7 +550,7 @@ def inspect_compose_project(project):
     return {'status': 'containers_found', 'services': services}
 
 
-def merge_capture_image(evidence_manifest, capture_image, neo4j_image=None):
+def merge_capture_image(evidence_manifest, capture_image, neo4j_image=None, diagnostic_logs=None):
     """Add host-inspected image identities without replacing capture evidence."""
     path = Path(evidence_manifest)
     if path.is_symlink() or not path.is_file():
@@ -548,6 +562,8 @@ def merge_capture_image(evidence_manifest, capture_image, neo4j_image=None):
     if not isinstance(value, dict):
         raise RuntimeError('Manifiesto de captura no válido')
     value['capture_image'] = capture_image
+    if diagnostic_logs is not None:
+        value['diagnostic_logs'] = diagnostic_logs
     if neo4j_image is not None:
         value['neo4j_image'] = neo4j_image
     temporary = path.with_name('manifest.json.tmp')
@@ -932,9 +948,17 @@ async def run(source, evidence):
                         raise RuntimeError('El capturador no escribió manifest.json')
                     manifest['stage'] = 'record_capture_image'
                     merge_capture_image(capture_manifest, manifest['capture_image'],
-                                        manifest['neo4j_image'])
+                                        manifest['neo4j_image'], manifest.get('diagnostic_logs'))
                 except Exception as caught:
                     error = caught
+                    if isinstance(caught, subprocess.TimeoutExpired) and manifest['stage'] in ('build_image', 'compose_up'):
+                        log = private / ('build.log' if manifest['stage'] == 'build_image' else 'capture.log')
+                        try:
+                            publish_diagnostic_logs(evidence, log)
+                        except OSError:
+                            pass  # Preserve the original timeout.
+                        else:
+                            manifest['diagnostic_logs'] = [log.name]
                     _write_blocked_manifest(evidence, manifest, caught)
                 finally:
                     if compose_path is not None and project is not None:

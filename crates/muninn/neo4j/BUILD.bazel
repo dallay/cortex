@@ -59,7 +59,7 @@ rust_test(
 rust_test(
     name = "durability_reconnect",
     crate_name = "durability_reconnect",
-    srcs = ["tests/durability_reconnect.rs"],
+    srcs = ["tests/common/fixture.rs", "tests/durability_reconnect.rs"],
     edition = crate_edition(),
     deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_neo4j"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
@@ -131,7 +131,7 @@ rust_test(
 rust_test(
     name = "multi_tenant_isolation",
     crate_name = "multi_tenant_isolation",
-    srcs = ["tests/multi_tenant_isolation.rs"],
+    srcs = ["tests/common/fixture.rs", "tests/multi_tenant_isolation.rs"],
     edition = crate_edition(),
     deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_neo4j"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
@@ -176,7 +176,7 @@ rust_test(
 rust_test(
     name = "preference_relationships",
     crate_name = "preference_relationships",
-    srcs = ["tests/preference_relationships.rs"],
+    srcs = ["tests/common/fixture.rs", "tests/preference_relationships.rs"],
     edition = crate_edition(),
     deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_neo4j"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),

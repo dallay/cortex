@@ -11,146 +11,25 @@ use muninn_core::ports::{
     EmbeddingIdentity, LongTermStore, MessageRecord, OwnerScope, ReasoningStore, SessionQuery,
     ShortTermStore, StepRecord, TraceQuery, TraceRecord,
 };
-use muninn_neo4j::{
-    Neo4jClient, Neo4jConfig, Neo4jLongTermStore, Neo4jReasoningStore, Neo4jShortTermStore,
-    SchemaManager,
-};
+use muninn_neo4j::{Neo4jLongTermStore, Neo4jReasoningStore, Neo4jShortTermStore, SchemaManager};
 use serde_json::json;
-use std::process::{Command, Stdio};
-use std::time::Duration;
 use uuid::Uuid;
 
-struct DockerFixture {
-    container_id: Option<String>,
-    pub uri: String,
-    pub password: String,
-    vector_dimensions: usize,
-}
-
-impl DockerFixture {
-    fn start() -> Self {
-        if let Ok(uri) = std::env::var("MUNINN_FIXTURE_URI") {
-            let password = std::env::var("MUNINN_FIXTURE_PASSWORD").unwrap_or_default();
-            // CI's shared Neo4j fixture uses the production embedding dimension.
-            let vector_dimensions = 1536;
-            eprintln!("[BOLT-03-03] Using existing Neo4j fixture");
-            return Self {
-                container_id: None,
-                uri,
-                password,
-                vector_dimensions,
-            };
-        }
-
-        let password = format!("p_{}", Uuid::new_v4().simple());
-        let env_file = std::env::temp_dir().join(format!("neo4j_auth_{}.env", Uuid::new_v4()));
-        let env_body = format!(
-            "NEO4J_AUTH=neo4j/{password}\n\
-             NEO4J_dbms_security_auth__minimum__password__length=4\n\
-             NEO4J_db_transaction_timeout=10s\n\
-             NEO4J_db_lock_acquisition_timeout=10s\n"
-        );
-        std::fs::write(&env_file, env_body).expect("failed to write temporary auth env file");
-
-        eprintln!("[BOLT-03-03] Spawning isolated neo4j:5.26-community container via loopback...");
-        let output = Command::new("docker")
-            .args([
-                "run",
-                "-d",
-                "--rm",
-                "--publish",
-                "127.0.0.1::7687",
-                "--env-file",
-                env_file.to_str().expect("valid temp env path"),
-                "neo4j:5.26-community",
-            ])
-            .output()
-            .expect("failed to spawn docker run for neo4j");
-
-        // Immediately delete temp auth file to protect credentials
-        let _ = std::fs::remove_file(&env_file);
-
-        assert!(output.status.success(), "docker run failed");
-
-        let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        assert!(
-            (12..=64).contains(&container_id.len())
-                && container_id.bytes().all(|byte| byte.is_ascii_hexdigit()),
-            "docker returned an invalid container identifier"
-        );
-
-        let port_output = Command::new("docker")
-            .args(["port", &container_id, "7687/tcp"])
-            .output()
-            .expect("failed to get docker port");
-
-        assert!(port_output.status.success(), "docker port failed");
-
-        let port_str = String::from_utf8_lossy(&port_output.stdout);
-        let port = port_str
-            .trim()
-            .rsplit(':')
-            .next()
-            .and_then(|port| port.parse::<u16>().ok())
-            .filter(|port| *port != 0)
-            .expect("docker returned an invalid published port");
-        let uri = format!("bolt://127.0.0.1:{port}");
-        eprintln!(
-            "[BOLT-03-03] Container {} running at 127.0.0.1:{}",
-            container_id, port
-        );
-
-        Self {
-            container_id: Some(container_id),
-            uri,
-            password,
-            vector_dimensions: 3,
-        }
-    }
-}
-
-impl Drop for DockerFixture {
-    fn drop(&mut self) {
-        if let Some(ref container_id) = self.container_id {
-            eprintln!("[BOLT-03-03] Cleaning up container {}...", container_id);
-            let _ = Command::new("docker")
-                .args(["stop", "-t", "2", container_id])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-            eprintln!("[BOLT-03-03] Container cleanup complete.");
-        }
-    }
-}
-
-async fn wait_for_neo4j(config: &Neo4jConfig) -> Neo4jClient {
-    for attempt in 1..=60 {
-        if let Ok(client) = Neo4jClient::connect(config).await {
-            if client.execute("RETURN 1 AS n", vec![]).await.is_ok() {
-                eprintln!("[BOLT-03-03] Neo4j ready after attempt {}", attempt);
-                return client;
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-    panic!("Neo4j did not become ready in 30s");
-}
+#[path = "common/fixture.rs"]
+mod fixture;
+use fixture::DockerFixture;
 
 #[tokio::test]
 async fn test_bolt_03_03_multi_tenant_isolation_across_three_tiers() {
     eprintln!("=== [START] BOLT-03-03 Multi-Tenant Strict Isolation Test ===");
-    let fixture = DockerFixture::start();
-    let config = Neo4jConfig {
-        uri: fixture.uri.clone(),
-        username: "neo4j".into(),
-        password: fixture.password.clone(),
-        ..Default::default()
+    let Some(fixture) = DockerFixture::start("MUNINN_ISOLATION_URI") else {
+        return;
     };
 
-    let client = wait_for_neo4j(&config).await;
+    let client = fixture.connect_fresh().await;
 
     // Match the existing fixture's managed vector index configuration.
-    let vector_dimensions = fixture.vector_dimensions;
+    let vector_dimensions = 3;
     eprintln!(
         "[BOLT-03-03] Applying SchemaManager::setup_all with {vector_dimensions} dimensions..."
     );
@@ -632,21 +511,11 @@ async fn test_bolt_03_03_multi_tenant_isolation_across_three_tiers() {
         2,
         "search_messages for alpha must return only alpha's 2 messages"
     );
-    for hit in &alpha_hits {
-        assert!(
-            hit.message.id == msg_alpha1_id || hit.message.id == msg_alpha2_id,
-            "Found leaked foreign message: {:?}",
-            hit.message.id
-        );
-        assert_ne!(
-            hit.message.id, msg_beta1_id,
-            "CRITICAL: tenant-beta msg1 leaked to tenant-alpha via vector search!"
-        );
-        assert_ne!(
-            hit.message.id, msg_beta2_id,
-            "CRITICAL: tenant-beta msg2 leaked to tenant-alpha via vector search!"
-        );
-    }
+    let mut ids: Vec<_> = alpha_hits.iter().map(|h| h.message.id).collect();
+    ids.sort();
+    let mut expected = [msg_alpha1_id, msg_alpha2_id];
+    expected.sort();
+    assert_eq!(ids, expected);
 
     // Unidentified search_messages must fail closed with error
     let unident_search = short_term
@@ -842,7 +711,7 @@ async fn test_bolt_03_03_multi_tenant_isolation_across_three_tiers() {
     let add_conv_step_attempt = reasoning
         .add_conversation_step(
             conv_beta_id,
-            trace_alpha_id,
+            trace_beta_id,
             &scope_alpha,
             &malicious_step_rec,
         )
@@ -879,6 +748,19 @@ async fn test_bolt_03_03_multi_tenant_isolation_across_three_tiers() {
     assert!(
         !link_trace_attempt,
         "link_trace_to_message across tenants must return false"
+    );
+
+    let links = client
+        .execute(
+            "MATCH (:ReasoningTrace {id:$id})-[:INITIATED_BY]->(m:Message) RETURN m.id AS id",
+            vec![("id", trace_beta_id.to_string().into())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(links.len(), 1);
+    assert_eq!(
+        links[0].get::<String>("id").unwrap(),
+        msg_beta1_id.to_string()
     );
 
     // Linking beta's tool call to alpha's message must return false
@@ -992,6 +874,24 @@ async fn test_bolt_03_03_multi_tenant_isolation_across_three_tiers() {
         conv_steps_beta[0].tool_calls[0].tool_name,
         "beta_compile_tool"
     );
+
+    let allowed = reasoning
+        .add_conversation_step(
+            conv_beta_id,
+            trace_beta_id,
+            &scope_beta,
+            &malicious_step_rec,
+        )
+        .await
+        .unwrap();
+    assert_eq!(allowed.id, malicious_step_rec.id);
+    assert!(reasoning
+        .conversation_steps(conv_beta_id, &scope_beta)
+        .await
+        .unwrap()
+        .unwrap()
+        .iter()
+        .any(|s| s.id == allowed.id));
 
     // Complete trace_beta now and confirm completion succeeds
     let completed_beta = reasoning

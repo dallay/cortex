@@ -642,6 +642,29 @@ jobs:
       neo4j:
         image: neo4j:5.26-community@sha256:414adfe41c6ff32abb752be37f265c77607c166cab298f65a917fc4f05776218
         env:
+          NEO4J_db_transaction_timeout: 5s
+          NEO4J_db_lock_acquisition_timeout: 5s
+          NEO4J_db_transaction_monitor_check_interval: 500ms
+          NEO4J_AUTH: neo4j/${{ github.run_id }}-${{ github.run_attempt }}-coverage
+        options: >-
+          --tmpfs /data:rw,noexec,nosuid,size=1g
+          --tmpfs /logs:rw,noexec,nosuid,size=256m
+      isolation:
+        image: neo4j:5.26-community@sha256:414adfe41c6ff32abb752be37f265c77607c166cab298f65a917fc4f05776218
+        env:
+          NEO4J_db_transaction_timeout: 5s
+          NEO4J_db_lock_acquisition_timeout: 5s
+          NEO4J_db_transaction_monitor_check_interval: 500ms
+          NEO4J_AUTH: neo4j/${{ github.run_id }}-${{ github.run_attempt }}-coverage
+        options: >-
+          --tmpfs /data:rw,noexec,nosuid,size=1g
+          --tmpfs /logs:rw,noexec,nosuid,size=256m
+      preferences:
+        image: neo4j:5.26-community@sha256:414adfe41c6ff32abb752be37f265c77607c166cab298f65a917fc4f05776218
+        env:
+          NEO4J_db_transaction_timeout: 5s
+          NEO4J_db_lock_acquisition_timeout: 5s
+          NEO4J_db_transaction_monitor_check_interval: 500ms
           NEO4J_AUTH: neo4j/${{ github.run_id }}-${{ github.run_attempt }}-coverage
         options: >-
           --tmpfs /data:rw,noexec,nosuid,size=1g
@@ -654,6 +677,9 @@ jobs:
     env:
       NEO4J_FIXTURE_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}-coverage
       MUNINN_FIXTURE_URI: bolt://neo4j:7687
+      MUNINN_FIXTURE_DISPOSABLE: '1'
+      MUNINN_ISOLATION_URI: bolt://isolation:7687
+      MUNINN_PREFERENCES_URI: bolt://preferences:7687
       MUNINN_FIXTURE_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}-coverage
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
