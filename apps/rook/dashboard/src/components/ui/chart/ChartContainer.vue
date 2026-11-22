@@ -6,6 +6,9 @@ import {cn} from "@/lib/utils";
 </script>
 
 <script lang="ts" setup>
+import type {HTMLAttributes} from "vue";
+import {computed, toRefs} from "vue";
+
 const props = defineProps<{
   id?: HTMLAttributes["id"]
   class?: HTMLAttributes["class"]

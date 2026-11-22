@@ -2,6 +2,24 @@ set shell := ["/bin/bash", "-c"]
 set dotenv-load
 set positional-arguments
 
+# === Bazel ===
+
+# Build the current Bazel bootstrap target from the root Bzlmod graph.
+bazel-build-core:
+    bazel build //crates/huginn/core:huginn_core --lockfile_mode=error
+
+# Run all unit and integration tests currently modeled for huginn-core.
+bazel-test-core:
+    bazel test //crates/huginn/core:all --lockfile_mode=error
+
+# Build every target modeled across the workspace (including the dashboard, hermetically).
+bazel-build:
+    bazel build //... --lockfile_mode=error
+
+# Run the full Bazel suite without cached results (including dashboard tests, hermetically).
+bazel-test:
+    bazel test //... --nocache_test_results --lockfile_mode=error --test_output=summary
+
 # === Colors ===
 # Generated via printf because just 1.51.0 doesn't accept \033 (octal) or \x1b (hex)
 # escape sequences in string variables. Newer just versions handle both.
@@ -107,6 +125,7 @@ huginn-wasm-build:
 huginn-wasm-test:
     cargo test --locked -p huginn-rust-outline-component
     cargo test --locked -p huginn-runtime --features experimental-wasm --test wasm_outline
+    cargo test --locked -p huginn-runtime --features experimental-wasm --test wasm_output_validation
     cargo test --locked -p huginn --features experimental-wasm --test wasm_outline
     just huginn-architecture
 
@@ -148,6 +167,29 @@ test-e2e-cleanup:
 test-e2e-install-deps:
     @echo "{{ YELLOW }}Installing dashboard dependencies...{{ RESET }}"
     cd apps/rook/dashboard && pnpm install
+
+# === Muninn GM-01 ===
+
+# Run GM-01 harness unit tests (differential, contract, lifecycle, runner)
+test-gm01:
+    @echo "{{ YELLOW }}Running GM-01 harness tests...{{ RESET }}"
+    PYTHONPATH=dev/muninn python3 -m pytest dev/muninn/tests/test_gm01_*.py -v
+
+# Run the three live parity scenarios; each test owns a fresh Neo4j container.
+muninn-bolt-parity:
+    @docker info > /dev/null
+    env -u MUNINN_FIXTURE_URI -u MUNINN_ISOLATION_URI -u MUNINN_PREFERENCES_URI cargo test -p muninn-neo4j --test durability_reconnect --test multi_tenant_isolation --test preference_relationships
+
+# Run the isolated GM-01 Compose capture (requires Docker + Linux arm64)
+# Usage: just run-gm01 /path/to/agent-memory-checkout /path/to/evidence-dir
+run-gm01 reference evidence:
+    @echo "{{ YELLOW }}Running GM-01 capture...{{ RESET }}"
+    PYTHONPATH=dev/muninn python3 dev/muninn/gm01_runner.py --reference {{quote(reference)}} --evidence {{quote(evidence)}}
+
+# Offline GM-01 differential comparison of two capture files
+# Usage: just diff-gm01 /path/to/reference.json /path/to/rust.json
+diff-gm01 reference candidate:
+    PYTHONPATH=dev/muninn python3 dev/muninn/gm01_differential.py {{quote(reference)}} {{quote(candidate)}}
 
 # Generate HTML code coverage report with llvm-cov
 coverage:

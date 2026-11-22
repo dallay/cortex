@@ -488,6 +488,11 @@ see the [Huginn development guide](../development/huginn.md).
 
 ## 🔒 Security
 
+For security support and vulnerability reporting, consult the
+[Cortex Security Policy](../../SECURITY.md). Do not share exploit details in
+public issues or pull requests. The safeguards below are scoped to the
+documented tools and platforms; they are not an agent-wide sandbox guarantee.
+
 | Concern         | Mitigation                                                  |
 |-----------------|-------------------------------------------------------------|
 | API keys        | Use environment variables, not config files                 |
@@ -513,6 +518,12 @@ see the [Huginn development guide](../development/huginn.md).
 | [Providers UI](providers-ui.md) | Provider configuration in TUI |
 | [Rook](../rook/README.md)       | Companion AI proxy            |
 | [Cortex](../README.md)          | Full project documentation    |
+
+---
+
+## ♿ Accessibility
+
+Cortex is committed to accessibility. Please see the [Accessibility Statement](../../ACCESSIBILITY.md). If you encounter an accessibility barrier, [file a report](https://github.com/dallay/cortex/issues/new?template=accessibility.yml).
 
 ---
 

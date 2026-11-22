@@ -1,0 +1,58 @@
+name: Bazel (non-blocking)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: bazel-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  bazel-test-linux:
+    name: Bazel test (Linux, advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+      - name: Classify changed paths
+        id: affected
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node .github/scripts/ci-affected-crates.cjs
+
+      # The dashboard is now built hermetically by Bazel (Vite 7 + Rollup).
+      # No pnpm install or pnpm build step is needed.
+
+      - uses: bazel-contrib/setup-bazel@e1614ab8b64f375e8e1d6885bc7d47f72e8bd0b1 # 0.19.2
+        if: steps.affected.outputs.mode != 'docs-only'
+        with:
+          bazelisk-cache: true
+      - name: Run Bazel tooling tests
+        if: steps.affected.outputs.mode != 'docs-only'
+        run: python3 -m unittest dev.bazel.test_check_inventory dev.bazel.test_generate_build_files
+      - name: Check generated Bazel files
+        if: steps.affected.outputs.mode != 'docs-only'
+        run: python3 dev/bazel/generate_build_files.py --check
+      - name: Check Bazel inventory
+        if: steps.affected.outputs.mode != 'docs-only'
+        run: python3 dev/bazel/check_inventory.py
+      - name: Validate Bazel module lockfile
+        if: steps.affected.outputs.mode != 'docs-only'
+        run: bazel mod deps --lockfile_mode=error
+      - name: Run Bazel test suite
+        if: steps.affected.outputs.mode != 'docs-only'
+        run: bazel test //... --lockfile_mode=error --test_output=summary

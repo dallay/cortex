@@ -13,6 +13,9 @@ The AI Infrastructure Stack for Production
 [![Last Commit](https://img.shields.io/github/last-commit/dallay/cortex/main?label=last%20commit)](https://github.com/dallay/cortex/commits/main)
 [![Stars](https://img.shields.io/github/stars/dallay/cortex?style=flat&color=yellow)](https://github.com/dallay/cortex/stargazers)
 
+[![Contributors](https://img.shields.io/github/contributors/dallay/cortex?color=4A4A4A)](https://github.com/dallay/cortex/graphs/contributors)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/dallay/cortex)
 
 **Rook** — AI Proxy & Router · **Huginn** — Local Coding Agent
@@ -29,6 +32,24 @@ The AI Infrastructure Stack for Production
   <a href="#-architecture"><b>Architecture</b></a> •
   <a href="#-documentation"><b>Docs</b></a>
 </p>
+
+---
+
+## Table of Contents
+
+- [What is Cortex?](#-what-is-cortex)
+- [Products](#-products)
+  - [Rook — AI Proxy & Router](#%EF%B8%8F-rook--ai-proxy--router)
+  - [Huginn — Local Coding Agent](#-huginn--local-coding-agent)
+- [Why Cortex?](#-why-cortex)
+- [Quick Start](#-quick-start)
+- [Architecture](#-architecture)
+- [Development](#-development)
+- [Documentation](#-documentation)
+- [Accessibility](#-accessibility)
+- [Contributing](#-contributing)
+- [License](#-license)
+- [Community](#-community)
 
 ---
 
@@ -445,32 +466,40 @@ pnpm typecheck && pnpm build && pnpm exec vitest run
 
 ---
 
+## ♿ Accessibility
+
+Cortex is committed to making its tools and documentation accessible to everyone. Please see our [Accessibility Statement](ACCESSIBILITY.md) for details on our commitment, current status, and how to report accessibility barriers.
+
+If you encounter an accessibility issue, please [file an accessibility report](https://github.com/dallay/cortex/issues/new?template=accessibility.yml).
+
+---
+
 ## 🤝 Contributing
 
 We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for:
 
-- Development setup
+- Ground rules and code of conduct
+- Development setup and workflow
 - Code style guidelines
-- Pull request process
-- Issue templates
+- Pull request process with accessibility checklist
+- Issue templates for bugs, features, and accessibility reports
 
-We follow the [Rust Code of Conduct](https://www.rust-lang.org/policies/code-of-conduct).
+We follow the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).
 
 ---
 
 ## 📄 License
 
-MIT License. See [LICENSE](LICENSE).
+MIT License. See [LICENSE](LICENSE). By contributing to Cortex, you agree that your contributions will be licensed under the MIT License.
 
 ---
 
 ## 👥 Community
 
-| Channel                                                        | Purpose           |
-|----------------------------------------------------------------|-------------------|
-| 💬 [Discussions](https://github.com/dallay/cortex/discussions) | Questions & ideas |
-| 🐛 [Issues](https://github.com/dallay/cortex/issues)           | Bug reports       |
-| 🌐 [DeepWiki](https://deepwiki.com/dallay/cortex)              | AI-powered docs   |
+| Channel                                             | Purpose                                                        |
+|-----------------------------------------------------|----------------------------------------------------------------|
+| [Issues](https://github.com/dallay/cortex/issues)   | Bug reports, accessibility issues, and feature requests   |
+| [DeepWiki](https://deepwiki.com/dallay/cortex)      | AI-powered docs                                                |
 
 ---
 

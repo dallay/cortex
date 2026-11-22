@@ -1,3 +1,6 @@
+#[path = "support/runfiles.rs"]
+mod runfiles;
+
 use async_trait::async_trait;
 use futures::{stream::BoxStream, StreamExt};
 use huginn_core::{
@@ -1525,10 +1528,15 @@ async fn denied_mcp_call_never_reaches_the_started_server() {
     let config = ServerConfig {
         name: "fixture".into(),
         command: "/usr/bin/python3".into(),
-        args: vec![format!(
-            "{}/tests/fixtures/mcp_server.py",
-            env!("CARGO_MANIFEST_DIR")
-        )],
+        args: vec![runfiles::resolve(
+            "_main/crates/huginn/runtime/tests/fixtures/mcp_server.py",
+            std::path::Path::new(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/mcp_server.py"
+            )),
+        )
+        .display()
+        .to_string()],
         env: BTreeMap::from([("MARKER".into(), marker.display().to_string())]),
         env_from: BTreeMap::new(),
     };

@@ -11,7 +11,7 @@ const props = withDefaults(
     orientation: "vertical",
   },
 );
-const delegatedProps = reactiveOmit(props, "class");
+const delegatedProps = reactiveOmit(props, "class", "orientation");
 </script>
 
 <template>

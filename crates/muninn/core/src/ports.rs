@@ -666,6 +666,28 @@ pub trait LongTermStore: Send + Sync {
     ) -> MemoryResult<Vec<Scored<Fact>>>;
 
     async fn facts_by_subject(&self, subject: &str, limit: i64) -> MemoryResult<Vec<Fact>>;
+
+    /// Create the fact and all `(:Fact)-[:ABOUT]->(:Entity)` edges atomically.
+    async fn create_fact_with_about(&self, fact: &Fact, about: &[Uuid]) -> MemoryResult<Fact> {
+        if !about.is_empty() {
+            return Err(MemoryError::NotSupported("atomic fact ABOUT".into()));
+        }
+        self.create_fact(fact).await
+    }
+
+    /// Update a duplicate and merge its requested edges in the same write.
+    async fn update_fact_with_about(
+        &self,
+        id: Uuid,
+        confidence: f64,
+        object: &str,
+        about: &[Uuid],
+    ) -> MemoryResult<()> {
+        if !about.is_empty() {
+            return Err(MemoryError::NotSupported("atomic fact ABOUT".into()));
+        }
+        self.update_fact_confidence(id, confidence, object).await
+    }
 }
 
 /// Persistence port for reasoning (trace, step, tool-call and hosted
@@ -912,18 +934,142 @@ pub trait ConsolidationStore: Send + Sync {
 
 #[cfg(test)]
 mod owner_scope_tests {
-    use super::OwnerScope;
+    use super::{
+        ConsolidationReport, EmbeddingIdentity, MessageRecord, OwnerScope, SessionOrder,
+        SessionQuery, TraceOrder, TraceQuery,
+    };
+    use crate::model::{MessageRole, Metadata, NewMessage};
+    use chrono::{DateTime, Utc};
+    use serde_json::Value;
 
     #[test]
     fn owners_preserve_exact_identity_and_do_not_alias_unowned() {
         assert_ne!(
-            OwnerScope::owned(" owner ").unwrap(),
-            OwnerScope::owned("owner").unwrap()
+            OwnerScope::owned(" owner ").expect("owner is nonblank"),
+            OwnerScope::owned("owner").expect("owner is nonblank")
         );
         assert!(OwnerScope::owned(" ").is_err());
         assert_ne!(
-            OwnerScope::owned("unowned").unwrap().storage_key(),
+            OwnerScope::owned("unowned")
+                .expect("owner is nonblank")
+                .storage_key(),
             OwnerScope::unowned().storage_key()
         );
+    }
+
+    #[test]
+    fn owner_scope_helpers_encode_and_decode_namespaces() {
+        let unowned = OwnerScope::unowned();
+        assert!(unowned.is_unowned());
+        assert_eq!(unowned.as_str(), None);
+        assert_eq!(unowned.storage_key(), "unowned");
+        assert_eq!(
+            OwnerScope::from_option(None).expect("unowned scope"),
+            unowned
+        );
+        assert_eq!(
+            OwnerScope::from_storage_key("unowned").expect("decode"),
+            unowned
+        );
+
+        let owned = OwnerScope::owned("alice").expect("valid owner");
+        assert!(!owned.is_unowned());
+        assert_eq!(owned.as_str(), Some("alice"));
+        assert_eq!(owned.storage_key(), "owned:alice");
+        assert_eq!(
+            OwnerScope::from_option(Some("alice")).expect("owned scope"),
+            owned
+        );
+        assert_eq!(
+            OwnerScope::from_storage_key("owned:alice").expect("decode"),
+            owned
+        );
+        assert_eq!(
+            OwnerScope::from_storage_key("alice")
+                .expect_err("invalid namespace rejected")
+                .to_string(),
+            "invalid input: invalid stored owner namespace"
+        );
+        assert!(OwnerScope::from_storage_key("owned: ").is_err());
+    }
+
+    #[test]
+    fn embedding_identity_validates_and_exposes_its_key_and_dimensions() {
+        let identity = EmbeddingIdentity::new("model:v1", 3).expect("valid identity");
+        assert_eq!(identity.key(), "model:v1");
+        assert_eq!(identity.dimensions(), 3);
+        assert_eq!(
+            EmbeddingIdentity::new("  ", 3)
+                .expect_err("blank key rejected")
+                .to_string(),
+            "invalid input: invalid embedding identity"
+        );
+        assert!(EmbeddingIdentity::new("model:v1", 0).is_err());
+        assert!(EmbeddingIdentity::new("model:v1", usize::MAX).is_err());
+    }
+
+    #[test]
+    fn session_orders_have_stable_names_and_query_defaults() {
+        assert_eq!(SessionOrder::CreatedAt.as_str(), "created_at");
+        assert_eq!(SessionOrder::UpdatedAt.as_str(), "updated_at");
+        assert_eq!(SessionOrder::MessageCount.as_str(), "message_count");
+        assert_eq!(SessionOrder::default(), SessionOrder::UpdatedAt);
+
+        let query = SessionQuery::default();
+        assert_eq!(query.prefix, None);
+        assert_eq!(query.limit, 0);
+        assert_eq!(query.offset, 0);
+        assert_eq!(query.order_by, SessionOrder::UpdatedAt);
+        assert!(!query.ascending);
+    }
+
+    #[test]
+    fn trace_orders_and_query_defaults_are_stable() {
+        assert_eq!(TraceOrder::StartedAt.as_str(), "started_at");
+        assert_eq!(TraceOrder::CompletedAt.as_str(), "completed_at");
+        assert_eq!(TraceOrder::default(), TraceOrder::StartedAt);
+
+        let query = TraceQuery::default();
+        assert_eq!(query.session_id, None);
+        assert_eq!(query.success, None);
+        assert_eq!(query.since, None);
+        assert_eq!(query.until, None);
+        assert_eq!(query.limit, 100);
+        assert_eq!(query.offset, 0);
+        assert_eq!(query.order_by, TraceOrder::StartedAt);
+        assert!(!query.ascending);
+    }
+
+    #[test]
+    fn consolidation_report_defaults_to_a_dry_run() {
+        let report = ConsolidationReport::default();
+        assert!(report.kind.is_empty());
+        assert!(report.dry_run);
+        assert_eq!(report.candidates_found, 0);
+        assert_eq!(report.mutations_applied, 0);
+        assert!(report.candidates.is_empty());
+        assert_eq!(report.run_id, None);
+    }
+
+    #[test]
+    fn message_record_from_new_copies_input_and_adds_empty_operation_fields() {
+        let timestamp =
+            DateTime::<Utc>::from_timestamp(1_700_000_000, 0).expect("timestamp is representable");
+        let metadata = Metadata::from_iter([("source".to_owned(), Value::from("test"))]);
+        let input = NewMessage {
+            role: MessageRole::Assistant,
+            content: "hello".to_owned(),
+            metadata: metadata.clone(),
+            timestamp: Some(timestamp),
+        };
+        let record = MessageRecord::from_new(&input, Some(vec![0.25, 0.75]));
+        assert_eq!(record.role, "assistant");
+        assert_eq!(record.content, "hello");
+        assert_eq!(record.metadata, metadata);
+        assert_eq!(record.timestamp, Some(timestamp));
+        assert_eq!(record.embedding, Some(vec![0.25, 0.75]));
+        assert_eq!(record.operation_key, None);
+        assert_eq!(record.operation_payload, None);
+        assert_eq!(record.embedding_identity, None);
     }
 }

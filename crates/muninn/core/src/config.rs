@@ -1667,45 +1667,249 @@ mod tests {
 
     #[test]
     fn enum_parsing() {
-        assert_eq!(
-            "openai".parse::<EmbeddingProvider>().unwrap(),
-            EmbeddingProvider::Openai
-        );
-        assert_eq!(
-            "OPENAI".parse::<EmbeddingProvider>().unwrap(),
-            EmbeddingProvider::Openai
-        );
+        let embedding_providers = [
+            ("openai", EmbeddingProvider::Openai),
+            ("anthropic", EmbeddingProvider::Anthropic),
+            ("ollama", EmbeddingProvider::Ollama),
+            (
+                "sentence_transformers",
+                EmbeddingProvider::SentenceTransformers,
+            ),
+            ("vertex_ai", EmbeddingProvider::VertexAi),
+            ("bedrock", EmbeddingProvider::Bedrock),
+            ("custom", EmbeddingProvider::Custom),
+        ];
+        for (s, expected) in embedding_providers {
+            assert_eq!(s.parse::<EmbeddingProvider>().unwrap(), expected);
+            assert_eq!(
+                s.to_uppercase().parse::<EmbeddingProvider>().unwrap(),
+                expected
+            );
+        }
         assert!("unknown".parse::<EmbeddingProvider>().is_err());
 
-        assert_eq!(
-            "composite".parse::<ResolverStrategy>().unwrap(),
-            ResolverStrategy::Composite
-        );
-        assert_eq!(
-            "pipeline".parse::<ExtractorType>().unwrap(),
-            ExtractorType::Pipeline
-        );
-        assert_eq!(
-            "confidence".parse::<MergeStrategy>().unwrap(),
-            MergeStrategy::Confidence
-        );
-        assert_eq!("poleo".parse::<SchemaModel>().unwrap(), SchemaModel::Poleo);
+        let llm_providers = [
+            ("openai", LLMProvider::Openai),
+            ("anthropic", LLMProvider::Anthropic),
+            ("ollama", LLMProvider::Ollama),
+        ];
+        for (s, expected) in llm_providers {
+            assert_eq!(s.parse::<LLMProvider>().unwrap(), expected);
+            assert_eq!(s.to_uppercase().parse::<LLMProvider>().unwrap(), expected);
+        }
+        assert!("unknown".parse::<LLMProvider>().is_err());
+
+        let extractor_types = [
+            ("llm", ExtractorType::Llm),
+            ("gliner", ExtractorType::Gliner),
+            ("spacy", ExtractorType::Spacy),
+            ("pipeline", ExtractorType::Pipeline),
+            ("none", ExtractorType::None),
+        ];
+        for (s, expected) in extractor_types {
+            assert_eq!(s.parse::<ExtractorType>().unwrap(), expected);
+            assert_eq!(s.to_uppercase().parse::<ExtractorType>().unwrap(), expected);
+        }
+        assert!("unknown".parse::<ExtractorType>().is_err());
+
+        let merge_strategies = [
+            ("union", MergeStrategy::Union),
+            ("intersection", MergeStrategy::Intersection),
+            ("confidence", MergeStrategy::Confidence),
+            ("cascade", MergeStrategy::Cascade),
+        ];
+        for (s, expected) in merge_strategies {
+            assert_eq!(s.parse::<MergeStrategy>().unwrap(), expected);
+            assert_eq!(s.to_uppercase().parse::<MergeStrategy>().unwrap(), expected);
+        }
+        assert!("unknown".parse::<MergeStrategy>().is_err());
+
+        let schema_models = [
+            ("poleo", SchemaModel::Poleo),
+            ("legacy", SchemaModel::Legacy),
+            ("custom", SchemaModel::Custom),
+        ];
+        for (s, expected) in schema_models {
+            assert_eq!(s.parse::<SchemaModel>().unwrap(), expected);
+            assert_eq!(s.to_uppercase().parse::<SchemaModel>().unwrap(), expected);
+        }
+        assert!("unknown".parse::<SchemaModel>().is_err());
+
+        let resolver_strategies = [
+            ("exact", ResolverStrategy::Exact),
+            ("fuzzy", ResolverStrategy::Fuzzy),
+            ("semantic", ResolverStrategy::Semantic),
+            ("composite", ResolverStrategy::Composite),
+            ("none", ResolverStrategy::None),
+        ];
+        for (s, expected) in resolver_strategies {
+            assert_eq!(s.parse::<ResolverStrategy>().unwrap(), expected);
+            assert_eq!(
+                s.to_uppercase().parse::<ResolverStrategy>().unwrap(),
+                expected
+            );
+        }
+        assert!("unknown".parse::<ResolverStrategy>().is_err());
+
+        let geocoding_providers = [
+            ("nominatim", GeocodingProvider::Nominatim),
+            ("google", GeocodingProvider::Google),
+        ];
+        for (s, expected) in geocoding_providers {
+            assert_eq!(s.parse::<GeocodingProvider>().unwrap(), expected);
+            assert_eq!(
+                s.to_uppercase().parse::<GeocodingProvider>().unwrap(),
+                expected
+            );
+        }
+        assert!("unknown".parse::<GeocodingProvider>().is_err());
+
+        let enrichment_providers = [
+            ("wikimedia", EnrichmentProvider::Wikimedia),
+            ("diffbot", EnrichmentProvider::Diffbot),
+            ("none", EnrichmentProvider::None),
+        ];
+        for (s, expected) in enrichment_providers {
+            assert_eq!(s.parse::<EnrichmentProvider>().unwrap(), expected);
+            assert_eq!(
+                s.to_uppercase().parse::<EnrichmentProvider>().unwrap(),
+                expected
+            );
+        }
+        assert!("unknown".parse::<EnrichmentProvider>().is_err());
+
+        let backends = [("bolt", Backend::Bolt), ("nams", Backend::Nams)];
+        for (s, expected) in backends {
+            assert_eq!(s.parse::<Backend>().unwrap(), expected);
+            assert_eq!(s.to_uppercase().parse::<Backend>().unwrap(), expected);
+        }
+        assert!("unknown".parse::<Backend>().is_err());
+
+        let write_modes = [("sync", WriteMode::Sync), ("buffered", WriteMode::Buffered)];
+        for (s, expected) in write_modes {
+            assert_eq!(s.parse::<WriteMode>().unwrap(), expected);
+            assert_eq!(s.to_uppercase().parse::<WriteMode>().unwrap(), expected);
+        }
+        assert!("unknown".parse::<WriteMode>().is_err());
+
+        let validation_modes = [
+            ("strict", ValidationMode::Strict),
+            ("permissive", ValidationMode::Permissive),
+        ];
+        for (s, expected) in validation_modes {
+            assert_eq!(s.parse::<ValidationMode>().unwrap(), expected);
+            assert_eq!(
+                s.to_uppercase().parse::<ValidationMode>().unwrap(),
+                expected
+            );
+        }
+        assert!("unknown".parse::<ValidationMode>().is_err());
+
+        let resolution_scopes = [
+            ("global", ResolutionScope::Global),
+            ("user", ResolutionScope::User),
+        ];
+        for (s, expected) in resolution_scopes {
+            assert_eq!(s.parse::<ResolutionScope>().unwrap(), expected);
+            assert_eq!(
+                s.to_uppercase().parse::<ResolutionScope>().unwrap(),
+                expected
+            );
+        }
+        assert!("unknown".parse::<ResolutionScope>().is_err());
     }
 
     #[test]
     fn enum_display() {
         assert_eq!(EmbeddingProvider::Openai.to_string(), "openai");
+        assert_eq!(EmbeddingProvider::Anthropic.to_string(), "anthropic");
+        assert_eq!(EmbeddingProvider::Ollama.to_string(), "ollama");
+        assert_eq!(
+            EmbeddingProvider::SentenceTransformers.to_string(),
+            "sentence_transformers"
+        );
+        assert_eq!(EmbeddingProvider::VertexAi.to_string(), "vertex_ai");
+        assert_eq!(EmbeddingProvider::Bedrock.to_string(), "bedrock");
+        assert_eq!(EmbeddingProvider::Custom.to_string(), "custom");
+
+        assert_eq!(LLMProvider::Openai.to_string(), "openai");
         assert_eq!(LLMProvider::Anthropic.to_string(), "anthropic");
+        assert_eq!(LLMProvider::Ollama.to_string(), "ollama");
+        assert_eq!(LLMProvider::Custom.to_string(), "custom");
+
+        assert_eq!(ExtractorType::Llm.to_string(), "llm");
+        assert_eq!(ExtractorType::Gliner.to_string(), "gliner");
+        assert_eq!(ExtractorType::Spacy.to_string(), "spacy");
         assert_eq!(ExtractorType::Pipeline.to_string(), "pipeline");
+        assert_eq!(ExtractorType::None.to_string(), "none");
+
+        assert_eq!(MergeStrategy::Union.to_string(), "union");
+        assert_eq!(MergeStrategy::Intersection.to_string(), "intersection");
         assert_eq!(MergeStrategy::Confidence.to_string(), "confidence");
+        assert_eq!(MergeStrategy::Cascade.to_string(), "cascade");
+
         assert_eq!(SchemaModel::Poleo.to_string(), "poleo");
+        assert_eq!(SchemaModel::Legacy.to_string(), "legacy");
+        assert_eq!(SchemaModel::Custom.to_string(), "custom");
+
+        assert_eq!(ResolverStrategy::Exact.to_string(), "exact");
+        assert_eq!(ResolverStrategy::Fuzzy.to_string(), "fuzzy");
+        assert_eq!(ResolverStrategy::Semantic.to_string(), "semantic");
         assert_eq!(ResolverStrategy::Composite.to_string(), "composite");
+        assert_eq!(ResolverStrategy::None.to_string(), "none");
+
         assert_eq!(GeocodingProvider::Nominatim.to_string(), "nominatim");
+        assert_eq!(GeocodingProvider::Google.to_string(), "google");
+
         assert_eq!(EnrichmentProvider::Wikimedia.to_string(), "wikimedia");
+        assert_eq!(EnrichmentProvider::Diffbot.to_string(), "diffbot");
+        assert_eq!(EnrichmentProvider::None.to_string(), "none");
+
         assert_eq!(Backend::Bolt.to_string(), "bolt");
+        assert_eq!(Backend::Nams.to_string(), "nams");
+
+        assert_eq!(WriteMode::Sync.to_string(), "sync");
         assert_eq!(WriteMode::Buffered.to_string(), "buffered");
+
         assert_eq!(ValidationMode::Strict.to_string(), "strict");
+        assert_eq!(ValidationMode::Permissive.to_string(), "permissive");
+
+        assert_eq!(ResolutionScope::Global.to_string(), "global");
         assert_eq!(ResolutionScope::User.to_string(), "user");
+    }
+
+    #[test]
+    fn settings_constructors_and_value_parsing() {
+        let min = MemorySettings::minimal();
+        assert_eq!(min, MemorySettings::default());
+
+        let agent = MemorySettings::default_agent();
+        assert_eq!(agent, MemorySettings::default());
+
+        let val = serde_json::json!({
+            "neo4j": { "uri": "bolt://custom:7687", "password": "pass" },
+            "backend": "nams"
+        });
+        let settings = MemorySettings::from_value(val).unwrap();
+        assert_eq!(settings.neo4j.uri, "bolt://custom:7687");
+        assert_eq!(settings.backend, Some(Backend::Nams));
+
+        let bad_val = serde_json::json!({
+            "neo4j": "not_an_object"
+        });
+        assert!(MemorySettings::from_value(bad_val).is_err());
+        assert!(MemorySettings::from_json("invalid json string").is_err());
+
+        // Validate error propagation when resolution bands fail
+        let mut invalid_resolution_settings = MemorySettings {
+            resolution: ResolutionConfig {
+                review_threshold: 0.95,
+                auto_merge_threshold: 0.90,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(invalid_resolution_settings.validate().is_err());
     }
 
     #[test]

@@ -1,6 +1,6 @@
 [package]
 name = "muninn-neo4j"
-version.workspace = true
+version = "0.0.1"
 edition.workspace = true
 publish = false
 license = "Apache-2.0"
@@ -17,6 +17,7 @@ uuid.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 muninn-application = { path = "../application" }
 
 [lints]

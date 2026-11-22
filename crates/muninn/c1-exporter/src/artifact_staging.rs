@@ -65,11 +65,49 @@ impl ExclusiveStage {
     }
 
     /// Publishes directory visibility only, never a complete or durable model.
-    /// OutcomeUnknown means rename succeeded but the subsequent parent sync failed.
+    /// OutcomeUnknown means the rename happened but the parent sync failed, or the
+    /// published entry could not be reopened.
     pub fn publish_directory(self, target: &str) -> Result<ArtifactDir, FsError> {
-        self.publish_with_sync(target, File::sync_all, File::sync_all)
+        self.publish_transaction(
+            target,
+            File::sync_all,
+            File::sync_all,
+            |_| Ok(()),
+            |_| false,
+        )
     }
 
+    /// Publishes directory visibility and freezes the published entry before the
+    /// parent sync makes the new name durable.
+    ///
+    /// The staged directory cannot be frozen before the rename: macOS 15 denies
+    /// renaming a directory whose mode lacks write permission.
+    pub fn publish_frozen_directory(self, target: &str) -> Result<ArtifactDir, FsError> {
+        self.publish_frozen_directory_with(target, super::freeze_directory, |_| false)
+    }
+
+    /// Publishes a frozen directory and recovers an exact prior publication that a
+    /// failed freeze left writable.
+    ///
+    /// `matches` decides whether an existing final-name entry is exactly the
+    /// requested content. Adoption never replaces the entry: it freezes the
+    /// existing directory in place. An entry that does not match, or that is
+    /// already frozen, is never adopted.
+    pub(crate) fn publish_frozen_directory_with<M, F>(
+        self,
+        target: &str,
+        freeze: F,
+        matches: M,
+    ) -> Result<ArtifactDir, FsError>
+    where
+        F: FnOnce(&ArtifactDir) -> Result<(), FsError>,
+        M: FnOnce(&ArtifactDir) -> bool,
+    {
+        self.publish_transaction(target, File::sync_all, File::sync_all, freeze, matches)
+    }
+
+    /// Test seam that injects synchronization failures around the publication.
+    #[cfg(test)]
     fn publish_with_sync<B, A>(
         self,
         target: &str,
@@ -80,20 +118,42 @@ impl ExclusiveStage {
         B: FnOnce(&File) -> std::io::Result<()>,
         A: FnOnce(&File) -> std::io::Result<()>,
     {
+        self.publish_transaction(target, before, after, |_| Ok(()), |_| false)
+    }
+
+    fn publish_transaction<B, A, F, M>(
+        self,
+        target: &str,
+        before: B,
+        after: A,
+        freeze: F,
+        matches: M,
+    ) -> Result<ArtifactDir, FsError>
+    where
+        B: FnOnce(&File) -> std::io::Result<()>,
+        A: FnOnce(&File) -> std::io::Result<()>,
+        F: FnOnce(&ArtifactDir) -> Result<(), FsError>,
+        M: FnOnce(&ArtifactDir) -> bool,
+    {
         if !crate::artifacts::is_lower_hex(target, 64) {
             return Err(FsError::InvalidPath);
         }
         let parent =
             ArtifactDir::from_directory(self.parent.try_clone().map_err(|_| FsError::Io)?)?;
-        let named = parent.open_subdir(&self.source_name)?;
-        let owned = self
-            .directory
-            .directory
-            .metadata()
-            .map_err(|_| FsError::Io)?;
-        let current = named.directory.metadata().map_err(|_| FsError::Io)?;
-        if owned.dev() != current.dev() || owned.ino() != current.ino() {
-            return Err(FsError::UnsafeEntry);
+        {
+            // The identity check borrows the named entry, so its descriptor closes
+            // here. When VOL_CAP_INT_RENAME_OPENFAIL is set, renaming an open
+            // object may fail, which can surface as EACCES.
+            let named = parent.open_subdir(&self.source_name)?;
+            let owned = self
+                .directory
+                .directory
+                .metadata()
+                .map_err(|_| FsError::Io)?;
+            let current = named.directory.metadata().map_err(|_| FsError::Io)?;
+            if owned.dev() != current.dev() || owned.ino() != current.ino() {
+                return Err(FsError::UnsafeEntry);
+            }
         }
         before(&self.directory.directory).map_err(|error| {
             #[cfg(test)]
@@ -102,20 +162,58 @@ impl ExclusiveStage {
             let _ = error;
             FsError::Io
         })?;
+        // Same reason as above: the owned descriptor to the renamed entry closes
+        // before the rename and the published entry is reopened through the parent.
+        drop(self.directory);
         #[cfg(test)]
         super::diagnostics::probe_pre_rename();
-        rustix::fs::renameat_with(
+        let renamed = rustix::fs::renameat_with(
             &self.parent,
             &self.source_name,
             &self.parent,
             target,
             rustix::fs::RenameFlags::NOREPLACE,
-        )
-        .map_err(|error| {
-            #[cfg(test)]
-            super::diagnostics::report("publish.rename_noreplace", &std::io::Error::from(error));
-            map_errno(error)
-        })?;
+        );
+        let published = match renamed {
+            Ok(()) => {
+                // The published entry is reopened and frozen before the parent
+                // sync makes the new name durable, so a crash cannot expose a
+                // writable published directory under a durable name.
+                let published = parent
+                    .open_subdir(target)
+                    .map_err(|_| FsError::OutcomeUnknown)?;
+                freeze(&published).map_err(|_| FsError::OutcomeUnknown)?;
+                published
+            }
+            Err(error) => {
+                #[cfg(test)]
+                super::diagnostics::report(
+                    "publish.rename_noreplace",
+                    &std::io::Error::from(error),
+                );
+                let error = map_errno(error);
+                if error != FsError::AlreadyExists {
+                    return Err(error);
+                }
+                // The rename never replaces an existing entry. A retry that finds
+                // the final name already taken can only recover the exact entry
+                // that a failed freeze left writable.
+                let existing = parent
+                    .open_subdir(target)
+                    .map_err(|_| FsError::AlreadyExists)?;
+                let metadata = existing.directory.metadata().map_err(|_| FsError::Io)?;
+                if metadata.mode() & 0o200 == 0 {
+                    // The entry is already frozen: an earlier publication
+                    // completed. It is never adopted or published twice.
+                    return Err(FsError::AlreadyExists);
+                }
+                if !matches(&existing) {
+                    return Err(FsError::AlreadyExists);
+                }
+                freeze(&existing).map_err(|_| FsError::OutcomeUnknown)?;
+                existing
+            }
+        };
         after(&self.parent).map_err(|error| {
             #[cfg(test)]
             super::diagnostics::report("publish.post_sync", &error);
@@ -123,7 +221,7 @@ impl ExclusiveStage {
             let _ = error;
             FsError::OutcomeUnknown
         })?;
-        Ok(self.directory)
+        Ok(published)
     }
 }
 
@@ -276,6 +374,37 @@ mod tests {
     }
 
     #[test]
+    fn publication_releases_every_descriptor_to_the_renamed_directory() {
+        let root = fixture();
+        let parent = ArtifactDir::open_root(root.path()).expect("root");
+        let stage = ExclusiveStage::begin(&parent).expect("stage");
+        let metadata =
+            std::fs::metadata(root.path().join(&stage.source_name)).expect("stage metadata");
+        let (device, inode) = (metadata.dev(), metadata.ino());
+        assert_eq!(
+            crate::artifact_fs::diagnostics::descriptor_open_for(device, inode),
+            Some(true),
+            "the scan must detect the known-live stage descriptor"
+        );
+        let open_during_rename = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed = std::sync::Arc::clone(&open_during_rename);
+        let _guard = crate::artifact_fs::diagnostics::set_pre_rename_probe(move || {
+            if crate::artifact_fs::diagnostics::descriptor_open_for(device, inode)
+                .expect("conclusive descriptor scan before rename")
+            {
+                observed.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
+        stage
+            .publish_directory(&"d".repeat(64))
+            .expect("publication");
+        assert!(
+            !open_during_rename.load(std::sync::atomic::Ordering::SeqCst),
+            "a descriptor to the staged directory was still open before the rename"
+        );
+    }
+
+    #[test]
     fn rejects_a_source_entry_that_no_longer_names_the_owned_inode() {
         let root = fixture();
         let parent = ArtifactDir::open_root(root.path()).expect("root");
@@ -425,6 +554,57 @@ mod tests {
         assert_eq!(
             std::fs::read(root.path().join("a".repeat(64)).join("marker")).expect("winner data"),
             winner
+        );
+    }
+
+    #[test]
+    fn an_existing_writable_entry_is_recovered_only_when_it_matches_exactly() {
+        let root = fixture();
+        let parent = ArtifactDir::open_root(root.path()).expect("root");
+        let target = "9".repeat(64);
+        let existing = root.path().join(&target);
+        std::fs::create_dir(&existing).expect("existing entry");
+        std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o700))
+            .expect("entry mode");
+        std::fs::write(existing.join("marker"), b"existing").expect("marker");
+        std::fs::set_permissions(
+            existing.join("marker"),
+            std::fs::Permissions::from_mode(0o400),
+        )
+        .expect("marker mode");
+
+        // A publication that does not recognize the entry leaves it untouched.
+        let stage = ExclusiveStage::begin(&parent).expect("stage");
+        write_marker(&stage, b"source");
+        let source = stage.source_name.clone();
+        assert!(matches!(
+            stage.publish_frozen_directory_with(&target, super::super::freeze_directory, |_| false),
+            Err(FsError::AlreadyExists)
+        ));
+        assert_eq!(
+            std::fs::metadata(&existing).expect("metadata").mode() & 0o777,
+            0o700,
+            "an unrecognized entry must not be frozen"
+        );
+        assert!(root.path().join(source).is_dir());
+
+        // A publication that recognizes the exact entry freezes it in place.
+        let marker = existing.join("marker");
+        let stage = ExclusiveStage::begin(&parent).expect("stage");
+        write_marker(&stage, b"source");
+        let published = stage
+            .publish_frozen_directory_with(&target, super::super::freeze_directory, |entry| {
+                entry.open_file("marker").is_ok()
+                    && std::fs::read(&marker).is_ok_and(|bytes| bytes == b"existing")
+            })
+            .expect("recovered publication");
+        assert_eq!(
+            published.directory.metadata().expect("metadata").mode() & 0o777,
+            0o500
+        );
+        assert_eq!(
+            std::fs::read(&marker).expect("preserved marker"),
+            b"existing"
         );
     }
 

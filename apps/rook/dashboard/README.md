@@ -142,6 +142,22 @@ The [Dashboard Development Guide](../../../docs/development/dashboard.md) lists 
 typecheck, lint, and build commands. Docker-based Playwright setup and manual testing are in the
 [E2E Testing Guide](../../../dev/README.md#path-2--playwright-e2e-against-docker).
 
+### Bazel targets
+
+The dashboard also exposes Bazel targets from the repository root:
+
+```bash
+bazel test //apps/rook/dashboard:vitest     # Vitest suite
+bazel test //apps/rook/dashboard:typecheck  # vue-tsc --noEmit
+bazel test //apps/rook/dashboard:lint       # biome check
+```
+
+These targets delegate dependency management and execution to pnpm. The root `pnpm-lock.yaml`
+stays authoritative: the targets never install, update, or lock packages, and they create no
+dashboard lockfile or workspace file. They are therefore not hermetic — `node_modules` must be
+installed first (`just dashboard-install`), and the targets run against the source tree so that
+the installed toolchain is the one under test.
+
 ---
 
 ## 🎨 Development
@@ -203,6 +219,12 @@ defineProps<Props>()
 | [Configuration](../../../docs/rook/configuration.md)                  | Rook config options                    |
 | [Dashboard Development Guide](../../../docs/development/dashboard.md) | Local dashboard development and checks |
 | [Docker E2E Guide](../../../dev/README.md)                            | Docker-based integration testing       |
+
+---
+
+## ♿ Accessibility
+
+Cortex is committed to accessibility. Please see the [Accessibility Statement](../../../ACCESSIBILITY.md). If you encounter an accessibility barrier, [file a report](https://github.com/dallay/cortex/issues/new?template=accessibility.yml).
 
 ---
 

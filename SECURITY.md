@@ -1,170 +1,199 @@
 # Security Policy
 
+Cortex is a public monorepo containing Rook, Huginn, and shared or experimental
+components. Security reports are welcome for the code in this repository, but
+receiving a report is not a promise to maintain every build or version.
+
 ## Supported Versions
 
-We actively maintain security updates for the following versions. We recommend always using the latest stable release.
+**Current pre-GA position (18 November 2026):** No public GitHub Releases are
+published for Rook or Huginn. The
+[Release Please manifest](.release-please-manifest.json) tracks `0.0.1` for
+each product; a manifest version is not evidence of a released, supported
+distribution.
 
-| Version  | Supported          |
-|----------|--------------------|
-| `>= 2.x` | :white_check_mark: |
-| `1.x`    | :white_check_mark: |
-| `< 1.x`  | :x:                |
+| Product | Public release status | Security maintenance commitment |
+|---------|-----------------------|---------------------------------|
+| Rook | No published GitHub Release | No supported released version; reports about current development code are welcome |
+| Huginn | No published GitHub Release | No supported released version; reports about current development code are welcome |
 
-### Release Cadence
+Cortex is an ecosystem and repository, **not** a separately versioned product.
+Other components, including Muninn and internal crates, are within the scope of
+security reports but have no independently announced support window. We do not
+currently promise fixes, backports, or a security update schedule for particular
+commits, pre-release builds, or historical versions.
 
-- **Major versions** (`2.x`, `3.x`): Supported for 12 months after the next major is released.
-- **Minor versions** (`2.1.x`): Supported while the minor is current or previous.
-- **Patch versions** (`2.1.1`): Supported within the same minor as the latest patch.
-
-Subscribe to [GitHub Releases](https://github.com/dallay/cortex/releases) for alerts.
-
----
+Each product will define its own supported versions and maintenance window
+before an announced public support commitment. Until then, follow the
+[release and distribution contract](docs/releasing.md) for release gates and
+the [GitHub Releases page](https://github.com/dallay/cortex/releases) for
+published artifacts. Do not infer a support guarantee from a manifest entry,
+tag, CI build, or source installation.
 
 ## Reporting a Vulnerability
 
-**Please do not report security vulnerabilities through public GitHub Issues.**
+**Do not publish exploit details, credentials, reproduction payloads, or
+sensitive logs in GitHub Issues, pull requests, or Discussions.**
 
-Send a report to **privately via GitHub Security Advisories**:
+1. Visit [Cortex Security Advisories](https://github.com/dallay/cortex/security/advisories).
+2. If **Report a vulnerability** is available, submit the report privately.
+   Include the affected product, commit or build reference, impact, reproduction
+   steps, and a minimal proof of concept, without including live secrets.
+3. If the private-reporting option is **not** available, open a
+   [public issue](https://github.com/dallay/cortex/issues/new) **only to
+   request a private reporting channel**. Do not describe the vulnerability
+   publicly. Maintainers should arrange a private contact method before asking
+   for technical details.
 
-1. Navigate to [the repository's Security tab](https://github.com/dallay/cortex/security/advisories).
-2. Click **Report a vulnerability**.
-3. Fill out the advisory form — we respond within **48 hours** with an acknowledgment.
-4. Provide as much detail as possible: reproduction steps, affected versions, any potential fixes.
+**Maintainer configuration check:** The presence of a Security Advisories URL
+does **not** prove that private vulnerability reporting is enabled. A repository
+administrator must confirm the **Private vulnerability reporting** setting and
+test the external reporter flow. This check is still required; no functioning
+private intake channel is asserted by this document.
 
-### What to Expect After Reporting
+### Response and Disclosure
 
-| Timeline       | What Happens                                                                                   |
-|----------------|------------------------------------------------------------------------------------------------|
-| **< 48 hours** | Initial acknowledgment from the maintainers.                                                   |
-| **< 7 days**   | Preliminary severity assessment (Critical / High / Medium / Low).                              |
-| **< 30 days**  | If accepted: a fix is prepared in a private branch. Patch release timeline communicated.       |
-| **< 60 days**  | Public disclosure on a mutually agreed date. We will reach out if extended timeline is needed. |
+Maintainers will review actionable reports and coordinate next steps with the
+reporter when a private channel is available. Prioritization depends on impact,
+exploitability, affected surfaces, maintainer capacity, and release readiness.
+**There is currently no guaranteed acknowledgment, fix, or disclosure SLA.**
 
-### Scope
+Where appropriate, maintainers may prepare a fix privately, communicate
+mitigations, and coordinate an advisory and disclosure with the reporter.
+Publishing a patch or GitHub Security Advisory requires an actual validated
+fix and the relevant product's release authorization; neither is automatic.
+Never disclose a reporter's identity or reproduction details without
+permission. Maintainers should record ownership, escalation, and feasible
+response targets before publicly promising specific deadlines.
 
-The policy covers vulnerabilities in the cortex monorepo, including:
+## Scope
 
-- Core packages (`rook` CLI, Rust backend)
-- Frontend apps (`apps/`)
-- Infrastructure-as-Code configurations
-- GitHub Actions workflows
+Security findings are in scope when they demonstrate a real trust-boundary
+failure in repository-maintained components, including:
 
-**In-scope**: Remote code execution, privilege escalation, data exfiltration, authentication bypass, dependency chain compromise.
+- **Rook:** HTTP API and authentication, provider routing, API keys, admin
+  sessions, request logging, and the Vue management dashboard in
+  [`apps/rook/`](apps/rook/).
+- **Huginn:** local agent tools, command execution, filesystem access, MCP
+  integrations, permissions, and persisted sessions in
+  [`apps/huginn/`](apps/huginn/) and [`crates/huginn/`](crates/huginn/).
+- **Muninn and shared code:** memory, data processing, and common components
+  under [`apps/muninn/`](apps/muninn/) and [`crates/`](crates/).
+- **Supply chain:** [`third_party/`](third_party/), dependencies,
+  Dockerfiles, development images, and
+  [GitHub Actions workflows](.github/workflows/).
 
-**Out-of-scope**: Social engineering, denial-of-service against third-party infrastructure, pre-disclosure findings from automated scanners.
+Examples include credential disclosure, authentication or authorization bypass,
+unintended code execution, unsafe path handling, privilege escalation, and
+prompt injection **when it crosses an implemented tool or permission boundary**.
 
----
+Reports without a demonstrated security impact, purely hypothetical prompt
+injections, social engineering, and denial-of-service against unrelated
+third-party infrastructure are generally outside this repository's security
+triage process. Report ordinary bugs via the
+[issue templates](.github/ISSUE_TEMPLATE/). Do not use a public bug report for
+an exploitable vulnerability.
 
-## Security Best Practices for Contributors
+## Trust Boundaries and Contributor Guidance
 
-### Secrets Management
+### Secrets and Dependencies
 
-- **Never commit secrets, credentials, or tokens** to the repository. Use environment variables or GitHub Secrets.
-- If a secret is accidentally committed, assume it is compromised and rotate it immediately.
-- Use `.gitignore`, `.env.example`, and `git-secrets`, `gitleaks`, or GitGuardian `ggshield` pre-push hooks.
+- Never commit API keys, tokens, passwords, credentials, or sensitive session
+  data. Use scoped environment variables or approved secret storage.
+- Treat accidentally committed credentials as compromised; revoke and rotate
+  them. Removing the line from a later commit does not revoke the credential.
+- Review dependency updates and lockfile changes in
+  [`Cargo.lock`](Cargo.lock) and [`pnpm-lock.yaml`](pnpm-lock.yaml).
+  [Renovate](renovate.json) opens dependency and vulnerability-update PRs; it is
+  **not** an approval or release gate.
+- The Cargo three-day publish-age cooldown is configured in
+  [`.cargo/config.toml`](.cargo/config.toml). It reduces early adoption of
+  suspicious releases but is **not** a substitute for audits or review; it
+  does not protect every installation command. See the
+  [development guide](docs/development.md#dependency-cooldown).
 
-### Dependency Management
+### Rook: HTTP, Authentication, and Configuration
 
-- All Rust dependencies are audited via `cargo audit` in CI (`ci.yml#audit`).
-- Frontend dependencies are audited via `pnpm audit` where applicable.
-- **Do not** add dependencies with known high/critical vulnerabilities.
-- Keep lock files (`Cargo.lock`, `pnpm-lock.yaml`) up to date and committed.
-- Cargo resolves Rust dependencies with a three-day publish-age cooldown (`.cargo/config.toml`), so a compromised release has time to be detected before it reaches `Cargo.lock`. See the [development guide](docs/development.md#dependency-cooldown) for the override procedure.
-- `cargo install` ignores that cooldown. CI pins the versions of the tools it installs (`cargo-audit`, `cargo-llvm-cov`) in `.github/workflows/ci.yml`.
-- The cooldown reduces supply-chain risk but does not replace review. Keep reviewing dependency updates.
+- Apply authorization and validation at Rook's backend/API boundaries; a
+  client-side route or dashboard control is not a security boundary.
+- **Persistent client API-key authentication is disabled by default** in the
+  documented configuration; deployments must explicitly assess and enable
+  suitable controls before exposing the API. See
+  [Rook authentication configuration](docs/rook/configuration.md#authapi_keys).
+- Protect `API_KEY_HASH_SECRET`, admin credentials, upstream provider
+  secrets, SQLite databases, and logs. Never log a raw bearer token.
+- Validate provider destinations, request input, API key restrictions, and
+  untrusted external response data before routing, storing, or executing
+  anything. Use least-privilege credentials and review any public exposure.
 
-### Input Validation
+### Huginn: Tools, Model Output, and Local Authority
 
-- Validate and sanitize ALL user input at trust boundaries, especially in:
-    - CLI argument parsing (`rook` package)
-    - File path handling (path traversal attacks)
-    - HTTP API handlers (`apps/*/api`)
-    - AI model prompt injection surfaces
+- Treat model-generated commands, workspace files, prompts, skill content, and
+  MCP server output as **untrusted input**, not user authorization.
+- Require the documented permission decisions for tool invocations. Never
+  bypass approval or broaden filesystem/network access because an LLM or a
+  retrieved document requests it.
+- The documented macOS Seatbelt profile applies to **`run_shell` and its
+  child processes only**. Native tools and MCP servers are outside that
+  sandbox, and Linux/Windows do not have equivalent isolation from this
+  feature. Do not claim the entire agent is sandboxed. See
+  [Huginn shell isolation](docs/huginn/README.md#shell-command-isolation).
+- Respect workspace boundaries, audit tool inputs/outputs, and handle local
+  SQLite session data as potentially sensitive. The session store does not
+  provide built-in encryption.
 
-### Authentication / Authorization
+## Security Controls: Verified Configuration vs. Guarantees
 
-- Use Vercel Middleware/Routing Middleware for auth at the edge.
-- Never roll custom auth — use established patterns (Clerk, Auth.js, etc.).
-- Apply least-privilege scoping on all secrets and API keys.
+The table reflects the **configured workflows**, not a claim that every run
+is successful or that every GitHub security setting is enabled.
 
-### Security-Sensitive Code Areas
+| Control | Current scope and enforcement |
+|---------|-------------------------------|
+| `cargo audit` | `audit` CI job checks Rust dependencies; runs for backend or GitHub changes and participates in the required CI result |
+| Trivy | `trivy-fs` scans filesystem dependencies and misconfigurations for HIGH/CRITICAL findings, ignoring unfixed vulnerabilities; runs when relevant paths change |
+| Gitleaks | `gitleaks-pr` fails on secrets in the PR commit range (or history on push); separate history scans are reporting-only |
+| Semgrep | `semgrep-pr` scans Rust, Dockerfile, and GitHub Actions rules for ERROR-severity findings on relevant changes; not a general TypeScript/Vue SAST guarantee |
+| GitGuardian | A separate reusable workflow runs for push and eligible PRs, but excludes fork PRs and Dependabot PRs; effectiveness depends on the configured secret and shared workflow |
+| SonarCloud | Conditional integration; requires the relevant secret/service configuration and is not evidence of a completed security audit |
+| Renovate | Dependency PRs, OSV alerts, and lockfile maintenance; review and merge are separate human or repository-policy decisions |
 
-The following packages/configs receive elevated security scrutiny:
+Source of truth: [`ci.yml`](.github/workflows/ci.yml),
+[`gitguardian-scan.yml`](.github/workflows/gitguardian-scan.yml),
+[`security-deep.yml`](.github/workflows/security-deep.yml), and
+[`renovate.json`](renovate.json).
 
-| Package / Config       | Reason                              |
-|------------------------|-------------------------------------|
-| `crates/rook/`         | CLI with file system and git access |
-| `apps/rook/dashboard/` | User-facing web app with auth       |
-| `.github/workflows/`   | CI/CD with secrets access           |
-| `infra/`               | Cloud infrastructure definitions    |
+The `security-deep.yml` workflow is scheduled **Monday–Friday at 03:17 UTC**
+(not every night of the week). Its full-history Gitleaks, broader Semgrep,
+and Trivy scans publish reports/SARIF but do **not** block merges. The current
+CI workflow does **not** define a dedicated `pnpm audit` merge gate;
+frontend dependency risk should not be described as covered by such a job.
 
----
+The [release workflow](.github/workflows/release.yml) defines tagged source
+verification, product-specific builds and channel gates. These are intended
+controls, **not proof of published artifacts or reproducible builds**.
+Follow [`docs/releasing.md`](docs/releasing.md) and verify the release
+preflight before making distribution security claims.
 
-## Dependency Security
+## Incident Handling
 
-### Automated Scanning
+For a credible private report, the maintainers should:
 
-The project uses multiple layers of automated vulnerability scanning:
+1. Establish a private communication channel and confirm the affected product,
+   version or commit, impact, and reproducibility.
+2. Assess severity and immediate mitigations without sharing exploit details
+   publicly. Rotate exposed secrets if applicable.
+3. Assign an owner, reproduce and fix the issue, and verify the remediation
+   using focused tests and relevant security scans.
+4. Decide whether to release a fix for an authorized distribution channel,
+   then coordinate public disclosure and a GitHub Security Advisory if
+   appropriate.
 
-| Tool                         | Scope                                    | PR Gate (`ci.yml`)                                                                     | Nightly (`security-deep.yml`)   | SonarCloud                       |
-|------------------------------|------------------------------------------|----------------------------------------------------------------------------------------|---------------------------------|----------------------------------|
-| **cargo audit**              | Rust dependencies                        | :white_check_mark: Blocks on vulnerable deps                                           | N/A                             | —                                |
-| **Renovate**                 | `Cargo.lock`, `pnpm-lock.yaml`           | :white_check_mark: Opens patch/security and lock-file maintenance PRs for manual merge | N/A                             | —                                |
-| **Gitleaks** (`gitleaks-pr`) | Secrets in commits                       | :white_check_mark: Blocks on any secret found                                          | Reporting only (full history)   | —                                |
-| **GitGuardian** (`ggshield`) | Secret detection in commits & pre-push   | :white_check_mark: Scans on push/PR (`gitguardian-scan.yml`) & local pre-push hook     | —                               | —                                |
-| **Semgrep** (`semgrep-pr`)   | SAST (rust, docker, GH actions, secrets) | :white_check_mark: Blocks on ERROR-severity findings                                   | Reporting only (all severities) | —                                |
-| **Trivy** (`trivy-fs`)       | Filesystem, dependencies, IaC            | :white_check_mark: Blocks on HIGH/CRITICAL vulns                                       | Reporting only (all severities) | —                                |
-| **SonarCloud**               | Code quality + security hotspots         | Conditional (token required)                                                           | —                               | :white_check_mark: If configured |
+No SOC 2, ISO 27001, or other formal security certification is claimed.
 
-### Keeping Dependencies Updated
+## Related Resources
 
-- **Renovate** creates PRs for outdated dependencies automatically, with OSV vulnerability alerts enabled and lock file maintenance.
-- Security updates are merged quickly; feature/minor updates follow regular review cadence.
-- Renovate runs on a schedule with a minimum release age of 3 days and groups updates by manager and type.
-
----
-
-## Incident Response
-
-When a vulnerability is reported or discovered:
-
-1. **Triage** — The maintainer team assesses severity within 48 hours.
-2. **Private fix** — A fix is developed in a private fork/branch.
-3. **Coordinated disclosure** — A patch is prepared with a target disclosure date.
-4. **Patch release** — A patch version (`x.y.z`) is tagged and released.
-5. **Public disclosure** — A GitHub Security Advisory is published with the full write-up.
-
-### Severity Classification
-
-| Level        | Definition                                            | Response Time                     |
-|--------------|-------------------------------------------------------|-----------------------------------|
-| **Critical** | Remote code execution, complete authentication bypass | < 24 hours for initial mitigation |
-| **High**     | Data exfiltration, privilege escalation               | < 7 days for patch                |
-| **Medium**   | Information disclosure, DoS                           | < 30 days for patch               |
-| **Low**      | Minor impact, hard to exploit                         | Next release cycle                |
-
----
-
-## Compliance & Standards
-
-This project follows:
-
-- **Secure by design** principles: minimal dependency surface, defense in depth.
-- **Dependency audit** before each release via `cargo audit` and `pnpm audit`.
-- **Secret scanning** via Gitleaks on the repository full history.
-- **Reproducible builds**: Linux, macOS, and Windows binaries are built from verified build pipelines.
-
-No formal certifications currently (SOC2, ISO 27001, etc.).
-
----
-
-## Security-Related Links
-
-| Resource                   | Link                                                                               |
-|----------------------------|------------------------------------------------------------------------------------|
-| Report a vulnerability     | [GitHub Security Advisories](https://github.com/dallay/cortex/security/advisories) |
-| Code scanning results      | [GitHub Code Scanning](https://github.com/dallay/cortex/security/code-scanning)    |
-| Renovate configuration     | [`renovate.json`](renovate.json)                                                   |
-| Secret scanning alerts     | [GitHub Secret Scanning](https://github.com/dallay/cortex/security/secrets)        |
-| CI/CD workflow             | [`.github/workflows/ci.yml`](.github/workflows/ci.yml)                             |
-| Nightly security deep scan | [`.github/workflows/security-deep.yml`](.github/workflows/security-deep.yml)       |
+- [Cortex Security Advisories](https://github.com/dallay/cortex/security/advisories)
+- [GitHub code scanning](https://github.com/dallay/cortex/security/code-scanning)
+- [Dependency management](renovate.json)
+- [Development and test guide](docs/development.md)
+- [Release and distribution contract](docs/releasing.md)

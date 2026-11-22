@@ -5,6 +5,9 @@ pub mod client;
 pub mod consolidation;
 pub mod enrichment;
 pub mod extraction;
+pub mod local_operator;
+#[cfg(test)]
+mod local_operator_tests;
 pub mod long_term;
 pub mod reasoning;
 pub mod reasoning_observer;

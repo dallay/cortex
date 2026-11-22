@@ -227,14 +227,22 @@ async fn ollama_protocol_uses_descriptor_paths_independent_of_adapter_metadata()
     };
     let descriptor = Box::leak(Box::new(descriptor));
 
-    let provider = build_provider_from_connection(
+    let server_origin = server.uri();
+    let provider = build_provider_from_connection_with_policy(
         &ConnectionId::new(),
         descriptor,
         &DecryptedCredentials::ApiKey {
             api_key: "ollama-key".into(),
         },
-        Some(server.uri()),
+        Some(server_origin.clone()),
         vec![ModelId::new("test-model")],
+        ProviderConnectionBuildOptions {
+            quota_recorder: None,
+            oauth_token_port: None,
+            endpoint_policy: rook_core::EndpointPolicy {
+                allowed_origins: vec![server_origin],
+            },
+        },
     )
     .expect("Ollama protocol should build regardless of adapter metadata");
     provider
@@ -562,6 +570,12 @@ impl EnvVarGuard {
         std::env::remove_var(name);
         Self { name, original }
     }
+
+    fn set(name: &'static str, value: &str) -> Self {
+        let original = std::env::var_os(name);
+        std::env::set_var(name, value);
+        Self { name, original }
+    }
 }
 
 #[cfg(unix)]
@@ -592,6 +606,10 @@ fn build_api_key_auth_disabled_returns_none() {
 
 #[test]
 fn build_api_key_auth_enabled_returns_some() {
+    // Serialize against the tests that mutate API_KEY_HASH_SECRET so this test
+    // never observes a transient value from a parallel test.
+    #[cfg(unix)]
+    let _lock = API_KEY_SECRET_ENV_LOCK.lock().unwrap();
     // Use in-memory SQLite so resolve_api_key_secret generates a transient secret
     // automatically without needing to mutate the process environment.
     let config: RookConfig = toml::from_str(
@@ -634,6 +652,56 @@ enabled = false
 
 #[cfg(unix)]
 #[test]
+fn api_key_secret_rejects_values_shorter_than_32_bytes() {
+    let _lock = API_KEY_SECRET_ENV_LOCK.lock().unwrap();
+    let _env = EnvVarGuard::set("API_KEY_HASH_SECRET", "too-short-secret");
+    let config = api_key_auth_config(":memory:");
+    let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepository::default());
+    let registry: Arc<dyn rook_core::ProviderRegistryPort> = Arc::new(FakeProviderRegistry);
+
+    let error = match build_api_key_auth(&config, &repo, &registry) {
+        Ok(_) => panic!("short API key hash secrets must be rejected"),
+        Err(error) => error,
+    };
+
+    assert!(error.to_string().contains("at least 32 bytes"));
+}
+
+#[cfg(unix)]
+#[test]
+fn api_key_secret_accepts_values_with_at_least_32_bytes() {
+    let _lock = API_KEY_SECRET_ENV_LOCK.lock().unwrap();
+    let _env = EnvVarGuard::set("API_KEY_HASH_SECRET", "01234567890123456789012345678901");
+    let config = api_key_auth_config(":memory:");
+    let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepository::default());
+    let registry: Arc<dyn rook_core::ProviderRegistryPort> = Arc::new(FakeProviderRegistry);
+
+    assert!(build_api_key_auth(&config, &repo, &registry).is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn api_key_secret_rejects_persisted_values_shorter_than_32_bytes() {
+    let _lock = API_KEY_SECRET_ENV_LOCK.lock().unwrap();
+    let _env = EnvVarGuard::remove("API_KEY_HASH_SECRET");
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("rook.db");
+    std::fs::write(&db, "").unwrap();
+    std::fs::write(dir.path().join("api_key_secret.key"), "short-file-secret\n").unwrap();
+    let config = api_key_auth_config(db.to_str().unwrap());
+    let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepository::default());
+    let registry: Arc<dyn rook_core::ProviderRegistryPort> = Arc::new(FakeProviderRegistry);
+
+    let error = match build_api_key_auth(&config, &repo, &registry) {
+        Ok(_) => panic!("short persisted secrets must be rejected"),
+        Err(error) => error,
+    };
+
+    assert!(error.to_string().contains("at least 32 bytes"));
+}
+
+#[cfg(unix)]
+#[test]
 fn api_key_secret_storage_accepts_symlinked_database_directory() {
     use std::os::unix::fs::symlink;
 
@@ -667,7 +735,7 @@ fn api_key_secret_storage_rejects_symlink_outside_database_directory() {
     std::fs::create_dir(&database_dir).unwrap();
     std::fs::create_dir(&outside_dir).unwrap();
     let outside_secret = outside_dir.join("secret.key");
-    std::fs::write(&outside_secret, "secret\n").unwrap();
+    std::fs::write(&outside_secret, "secret-value-with-at-least-32-bytes\n").unwrap();
     symlink(&outside_secret, database_dir.join("api_key_secret.key")).unwrap();
     let db_path = database_dir.join("rook.db");
     let config = api_key_auth_config(db_path.to_str().unwrap());
@@ -721,7 +789,11 @@ fn existing_api_key_secret_permissions_are_restricted_without_changing_content()
     let db = dir.path().join("rook.db");
     std::fs::write(&db, "").unwrap();
     let secret_path = dir.path().join("api_key_secret.key");
-    std::fs::write(&secret_path, "existing-secret\n").unwrap();
+    std::fs::write(
+        &secret_path,
+        "existing-secret-value-with-at-least-32-bytes\n",
+    )
+    .unwrap();
     std::fs::set_permissions(&secret_path, std::fs::Permissions::from_mode(0o644)).unwrap();
     let config = api_key_auth_config(db.to_str().unwrap());
     let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepository::default());
@@ -731,7 +803,7 @@ fn existing_api_key_secret_permissions_are_restricted_without_changing_content()
 
     assert_eq!(
         std::fs::read_to_string(&secret_path).unwrap(),
-        "existing-secret\n"
+        "existing-secret-value-with-at-least-32-bytes\n"
     );
     assert_eq!(
         std::fs::metadata(&secret_path)
@@ -754,7 +826,11 @@ fn already_restricted_api_key_secret_permissions_are_preserved() {
     let db = dir.path().join("rook.db");
     std::fs::write(&db, "").unwrap();
     let secret_path = dir.path().join("api_key_secret.key");
-    std::fs::write(&secret_path, "read-only-secret\n").unwrap();
+    std::fs::write(
+        &secret_path,
+        "read-only-secret-value-with-at-least-32-bytes\n",
+    )
+    .unwrap();
     std::fs::set_permissions(&secret_path, std::fs::Permissions::from_mode(0o400)).unwrap();
     let config = api_key_auth_config(db.to_str().unwrap());
     let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> = Arc::new(FakeApiKeyRepository::default());
@@ -764,7 +840,7 @@ fn already_restricted_api_key_secret_permissions_are_preserved() {
 
     assert_eq!(
         std::fs::read_to_string(&secret_path).unwrap(),
-        "read-only-secret\n"
+        "read-only-secret-value-with-at-least-32-bytes\n"
     );
     assert_eq!(
         std::fs::metadata(&secret_path)
@@ -773,6 +849,124 @@ fn already_restricted_api_key_secret_permissions_are_preserved() {
             .mode()
             & 0o777,
         0o400
+    );
+}
+
+/// Concurrent API key auth initializers must converge on the persisted secret.
+///
+/// The public surface is `build_api_key_auth`: every concurrent builder resolves
+/// the secret file on its own. The convergence is observable through the shared
+/// repository — a key created by one instance authenticates under every other
+/// instance, while an instance built with a different secret rejects it.
+#[cfg(unix)]
+#[tokio::test]
+async fn concurrent_api_key_auth_builds_converge_on_the_persisted_secret() {
+    const BUILDERS: usize = 8;
+
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("rook.db");
+    db_migration::run_migrations(db_path.to_str().unwrap()).expect("migrations run");
+    let config = api_key_auth_config(db_path.to_str().unwrap());
+    let repo: Arc<dyn rook_core::ApiKeyRepositoryPort> =
+        Arc::new(auth_sqlite::SqliteApiKeyRepository::new(&db_path).expect("api key repository"));
+    let registry: Arc<dyn rook_core::ProviderRegistryPort> = Arc::new(FakeProviderRegistry);
+
+    // The secret file is only read while the environment is stable, so the
+    // environment lock covers the synchronous build phase only.
+    let (instances, later_auth, secret_path, persisted) = {
+        let _lock = API_KEY_SECRET_ENV_LOCK.lock().unwrap();
+        let _env = EnvVarGuard::remove("API_KEY_HASH_SECRET");
+
+        // Every builder starts at the same time, so without the exclusive lock
+        // they all observe the secret file as missing and publish a different
+        // secret.
+        let barrier = Arc::new(std::sync::Barrier::new(BUILDERS));
+        let handles: Vec<_> = (0..BUILDERS)
+            .map(|_| {
+                let config = config.clone();
+                let repo = Arc::clone(&repo);
+                let registry = Arc::clone(&registry);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    build_api_key_auth(&config, &repo, &registry).expect("api key auth builds")
+                })
+            })
+            .collect();
+
+        let instances: Vec<_> = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("builder thread"))
+            .map(|(auth, manage_keys)| {
+                (
+                    auth.expect("client authentication is enabled"),
+                    manage_keys.expect("api key management is enabled"),
+                )
+            })
+            .collect();
+
+        // An instance built after the concurrent phase reuses the persisted value.
+        let (later_auth, _) =
+            build_api_key_auth(&config, &repo, &registry).expect("api key auth builds");
+        let later_auth = later_auth.expect("client authentication is enabled");
+
+        let secret_path = dir.path().join("api_key_secret.key");
+        let persisted = std::fs::read_to_string(&secret_path).expect("persisted secret file");
+        assert!(
+            persisted.trim().len() >= 32,
+            "the persisted secret must satisfy the 32-byte minimum"
+        );
+
+        (instances, later_auth, secret_path, persisted)
+    };
+
+    // The creator publishes the key through the shared repository.
+    let (record, raw_key) = instances[0]
+        .1
+        .create(rook_usecases::CreateApiKeyRequest {
+            label: "convergence".to_string(),
+            scopes: vec![rook_core::ApiKeyScope::parse("chat:read").expect("canonical scope")],
+            tier: rook_core::ApiKeyTier::Free,
+            expires_at: None,
+            allowed_models: vec![],
+            allowed_providers: vec![],
+            spending_budget: None,
+        })
+        .await
+        .expect("api key created");
+
+    // Every concurrently built instance must accept the key, which holds only
+    // when all of them resolved the same persisted secret.
+    for (index, (authenticate, _)) in instances.iter().enumerate() {
+        let subject = authenticate
+            .execute(&raw_key)
+            .await
+            .unwrap_or_else(|error| panic!("instance {index} must accept the key: {error}"));
+        assert_eq!(subject.id, record.id);
+    }
+
+    // A divergent secret must reject the same key, so the assertion above is
+    // not vacuous.
+    let divergent = rook_usecases::AuthenticateClientApi::new(
+        Arc::clone(&repo),
+        "a-different-hash-secret-value-with-enough-bytes",
+    );
+    assert!(
+        divergent.execute(&raw_key).await.is_err(),
+        "an instance built with a different secret must reject the key"
+    );
+
+    // The instance built after the concurrent phase accepts the same key.
+    let subject = later_auth
+        .execute(&raw_key)
+        .await
+        .expect("a later instance must accept the key");
+    assert_eq!(subject.id, record.id);
+
+    // The persisted secret is never rewritten once published.
+    assert_eq!(
+        std::fs::read_to_string(&secret_path).expect("persisted secret file"),
+        persisted
     );
 }
 
@@ -988,12 +1182,19 @@ fn build_provider_from_connection_ollama_cloud_uses_override() {
         api_key: "ollama-cloud-key".to_string(),
     };
     let id = conn_id();
-    let result = build_provider_from_connection(
+    let result = build_provider_from_connection_with_policy(
         &id,
         rook_core::descriptor_by_id("ollama-cloud").expect("ollama-cloud descriptor"),
         &creds,
         Some("https://staging.ollama.example.com".to_string()),
         Vec::new(),
+        ProviderConnectionBuildOptions {
+            quota_recorder: None,
+            oauth_token_port: None,
+            endpoint_policy: rook_core::EndpointPolicy {
+                allowed_origins: vec!["https://staging.ollama.example.com".to_string()],
+            },
+        },
     );
     let provider = result.expect("expected Ok for OllamaCloud with override base_url");
     assert_eq!(provider.id().as_str(), id.to_string());

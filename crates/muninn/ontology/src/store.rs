@@ -748,92 +748,7 @@ impl BoltOntology {
         to_revision: i64,
     ) -> MemoryResult<OntologyDiff> {
         let ontology = self.get(ontology_id).await?;
-
-        let before = document_at(&ontology, from_revision)?;
-        let after = document_at(&ontology, to_revision)?;
-
-        let mut diff = OntologyDiff {
-            from_revision: Some(from_revision),
-            to_revision: Some(to_revision),
-            entity_types: serde_json::Value::Object(serde_json::Map::new()),
-            relationships: serde_json::Value::Object(serde_json::Map::new()),
-            mode_change: None,
-        };
-
-        let before_labels: HashSet<&str> = before.labels().into_iter().collect();
-        let after_labels: HashSet<&str> = after.labels().into_iter().collect();
-
-        let added: Vec<&str> = after_labels.difference(&before_labels).copied().collect();
-        let removed: Vec<&str> = before_labels.difference(&after_labels).copied().collect();
-
-        let mut entity_changes = serde_json::Map::new();
-        if !added.is_empty() {
-            entity_changes.insert(
-                "added".to_string(),
-                serde_json::Value::Array(
-                    added.into_iter().map(|s| serde_json::json!(*s)).collect(),
-                ),
-            );
-        }
-        if !removed.is_empty() {
-            entity_changes.insert(
-                "removed".to_string(),
-                serde_json::Value::Array(
-                    removed.into_iter().map(|s| serde_json::json!(*s)).collect(),
-                ),
-            );
-        }
-        diff.entity_types = serde_json::Value::Object(entity_changes);
-
-        let before_patterns = before.patterns();
-        let after_patterns = after.patterns();
-
-        let rel_added: Vec<_> = after_patterns.difference(&before_patterns).collect();
-        let rel_removed: Vec<_> = before_patterns.difference(&after_patterns).collect();
-
-        let mut rel_changes = serde_json::Map::new();
-        if !rel_added.is_empty() {
-            rel_changes.insert(
-                "added".to_string(),
-                serde_json::Value::Array(
-                    rel_added
-                        .iter()
-                        .map(|(s, r, t)| serde_json::json!({ "source": s, "type": r, "target": t }))
-                        .collect(),
-                ),
-            );
-        }
-        if !rel_removed.is_empty() {
-            rel_changes.insert(
-                "removed".to_string(),
-                serde_json::Value::Array(
-                    rel_removed
-                        .iter()
-                        .map(|(s, r, t)| serde_json::json!({ "source": s, "type": r, "target": t }))
-                        .collect(),
-                ),
-            );
-        }
-        diff.relationships = serde_json::Value::Object(rel_changes);
-
-        let modes: HashMap<i64, String> = ontology
-            .versions
-            .iter()
-            .map(|v| (v.revision, v.validation_mode.clone()))
-            .collect();
-
-        if let (Some(old_mode), Some(new_mode)) =
-            (modes.get(&from_revision), modes.get(&to_revision))
-        {
-            if old_mode != new_mode {
-                diff.mode_change = Some(serde_json::json!({
-                    "from": old_mode,
-                    "to": new_mode
-                }));
-            }
-        }
-
-        Ok(diff)
+        compute_diff(&ontology, from_revision, to_revision)
     }
 
     // -- migration ------------------------------------------------------------
@@ -993,46 +908,11 @@ impl BoltOntology {
     // -- internals ------------------------------------------------------------
 
     fn template_summary(&self, name: &str) -> OntologySummary {
-        let document = get_template(name);
-        OntologySummary {
-            id: format!("{TEMPLATE_ID_PREFIX}{name}"),
-            name: name.to_owned(),
-            display_name: Some(document.domain.name.clone()),
-            description: document.domain.description.clone(),
-            emoji: document.domain.emoji.clone(),
-            tagline: document.domain.tagline.clone(),
-            is_system: true,
-            current_revision: None,
-            is_active: false,
-        }
+        template_summary(name)
     }
 
     fn template_ontology(&self, ontology_id: &str) -> MemoryResult<Ontology> {
-        let name = ontology_id
-            .strip_prefix(TEMPLATE_ID_PREFIX)
-            .unwrap_or(ontology_id);
-        let document = get_template(name);
-
-        Ok(Ontology {
-            record: OntologyRecord {
-                id: ontology_id.to_owned(),
-                name: name.to_owned(),
-                description: document.domain.description.clone(),
-                workspace_id: None,
-                is_system: true,
-                created_at: None,
-            },
-            versions: vec![OntologyVersion {
-                id: format!("{ontology_id}:1"),
-                ontology_id: ontology_id.to_owned(),
-                revision: 1,
-                validation_mode: DEFAULT_VALIDATION_MODE.to_owned(),
-                document: Some(document),
-                schema_hash: None,
-                created_at: None,
-                message: None,
-            }],
-        })
+        template_ontology(ontology_id)
     }
 
     async fn unique_name(&self, base: &str) -> MemoryResult<String> {
@@ -1253,6 +1133,146 @@ fn document_at(ontology: &Ontology, revision: i64) -> MemoryResult<OntologyDocum
     )))
 }
 
+/// Compute differences between two revisions of an ontology.
+fn compute_diff(
+    ontology: &Ontology,
+    from_revision: i64,
+    to_revision: i64,
+) -> MemoryResult<OntologyDiff> {
+    let before = document_at(ontology, from_revision)?;
+    let after = document_at(ontology, to_revision)?;
+
+    let mut diff = OntologyDiff {
+        from_revision: Some(from_revision),
+        to_revision: Some(to_revision),
+        entity_types: serde_json::Value::Object(serde_json::Map::new()),
+        relationships: serde_json::Value::Object(serde_json::Map::new()),
+        mode_change: None,
+    };
+
+    let before_labels: HashSet<&str> = before.labels().into_iter().collect();
+    let after_labels: HashSet<&str> = after.labels().into_iter().collect();
+
+    let added: Vec<&str> = after_labels.difference(&before_labels).copied().collect();
+    let removed: Vec<&str> = before_labels.difference(&after_labels).copied().collect();
+
+    let mut entity_changes = serde_json::Map::new();
+    if !added.is_empty() {
+        entity_changes.insert(
+            "added".to_string(),
+            serde_json::Value::Array(added.into_iter().map(|s| serde_json::json!(*s)).collect()),
+        );
+    }
+    if !removed.is_empty() {
+        entity_changes.insert(
+            "removed".to_string(),
+            serde_json::Value::Array(removed.into_iter().map(|s| serde_json::json!(*s)).collect()),
+        );
+    }
+    diff.entity_types = serde_json::Value::Object(entity_changes);
+
+    let before_patterns = before.patterns();
+    let after_patterns = after.patterns();
+
+    let rel_added: Vec<_> = after_patterns.difference(&before_patterns).collect();
+    let rel_removed: Vec<_> = before_patterns.difference(&after_patterns).collect();
+
+    let mut rel_changes = serde_json::Map::new();
+    if !rel_added.is_empty() {
+        rel_changes.insert(
+            "added".to_string(),
+            serde_json::Value::Array(
+                rel_added
+                    .iter()
+                    .map(|(s, r, t)| serde_json::json!({ "source": s, "type": r, "target": t }))
+                    .collect(),
+            ),
+        );
+    }
+    if !rel_removed.is_empty() {
+        rel_changes.insert(
+            "removed".to_string(),
+            serde_json::Value::Array(
+                rel_removed
+                    .iter()
+                    .map(|(s, r, t)| serde_json::json!({ "source": s, "type": r, "target": t }))
+                    .collect(),
+            ),
+        );
+    }
+    diff.relationships = serde_json::Value::Object(rel_changes);
+
+    let modes: HashMap<i64, String> = ontology
+        .versions
+        .iter()
+        .map(|v| (v.revision, v.validation_mode.clone()))
+        .collect();
+
+    if let (Some(old_mode), Some(new_mode)) = (modes.get(&from_revision), modes.get(&to_revision)) {
+        if old_mode != new_mode {
+            diff.mode_change = Some(serde_json::json!({
+                "from": old_mode,
+                "to": new_mode
+            }));
+        }
+    }
+
+    Ok(diff)
+}
+
+/// Build the summary of a built-in ontology template.
+///
+/// # Panics
+///
+/// Panics if `name` is not a built-in template; see [`get_template`].
+fn template_summary(name: &str) -> OntologySummary {
+    let document = get_template(name);
+    OntologySummary {
+        id: format!("{TEMPLATE_ID_PREFIX}{name}"),
+        name: name.to_owned(),
+        display_name: Some(document.domain.name.clone()),
+        description: document.domain.description.clone(),
+        emoji: document.domain.emoji.clone(),
+        tagline: document.domain.tagline.clone(),
+        is_system: true,
+        current_revision: None,
+        is_active: false,
+    }
+}
+
+/// Build the ontology of a built-in template id such as `template:poleo`.
+///
+/// # Panics
+///
+/// Panics if the id does not name a built-in template; see [`get_template`].
+fn template_ontology(ontology_id: &str) -> MemoryResult<Ontology> {
+    let name = ontology_id
+        .strip_prefix(TEMPLATE_ID_PREFIX)
+        .unwrap_or(ontology_id);
+    let document = get_template(name);
+
+    Ok(Ontology {
+        record: OntologyRecord {
+            id: ontology_id.to_owned(),
+            name: name.to_owned(),
+            description: document.domain.description.clone(),
+            workspace_id: None,
+            is_system: true,
+            created_at: None,
+        },
+        versions: vec![OntologyVersion {
+            id: format!("{ontology_id}:1"),
+            ontology_id: ontology_id.to_owned(),
+            revision: 1,
+            validation_mode: DEFAULT_VALIDATION_MODE.to_owned(),
+            document: Some(document),
+            schema_hash: None,
+            created_at: None,
+            message: None,
+        }],
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1435,5 +1455,333 @@ mod tests {
         assert_eq!(validate_entity_type("EVENT"), Some("Event".to_owned()));
         assert_eq!(validate_entity_type("OBJECT"), Some("Object".to_owned()));
         assert_eq!(validate_entity_type("INVALID"), None);
+    }
+
+    #[test]
+    fn bolt_param_helpers_construct_expected_types() {
+        let owned = bs("hello".to_string());
+        let borrowed = bs_ref("world");
+        assert!(matches!(owned, BoltType::String(_)));
+        assert!(matches!(borrowed, BoltType::String(_)));
+
+        let p = params([("a", bs_ref("val1")), ("b", bs("val2".to_string()))]);
+        assert_eq!(p.len(), 2);
+        assert_eq!(p[0].0, "a");
+        assert_eq!(p[1].0, "b");
+    }
+
+    #[test]
+    fn count_entities_with_label_query_formats_cypher() {
+        let q = count_entities_with_label_query("User");
+        assert!(q.contains("MATCH (e:User)"));
+        assert!(q.contains("RETURN count(e) AS matched"));
+    }
+
+    #[test]
+    fn relabel_entities_query_generates_clauses() {
+        // Simple case: no subtype, no set_type
+        let q1 = relabel_entities_query("Old", "New", false, None, None);
+        assert!(q1.contains("REMOVE e:`Old`"));
+        assert!(q1.contains("SET e:`New`"));
+        assert!(!q1.contains("subtype"));
+
+        // With subtype and set_type
+        let q2 = relabel_entities_query(
+            "PersonOld",
+            "PersonNew",
+            true,
+            Some("Person"),
+            Some("ACTOR"),
+        );
+        assert!(q2.contains("REMOVE e:`PersonOld`"));
+        assert!(q2.contains("SET e:`PersonNew`"));
+        assert!(q2.contains("SET e:`ACTOR`, e.subtype = $subtype"));
+        assert!(q2.contains("SET e:`Person`, e.type = $type"));
+    }
+
+    #[test]
+    fn parse_inline_handles_valid_and_invalid_json() {
+        // Valid JSON object
+        let res = parse_inline(r#"{"nodes": [], "relationships": []}"#, "json");
+        assert!(res.is_ok());
+
+        // Malformed JSON
+        let err1 = parse_inline("not json", "json");
+        assert!(err1.is_err());
+
+        // Valid JSON but array instead of object
+        let err2 = parse_inline("[1, 2, 3]", "json");
+        assert!(err2.is_err());
+    }
+
+    #[test]
+    fn document_at_finds_revision_and_handles_errors() {
+        let doc = mapping_document("Person", None);
+        let ontology = Ontology {
+            record: OntologyRecord {
+                id: "test-ont".to_string(),
+                name: "Test".to_string(),
+                description: None,
+                workspace_id: None,
+                is_system: false,
+                created_at: None,
+            },
+            versions: vec![
+                OntologyVersion {
+                    id: "test-ont:1".to_string(),
+                    ontology_id: "test-ont".to_string(),
+                    revision: 1,
+                    validation_mode: "permissive".to_string(),
+                    document: Some(doc.clone()),
+                    schema_hash: None,
+                    created_at: None,
+                    message: None,
+                },
+                OntologyVersion {
+                    id: "test-ont:2".to_string(),
+                    ontology_id: "test-ont".to_string(),
+                    revision: 2,
+                    validation_mode: "strict".to_string(),
+                    document: None, // unreadable
+                    schema_hash: None,
+                    created_at: None,
+                    message: None,
+                },
+            ],
+        };
+
+        // Found revision 1
+        let found = document_at(&ontology, 1).unwrap();
+        assert_eq!(found.domain.id, doc.domain.id);
+
+        // Unreadable revision 2
+        let unreadable = document_at(&ontology, 2);
+        assert!(unreadable.is_err());
+
+        // Non-existent revision 3
+        let missing = document_at(&ontology, 3);
+        assert!(missing.is_err());
+    }
+
+    #[test]
+    fn props_conversions_from_bolt_fixtures() {
+        let mut map = neo4rs::BoltMap::new();
+        map.put("id".into(), BoltType::from("v-123"));
+        map.put("ontology_id".into(), BoltType::from("ont-456"));
+        map.put("revision".into(), BoltType::from(2i64));
+        map.put("validation_mode".into(), BoltType::from("strict"));
+        map.put("name".into(), BoltType::from("Sample"));
+        map.put("description".into(), BoltType::from("A sample ontology"));
+        map.put("is_system".into(), BoltType::from(true));
+        map.put("status".into(), BoltType::from("completed"));
+        map.put("total".into(), BoltType::from(10i64));
+        map.put("processed".into(), BoltType::from(10i64));
+        map.put("errored".into(), BoltType::from(0i64));
+        map.put("spec".into(), BoltType::from(r#"{"dry_run": false}"#));
+
+        let doc = mapping_document("User", None);
+        let doc_json = serde_json::to_string(&doc).unwrap();
+        map.put("document".into(), BoltType::from(doc_json.as_str()));
+
+        let bolt_map = BoltType::Map(map);
+        let props = Props::of(&bolt_map).unwrap();
+
+        // Test version_from_props
+        let version = version_from_props(&props);
+        assert_eq!(version.id, "v-123");
+        assert_eq!(version.ontology_id, "ont-456");
+        assert_eq!(version.revision, 2);
+        assert_eq!(version.validation_mode, "strict");
+        assert!(version.document.is_some());
+
+        // Test record_from_props
+        let record = record_from_props(&props);
+        assert_eq!(record.id, "v-123");
+        assert_eq!(record.name, "Sample");
+        assert_eq!(record.description.as_deref(), Some("A sample ontology"));
+        assert!(record.is_system);
+
+        // Test migration_from_props
+        let migration = migration_from_props(&props);
+        assert_eq!(migration.id, "v-123");
+        assert_eq!(migration.ontology_id.as_deref(), Some("ont-456"));
+        assert_eq!(migration.status.as_deref(), Some("completed"));
+        assert_eq!(migration.total, Some(10));
+        assert_eq!(migration.processed, Some(10));
+        assert_eq!(migration.errored, Some(0));
+        assert!(migration.spec.is_some());
+    }
+
+    #[test]
+    fn compute_diff_calculates_added_removed_entities_and_relations() {
+        let mut doc1 = mapping_document("Person", None);
+        doc1.relationships.push(crate::models::RelationshipDef {
+            source: "Person".to_string(),
+            r#type: "KNOWS".to_string(),
+            target: "Person".to_string(),
+            description: None,
+            threshold: None,
+            inverse: None,
+            unique_source: false,
+            unique_target: false,
+            acyclic: false,
+            allow_self: false,
+        });
+
+        let mut doc2 = mapping_document("Actor", Some("actor"));
+        doc2.relationships.push(crate::models::RelationshipDef {
+            source: "Actor".to_string(),
+            r#type: "ACTS_IN".to_string(),
+            target: "Actor".to_string(),
+            description: None,
+            threshold: None,
+            inverse: None,
+            unique_source: false,
+            unique_target: false,
+            acyclic: false,
+            allow_self: false,
+        });
+
+        let ontology = Ontology {
+            record: OntologyRecord {
+                id: "ont-diff".to_string(),
+                name: "Diff Test".to_string(),
+                description: None,
+                workspace_id: None,
+                is_system: false,
+                created_at: None,
+            },
+            versions: vec![
+                OntologyVersion {
+                    id: "ont-diff:1".to_string(),
+                    ontology_id: "ont-diff".to_string(),
+                    revision: 1,
+                    validation_mode: "permissive".to_string(),
+                    document: Some(doc1),
+                    schema_hash: None,
+                    created_at: None,
+                    message: None,
+                },
+                OntologyVersion {
+                    id: "ont-diff:2".to_string(),
+                    ontology_id: "ont-diff".to_string(),
+                    revision: 2,
+                    validation_mode: "strict".to_string(),
+                    document: Some(doc2),
+                    schema_hash: None,
+                    created_at: None,
+                    message: None,
+                },
+            ],
+        };
+
+        let diff = compute_diff(&ontology, 1, 2).expect("diff should succeed");
+        assert_eq!(diff.from_revision, Some(1));
+        assert_eq!(diff.to_revision, Some(2));
+
+        // Validation mode changed
+        assert!(diff.mode_change.is_some());
+        let mode_change = diff.mode_change.unwrap();
+        assert_eq!(mode_change["from"], "permissive");
+        assert_eq!(mode_change["to"], "strict");
+
+        // Entities added & removed
+        let entities = diff.entity_types.as_object().unwrap();
+        assert!(entities.contains_key("added"));
+        assert!(entities.contains_key("removed"));
+
+        // Relations added & removed
+        let rels = diff.relationships.as_object().unwrap();
+        assert!(rels.contains_key("added"));
+        assert!(rels.contains_key("removed"));
+    }
+
+    #[test]
+    fn template_summary_reports_builtin_template_metadata() {
+        let summary = template_summary("poleo");
+
+        assert_eq!(summary.id, "template:poleo");
+        assert_eq!(summary.name, "poleo");
+        assert_eq!(summary.display_name.as_deref(), Some("poleo"));
+        assert_eq!(
+            summary.description.as_deref(),
+            Some(
+                "Person, Object, Location, Event, Organization — the default investigative entity model."
+            )
+        );
+        assert_eq!(
+            summary.tagline.as_deref(),
+            Some("The default POLE+O entity model")
+        );
+        assert_eq!(summary.emoji, None);
+        assert!(summary.is_system);
+        assert_eq!(summary.current_revision, None);
+        assert!(!summary.is_active);
+    }
+
+    #[test]
+    fn template_ontology_builds_system_record_with_one_initial_version() {
+        let ontology = template_ontology("template:poleo").expect("built-in template resolves");
+
+        assert_eq!(ontology.record.id, "template:poleo");
+        assert_eq!(ontology.record.name, "poleo");
+        assert_eq!(
+            ontology.record.description.as_deref(),
+            Some(
+                "Person, Object, Location, Event, Organization — the default investigative entity model."
+            )
+        );
+        assert_eq!(ontology.record.workspace_id, None);
+        assert!(ontology.record.is_system);
+        assert_eq!(ontology.record.created_at, None);
+
+        assert_eq!(ontology.versions.len(), 1);
+        let version = &ontology.versions[0];
+        assert_eq!(version.id, "template:poleo:1");
+        assert_eq!(version.ontology_id, "template:poleo");
+        assert_eq!(version.revision, 1);
+        assert_eq!(version.validation_mode, "permissive");
+        assert_eq!(version.schema_hash, None);
+        assert_eq!(version.created_at, None);
+        assert_eq!(version.message, None);
+
+        let document = version
+            .document
+            .as_ref()
+            .expect("template version carries its document");
+        let labels = document.labels();
+        assert_eq!(labels.len(), 5);
+        for label in ["Person", "Organization", "Location", "Event", "Object"] {
+            assert!(labels.contains(&label), "missing label {label}");
+        }
+    }
+
+    #[test]
+    fn template_ontology_accepts_a_bare_template_name() {
+        let ontology = template_ontology("poleo").expect("built-in template resolves");
+
+        assert_eq!(ontology.record.id, "poleo");
+        assert_eq!(ontology.record.name, "poleo");
+        assert_eq!(ontology.versions.len(), 1);
+        assert_eq!(ontology.versions[0].id, "poleo:1");
+        assert_eq!(ontology.versions[0].ontology_id, "poleo");
+    }
+
+    #[test]
+    fn template_ontology_panics_for_an_unknown_template() {
+        // Current behaviour: `get_template` panics on unknown names, so an
+        // unknown template id aborts instead of returning an error.
+        let outcome = std::panic::catch_unwind(|| template_ontology("template:unknown"));
+
+        let payload = outcome.expect_err("unknown template ids must not resolve");
+        let message = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap_or_default();
+        assert!(
+            message.contains("Unknown ontology template"),
+            "unexpected panic message: {message}"
+        );
     }
 }

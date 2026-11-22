@@ -6,8 +6,9 @@ use rook::{config, di, server};
 
 use anyhow::Context;
 use clap::Parser;
+use rook::startup::{build_bootstrap_banner, load_dotenv};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use db_migration::MigrationRunner;
 use observability::init_tracing;
@@ -63,73 +64,6 @@ enum DbCommands {
     Status,
     /// Rollback: create a new migration to undo the last applied migration
     Rollback,
-}
-
-/// Load .env from the same directory as the config file.
-///
-/// Tries locations in order:
-/// 1. Same directory as the explicit config path (from CLI `--config` or `$ROOK_CONFIG`)
-/// 2. `~/.cortex/rook/` (default config directory)
-/// 3. Current working directory
-///
-/// Silently fails if no .env is found at any location.
-/// If a found .env fails to load, logs a warning and continues.
-fn load_dotenv(config_path: Option<&Path>) {
-    let candidates: Vec<PathBuf> = {
-        // 1. Same directory as the explicit config path
-        let from_config = config_path
-            .and_then(|p| p.parent())
-            .map(|dir| dir.join(".env"));
-
-        // Fallback: same directory as $ROOK_CONFIG (if no explicit --config was passed)
-        let from_env_config = std::env::var("ROOK_CONFIG")
-            .ok()
-            .and_then(|p| PathBuf::from(p).parent().map(|dir| dir.join(".env")));
-
-        // 2. Default config directory (~/.cortex/rook/)
-        let from_default = config::cortex_home_dir()
-            .join(config::ROOK_HOME_DIR)
-            .join(".env");
-
-        // 3. Current working directory
-        let from_cwd = std::env::current_dir().ok().map(|cwd| cwd.join(".env"));
-
-        [from_config, from_env_config, Some(from_default), from_cwd]
-            .into_iter()
-            .flatten()
-            .collect()
-    };
-
-    for candidate in &candidates {
-        if candidate.exists() {
-            match dotenvy::from_path(candidate) {
-                Ok(()) => {
-                    tracing::debug!(env_file = %candidate.display(), "loaded environment variables");
-                }
-                Err(dotenvy::Error::LineParse(_, position)) => {
-                    tracing::warn!(
-                        env_file = %candidate.display(),
-                        position,
-                        "failed to parse .env file, continuing without it"
-                    );
-                }
-                Err(dotenvy::Error::Io(error)) => {
-                    tracing::warn!(
-                        env_file = %candidate.display(),
-                        error_kind = ?error.kind(),
-                        "failed to read .env file, continuing without it"
-                    );
-                }
-                Err(_) => {
-                    tracing::warn!(
-                        env_file = %candidate.display(),
-                        "failed to load .env file, continuing without it"
-                    );
-                }
-            }
-            return;
-        }
-    }
 }
 
 #[tokio::main]
@@ -334,61 +268,6 @@ async fn run_db_command(cmd: DbCommands) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Build a dynamically-sized ASCII box for the bootstrap banner.
-///
-/// Computes the box width from the longest content line so the border aligns
-/// regardless of token length. The full token is displayed because this banner
-/// goes to stderr (local console only), never to remote logs or the HTTP API.
-fn build_bootstrap_banner(sanitized_token: &str) -> String {
-    let header = "ROOK -- BOOTSTRAP MODE ACTIVE";
-    let dash_url = "http://localhost:4747";
-    let instruction = "To complete setup, open the dashboard at";
-    let token_label = "Setup token:";
-    let token_display = sanitized_token;
-
-    // Lines to measure — compute max visible width
-    let lines: &[&str] = &[
-        header,
-        instruction,
-        dash_url,
-        &format!("{} {}", token_label, token_display),
-        "along with your desired admin password.",
-    ];
-
-    let max_len = lines.iter().map(|l| l.len()).max().unwrap_or(40);
-    let width = max_len.max(62); // minimum 62 chars wide
-
-    let border = format!("+{}+", "-".repeat(width));
-
-    let center_pad = |text: &str| {
-        let pad = width.saturating_sub(text.len());
-        let left = pad / 2;
-        format!("|{}{}{}|", " ".repeat(left), text, " ".repeat(pad - left))
-    };
-
-    let left_pad = |text: &str| {
-        let pad = width.saturating_sub(text.len());
-        format!(
-            "| {}{}{}|",
-            text,
-            " ".repeat(pad.saturating_sub(1)),
-            " ".repeat(pad.saturating_sub(1))
-        )
-    };
-
-    format!(
-        "{0}\n{1}\n{0}\n{2}\n{3}\n{4}\n{5}\n{6}\n{7}\n{0}",
-        border,
-        center_pad(header),
-        left_pad(&format!("{} {}", token_label, token_display)),
-        left_pad(""),
-        left_pad("Paste it into the dashboard to complete setup."),
-        left_pad(instruction),
-        left_pad(dash_url),
-        left_pad("along with your desired admin password."),
-    )
-}
-
 fn load_config() -> anyhow::Result<config::RookConfig> {
     let config_path =
         std::env::var("ROOK_CONFIG").map_or_else(|_| config::default_config_path(), PathBuf::from);
@@ -406,4 +285,55 @@ fn load_config_with_path(config_path: Option<PathBuf>) -> anyhow::Result<config:
     // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
     config::RookConfig::load(&config_path)
         .with_context(|| format!("failed to load config from {}", config_path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn load_dotenv_reads_from_the_explicit_config_directory() {
+        let _guard = ENV_LOCK.lock().expect("environment lock");
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let config_path = directory.path().join("config.toml");
+        let dotenv_path = directory.path().join(".env");
+        let variable = format!("ROOK_DOTENV_TEST_{}", std::process::id());
+        std::env::remove_var(&variable);
+        std::fs::write(
+            &dotenv_path,
+            format!("{variable}=loaded-from-explicit-config\n"),
+        )
+        .expect("write controlled dotenv file");
+
+        load_dotenv(Some(&config_path));
+
+        assert_eq!(
+            std::env::var(&variable).as_deref(),
+            Ok("loaded-from-explicit-config")
+        );
+        std::env::remove_var(&variable);
+    }
+
+    #[test]
+    fn load_dotenv_keeps_valid_entries_when_a_line_is_malformed() {
+        let _guard = ENV_LOCK.lock().expect("environment lock");
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let config_path = directory.path().join("config.toml");
+        let dotenv_path = directory.path().join(".env");
+        let variable = format!("ROOK_DOTENV_INVALID_TEST_{}", std::process::id());
+        std::env::remove_var(&variable);
+        std::fs::write(
+            &dotenv_path,
+            format!("{variable}=loaded\nthis line is invalid dotenv syntax\n"),
+        )
+        .expect("write controlled dotenv file");
+
+        load_dotenv(Some(&config_path));
+
+        assert_eq!(std::env::var(&variable).as_deref(), Ok("loaded"));
+        std::env::remove_var(&variable);
+    }
 }

@@ -147,7 +147,7 @@ async fn ollama_structured_tool_call_survives_domain_and_openai_wire() {
         .mount(&server)
         .await;
 
-    let provider = OllamaProvider::new(OllamaProviderConfig {
+    let provider = granted_ollama(OllamaProviderConfig {
         id: ProviderId::new("ollama-test"),
         base_url: server.uri(),
         models: vec![ModelId::new("qwen3")],
@@ -237,7 +237,7 @@ async fn ollama_json_text_remains_content_in_openai_wire() {
         .mount(&server)
         .await;
 
-    let provider = OllamaProvider::new(OllamaProviderConfig {
+    let provider = granted_ollama(OllamaProviderConfig {
         id: ProviderId::new("ollama-test"),
         base_url: server.uri(),
         models: vec![ModelId::new("qwen3")],
@@ -283,4 +283,15 @@ async fn ollama_json_text_remains_content_in_openai_wire() {
     assert_eq!(wire["choices"][0]["delta"]["content"], text);
     assert!(wire["choices"][0]["delta"]["tool_calls"].is_null());
     assert_eq!(wire["choices"][0]["finish_reason"], "stop");
+}
+
+// Synthetic loopback servers use ephemeral ports, granted explicitly per fixture.
+fn granted_ollama(
+    config: OllamaProviderConfig,
+) -> Result<std::sync::Arc<OllamaProvider>, Box<dyn std::error::Error + Send + Sync>> {
+    let url = reqwest::Url::parse(&config.base_url)?;
+    let policy = rook_core::EndpointPolicy {
+        allowed_origins: vec![url.origin().ascii_serialization()],
+    };
+    Ok(OllamaProvider::new_with_endpoint_policy(config, policy)?)
 }

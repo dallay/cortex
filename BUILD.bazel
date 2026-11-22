@@ -1,0 +1,39 @@
+load("@npm//:defs.bzl", "npm_link_all_packages")
+
+package(default_visibility = ["//visibility:public"])
+
+# Link npm packages at the workspace root so subdirectory packages (like the
+# dashboard) can reference them. The pnpm workspace root is the repo root.
+npm_link_all_packages(name = "node_modules")
+
+# Platform-aware alias for the Node.js binary, so genrules can reference a
+# single label instead of hardcoding a platform-specific repository.
+# Nested selects are not allowed in alias.actual, so we flatten the combinations.
+_NODE_BINARIES = select({
+    "@@platforms//os:osx": "@@rules_nodejs++node+nodejs_darwin_arm64//:node",
+    "@@platforms//os:linux": "@@rules_nodejs++node+nodejs_linux_amd64//:node",
+    "//conditions:default": "@@rules_nodejs++node+nodejs_linux_amd64//:node",
+})
+
+alias(
+    name = "node",
+    actual = _NODE_BINARIES,
+    visibility = ["//visibility:public"],
+)
+
+exports_files([
+    "Cargo.lock",
+    "Cargo.toml",
+    "rust-toolchain.toml",
+])
+
+# Muninn keeps shared test fixtures at the repository root. Rust crates embed
+# them with include_bytes!/include_str! through paths relative to the crate, so
+# Bazel must expose them as root-package files to place them in the sandbox at
+# the same workspace-relative path the compiler expects.
+exports_files(
+    glob(
+        ["dev/muninn/fixtures/**"],
+        allow_empty = True,
+    ),
+)

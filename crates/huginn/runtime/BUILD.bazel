@@ -1,0 +1,324 @@
+load("@crates//:defs.bzl", "aliases", "all_crate_deps", "crate_edition")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["tests/fixtures/mcp_server.py", "tests/support/session_lock_holder.rs", "tests/support/wasm_component.rs"])
+
+rust_library(
+    name = "huginn_runtime",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "huginn_runtime",
+    crate_root = "src/lib.rs",
+    edition = crate_edition(),
+    deps = ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/guards:huginn_guards'] + all_crate_deps(normal = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+)
+
+rust_library(
+    name = "huginn_runtime_test_hooks",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "huginn_runtime",
+    crate_root = "src/lib.rs",
+    crate_features = ["test-hooks"],
+    edition = crate_edition(),
+    deps = ['//crates/huginn/application:huginn_application_test_hooks', '//crates/huginn/core:huginn_core', '//crates/huginn/guards:huginn_guards'] + all_crate_deps(normal = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+)
+
+rust_test(
+    name = "huginn_runtime_unit_test",
+    crate = ":huginn_runtime",
+    aliases = aliases(normal_dev = True, proc_macro_dev = True),
+    edition = crate_edition(),
+    # The unit tests cover the macOS Seatbelt shell sandbox, which cannot nest
+    # inside Bazel's darwin-sandbox. See the note on :coding_workflow.
+    local = True,
+    tags = ["exclusive"],
+    # muninn-mcp is a dev-dependency used by src/mcp.rs under #[cfg(test)].
+    # The dev-dependency alias resolves to a test-hooks target that this
+    # crate does not publish, so the plain crate is wired in explicitly.
+    deps = ['//crates/huginn/application:huginn_application', '//crates/huginn/guards:huginn_guards', '//crates/muninn/mcp:muninn_mcp'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "adapter_security",
+    crate_name = "adapter_security",
+    srcs = ['tests/adapter_security.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_runtime", '//crates/huginn/core:huginn_core'] + ['//crates/huginn/application:huginn_application', '//crates/huginn/guards:huginn_guards', '//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "approval_resource",
+    crate_name = "approval_resource",
+    # The test includes src/tools.rs directly and re-exports src/seatbelt.rs
+    # through #[path], so both sources must be staged for this target.
+    srcs = ['tests/approval_resource.rs', 'src/seatbelt.rs', 'src/tools.rs'],
+    edition = crate_edition(),
+    # The test covers the macOS Seatbelt shell sandbox, which cannot nest
+    # inside Bazel's darwin-sandbox. See the note on :coding_workflow.
+    local = True,
+    tags = ["exclusive"],
+    deps = [":huginn_runtime", '//crates/huginn/core:huginn_core'] + ['//crates/huginn/application:huginn_application', '//crates/huginn/guards:huginn_guards', '//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "coding_workflow",
+    crate_name = "coding_workflow",
+    srcs = ['tests/coding_workflow.rs', 'tests/support/runfiles.rs'],
+    data = ["//crates/huginn/runtime:tests/fixtures/mcp_server.py"],
+    edition = crate_edition(),
+    # The shell tool applies its own macOS Seatbelt profile through
+    # /usr/bin/sandbox-exec. Seatbelt cannot nest inside Bazel's darwin-sandbox
+    # ("sandbox-exec: sandbox_apply: Operation not permitted"), so the product
+    # sandbox would silently never run and the assertions on the sandboxed
+    # command would fail. "local" keeps the product sandbox under test and
+    # only drops Bazel's outer macOS sandbox for this target. "exclusive"
+    # keeps these Seatbelt cases from overlapping each other or CPU-heavy
+    # local tests, without serializing `bazel test //...`.
+    local = True,
+    tags = ["exclusive"],
+    deps = [":huginn_runtime", '//crates/huginn/core:huginn_core'] + ['//crates/huginn/application:huginn_application', '//crates/huginn/guards:huginn_guards', '//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "connection_workers",
+    crate_name = "connection_workers",
+    crate_features = ["test-hooks"],
+    srcs = ['tests/connection_workers.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_runtime_test_hooks", "//crates/huginn/application:huginn_application_test_hooks", '//crates/huginn/core:huginn_core', '//crates/huginn/guards:huginn_guards', '//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "connections",
+    crate_name = "connections",
+    srcs = ['tests/connections.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_runtime", '//crates/huginn/core:huginn_core'] + ['//crates/huginn/application:huginn_application', '//crates/huginn/guards:huginn_guards', '//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "guardrails",
+    crate_name = "guardrails",
+    srcs = ['tests/guardrails.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_runtime", '//crates/huginn/core:huginn_core'] + ['//crates/huginn/application:huginn_application', '//crates/huginn/guards:huginn_guards', '//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "host_secrets",
+    crate_name = "host_secrets",
+    srcs = ['tests/host_secrets.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_runtime", '//crates/huginn/core:huginn_core'] + ['//crates/huginn/application:huginn_application', '//crates/huginn/guards:huginn_guards', '//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "inference_adapters",
+    crate_name = "inference_adapters",
+    srcs = ['tests/inference_adapters.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_runtime", '//crates/huginn/core:huginn_core'] + ['//crates/huginn/application:huginn_application', '//crates/huginn/guards:huginn_guards', '//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "mcp_lifecycle",
+    crate_name = "mcp_lifecycle",
+    srcs = ['tests/mcp_lifecycle.rs', 'tests/support/runfiles.rs'],
+    data = ["//crates/huginn/runtime:tests/fixtures/mcp_server.py"],
+    edition = crate_edition(),
+    deps = [":huginn_runtime", '//crates/huginn/core:huginn_core'] + ['//crates/huginn/application:huginn_application', '//crates/huginn/guards:huginn_guards', '//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "providers_integration",
+    crate_name = "providers_integration",
+    srcs = ['tests/providers_integration.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_runtime", '//crates/huginn/core:huginn_core'] + ['//crates/huginn/application:huginn_application', '//crates/huginn/guards:huginn_guards', '//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_binary(
+    name = "session_lock_holder",
+    srcs = ["tests/support/session_lock_holder.rs"],
+    crate_name = "session_lock_holder",
+    edition = crate_edition(),
+    deps = all_crate_deps(normal = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+)
+
+# Cargo example binary; kept out of the generated file because this package is
+# hand-tuned for the `test-hooks` and Seatbelt targets.
+rust_binary(
+    name = "verify_ollama",
+    srcs = ["examples/verify_ollama.rs"],
+    crate_name = "verify_ollama",
+    edition = crate_edition(),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/guards:huginn_guards", ":huginn_runtime"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "session_locks",
+    crate_name = "session_locks",
+    srcs = ['tests/session_locks.rs', 'tests/support/runfiles.rs'],
+    env = {"CARGO_BIN_EXE_session_lock_holder": "$(execpath :session_lock_holder)"},
+    rustc_env = {"CARGO_BIN_EXE_session_lock_holder": "_main/crates/huginn/runtime/session_lock_holder"},
+    data = [":session_lock_holder"],
+    edition = crate_edition(),
+    deps = [":session_lock_holder", ":huginn_runtime", '//crates/huginn/core:huginn_core'] + ['//crates/huginn/application:huginn_application', '//crates/huginn/guards:huginn_guards', '//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "sessions_persistence",
+    crate_name = "sessions_persistence",
+    srcs = ['tests/sessions_persistence.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_runtime", '//crates/huginn/core:huginn_core'] + ['//crates/huginn/application:huginn_application', '//crates/huginn/guards:huginn_guards', '//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "skill_loading",
+    crate_name = "skill_loading",
+    srcs = ['tests/skill_loading.rs'],
+    edition = crate_edition(),
+    # The test creates a workspace path whose name is not valid UTF-8. Bazel's
+    # darwin-sandbox denies that file creation ("Operation not permitted"), so
+    # the case can only run outside the outer sandbox.
+    local = True,
+    deps = [":huginn_runtime", '//crates/huginn/core:huginn_core'] + ['//crates/huginn/application:huginn_application', '//crates/huginn/guards:huginn_guards', '//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "skills_catalog",
+    crate_name = "skills_catalog",
+    srcs = ['tests/skills_catalog.rs'],
+    edition = crate_edition(),
+    # The test creates a repository path whose name is not valid UTF-8. Bazel's
+    # darwin-sandbox denies that file creation ("Operation not permitted"), so
+    # the case can only run outside the outer sandbox.
+    local = True,
+    deps = [":huginn_runtime", '//crates/huginn/core:huginn_core'] + ['//crates/huginn/application:huginn_application', '//crates/huginn/guards:huginn_guards', '//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "stream_persistence",
+    crate_name = "stream_persistence",
+    srcs = ['tests/stream_persistence.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_runtime", '//crates/huginn/core:huginn_core'] + ['//crates/huginn/application:huginn_application', '//crates/huginn/guards:huginn_guards', '//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "tls_transport",
+    crate_name = "tls_transport",
+    crate_features = ["test-hooks"],
+    srcs = ['tests/tls_transport.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_runtime_test_hooks", "//crates/huginn/application:huginn_application_test_hooks", '//crates/huginn/core:huginn_core', '//crates/huginn/guards:huginn_guards', '//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "tool_authoring",
+    crate_name = "tool_authoring",
+    srcs = ['tests/tool_authoring.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_runtime", '//crates/huginn/core:huginn_core'] + ['//crates/huginn/application:huginn_application', '//crates/huginn/guards:huginn_guards', '//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "tool_lifecycle",
+    crate_name = "tool_lifecycle",
+    srcs = ['tests/tool_lifecycle.rs'],
+    edition = crate_edition(),
+    deps = [":huginn_runtime", '//crates/huginn/core:huginn_core'] + ['//crates/huginn/application:huginn_application', '//crates/huginn/guards:huginn_guards', '//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "transports",
+    crate_name = "transports",
+    srcs = ['tests/transports.rs', 'tests/support/runfiles.rs'],
+    data = ["//crates/huginn/runtime:tests/fixtures/mcp_server.py"],
+    edition = crate_edition(),
+    deps = [":huginn_runtime", '//crates/huginn/core:huginn_core'] + ['//crates/huginn/application:huginn_application', '//crates/huginn/guards:huginn_guards', '//crates/huginn/plugin-api:huginn_plugin_api'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_library(
+    name = "huginn_runtime_experimental_wasm",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "huginn_runtime",
+    crate_root = "src/lib.rs",
+    crate_features = ["experimental-wasm"],
+    compile_data = ["//crates/huginn/plugin-api:wit/experimental-rust-outline/outline.wit"],
+    edition = crate_edition(),
+    deps = ["//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/guards:huginn_guards", "@crates//:wasmtime"] + all_crate_deps(normal = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+)
+
+rust_test(
+    name = "wasm_outline",
+    crate_name = "wasm_outline",
+    srcs = [
+        "tests/wasm_outline.rs",
+        "tests/support/wasm_adversary.rs",
+        "tests/support/runfiles.rs",
+        "tests/support/wasm_component.rs",
+    ],
+    crate_root = "tests/wasm_outline.rs",
+    crate_features = ["experimental-wasm"],
+    # The independent guest build uses the source Cargo workspace and host Rust.
+    # Run with Cargo on PATH and rustup target add wasm32-unknown-unknown.
+    # Resolve the manifest symlink to the full workspace; nested Cargo inputs
+    # are outside Bazel, so always rerun this local integration test.
+    data = [
+        "//:Cargo.toml",
+        "//crates/huginn/plugin-api:wit/experimental-rust-outline/outline.wit",
+    ],
+    env = {"HUGINN_CARGO_MANIFEST": "$(rootpath //:Cargo.toml)"},
+    env_inherit = ["PATH", "HOME", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"],
+    rustc_env = {"CARGO": "cargo"},
+    tags = ["external", "no-sandbox", "requires-cargo", "requires-wasm32-target"],
+    local = True,
+    timeout = "long",
+    edition = crate_edition(),
+    deps = [":huginn_runtime_experimental_wasm", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/guards:huginn_guards"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "wasm_output_validation",
+    crate_name = "wasm_output_validation",
+    srcs = [
+        "tests/wasm_output_validation.rs",
+        "tests/support/wasm_adversary.rs",
+        "tests/support/runfiles.rs",
+    ],
+    crate_root = "tests/wasm_output_validation.rs",
+    crate_features = ["experimental-wasm"],
+    data = ["//crates/huginn/plugin-api:wit/experimental-rust-outline/outline.wit"],
+    edition = crate_edition(),
+    deps = [":huginn_runtime_experimental_wasm", "//crates/huginn/application:huginn_application", "//crates/huginn/core:huginn_core", "//crates/huginn/guards:huginn_guards"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)

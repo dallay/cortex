@@ -35,10 +35,37 @@ body:
     validations:
       required: true
   - type: textarea
-    id: description
+    id: goal
     attributes:
-      label: Description
-      description: Goal, context, exit criteria.
-      placeholder: What must be true when this is done?
+      label: Goal
+      description: What is the objective of this technical task?
+      placeholder: "Describe the goal and why this work is needed."
     validations:
       required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Any background information or related issues.
+      placeholder: "Provide context, links to related issues, or references."
+    validations:
+      required: false
+  - type: textarea
+    id: exit-criteria
+    attributes:
+      label: Exit Criteria
+      description: What must be true when this task is complete?
+      placeholder: |
+        - [ ] Tests pass
+        - [ ] Documentation updated
+        - [ ] CI passes
+    validations:
+      required: true
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Notes (optional)
+      description: Any other notes, constraints, or considerations.
+      placeholder: "Add any additional information here."
+    validations:
+      required: false

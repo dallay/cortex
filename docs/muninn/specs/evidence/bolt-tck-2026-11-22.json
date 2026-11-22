@@ -1,0 +1,908 @@
+{
+  "tck_commit": "b6c72c36bb7486881b87053ee1610f2caf972fb6",
+  "binary": "muninn",
+  "binary_sha256": "e126be3841a6f806466506b97d7ad1e5553c0ddfbba1fb515a3a86b96cbda889",
+  "product_base_commit": "6be52cb0cf4c7536a541f11c1cbd6eb803f98b72",
+  "build": "cargo build -p muninn (working tree with fact transaction ownership change)",
+  "neo4j_image_id": "sha256:b3522b9d5d85bc7a0de78f0030a0e18b6a665d14b71987f6b2c296ba2ccad4dd",
+  "embedding_provider": "hash",
+  "inference": false,
+  "collected": 189,
+  "selected": 178,
+  "passed": 178,
+  "failed": 0,
+  "skipped": 0,
+  "deselected": 11,
+  "cases": [
+    {
+      "profile": "gold-cross-memory",
+      "nodeid": "v1/test_cross_memory.py::TestAddRelationship::test_add_relationship_between_entities",
+      "outcome": "passed"
+    },
+    {
+      "profile": "gold-cross-memory",
+      "nodeid": "v1/test_cross_memory.py::TestAddRelationship::test_add_relationship_bidirectional_traversal",
+      "outcome": "passed"
+    },
+    {
+      "profile": "gold-cross-memory",
+      "nodeid": "v1/test_cross_memory.py::TestAddRelationship::test_add_relationship_multiple_types",
+      "outcome": "passed"
+    },
+    {
+      "profile": "gold-cross-memory",
+      "nodeid": "v1/test_cross_memory.py::TestAddRelationship::test_add_relationship_returns_valid_id",
+      "outcome": "passed"
+    },
+    {
+      "profile": "gold-cross-memory",
+      "nodeid": "v1/test_cross_memory.py::TestCrossMemoryEntityReferences::test_end_to_end_conversation_with_entities_and_reasoning",
+      "outcome": "passed"
+    },
+    {
+      "profile": "gold-cross-memory",
+      "nodeid": "v1/test_cross_memory.py::TestCrossMemoryEntityReferences::test_entity_enriched_across_sessions",
+      "outcome": "passed"
+    },
+    {
+      "profile": "gold-cross-memory",
+      "nodeid": "v1/test_cross_memory.py::TestCrossMemoryEntityReferences::test_entity_in_long_term_and_reasoning",
+      "outcome": "passed"
+    },
+    {
+      "profile": "gold-cross-memory",
+      "nodeid": "v1/test_cross_memory.py::TestCrossMemoryEntityReferences::test_fact_references_entity_names",
+      "outcome": "passed"
+    },
+    {
+      "profile": "gold-cross-memory",
+      "nodeid": "v1/test_cross_memory.py::TestCrossMemoryEntityReferences::test_preference_stored_alongside_entity",
+      "outcome": "passed"
+    },
+    {
+      "profile": "gold-cross-memory",
+      "nodeid": "v1/test_cross_memory.py::TestCrossMemoryEntityReferences::test_reasoning_trace_references_conversation",
+      "outcome": "passed"
+    },
+    {
+      "profile": "gold-cross-memory",
+      "nodeid": "v1/test_cross_memory.py::TestGetSimilarTraces::test_get_similar_traces",
+      "outcome": "passed"
+    },
+    {
+      "profile": "gold-cross-memory",
+      "nodeid": "v1/test_cross_memory.py::TestGetSimilarTraces::test_get_similar_traces_empty_database",
+      "outcome": "passed"
+    },
+    {
+      "profile": "gold-cross-memory",
+      "nodeid": "v1/test_cross_memory.py::TestGetSimilarTraces::test_get_similar_traces_respects_limit",
+      "outcome": "passed"
+    },
+    {
+      "profile": "gold-cross-memory",
+      "nodeid": "v1/test_cross_memory.py::TestMergeDuplicateEntities::test_merge_duplicate_entities",
+      "outcome": "passed"
+    },
+    {
+      "profile": "gold-cross-memory",
+      "nodeid": "v1/test_cross_memory.py::TestMergeDuplicateEntities::test_merge_preserves_relationships",
+      "outcome": "passed"
+    },
+    {
+      "profile": "gold-cross-memory",
+      "nodeid": "v1/test_cross_memory.py::TestMultiAgentMemorySharing::test_conversations_isolated_but_entities_shared",
+      "outcome": "passed"
+    },
+    {
+      "profile": "gold-cross-memory",
+      "nodeid": "v1/test_cross_memory.py::TestMultiAgentMemorySharing::test_entity_created_by_one_session_visible_to_another",
+      "outcome": "passed"
+    },
+    {
+      "profile": "gold-cross-memory",
+      "nodeid": "v1/test_cross_memory.py::TestMultiAgentMemorySharing::test_reasoning_traces_isolated_by_session",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestAddEntity::test_add_entity_basic",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestAddEntity::test_add_entity_duplicate_name_different_type",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestAddEntity::test_add_entity_event_type",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestAddEntity::test_add_entity_id_is_uuid",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestAddEntity::test_add_entity_location_type",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestAddEntity::test_add_entity_object_type",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestAddEntity::test_add_entity_organization_type",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestAddEntity::test_add_entity_person_type",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestAddEntity::test_add_entity_special_characters_in_name",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestAddEntity::test_add_entity_with_description",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestAddEntity::test_add_entity_without_description",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestAddEntity::test_add_multiple_entities",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestAddFact::test_add_fact_basic",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestAddFact::test_add_fact_id_is_uuid",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestAddFact::test_add_fact_same_subject_multiple_facts",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestAddFact::test_add_fact_special_characters",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestAddFact::test_add_multiple_facts",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestAddPreference::test_add_multiple_preferences",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestAddPreference::test_add_preference_basic",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestAddPreference::test_add_preference_id_is_uuid",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestAddPreference::test_add_preference_long_text",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestAddPreference::test_add_preference_same_category_multiple",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestAddPreference::test_add_preference_with_context",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestAddPreference::test_add_preference_without_context",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestGetEntityByName::test_get_entity_by_name_found",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestGetEntityByName::test_get_entity_by_name_not_found",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestGetRelatedEntities::test_get_related_entities_empty",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestGetRelatedEntities::test_get_related_entities_multiple_relationships",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestGetRelatedEntities::test_get_related_entities_with_relationship",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestGetRelatedEntities::test_get_related_entities_with_type_filter",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestSearchEntities::test_search_entities_empty_database",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestSearchEntities::test_search_entities_finds_relevant",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestSearchEntities::test_search_entities_no_match",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestSearchEntities::test_search_entities_respects_limit",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestSearchPreferences::test_search_preferences_by_category",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestSearchPreferences::test_search_preferences_empty_database",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestSearchPreferences::test_search_preferences_finds_relevant",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-long-term",
+      "nodeid": "v1/test_long_term.py::TestSearchPreferences::test_search_preferences_no_match",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestAddStep::test_add_many_steps_maintain_numbering",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestAddStep::test_add_step_all_fields",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestAddStep::test_add_step_basic",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestAddStep::test_add_step_observation_only",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestAddStep::test_add_step_partial_fields",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestAddStep::test_add_step_sequential_numbering",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestCompleteTrace::test_complete_trace_failure",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestCompleteTrace::test_complete_trace_with_outcome",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestGetToolStats::test_get_tool_stats_after_calls",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestGetToolStats::test_get_tool_stats_multiple_tools",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestGetToolStats::test_get_tool_stats_no_calls",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestGetToolStats::test_get_tool_stats_success_rate",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestGetTraceWithSteps::test_get_trace_includes_tool_calls",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestGetTraceWithSteps::test_get_trace_nonexistent",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestGetTraceWithSteps::test_get_trace_with_steps",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestListTraces::test_list_traces_all",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestListTraces::test_list_traces_by_session",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestListTraces::test_list_traces_empty",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestListTraces::test_list_traces_respects_limit",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestRecordToolCall::test_record_multiple_tool_calls_per_step",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestRecordToolCall::test_record_tool_call_basic",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestRecordToolCall::test_record_tool_call_cancelled_status",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestRecordToolCall::test_record_tool_call_error_status",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestRecordToolCall::test_record_tool_call_failure_status",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestRecordToolCall::test_record_tool_call_pending_status",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestRecordToolCall::test_record_tool_call_timeout_status",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestRecordToolCall::test_record_tool_call_with_result",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestStartTrace::test_start_trace_basic",
+      "outcome": "passed"
+    },
+    {
+      "profile": "silver-reasoning",
+      "nodeid": "v1/test_reasoning.py::TestStartTrace::test_start_trace_unique_ids",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaConversationCreation::test_conversation_created_at_is_set",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaConversationCreation::test_conversation_id_is_valid_uuid",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaConversationCreation::test_conversation_reuses_same_id_across_messages",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaConversationCreation::test_conversation_title_is_optional",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaConversationCreation::test_first_message_creates_conversation",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaConversationCreation::test_subsequent_messages_reuse_conversation",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaEntityCreation::test_entity_created_at_is_set",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaEntityCreation::test_entity_created_with_required_fields",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaEntityCreation::test_entity_event_type_schema",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaEntityCreation::test_entity_id_is_valid_uuid",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaEntityCreation::test_entity_location_type_schema",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaEntityCreation::test_entity_object_type_schema",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaEntityCreation::test_entity_organization_type_schema",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaEntityCreation::test_entity_person_type_schema",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaFactCreation::test_fact_has_required_fields",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaFactCreation::test_fact_id_is_valid_uuid",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaMessageDeletion::test_deleted_message_not_retrievable",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaMessageDeletion::test_deletion_does_not_affect_other_messages",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaMessageProperties::test_message_has_content",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaMessageProperties::test_message_has_id",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaMessageProperties::test_message_has_role",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaMessageProperties::test_message_has_timestamp",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaPreferenceCreation::test_preference_has_required_fields",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaPreferenceCreation::test_preference_id_is_valid_uuid",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaSessionIsolation::test_messages_isolated_between_sessions",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_schema.py::TestSchemaSessionIsolation::test_sessions_have_different_conversation_ids",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestAddMessage::test_add_message_assistant_role",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestAddMessage::test_add_message_creates_conversation_on_first_call",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestAddMessage::test_add_message_empty_content",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestAddMessage::test_add_message_empty_metadata",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestAddMessage::test_add_message_long_content",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestAddMessage::test_add_message_nested_metadata",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestAddMessage::test_add_message_null_metadata_defaults_empty",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestAddMessage::test_add_message_rapid_succession",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestAddMessage::test_add_message_returns_valid_message",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestAddMessage::test_add_message_special_characters",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestAddMessage::test_add_message_system_role",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestAddMessage::test_add_message_timestamp_is_recent",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestAddMessage::test_add_message_unicode_content",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestAddMessage::test_add_message_user_role",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestAddMessage::test_add_message_uuid_format",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestAddMessage::test_add_message_with_metadata",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestClearSession::test_clear_session_idempotent_on_empty",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestClearSession::test_clear_session_multiple_sessions_selective",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestClearSession::test_clear_session_preserves_other_sessions",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestClearSession::test_clear_session_removes_all_messages",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestClearSession::test_clear_session_then_add_new_messages",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestDeleteMessage::test_delete_all_messages_one_by_one",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestDeleteMessage::test_delete_first_message",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestDeleteMessage::test_delete_last_message",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestDeleteMessage::test_delete_message_nonexistent_returns_false",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestDeleteMessage::test_delete_message_preserves_remaining_order",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestDeleteMessage::test_delete_message_removes_from_conversation",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestDeleteMessage::test_delete_message_returns_true",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestDeleteMessage::test_delete_middle_message",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestDeleteMessage::test_delete_same_message_twice",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestGetConversation::test_get_conversation_empty_session",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestGetConversation::test_get_conversation_limit_exceeds_count",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestGetConversation::test_get_conversation_limit_one",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestGetConversation::test_get_conversation_message_order",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestGetConversation::test_get_conversation_multiple_sessions_isolated",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestGetConversation::test_get_conversation_preserves_content_fidelity",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestGetConversation::test_get_conversation_preserves_metadata",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestGetConversation::test_get_conversation_preserves_roles",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestGetConversation::test_get_conversation_returns_valid_conversation_id",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestGetConversation::test_get_conversation_three_sessions_fully_isolated",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestGetConversation::test_get_conversation_twenty_messages_ordered",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestGetConversation::test_get_conversation_with_limit",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestIdempotency::test_add_message_returns_unique_ids",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestIdempotency::test_clear_session_is_idempotent",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestIdempotency::test_duplicate_content_stored_separately",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestListSessions::test_list_sessions_created_at_present",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestListSessions::test_list_sessions_empty",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestListSessions::test_list_sessions_includes_message_count",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestListSessions::test_list_sessions_message_count_after_delete",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestListSessions::test_list_sessions_multiple_sessions_independent_counts",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestListSessions::test_list_sessions_respects_limit",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestListSessions::test_list_sessions_returns_all",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestListSessions::test_list_sessions_single_session",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestMessageChainStructure::test_chain_integrity_after_middle_delete",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestMessageChainStructure::test_chain_with_single_message",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestMessageChainStructure::test_chain_with_two_messages",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestMessageChainStructure::test_large_chain_ordering",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestMessageChainStructure::test_messages_maintain_insertion_order",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestMessageChainStructure::test_mixed_roles_maintain_order",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestMessageChainStructure::test_timestamps_are_monotonically_increasing",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestSearchMessages::test_search_messages_across_sessions",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestSearchMessages::test_search_messages_empty_database",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestSearchMessages::test_search_messages_finds_relevant",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestSearchMessages::test_search_messages_limit_one",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestSearchMessages::test_search_messages_no_results",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestSearchMessages::test_search_messages_respects_limit",
+      "outcome": "passed"
+    },
+    {
+      "profile": "bronze",
+      "nodeid": "v1/test_short_term.py::TestSearchMessages::test_search_messages_session_filter",
+      "outcome": "passed"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+# Directories excluded from the Bazel package tree.
+#
+# pnpm creates symlinked package trees inside node_modules; Bazel would follow
+# them and discover duplicate packages that mirror the real sources.
+node_modules
+apps/rook/dashboard/node_modules
+apps/rook/dashboard/coverage

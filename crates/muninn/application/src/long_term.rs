@@ -149,6 +149,7 @@ pub struct AddFactOptions {
     pub confidence: f64,
     pub valid_from: Option<DateTime<Utc>>,
     pub valid_until: Option<DateTime<Utc>>,
+    pub about_entities: Vec<Uuid>,
     pub generate_embedding: bool,
     pub metadata: Metadata,
 }
@@ -159,6 +160,7 @@ impl Default for AddFactOptions {
             confidence: 1.0,
             valid_from: None,
             valid_until: None,
+            about_entities: Vec::new(),
             generate_embedding: true,
             metadata: Metadata::new(),
         }
@@ -862,7 +864,12 @@ impl LongTermMemory {
                 });
             if let Some(mut existing) = duplicate {
                 self.store
-                    .update_fact_confidence(existing.id, options.confidence, object)
+                    .update_fact_with_about(
+                        existing.id,
+                        options.confidence,
+                        object,
+                        &options.about_entities,
+                    )
                     .await?;
                 existing
                     .metadata
@@ -882,7 +889,9 @@ impl LongTermMemory {
             created_at: Utc::now(),
             metadata: options.metadata,
         };
-        self.store.create_fact(&record).await
+        self.store
+            .create_fact_with_about(&record, &options.about_entities)
+            .await
     }
 
     pub async fn search_facts(

@@ -748,3 +748,79 @@ pub fn descriptor_by_id(id: &str) -> Option<&'static ProviderDescriptor> {
 pub fn provider_ids() -> impl Iterator<Item = &'static str> {
     PROVIDER_DESCRIPTORS.iter().map(|d| d.id)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn category_order_and_slugs() {
+        let categories = [
+            (ProviderCategory::Compatible, 0, "compatible"),
+            (ProviderCategory::OAuth, 1, "oauth"),
+            (ProviderCategory::IDE, 2, "ide"),
+            (ProviderCategory::ApiKey, 3, "api-key"),
+            (ProviderCategory::Free, 4, "free"),
+            (ProviderCategory::Local, 5, "local"),
+            (ProviderCategory::Other, 6, "other"),
+        ];
+        for (cat, expected_order, expected_slug) in categories {
+            assert_eq!(cat.order(), expected_order);
+            assert_eq!(cat.as_str(), expected_slug);
+        }
+    }
+
+    #[test]
+    fn oauth_config_resolve_endpoint() {
+        let cfg = OAuthConfig {
+            scopes: "read",
+            authorization_endpoint: "https://auth.example.com/{tenant}/auth",
+            token_endpoint: "https://auth.example.com/{tenant}/token",
+            device_code_endpoint: None,
+            userinfo_endpoint: "https://auth.example.com/{tenant}/userinfo",
+            extra_authorize_params: &[],
+        };
+        assert_eq!(
+            cfg.resolve_endpoint(cfg.authorization_endpoint, "my-tenant"),
+            "https://auth.example.com/my-tenant/auth"
+        );
+    }
+
+    #[test]
+    fn all_descriptor_constructor_functions() {
+        let descriptors = [
+            openai(),
+            openai_codex(),
+            anthropic_compatible(),
+            openai_compatible(),
+            anthropic(),
+            ollama(),
+            ollama_cloud(),
+            gemini(),
+            azure_openai(),
+            groq(),
+            xai(),
+            mistral(),
+            deepseek(),
+            together(),
+            fireworks(),
+            cerebras(),
+            openrouter(),
+            nan(),
+        ];
+        for desc in descriptors {
+            assert!(!desc.as_str().is_empty());
+            assert!(desc.matches(desc.id));
+            assert!(desc.matches(&desc.id.to_uppercase()));
+            assert!(!desc.matches("nonexistent_unknown_provider_id"));
+        }
+        let limited = limited_ceiling();
+        assert_eq!(limited.tools, CapabilityState::Unsupported);
+        let non_streaming = non_streaming_ceiling();
+        assert_eq!(non_streaming.streaming, CapabilityState::Unsupported);
+
+        let ids: Vec<&str> = provider_ids().collect();
+        assert_eq!(ids.len(), 18);
+        assert!(ids.contains(&"openai"));
+    }
+}

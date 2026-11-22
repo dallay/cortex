@@ -12,7 +12,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 metrics = "0.24"
 
 # Async
-tokio = { version = "1", features = ["rt", "macros"] }
+tokio = { workspace = true, features = ["rt", "macros"] }
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }

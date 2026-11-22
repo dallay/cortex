@@ -137,6 +137,24 @@ pub enum EndpointPolicyError {
 }
 
 impl EndpointPolicy {
+    /// Built-in Ollama destinations plus operator-approved connection origins.
+    /// Custom local ports and hosts require an explicit connection grant.
+    pub fn for_ollama(&self) -> Self {
+        let mut policy = self.clone();
+        for origin in [
+            "http://localhost:11434",
+            "http://127.0.0.1:11434",
+            "http://[::1]:11434",
+            "https://localhost:11434",
+            "https://127.0.0.1:11434",
+            "https://[::1]:11434",
+            "https://ollama.com",
+        ] {
+            policy.allowed_origins.push(origin.to_string());
+        }
+        policy
+    }
+
     /// Require an exact operator grant for the URL origin. Userinfo is never accepted.
     pub fn validate_url(&self, url: &url::Url) -> Result<(), EndpointPolicyError> {
         let host = url.host_str().ok_or(EndpointPolicyError::InvalidHost)?;
@@ -340,5 +358,525 @@ fn is_private_ip(ip: IpAddr) -> bool {
                     a == 10 || (a == 172 && (16..=31).contains(&b)) || (a == 192 && b == 168)
                 })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CONNECTION_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
+    const OTHER_CONNECTION_ID: &str = "6ba7b810-9dad-41d1-80b4-00c04fd430c8";
+
+    fn grant(connection_id: &str, origins: &[&str]) -> EndpointGrant {
+        EndpointGrant {
+            connection_id: connection_id.to_string(),
+            allowed_origins: origins.iter().map(|origin| origin.to_string()).collect(),
+        }
+    }
+
+    fn config(grants: Vec<EndpointGrant>) -> EndpointPolicyConfig {
+        EndpointPolicyConfig { grants }
+    }
+
+    fn parse(url: &str) -> url::Url {
+        url::Url::parse(url).expect("valid url")
+    }
+
+    fn granted_policy(origins: &[&str]) -> EndpointPolicy {
+        EndpointPolicy {
+            allowed_origins: origins.iter().map(|origin| origin.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn endpoint_policy_config_defaults_to_no_grants() {
+        let config = EndpointPolicyConfig::default();
+        assert!(config.grants.is_empty());
+        assert_eq!(config.validate(), Ok(()));
+        assert_eq!(
+            config.for_connection(CONNECTION_ID),
+            EndpointPolicy::default()
+        );
+        assert!(EndpointPolicy::default().allowed_origins.is_empty());
+    }
+
+    #[test]
+    fn endpoint_policy_config_deserializes_snake_case_grants() {
+        let config: EndpointPolicyConfig = serde_json::from_str(
+            r#"{"grants":[{"connection_id":"550e8400-e29b-41d4-a716-446655440000","allowed_origins":["https://api.example.com"]}]}"#,
+        )
+        .expect("deserialize endpoint policy");
+        assert_eq!(config.grants.len(), 1);
+        assert_eq!(config.grants[0].connection_id, CONNECTION_ID);
+        assert_eq!(
+            config.grants[0].allowed_origins,
+            vec!["https://api.example.com"]
+        );
+    }
+
+    #[test]
+    fn endpoint_policy_config_accepts_well_formed_grants() {
+        let config = config(vec![grant(
+            CONNECTION_ID,
+            &["https://api.example.com", "http://localhost:8080"],
+        )]);
+        assert_eq!(config.validate(), Ok(()));
+    }
+
+    #[test]
+    fn endpoint_policy_config_rejects_an_invalid_connection_id() {
+        let config = config(vec![grant("not-a-uuid", &["https://api.example.com"])]);
+        let error = config
+            .validate()
+            .expect_err("invalid connection id must fail");
+        assert_eq!(error.grant_index, 0);
+        assert_eq!(
+            error.reason,
+            EndpointPolicyConfigErrorReason::InvalidConnectionId
+        );
+    }
+
+    #[test]
+    fn endpoint_policy_config_rejects_a_duplicate_connection_id() {
+        let config = config(vec![
+            grant(CONNECTION_ID, &["https://api.example.com"]),
+            grant(CONNECTION_ID, &["https://other.example.com"]),
+        ]);
+        let error = config
+            .validate()
+            .expect_err("duplicate connection id must fail");
+        assert_eq!(error.grant_index, 1);
+        assert_eq!(
+            error.reason,
+            EndpointPolicyConfigErrorReason::DuplicateConnectionId
+        );
+    }
+
+    #[test]
+    fn endpoint_policy_config_rejects_empty_origins() {
+        let config = config(vec![grant(CONNECTION_ID, &[])]);
+        let error = config.validate().expect_err("empty origins must fail");
+        assert_eq!(error.grant_index, 0);
+        assert_eq!(error.reason, EndpointPolicyConfigErrorReason::EmptyOrigins);
+    }
+
+    #[test]
+    fn endpoint_policy_config_rejects_invalid_origins() {
+        let invalid_origins = [
+            "ftp://api.example.com",
+            "https://user:secret@api.example.com",
+            "https://api.example.com/v1",
+            "https://api.example.com?query=1",
+            "https://api.example.com#fragment",
+            "not a url",
+        ];
+        for origin in invalid_origins {
+            let config = config(vec![grant(CONNECTION_ID, &[origin])]);
+            let error = config.validate().expect_err("invalid origin must fail");
+            assert_eq!(error.grant_index, 0);
+            assert_eq!(error.reason, EndpointPolicyConfigErrorReason::InvalidOrigin);
+        }
+    }
+
+    #[test]
+    fn endpoint_policy_config_error_display_names_the_grant_and_reason() {
+        let error = EndpointPolicyConfigError {
+            grant_index: 2,
+            reason: EndpointPolicyConfigErrorReason::EmptyOrigins,
+        };
+        assert_eq!(error.to_string(), "grant 2: EmptyOrigins");
+    }
+
+    #[test]
+    fn for_connection_returns_the_granted_origins() {
+        let config = config(vec![grant(
+            CONNECTION_ID,
+            &["https://api.example.com", "http://localhost:8080"],
+        )]);
+        let policy = config.for_connection(CONNECTION_ID);
+        assert_eq!(
+            policy.allowed_origins,
+            vec!["https://api.example.com", "http://localhost:8080"]
+        );
+    }
+
+    #[test]
+    fn for_connection_returns_the_default_policy_for_unmatched_requests() {
+        let config = config(vec![grant(CONNECTION_ID, &["https://api.example.com"])]);
+
+        // An unknown but valid connection id has no grant.
+        assert_eq!(
+            config.for_connection(OTHER_CONNECTION_ID),
+            EndpointPolicy::default()
+        );
+        // A malformed connection id never resolves.
+        assert_eq!(
+            config.for_connection("not-a-uuid"),
+            EndpointPolicy::default()
+        );
+    }
+
+    #[test]
+    fn for_connection_returns_the_default_policy_for_duplicate_grants() {
+        let config = config(vec![
+            grant(CONNECTION_ID, &["https://api.example.com"]),
+            grant(CONNECTION_ID, &["https://other.example.com"]),
+        ]);
+        assert_eq!(
+            config.for_connection(CONNECTION_ID),
+            EndpointPolicy::default()
+        );
+    }
+
+    #[test]
+    fn for_connection_returns_the_default_policy_for_invalid_grant_origins() {
+        let config = config(vec![grant(CONNECTION_ID, &["https://api.example.com/v1"])]);
+        assert_eq!(
+            config.for_connection(CONNECTION_ID),
+            EndpointPolicy::default()
+        );
+    }
+
+    #[test]
+    fn validate_url_rejects_userinfo() {
+        let policy = granted_policy(&["https://api.example.com"]);
+        let error = policy
+            .validate_url(&parse("https://user:secret@api.example.com/"))
+            .expect_err("userinfo must be rejected");
+        assert_eq!(error, EndpointPolicyError::InvalidHost);
+
+        let error = policy
+            .validate_url(&parse("https://user@api.example.com/"))
+            .expect_err("userinfo must be rejected");
+        assert_eq!(error, EndpointPolicyError::InvalidHost);
+    }
+
+    #[test]
+    fn validate_url_rejects_metadata_hosts() {
+        let policy = granted_policy(&["https://metadata.google.internal"]);
+        let error = policy
+            .validate_url(&parse("http://metadata.google.internal/"))
+            .expect_err("metadata host must be rejected");
+        assert_eq!(error, EndpointPolicyError::MetadataNotAllowed);
+
+        let policy = granted_policy(&["https://metadata.google.internal"]);
+        let error = policy
+            .validate_url(&parse("http://metadata.google.internal./"))
+            .expect_err("metadata host must be rejected");
+        assert_eq!(error, EndpointPolicyError::MetadataNotAllowed);
+    }
+
+    #[test]
+    fn validate_url_rejects_insecure_schemes() {
+        let policy = granted_policy(&["ftp://api.example.com"]);
+        let error = policy
+            .validate_url(&parse("ftp://api.example.com/"))
+            .expect_err("insecure scheme must be rejected");
+        assert_eq!(error, EndpointPolicyError::InsecureScheme);
+    }
+
+    #[test]
+    fn validate_url_rejects_origins_without_a_grant() {
+        let policy = granted_policy(&["https://api.example.com"]);
+        let error = policy
+            .validate_url(&parse("https://other.example.com/"))
+            .expect_err("ungranted origin must be rejected");
+        assert_eq!(error, EndpointPolicyError::OriginNotGranted);
+    }
+
+    #[test]
+    fn validate_url_matches_the_granted_port() {
+        let policy = granted_policy(&["https://api.example.com:8443"]);
+        assert_eq!(
+            policy.validate_url(&parse("https://api.example.com:8443/")),
+            Ok(())
+        );
+        let error = policy
+            .validate_url(&parse("https://api.example.com/"))
+            .expect_err("a different port must not match the grant");
+        assert_eq!(error, EndpointPolicyError::OriginNotGranted);
+    }
+
+    #[test]
+    fn validate_url_accepts_a_granted_https_origin() {
+        let policy = granted_policy(&["https://api.example.com"]);
+        assert_eq!(
+            policy.validate_url(&parse("https://api.example.com/")),
+            Ok(())
+        );
+        assert_eq!(
+            policy.validate_url(&parse("https://api.example.com")),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn validate_ip_rejects_metadata_addresses() {
+        let policy = granted_policy(&[]);
+        for address in ["169.254.169.254", "100.100.100.200", "168.63.129.16"] {
+            let ip: IpAddr = address.parse().expect("valid address");
+            let error = policy
+                .validate_ip(address, ip, 443, "https")
+                .expect_err("metadata address must be rejected");
+            assert_eq!(error, EndpointPolicyError::MetadataNotAllowed);
+        }
+
+        let ip: IpAddr = "fd00:ec2::254".parse().expect("valid address");
+        let error = policy
+            .validate_ip("fd00:ec2::254", ip, 443, "https")
+            .expect_err("metadata address must be rejected");
+        assert_eq!(error, EndpointPolicyError::MetadataNotAllowed);
+    }
+
+    #[test]
+    fn validate_ip_rejects_link_local_addresses() {
+        let policy = granted_policy(&[]);
+        let ip: IpAddr = "169.254.10.1".parse().expect("valid address");
+        let error = policy
+            .validate_ip("169.254.10.1", ip, 443, "https")
+            .expect_err("link-local address must be rejected");
+        assert_eq!(error, EndpointPolicyError::LinkLocalNotAllowed);
+
+        let ip: IpAddr = "fe80::1".parse().expect("valid address");
+        let error = policy
+            .validate_ip("fe80::1", ip, 443, "https")
+            .expect_err("link-local address must be rejected");
+        assert_eq!(error, EndpointPolicyError::LinkLocalNotAllowed);
+    }
+
+    #[test]
+    fn validate_ip_rejects_loopback_without_an_exact_grant() {
+        let policy = granted_policy(&["http://localhost:8080"]);
+        let ip: IpAddr = "127.0.0.1".parse().expect("valid address");
+        let error = policy
+            .validate_ip("127.0.0.1", ip, 80, "http")
+            .expect_err("loopback without a grant must be rejected");
+        assert_eq!(error, EndpointPolicyError::LoopbackNotAllowed);
+    }
+
+    #[test]
+    fn validate_ip_accepts_loopback_with_an_exact_grant() {
+        let policy = granted_policy(&["http://localhost:8080"]);
+        let ip: IpAddr = "127.0.0.1".parse().expect("valid address");
+        assert_eq!(policy.validate_ip("localhost", ip, 8080, "http"), Ok(()));
+
+        let policy = granted_policy(&["http://127.0.0.1:8080"]);
+        assert_eq!(policy.validate_ip("127.0.0.1", ip, 8080, "http"), Ok(()));
+    }
+
+    #[test]
+    fn validate_ip_rejects_private_addresses_without_a_grant() {
+        let policy = granted_policy(&[]);
+        let ip: IpAddr = "10.0.0.5".parse().expect("valid address");
+        let error = policy
+            .validate_ip("10.0.0.5", ip, 443, "https")
+            .expect_err("private address must be rejected");
+        assert_eq!(error, EndpointPolicyError::PrivateHostNotAllowlisted);
+    }
+
+    #[test]
+    fn validate_ip_accepts_private_addresses_with_a_grant() {
+        let policy = granted_policy(&["http://10.0.0.5"]);
+        let ip: IpAddr = "10.0.0.5".parse().expect("valid address");
+        assert_eq!(policy.validate_ip("10.0.0.5", ip, 80, "http"), Ok(()));
+    }
+
+    #[test]
+    fn validate_ip_rejects_non_global_addresses() {
+        let policy = granted_policy(&["https://api.example.com"]);
+        for address in ["0.0.0.0", "100.64.0.1", "240.0.0.1", "255.255.255.255"] {
+            let ip: IpAddr = address.parse().expect("valid address");
+            let error = policy
+                .validate_ip(address, ip, 443, "https")
+                .expect_err("non-global address must be rejected");
+            assert_eq!(error, EndpointPolicyError::NonGlobalAddress);
+        }
+    }
+
+    #[test]
+    fn validate_ip_requires_https_for_public_addresses() {
+        let policy = granted_policy(&["http://93.184.216.34"]);
+        let ip: IpAddr = "93.184.216.34".parse().expect("valid address");
+        let error = policy
+            .validate_ip("93.184.216.34", ip, 80, "http")
+            .expect_err("plain http must be rejected for a public address");
+        assert_eq!(error, EndpointPolicyError::InsecureScheme);
+
+        assert_eq!(
+            policy.validate_ip("93.184.216.34", ip, 443, "https"),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn validate_ip_accepts_public_addresses_over_https() {
+        let policy = granted_policy(&["https://api.example.com"]);
+        let ip: IpAddr = "93.184.216.34".parse().expect("valid address");
+        assert_eq!(
+            policy.validate_ip("api.example.com", ip, 443, "https"),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn validate_url_accepts_a_granted_public_origin() {
+        let policy = granted_policy(&["https://api.example.com"]);
+        assert_eq!(
+            policy.validate_url(&parse("https://api.example.com/")),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn validate_url_rejects_a_granted_loopback_origin_from_a_foreign_host() {
+        // The origin grant is checked against the URL host, so a private address
+        // can only be reached through the exact granted origin.
+        let policy = granted_policy(&["http://localhost:8080"]);
+        let error = policy
+            .validate_url(&parse("http://127.0.0.1:8080/"))
+            .expect_err("a different host must not match the grant");
+        assert_eq!(error, EndpointPolicyError::OriginNotGranted);
+    }
+
+    #[test]
+    fn validate_url_accepts_a_granted_ipv6_origin() {
+        let policy = granted_policy(&["https://[2001:4860:4860::8888]"]);
+        assert_eq!(
+            policy.validate_url(&parse("https://[2001:4860:4860::8888]/")),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn validate_url_accepts_a_granted_ipv4_origin() {
+        let policy = granted_policy(&["https://93.184.216.34"]);
+        assert_eq!(
+            policy.validate_url(&parse("https://93.184.216.34/")),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn validate_ip_accepts_a_granted_ipv6_loopback() {
+        let policy = granted_policy(&["http://[::1]:8080"]);
+        let ip: IpAddr = "::1".parse().expect("valid address");
+        assert_eq!(policy.validate_ip("[::1]", ip, 8080, "http"), Ok(()));
+    }
+
+    #[test]
+    fn validate_ip_rejects_an_ipv4_mapped_loopback_without_a_grant() {
+        let policy = granted_policy(&[]);
+        let ip: IpAddr = "::ffff:127.0.0.1".parse().expect("valid address");
+        let error = policy
+            .validate_ip("127.0.0.1", ip, 443, "https")
+            .expect_err("loopback must be rejected");
+        assert_eq!(error, EndpointPolicyError::LoopbackNotAllowed);
+    }
+
+    #[test]
+    fn validate_ip_rejects_an_ipv4_mapped_link_local_address() {
+        let policy = granted_policy(&[]);
+        let ip: IpAddr = "::ffff:169.254.10.1".parse().expect("valid address");
+        let error = policy
+            .validate_ip("169.254.10.1", ip, 443, "https")
+            .expect_err("link-local must be rejected");
+        assert_eq!(error, EndpointPolicyError::LinkLocalNotAllowed);
+    }
+
+    #[test]
+    fn validate_ip_rejects_an_ipv4_mapped_non_global_address() {
+        let policy = granted_policy(&[]);
+        let ip: IpAddr = "::ffff:100.64.0.1".parse().expect("valid address");
+        let error = policy
+            .validate_ip("100.64.0.1", ip, 443, "https")
+            .expect_err("non-global must be rejected");
+        assert_eq!(error, EndpointPolicyError::NonGlobalAddress);
+    }
+
+    #[test]
+    fn address_helpers_classify_ipv6_families() {
+        let global: IpAddr = "2001:4860:4860::8888".parse().expect("valid address");
+
+        assert!(is_loopback_ip("::1".parse().expect("valid address")));
+        assert!(is_loopback_ip(
+            "::ffff:127.0.0.1".parse().expect("valid address")
+        ));
+        assert!(!is_loopback_ip(global));
+
+        assert!(is_link_local("fe80::1".parse().expect("valid address")));
+        assert!(is_link_local(
+            "::ffff:169.254.10.1".parse().expect("valid address")
+        ));
+        assert!(!is_link_local(global));
+
+        assert!(is_metadata_ip(
+            "fd00:ec2::254".parse().expect("valid address")
+        ));
+        assert!(is_metadata_ip(
+            "::ffff:169.254.169.254".parse().expect("valid address")
+        ));
+        assert!(!is_metadata_ip(global));
+
+        assert!(is_private_ip("fc00::1".parse().expect("valid address")));
+        assert!(is_private_ip(
+            "::ffff:10.0.0.5".parse().expect("valid address")
+        ));
+        assert!(!is_private_ip(global));
+
+        assert!(is_non_global_ip("::".parse().expect("valid address")));
+        assert!(is_non_global_ip("ff02::1".parse().expect("valid address")));
+        assert!(is_non_global_ip("fc00::1".parse().expect("valid address")));
+        assert!(is_non_global_ip("3fff::1".parse().expect("valid address")));
+        assert!(is_non_global_ip(
+            "2001:db8::1".parse().expect("valid address")
+        ));
+        assert!(is_non_global_ip(
+            "::ffff:100.64.0.1".parse().expect("valid address")
+        ));
+        assert!(!is_non_global_ip(global));
+    }
+
+    #[test]
+    fn host_helpers_classify_loopback_and_metadata_names() {
+        assert!(host_is_loopback("localhost"));
+        assert!(host_is_loopback("LOCALHOST"));
+        assert!(host_is_loopback("api.localhost"));
+        assert!(host_is_loopback("[::1]"));
+        assert!(host_is_loopback("127.0.0.1"));
+        assert!(!host_is_loopback("api.example.com"));
+
+        assert!(is_metadata_host("metadata.google.internal"));
+        assert!(is_metadata_host("METADATA.GOOGLE.INTERNAL"));
+        assert!(is_metadata_host("metadata.google.internal."));
+        assert!(is_metadata_host("metadata"));
+        assert!(is_metadata_host("instance-data.ec2.internal"));
+        assert!(is_metadata_host("metadata.azure.com"));
+        assert!(is_metadata_host("metadata.tencentyun.com"));
+        assert!(is_metadata_host("metadata.oraclecloud.com"));
+        assert!(!is_metadata_host("api.example.com"));
+    }
+
+    #[test]
+    fn grant_helpers_validate_identifiers_and_origins() {
+        assert!(is_valid_connection_id(CONNECTION_ID));
+        assert!(!is_valid_connection_id("not-a-uuid"));
+
+        assert!(is_valid_grant_origin("https://api.example.com"));
+        assert!(is_valid_grant_origin("http://localhost:8080"));
+        assert!(!is_valid_grant_origin("https://api.example.com/v1"));
+        assert!(!is_valid_grant_origin("ftp://api.example.com"));
+        assert!(!is_valid_grant_origin("not a url"));
+    }
+
+    #[test]
+    fn origin_matches_requires_the_same_scheme_host_and_port() {
+        let url = parse("https://api.example.com/");
+        assert!(origin_matches("https://api.example.com", &url));
+        assert!(origin_matches("https://api.example.com/", &url));
+        assert!(!origin_matches("http://api.example.com", &url));
+        assert!(!origin_matches("https://other.example.com", &url));
+        assert!(!origin_matches("https://api.example.com:8443", &url));
+        assert!(!origin_matches("not a url", &url));
     }
 }

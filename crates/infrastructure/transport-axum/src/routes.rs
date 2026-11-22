@@ -1790,4 +1790,282 @@ mod tests {
             "bare model must not expose virtual alias"
         );
     }
+
+    // ---------------------------------------------------------------------
+    // Trusted authz header parsing (fails closed)
+    // ---------------------------------------------------------------------
+
+    fn authz_headers(models: &str, providers: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-authz-allowed-models",
+            models.parse().expect("valid header value"),
+        );
+        headers.insert(
+            "x-authz-allowed-providers",
+            providers.parse().expect("valid header value"),
+        );
+        headers
+    }
+
+    #[test]
+    fn csv_header_splits_trims_and_drops_empty_entries() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-authz-allowed-models",
+            " gpt-4o , ,claude-3 ".parse().expect("valid header value"),
+        );
+        assert_eq!(
+            parse_csv_header(&headers, "x-authz-allowed-models").expect("parsed header"),
+            vec!["gpt-4o".to_string(), "claude-3".to_string()]
+        );
+    }
+
+    #[test]
+    fn csv_header_present_but_empty_means_unrestricted() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-authz-allowed-models",
+            "".parse().expect("valid header value"),
+        );
+        assert!(parse_csv_header(&headers, "x-authz-allowed-models")
+            .expect("parsed header")
+            .is_empty());
+    }
+
+    #[test]
+    fn csv_header_only_commas_means_unrestricted() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-authz-allowed-models",
+            " , , ".parse().expect("valid header value"),
+        );
+        assert!(parse_csv_header(&headers, "x-authz-allowed-models")
+            .expect("parsed header")
+            .is_empty());
+    }
+
+    #[test]
+    fn csv_header_missing_fails_closed_with_authz_header_missing() {
+        let headers = HeaderMap::new();
+        let error = parse_csv_header(&headers, "x-authz-allowed-models")
+            .expect_err("a missing trusted header must fail closed");
+        assert_eq!(error.status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(error.code, "AUTHZ_HEADER_MISSING");
+        assert_eq!(error.message, "authz header x-authz-allowed-models missing");
+    }
+
+    #[test]
+    fn csv_header_with_non_utf8_value_fails_closed() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-authz-allowed-models",
+            axum::http::HeaderValue::from_bytes(&[0xff, 0xfe]).expect("raw header value"),
+        );
+        let error = parse_csv_header(&headers, "x-authz-allowed-models")
+            .expect_err("a non-UTF-8 trusted header must fail closed");
+        assert_eq!(error.status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(error.code, "AUTHZ_HEADER_INVALID");
+        assert!(
+            error
+                .message
+                .starts_with("authz header x-authz-allowed-models is not valid UTF-8"),
+            "unexpected message: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn restrictions_from_headers_maps_csv_values_to_ids() {
+        let headers = authz_headers("gpt-4o, claude-3", "openai,anthropic");
+        let restrictions = restrictions_from_headers(&headers).expect("restrictions");
+        assert_eq!(
+            restrictions
+                .allowed_models
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            vec!["gpt-4o".to_string(), "claude-3".to_string()]
+        );
+        assert_eq!(
+            restrictions
+                .allowed_providers
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            vec!["openai".to_string(), "anthropic".to_string()]
+        );
+        assert!(restrictions.spending_budget.is_none());
+    }
+
+    #[test]
+    fn restrictions_from_headers_fails_closed_when_a_header_is_missing() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-authz-allowed-models",
+            "gpt-4o".parse().expect("valid header value"),
+        );
+        let error = restrictions_from_headers(&headers)
+            .expect_err("a missing trusted header must fail closed");
+        assert_eq!(error.status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(error.code, "AUTHZ_HEADER_MISSING");
+        assert_eq!(
+            error.message,
+            "authz header x-authz-allowed-providers missing"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Error mapping shared by the streaming and non-streaming paths
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn forbidden_openai_maps_model_and_provider_violations_to_distinct_codes() {
+        let model = map_forbidden_openai(&CortexError::forbidden("model gpt-4o is not allowed"));
+        assert_eq!(model.status, StatusCode::FORBIDDEN);
+        assert_eq!(model.code, "MODEL_NOT_ALLOWED");
+        assert_eq!(model.message, "forbidden: model gpt-4o is not allowed");
+
+        let provider =
+            map_forbidden_openai(&CortexError::forbidden("provider openai is not allowed"));
+        assert_eq!(provider.status, StatusCode::FORBIDDEN);
+        assert_eq!(provider.code, "PROVIDER_NOT_ALLOWED");
+
+        // An unknown forbidden reason keeps the conservative model code.
+        let unknown = map_forbidden_openai(&CortexError::forbidden("something else"));
+        assert_eq!(unknown.code, "MODEL_NOT_ALLOWED");
+    }
+
+    #[test]
+    fn forbidden_openai_maps_a_structured_restriction_violation() {
+        let violation: CortexError =
+            shared_kernel::RestrictionViolation::ProviderNotAllowed(ProviderId::new("openai"))
+                .into();
+        let error = map_forbidden_openai(&violation);
+        assert_eq!(error.status, StatusCode::FORBIDDEN);
+        assert_eq!(error.code, "PROVIDER_NOT_ALLOWED");
+    }
+
+    #[test]
+    fn not_found_openai_maps_to_404_model_not_found() {
+        let error = map_not_found_openai(&CortexError::not_found("model rook/unknown not found"));
+        assert_eq!(error.status, StatusCode::NOT_FOUND);
+        assert_eq!(error.code, "MODEL_NOT_FOUND");
+        assert_eq!(error.message, "not found: model rook/unknown not found");
+    }
+
+    #[test]
+    fn rate_limited_maps_to_429_with_the_provider_message() {
+        let error = map_rate_limited(&CortexError::rate_limited(ProviderId::new("openai"), 30));
+        assert_eq!(error.status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(error.code, "RATE_LIMITED");
+        assert_eq!(error.message, "rate limited by openai, retry after 30s");
+    }
+
+    // ---------------------------------------------------------------------
+    // SSE encoding
+    // ---------------------------------------------------------------------
+
+    async fn sse_body(event: Event) -> String {
+        let stream = futures::stream::once(async move { Ok::<Event, Infallible>(event) });
+        let response = Sse::new(stream).into_response();
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("the SSE body must be readable")
+            .to_bytes();
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    #[tokio::test]
+    async fn openai_error_event_encodes_rate_limited_failures() {
+        let body = sse_body(openai_error_event(CortexError::rate_limited(
+            ProviderId::new("openai"),
+            30,
+        )))
+        .await;
+        assert!(body.contains("rate_limit_exceeded"), "{body}");
+        assert!(body.contains("\"code\":\"rate_limited\""), "{body}");
+    }
+
+    #[tokio::test]
+    async fn openai_error_event_encodes_exhaustion_and_churn_codes() {
+        let exhausted = sse_body(openai_error_event(CortexError::all_providers_exhausted())).await;
+        assert!(exhausted.contains("internal_error"), "{exhausted}");
+        assert!(
+            exhausted.contains("\"code\":\"all_providers_exhausted\""),
+            "{exhausted}"
+        );
+
+        let churn = sse_body(openai_error_event(CortexError::routing_snapshot_churn())).await;
+        assert!(
+            churn.contains("\"code\":\"routing_snapshot_churn\""),
+            "{churn}"
+        );
+    }
+
+    #[tokio::test]
+    async fn openai_error_event_encodes_generic_failures_without_a_code() {
+        let body = sse_body(openai_error_event(CortexError::provider("boom"))).await;
+        assert!(body.contains("internal_error"), "{body}");
+        assert!(body.contains("\"code\":null"), "{body}");
+        assert!(body.contains("boom"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn anthropic_stream_event_encodes_the_error_payload() {
+        let event = AnthropicSseEvent::from(CortexError::provider("boom"));
+        let body = sse_body(anthropic_stream_event(event)).await;
+        assert!(body.contains("\"type\":\"error\""), "{body}");
+        assert!(body.contains("invalid_request_error"), "{body}");
+        assert!(body.contains("boom"), "{body}");
+    }
+
+    #[test]
+    fn sse_headers_declare_the_streaming_contract() {
+        let mut headers = axum::http::HeaderMap::new();
+        apply_sse_headers(&mut headers);
+        assert_eq!(headers[header::CONTENT_TYPE], "text/event-stream");
+        assert_eq!(headers[header::CACHE_CONTROL], "no-cache");
+        assert_eq!(headers[header::CONNECTION], "keep-alive");
+    }
+
+    // ---------------------------------------------------------------------
+    // Client IP extraction
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn client_ip_falls_back_to_loopback_without_connect_info() {
+        let request = axum::http::Request::builder()
+            .uri("/v1/chat/completions")
+            .body(axum::body::Body::empty())
+            .expect("the request must build");
+        assert_eq!(
+            extract_client_ip(&request),
+            "127.0.0.1"
+                .parse::<std::net::IpAddr>()
+                .expect("valid ip address")
+        );
+    }
+
+    #[test]
+    fn client_ip_uses_the_socket_address_when_present() {
+        let mut request = axum::http::Request::builder()
+            .uri("/v1/chat/completions")
+            .body(axum::body::Body::empty())
+            .expect("the request must build");
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+                [10, 0, 0, 7],
+                4242,
+            ))));
+        assert_eq!(
+            extract_client_ip(&request),
+            "10.0.0.7"
+                .parse::<std::net::IpAddr>()
+                .expect("valid ip address")
+        );
+    }
 }

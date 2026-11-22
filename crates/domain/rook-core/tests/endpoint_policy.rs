@@ -481,3 +481,192 @@ fn dns_loopback_answers_require_a_loopback_hostname_as_well_as_a_grant() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Contract coverage that used to live in an inline `#[cfg(test)]` module.
+// The private classifiers are exercised through `EndpointPolicyConfig` and
+// `EndpointPolicy`, which are the only public surface of this module.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn endpoint_policy_config_deserializes_snake_case_grants() {
+    let config: EndpointPolicyConfig = serde_json::from_str(
+        r#"{"grants":[{"connection_id":"550e8400-e29b-41d4-a716-446655440000","allowed_origins":["https://api.example.com"]}]}"#,
+    )
+    .expect("deserialize endpoint policy");
+    assert_eq!(config.grants.len(), 1);
+    assert_eq!(
+        config.grants[0].connection_id,
+        "550e8400-e29b-41d4-a716-446655440000"
+    );
+    assert_eq!(
+        config.grants[0].allowed_origins,
+        vec!["https://api.example.com"]
+    );
+    assert_eq!(config.validate(), Ok(()));
+}
+
+#[test]
+fn endpoint_policy_config_error_display_names_the_grant_and_reason() {
+    let error = EndpointPolicyConfigError {
+        grant_index: 2,
+        reason: EndpointPolicyConfigErrorReason::EmptyOrigins,
+    };
+    assert_eq!(error.to_string(), "grant 2: EmptyOrigins");
+}
+
+#[test]
+fn non_http_schemes_are_rejected_with_the_insecure_scheme_reason() {
+    let granted = policy("https://api.example.com");
+    for url in ["ftp://api.example.com/", "ws://api.example.com/"] {
+        assert_eq!(
+            granted.validate_url(&url::Url::parse(url).expect("valid url")),
+            Err(EndpointPolicyError::InsecureScheme),
+            "url: {url}"
+        );
+    }
+}
+
+#[test]
+fn userinfo_in_any_form_is_rejected_with_the_invalid_host_reason() {
+    let granted = policy("https://api.example.com");
+    for url in [
+        "https://user:secret@api.example.com/",
+        "https://user@api.example.com/",
+    ] {
+        assert_eq!(
+            granted.validate_url(&url::Url::parse(url).expect("valid url")),
+            Err(EndpointPolicyError::InvalidHost),
+            "url: {url}"
+        );
+    }
+}
+
+#[test]
+fn loopback_hosts_are_matched_case_insensitively_and_by_ip_literal() {
+    let ipv4: IpAddr = "127.0.0.1".parse().expect("valid address");
+    let ipv6: IpAddr = "::1".parse().expect("valid address");
+    for (origin, host, address) in [
+        ("http://localhost:8080", "localhost", ipv4),
+        ("http://LOCALHOST:8080", "LOCALHOST", ipv4),
+        ("http://api.localhost:8080", "api.localhost", ipv4),
+        ("http://127.0.0.1:8080", "127.0.0.1", ipv4),
+        ("http://[::1]:8080", "[::1]", ipv6),
+    ] {
+        assert_eq!(
+            policy(origin).validate_ip(host, address, 8080, "http"),
+            Ok(()),
+            "origin: {origin}"
+        );
+    }
+    // A host that merely contains "localhost" is not a loopback host.
+    assert_eq!(
+        policy("http://notlocalhost:8080").validate_ip("notlocalhost", ipv4, 8080, "http"),
+        Err(EndpointPolicyError::LoopbackNotAllowed)
+    );
+}
+
+#[test]
+fn private_addresses_need_an_exact_host_port_and_scheme_grant() {
+    let ip: IpAddr = "10.0.0.5".parse().expect("valid address");
+    assert_eq!(
+        policy("http://10.0.0.5").validate_ip("10.0.0.5", ip, 80, "http"),
+        Ok(())
+    );
+    // A different port does not match the grant.
+    assert_eq!(
+        policy("http://10.0.0.5").validate_ip("10.0.0.5", ip, 443, "https"),
+        Err(EndpointPolicyError::PrivateHostNotAllowlisted)
+    );
+    // A different host does not match the grant.
+    assert_eq!(
+        policy("http://10.0.0.5").validate_ip("other.internal", ip, 80, "http"),
+        Err(EndpointPolicyError::PrivateHostNotAllowlisted)
+    );
+}
+
+#[test]
+fn granted_public_ip_literals_are_accepted() {
+    assert_eq!(
+        policy("https://93.184.216.34")
+            .validate_url(&url::Url::parse("https://93.184.216.34/").expect("valid url")),
+        Ok(())
+    );
+    assert_eq!(
+        policy("https://[2001:4860:4860::8888]")
+            .validate_url(&url::Url::parse("https://[2001:4860:4860::8888]/").expect("valid url")),
+        Ok(())
+    );
+}
+
+#[test]
+fn ipv6_address_families_are_classified_by_the_public_denial_reason() {
+    // Without an origin grant every private, loopback, link-local, metadata
+    // and reserved address is denied, each with its own reason.
+    let ungranted = EndpointPolicy::default();
+    for (address, expected) in [
+        ("::1", EndpointPolicyError::LoopbackNotAllowed),
+        ("::ffff:127.0.0.1", EndpointPolicyError::LoopbackNotAllowed),
+        ("fe80::1", EndpointPolicyError::LinkLocalNotAllowed),
+        (
+            "::ffff:169.254.10.1",
+            EndpointPolicyError::LinkLocalNotAllowed,
+        ),
+        (
+            "::ffff:169.254.169.254",
+            EndpointPolicyError::MetadataNotAllowed,
+        ),
+        // Unique local addresses are private before they are non-global.
+        ("fc00::1", EndpointPolicyError::PrivateHostNotAllowlisted),
+        ("fd00::1", EndpointPolicyError::PrivateHostNotAllowlisted),
+        ("::", EndpointPolicyError::NonGlobalAddress),
+        ("ff02::1", EndpointPolicyError::NonGlobalAddress),
+        ("3fff::1", EndpointPolicyError::NonGlobalAddress),
+        ("2001:db8::1", EndpointPolicyError::NonGlobalAddress),
+        ("::ffff:100.64.0.1", EndpointPolicyError::NonGlobalAddress),
+    ] {
+        let ip: IpAddr = address.parse().expect("valid address");
+        assert_eq!(
+            ungranted.validate_ip("upstream.example", ip, 443, "https"),
+            Err(expected),
+            "address: {address}"
+        );
+    }
+    // A globally routable IPv6 address stays reachable over HTTPS.
+    let global: IpAddr = "2001:4860:4860::8888".parse().expect("valid address");
+    assert_eq!(
+        policy("https://upstream.example").validate_ip("upstream.example", global, 443, "https"),
+        Ok(())
+    );
+}
+
+#[test]
+fn granted_origins_allow_listed_hosts_and_reject_unlisted_credentialed_or_local_targets() {
+    let policy = EndpointPolicy {
+        allowed_origins: vec![
+            "https://api.example.com".into(),
+            "https://[2606:4700:4700::1111]".into(),
+        ],
+    };
+    for endpoint in [
+        "https://localhost:11434/v1",
+        "https://user:password@10.0.0.1/v1",
+        "https://[::1]/v1",
+        "https://[fc00::1]/v1",
+        "https://[fdff::1]/v1",
+    ] {
+        let url = url::Url::parse(endpoint).unwrap();
+        assert!(policy.validate_url(&url).is_err(), "{endpoint}");
+    }
+    for endpoint in [
+        "https://api.example.com/v1",
+        "https://[2606:4700:4700::1111]/v1",
+    ] {
+        assert!(
+            policy
+                .validate_url(&url::Url::parse(endpoint).unwrap())
+                .is_ok(),
+            "{endpoint}"
+        );
+    }
+}
