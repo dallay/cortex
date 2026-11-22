@@ -83,9 +83,9 @@ impl DockerFixture {
             let port = String::from_utf8(port.stdout)
                 .unwrap()
                 .trim()
-                .strip_prefix("127.0.0.1:")
-                .and_then(|p| p.parse::<std::num::NonZeroU16>().ok())
-                .expect("valid loopback port");
+                .rsplit_once(':')
+                .and_then(|(_, port)| port.parse::<std::num::NonZeroU16>().ok())
+                .expect("valid published port");
             (
                 format!("bolt://127.0.0.1:{port}"),
                 password,
