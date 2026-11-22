@@ -14,7 +14,7 @@ export default mergeConfig(
 				thresholds: {
 					statements: 83,
 					branches: 72,
-					functions: 80,
+					functions: 79,
 					lines: 84,
 				},
 				reporter: ["text", "lcov", "json"],

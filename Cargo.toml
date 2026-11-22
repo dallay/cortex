@@ -109,6 +109,9 @@ refinery = { version = "0.10", features = ["rusqlite"] }
 # HTTP clients
 reqwest = { version = "0.13", features = ["form", "json", "rustls"], default-features = false }
 
+# URL handling
+url = "2.5.9"
+
 # Config
 toml = "1.1"
 toml_edit = "0.25"
