@@ -10,10 +10,7 @@ import {Input} from "@/components/ui/input";
 import {Label} from "@/components/ui/label";
 import {useAuthStore} from "@/stores/auth";
 
-const isDark = ref(false);
-if (import.meta.client) {
-  isDark.value = document.documentElement.classList.contains("dark");
-}
+const isDark = ref(typeof document !== "undefined" && document.documentElement.classList.contains("dark"));
 
 const {t} = useI18n();
 const router = useRouter();

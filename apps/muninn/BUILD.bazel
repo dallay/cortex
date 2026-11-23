@@ -12,7 +12,7 @@ package(default_visibility = ["//visibility:public"])
 
 rust_binary(
     name = "muninn",
-    srcs = ["src/main.rs", "src/mcp_command.rs"],
+    srcs = ["src/banner.rs", "src/main.rs", "src/mcp_command.rs"],
     crate_name = "muninn",
     edition = crate_edition(),
     deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/bridge:muninn_bridge", "//crates/muninn/core:muninn_core", "//crates/muninn/mcp:muninn_mcp", "//crates/muninn/neo4j:muninn_neo4j", "//crates/muninn/observability:muninn_observability", "//crates/muninn/ontology:muninn_ontology", "//crates/muninn/providers:muninn_providers"] + all_crate_deps(normal = True),
@@ -21,7 +21,7 @@ rust_binary(
 
 rust_test(
     name = "muninn_test",
-    srcs = ["src/main.rs", "src/mcp_command.rs"],
+    srcs = ["src/banner.rs", "src/main.rs", "src/mcp_command.rs"],
     crate_name = "muninn_test",
     crate_root = "src/main.rs",
     edition = crate_edition(),
