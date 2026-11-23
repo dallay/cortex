@@ -39,7 +39,7 @@
 		"@codecov/vite-plugin": "2.0.1",
 		"@playwright/test": "1.65.1",
 		"@tailwindcss/vite": "4.3.5",
-		"@vitejs/plugin-vue": "5.2.0",
+		"@vitejs/plugin-vue": "5.2.4",
 		"@vitest/coverage-v8": "5.1.0",
 		"@vue/test-utils": "2.6.0",
 		"jsdom": "31.0.1",
