@@ -236,3 +236,12 @@ rust_test(
     deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_neo4j"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
+
+rust_test(
+    name = "summary_isolation",
+    crate_name = "summary_isolation",
+    srcs = ["tests/common/fixture.rs", "tests/summary_isolation.rs"],
+    edition = crate_edition(),
+    deps = ["//crates/muninn/application:muninn_application", "//crates/muninn/core:muninn_core", ":muninn_neo4j"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
