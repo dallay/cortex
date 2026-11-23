@@ -1,5 +1,6 @@
 //! Muninn command-line entry point and composition root.
 
+mod banner;
 mod mcp_command;
 
 use std::net::{IpAddr, SocketAddr};
@@ -503,6 +504,7 @@ async fn main() -> Result<()> {
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .with_writer(std::io::stderr)
         .init();
+    banner::print_banner();
     let cli = Cli::parse();
     let mcp_scope = match &cli.command {
         Command::Mcp { owner_scope } => Some(

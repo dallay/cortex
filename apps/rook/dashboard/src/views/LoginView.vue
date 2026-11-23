@@ -10,6 +10,11 @@ import {Input} from "@/components/ui/input";
 import {Label} from "@/components/ui/label";
 import {useAuthStore} from "@/stores/auth";
 
+const isDark = ref(false);
+if (import.meta.client) {
+  isDark.value = document.documentElement.classList.contains("dark");
+}
+
 const {t} = useI18n();
 const router = useRouter();
 const auth = useAuthStore();
@@ -68,8 +73,12 @@ async function submitLogin() {
       <!-- ── Setup mode ─────────────────────────────────────────────────── -->
       <template v-if="auth.bootstrapRequired">
         <div class="space-y-2 text-center">
+          <div class="flex justify-center mb-2">
+            <img v-if="!isDark" alt="Rook" class="h-14 w-auto" src="/rook-lockup-horizontal.svg"/>
+            <img v-else alt="Rook" class="h-14 w-auto" src="/rook-lockup-horizontal-dark.svg"/>
+          </div>
           <div class="flex justify-center">
-            <ShieldCheck class="h-10 w-10 text-primary"/>
+            <ShieldCheck class="h-8 w-8 text-primary"/>
           </div>
           <PageHeader
             :description="t('setup.description')"
@@ -130,8 +139,12 @@ async function submitLogin() {
       <!-- ── Login mode ────────────────────────────────────────────────── -->
       <template v-else>
         <div class="space-y-2 text-center">
+          <div class="flex justify-center mb-2">
+            <img v-if="!isDark" alt="Rook" class="h-14 w-auto" src="/rook-lockup-horizontal.svg"/>
+            <img v-else alt="Rook" class="h-14 w-auto" src="/rook-lockup-horizontal-dark.svg"/>
+          </div>
           <div class="flex justify-center">
-            <Lock class="h-10 w-10 text-primary"/>
+            <Lock class="h-8 w-8 text-primary"/>
           </div>
           <PageHeader
             :description="t('auth.description')"
