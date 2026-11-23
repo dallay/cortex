@@ -5,8 +5,7 @@
   ],
   "timezone": "America/Havana",
   "schedule": [
-    "* 17-23,0-6 * * 1-5",
-    "* * * * 0,6"
+    "* 0-6 * * 1"
   ],
   "assignees": [
     "yacosta738"
@@ -15,71 +14,207 @@
     "team:dbwh",
     "yacosta738"
   ],
+  "assignAutomerge": true,
   "labels": [
     "area/dependencies"
   ],
-  "minimumReleaseAge": "3 days",
+  "minimumReleaseAge": "14 days",
   "dependencyDashboard": {
     "enabled": true
   },
-  "prConcurrentLimit": 10,
+  "prConcurrentLimit": 8,
+  "prHourlyLimit": 2,
   "semanticCommits": "enabled",
   "osvVulnerabilityAlerts": true,
+  "groupSingleUpdates": true,
+  "automergeType": "pr",
+  "automergeStrategy": "squash",
+  "ignoreTests": false,
   "lockFileMaintenance": {
     "enabled": true,
-    "schedule": [
-      "* 17-23,0-6 * * 1-5",
-      "* * * * 0,6"
-    ]
+    "automerge": true
   },
   "packageRules": [
     {
+      "description": "Keep Cargo version ranges instead of pinning development dependencies from the best-practices preset.",
       "matchManagers": [
         "cargo"
       ],
-      "matchUpdateTypes": [
-        "minor",
-        "patch",
-        "pin",
-        "digest"
-      ],
-      "groupName": "rust dependencies",
-      "semanticCommitScope": "deps-rust",
-      "labels": [
-        "area/dependencies"
-      ]
+      "rangeStrategy": "update-lockfile"
     },
     {
-      "matchManagers": [
-        "cargo"
-      ],
-      "matchUpdateTypes": [
-        "major"
-      ],
-      "groupName": "rust major",
-      "semanticCommitScope": "deps-rust",
-      "labels": [
-        "area/dependencies"
-      ]
-    },
-    {
+      "description": "Batch and automerge stable JavaScript minor and patch updates after CI.",
       "matchManagers": [
         "npm"
       ],
       "matchUpdateTypes": [
         "minor",
-        "patch",
-        "pin",
-        "digest"
+        "patch"
       ],
+      "matchCurrentVersion": "!/(^v?0\\.|-)/",
+      "minimumReleaseAge": "14 days",
       "groupName": "javascript dependencies",
       "semanticCommitScope": "deps-js",
-      "labels": [
-        "area/dependencies"
-      ],
       "postUpdateOptions": [
         "pnpmDedupe"
-      ]
+      ],
+      "automerge": true
+    },
+    {
+      "description": "Review pre-1.0 and prerelease JavaScript updates separately.",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "matchCurrentVersion": "/(^v?0\\.|-)/",
+      "minimumReleaseAge": "14 days",
+      "groupName": "javascript unstable",
+      "semanticCommitScope": "deps-js",
+      "postUpdateOptions": [
+        "pnpmDedupe"
+      ],
+      "automerge": false
+    },
+    {
+      "description": "Keep JavaScript pin updates in one manually reviewed batch.",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
+        "pin",
+        "pinDigest",
+        "digest"
+      ],
+      "groupName": "javascript pins",
+      "semanticCommitScope": "deps-js",
+      "postUpdateOptions": [
+        "pnpmDedupe"
+      ],
+      "automerge": false
+    },
+    {
+      "description": "Batch and automerge stable Cargo minor and patch updates after CI.",
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "matchCurrentVersion": "!/(^v?0\\.|-)/",
+      "groupName": "rust dependencies",
+      "semanticCommitScope": "deps-rust",
+      "automerge": true
+    },
+    {
+      "description": "Review pre-1.0 and prerelease Cargo updates separately.",
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "matchCurrentVersion": "/(^v?0\\.|-)/",
+      "groupName": "rust unstable",
+      "semanticCommitScope": "deps-rust",
+      "automerge": false
+    },
+    {
+      "description": "Group Cargo pin/digest updates without automerge.",
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchUpdateTypes": [
+        "pin",
+        "pinDigest",
+        "digest"
+      ],
+      "groupName": "rust pins",
+      "semanticCommitScope": "deps-rust",
+      "automerge": false
+    },
+    {
+      "description": "Group Python requirements updates; do not automerge hashed requirements until verified in CI.",
+      "matchManagers": [
+        "pip_requirements"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin"
+      ],
+      "groupName": "python dependencies",
+      "semanticCommitScope": "deps-python",
+      "automerge": false
+    },
+    {
+      "description": "Automerge grouped non-major GitHub Actions changes after required checks pass.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest",
+        "pinDigest"
+      ],
+      "groupName": "github-actions",
+      "semanticCommitScope": "deps-actions",
+      "addLabels": [
+        "area/ci"
+      ],
+      "automerge": true
+    },
+    {
+      "description": "Group Docker changes, but require human review before merging.",
+      "matchManagers": [
+        "dockerfile",
+        "docker-compose"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest",
+        "pinDigest"
+      ],
+      "groupName": "docker",
+      "semanticCommitScope": "deps-docker",
+      "automerge": false
+    },
+    {
+      "description": "Group Bazel upgrades; lockfile regeneration is currently blocked by host-level bazelModDeps restrictions.",
+      "matchManagers": [
+        "bazel-module",
+        "bazelisk"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "bazel dependencies",
+      "semanticCommitScope": "deps-bazel",
+      "automerge": false
+    },
+    {
+      "description": "Review toolchain updates separately.",
+      "matchManagers": [
+        "rust-toolchain"
+      ],
+      "groupName": "rust-toolchain",
+      "semanticCommitScope": "deps-rust",
+      "automerge": false
+    },
+    {
+      "description": "Require Dependency Dashboard approval for all major dependency upgrades.",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "dependencyDashboardApproval": true,
+      "automerge": false
     },
     {
       "matchManagers": [
@@ -89,21 +224,62 @@
         "major"
       ],
       "groupName": "javascript major",
-      "semanticCommitScope": "deps-js",
-      "labels": [
-        "area/dependencies"
-      ]
+      "semanticCommitScope": "deps-js"
+    },
+    {
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "groupName": "rust major",
+      "semanticCommitScope": "deps-rust"
+    },
+    {
+      "matchManagers": [
+        "pip_requirements"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "groupName": "python major",
+      "semanticCommitScope": "deps-python"
     },
     {
       "matchManagers": [
         "github-actions"
       ],
-      "groupName": "github-actions",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "groupName": "github-actions major",
       "semanticCommitScope": "deps-actions",
-      "labels": [
-        "area/dependencies",
+      "addLabels": [
         "area/ci"
       ]
+    },
+    {
+      "matchManagers": [
+        "dockerfile",
+        "docker-compose"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "groupName": "docker major",
+      "semanticCommitScope": "deps-docker"
+    },
+    {
+      "matchManagers": [
+        "bazel-module",
+        "bazelisk"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "groupName": "bazel major",
+      "semanticCommitScope": "deps-bazel"
     },
     {
       "description": "The Semgrep gate pins semgrep==1.126.0, which aborts while importing protobuf on Python 3.14 and newer, so the setup-python interpreter must stay on the version that the just ci-semgrep recipe uses. Updating the interpreter requires updating the Semgrep pin in the same review.",
@@ -111,42 +287,6 @@
         "python-version"
       ],
       "enabled": false
-    },
-    {
-      "matchManagers": [
-        "dockerfile"
-      ],
-      "groupName": "docker",
-      "semanticCommitScope": "deps-docker",
-      "labels": [
-        "area/dependencies"
-      ]
-    },
-    {
-      "matchManagers": [
-        "rust-toolchain"
-      ],
-      "groupName": "rust-toolchain",
-      "semanticCommitScope": "deps-rust",
-      "labels": [
-        "area/dependencies"
-      ]
-    },
-    {
-      "matchPackageNames": [
-        "vue"
-      ],
-      "matchUpdateTypes": [
-        "major",
-        "minor",
-        "patch"
-      ],
-      "minimumReleaseAge": "7 days",
-      "groupName": "vue",
-      "semanticCommitScope": "deps-js",
-      "labels": [
-        "area/dependencies"
-      ]
     },
     {
       "description": "TypeScript 7 removed the typescript/lib/tsc export that vue-tsc resolves, so the dashboard type-check and build fail. Remove this rule once vue-tsc supports TypeScript 7.",
