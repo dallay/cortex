@@ -291,8 +291,8 @@ importers:
         specifier: 4.3.5
         version: 4.3.5(vite@7.3.7(jiti@2.7.0)(lightningcss@1.33.0))
       '@vitejs/plugin-vue':
-        specifier: 5.2.0
-        version: 5.2.0(vite@7.3.7(jiti@2.7.0)(lightningcss@1.33.0))(vue@3.6.0-rc.15(typescript@6.0.3))
+        specifier: 5.2.4
+        version: 5.2.4(vite@7.3.7(jiti@2.7.0)(lightningcss@1.33.0))(vue@3.6.0-rc.15(typescript@6.0.3))
       '@vitest/coverage-v8':
         specifier: 5.1.0
         version: 5.1.0(vitest@5.1.0)
@@ -1257,11 +1257,11 @@ packages:
     peerDependencies:
       zod: ^3.24.0
 
-  '@vitejs/plugin-vue@5.2.0':
-    resolution: {integrity: sha512-7n7KdUEtx/7Yl7I/WVAMZ1bEb0eVvXF3ummWTeLcs/9gvo9pJhuLdouSXGjdZ/MKD1acf1I272+X0RMua4/R3g==}
+  '@vitejs/plugin-vue@5.2.4':
+    resolution: {integrity: sha512-7Yx/SXSOcQq5HiiV3orevHUFn+pmMB4cgbEkDYgnkUWb0WfeQ/wa2yFv6D5ICiCQOVpjA7vYDXrC7AGO8yjDHA==}
     engines: {node: ^18.0.0 || >=20.0.0}
     peerDependencies:
-      vite: ^5.0.0
+      vite: ^5.0.0 || ^6.0.0
       vue: 3.6.0-rc.15
 
   '@vitest/coverage-v8@5.1.0':
@@ -3492,7 +3492,7 @@ snapshots:
     transitivePeerDependencies:
       - vue
 
-  '@vitejs/plugin-vue@5.2.0(vite@7.3.7(jiti@2.7.0)(lightningcss@1.33.0))(vue@3.6.0-rc.15(typescript@6.0.3))':
+  '@vitejs/plugin-vue@5.2.4(vite@7.3.7(jiti@2.7.0)(lightningcss@1.33.0))(vue@3.6.0-rc.15(typescript@6.0.3))':
     dependencies:
       vite: 7.3.7(jiti@2.7.0)(lightningcss@1.33.0)
       vue: 3.6.0-rc.15(typescript@6.0.3)
