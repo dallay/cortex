@@ -19,7 +19,7 @@ overrides:
   re2js@>=2.2.0 <2.8.7: ^2.8.7
   nanoid@3: 6.0.2
   postcss: 8.5.33
-  esbuild: 0.28.1
+  esbuild: 0.28.2
   source-map-js: 1.2.2
   vue: 3.6.0-rc.15
   '@vue/compiler-core': 3.6.0-rc.15
