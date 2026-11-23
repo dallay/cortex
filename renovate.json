@@ -40,7 +40,7 @@
       "matchManagers": [
         "cargo"
       ],
-      "rangeStrategy": "replace"
+      "rangeStrategy": "update-lockfile"
     },
     {
       "description": "Batch and automerge stable JavaScript minor and patch updates after CI.",
@@ -52,6 +52,7 @@
         "patch"
       ],
       "matchCurrentVersion": "!/(^v?0\\.|-)/",
+      "minimumReleaseAge": "14 days",
       "groupName": "javascript dependencies",
       "semanticCommitScope": "deps-js",
       "postUpdateOptions": [
@@ -69,6 +70,7 @@
         "patch"
       ],
       "matchCurrentVersion": "/(^v?0\\.|-)/",
+      "minimumReleaseAge": "14 days",
       "groupName": "javascript unstable",
       "semanticCommitScope": "deps-js",
       "postUpdateOptions": [
