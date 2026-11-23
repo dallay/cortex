@@ -80,7 +80,11 @@
 		"viewProvidersDescription": "Configure your AI providers",
 		"recentActivity": "Recent Activity",
 		"noProvidersTitle": "No providers configured",
-		"noProvidersDescription": "Add your first AI provider to start routing requests"
+		"noProvidersDescription": "Add your first AI provider to start routing requests",
+		"ecosystem": "Cortex Ecosystem",
+		"rookDescription": "AI Gateway",
+		"huginnDescription": "Local Agent",
+		"muninnDescription": "Data Pipeline"
 	},
 	"endpoints": {
 		"title": "Endpoints",

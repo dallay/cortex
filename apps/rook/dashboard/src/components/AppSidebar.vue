@@ -13,14 +13,13 @@ const {appName} = useHealth();
 <template>
   <Sidebar>
     <SidebarHeader>
-      <div class="flex items-center gap-2 px-2 py-1">
-        <div
-          class="flex aspect-square size-8 items-center justify-center rounded-full bg-sidebar-primary-foreground">
-          <img :alt="appName" class="size-6 dark:brightness-200 dark:contrast-125"
-               src="/rook-icon.svg"/>
+      <div class="flex items-center gap-3 px-3 py-2">
+        <div class="flex size-8 shrink-0 items-center justify-center">
+          <img alt="Rook" class="block size-5 dark:hidden" src="/rook-isotype.svg"/>
+          <img alt="Rook" class="hidden size-5 dark:block" src="/rook-isotype-dark.svg"/>
         </div>
-        <div class="grid flex-1 text-left text-2xl leading-tight">
-          <span class="truncate font-medium">{{ appName }}</span>
+        <div class="grid flex-1 text-left leading-tight">
+          <span class="truncate text-xl font-semibold tracking-tight">{{ appName }}</span>
         </div>
       </div>
     </SidebarHeader>

@@ -2,6 +2,8 @@
 
 mod mcp_command;
 
+use muninn::banner;
+
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
@@ -504,6 +506,7 @@ async fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .init();
     let cli = Cli::parse();
+    banner::print_banner();
     let mcp_scope = match &cli.command {
         Command::Mcp { owner_scope } => Some(
             mcp_command::HostOwnerScope::parse(Some(owner_scope)).map_err(anyhow::Error::msg)?,

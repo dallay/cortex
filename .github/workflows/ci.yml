@@ -488,7 +488,9 @@ jobs:
         # Pinned because `cargo install` ignores registry.global-min-publish-age.
         run: cargo install cargo-audit --locked --version 0.23.0
       - name: Run cargo audit
-        run: cargo audit
+        # RUSTSEC-2026-0594 (cookie < 0.18.3) is ignored until the workspace's
+        # 3-day publish-age cooldown expires and Cargo.lock can be re-resolved.
+        run: cargo audit --ignore RUSTSEC-2026-0594
 
   trivy-fs:
     name: Security / Trivy (filesystem + deps)

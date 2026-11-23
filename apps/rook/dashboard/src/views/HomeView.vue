@@ -3,6 +3,7 @@ import {Activity, AlertCircle, CheckCircle2, CircleDot, Globe, Key, TrendingUp,}
 import {onMounted} from "vue";
 import {useI18n} from "vue-i18n";
 import {RouterLink} from "vue-router";
+import BrandBanner from "@/components/BrandBanner.vue";
 import {useHealth} from "@/composables/useHealth";
 import {useHomeMetrics} from "@/composables/useHomeMetrics";
 
@@ -38,6 +39,9 @@ const {
 
 <template>
   <div class="space-y-6">
+    <!-- Brand Banner -->
+    <BrandBanner/>
+
     <!-- Page Header -->
     <div>
       <h1 class="text-2xl font-semibold tracking-tight">{{ t('home.title') }}</h1>
