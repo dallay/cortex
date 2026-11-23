@@ -10,7 +10,7 @@ The Bazel workflow is advisory: it reports status, and a failure in it does not 
 ## Prerequisites
 
 Install Bazelisk and run `bazel` from the repository root. The checked-in `.bazelversion` selects
-Bazel 9.3.2. Bazel downloads the pinned Rust toolchain and resolves Rust crates from
+Bazel 9.3.3. Bazel downloads the pinned Rust toolchain and resolves Rust crates from
 `Cargo.Bazel.lock` through `rules_rust` and Crate Universe. While `Cargo.lock` remains the
 authoritative lockfile for Cargo workflows, `Cargo.Bazel.lock` is authoritative for Bazel and
 enables non-default optional features (such as `wasmtime`) without altering the standard Cargo
