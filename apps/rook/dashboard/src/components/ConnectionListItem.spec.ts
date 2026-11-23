@@ -68,7 +68,14 @@ describe("ConnectionListItem status", () => {
 			} as Partial<ProviderConnectionResponse>),
 		);
 
-		expect(wrapper.find(".text-destructive").exists()).toBe(true);
+		const statusLabel = wrapper
+			.findAll("span")
+			.find((span) => span.text() === "unhealthy");
+		expect(
+			statusLabel?.element.previousElementSibling?.classList.contains(
+				"text-destructive",
+			),
+		).toBe(true);
 	});
 
 	it("colours an untested connection yellow", () => {
@@ -81,10 +88,10 @@ describe("ConnectionListItem status", () => {
 		expect(wrapper.find(".text-yellow-500").exists()).toBe(true);
 	});
 
-	it("marks a disabled connection with the enabled badge", () => {
+	it("marks a disabled connection with the disabled badge", () => {
 		const wrapper = mountRow(makeConnection({ isActive: false }));
 
-		expect(wrapper.text()).toContain("Enabled");
+		expect(wrapper.text()).toContain("Disabled");
 	});
 
 	it("shows the latency only when it is known", () => {
