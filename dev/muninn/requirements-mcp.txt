@@ -338,9 +338,9 @@ py-key-value-aio==0.4.6 \
 pycparser==3.11 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy' \
     --hash=sha256:51d5a8ba2be0bbe440b99d2112604c95bbbc3c2748a64260186c541e1729cd80 \
     --hash=sha256:d875f09c3507d00e1aba0eecc6dcadc1352f30fff09dc6bff2f1c2935e97c2bc
-pydantic==2.14.3 \
-    --hash=sha256:1054f237f4d4733e5a30e1e2333bd33a2004ab9ab1510bd053a9a31bb48e232d \
-    --hash=sha256:3f7b347782ab7e4cf4c798496ae3a82787d9f21ec12676a9c564355eeef8daa8
+pydantic==2.14.4 \
+    --hash=sha256:653a2ad9f6d8858529c77c72717d0ea991d6c6837fe683246b2f4b2bbfc3fadc \
+    --hash=sha256:7c19f1d46f8accf55a4617a6116e1ade64840870f397b846a2c53fb9019414ba
 pydantic-core==2.50.4 \
     --hash=sha256:0036473f5583e6a60e50b8b21651511564277a3f05cc5dab8cf579f552cd5f6c \
     --hash=sha256:0048b6dddc8ef4b64fccaad878bd143b0c3882ea9936279dc11d613f6b7dd1bc \
