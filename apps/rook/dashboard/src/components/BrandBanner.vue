@@ -1,4 +1,7 @@
 <script lang="ts" setup>
+import {useI18n} from "vue-i18n";
+
+const {t} = useI18n();
 </script>
 
 <template>
@@ -11,7 +14,7 @@
           <img alt="Rook" class="hidden h-8 w-auto dark:block" src="/rook-lockup-horizontal-dark.svg"/>
         </div>
         <div class="text-right">
-          <p class="text-xs font-medium text-muted-foreground">Cortex Ecosystem</p>
+          <p class="text-xs font-medium text-muted-foreground">{{ t("home.ecosystem") }}</p>
         </div>
       </div>
 
@@ -25,7 +28,7 @@
           </div>
           <div>
             <p class="text-sm font-semibold text-foreground">Rook</p>
-            <p class="text-xs text-muted-foreground">AI Gateway</p>
+            <p class="text-xs text-muted-foreground">{{ t("home.rookDescription") }}</p>
           </div>
         </div>
 
@@ -37,7 +40,7 @@
           </div>
           <div>
             <p class="text-sm font-semibold text-foreground">Huginn</p>
-            <p class="text-xs text-muted-foreground">Local Agent</p>
+            <p class="text-xs text-muted-foreground">{{ t("home.huginnDescription") }}</p>
           </div>
         </div>
 
@@ -49,7 +52,7 @@
           </div>
           <div>
             <p class="text-sm font-semibold text-foreground">Muninn</p>
-            <p class="text-xs text-muted-foreground">Data Pipeline</p>
+            <p class="text-xs text-muted-foreground">{{ t("home.muninnDescription") }}</p>
           </div>
         </div>
       </div>

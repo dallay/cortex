@@ -80,7 +80,11 @@
 		"viewProvidersDescription": "Configurar tus proveedores AI",
 		"recentActivity": "Actividad Reciente",
 		"noProvidersTitle": "Sin proveedores configurados",
-		"noProvidersDescription": "Añade tu primer proveedor para empezar a rutear solicitudes"
+		"noProvidersDescription": "Añade tu primer proveedor para empezar a rutear solicitudes",
+		"ecosystem": "Ecosistema Cortex",
+		"rookDescription": "AI Gateway",
+		"huginnDescription": "Agente Local",
+		"muninnDescription": "Pipeline de Datos"
 	},
 	"usage": {
 		"title": "Uso y costos",

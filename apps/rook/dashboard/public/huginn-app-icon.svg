@@ -1,5 +1,6 @@
 <svg xmlns:c2pa="http://c2pa.org/manifest" height="1024" viewBox="0 0 1024 1024" width="1024"
   xmlns="http://www.w3.org/2000/svg">
+  <title>Huginn</title>
   <g transform="translate(182.0,247.26666666666665) scale(1.4666666666666666) translate(-87,-166)">
     <path d="M87,166 L149,323 L225,381 L225,478 L301,527 L301,289 L144,196 Z" fill="#F7F5F2"/>
     <path d="M537,166 L460,208 L324,289 L324,527 L400,478 L400,380 L475,323 Z" fill="#E84A3C"/>
