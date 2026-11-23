@@ -749,13 +749,17 @@ impl ShortTermStore for Neo4jShortTermStore {
     async fn summary_entities(
         &self,
         session_id: &str,
-        _scope: &OwnerScope,
+        scope: &OwnerScope,
     ) -> MemoryResult<Vec<String>> {
+        self.reject_legacy(Some(session_id), None, None).await?;
         let rows = self
             .client
             .execute(
                 q::GET_SUMMARY_ENTITIES,
-                vec![("session_id", session_id.into())],
+                vec![
+                    ("session_id", session_id.into()),
+                    ("owner_scope", scope.storage_key().into()),
+                ],
             )
             .await?;
         Ok(rows
