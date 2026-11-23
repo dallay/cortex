@@ -155,6 +155,20 @@
       "target": "muninn"
     },
     {
+      "kinds": "lib",
+      "label": "//apps/muninn:muninn",
+      "manifest": "apps/muninn/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/muninn#0.0.1",
+      "target": "muninn"
+    },
+    {
+      "kinds": "test",
+      "label": "//apps/muninn:banner",
+      "manifest": "apps/muninn/Cargo.toml",
+      "package_id": "path+file://<workspace>/apps/muninn#0.0.1",
+      "target": "banner"
+    },
+    {
       "kinds": "test",
       "label": "//apps/rook:alias_routing_e2e",
       "manifest": "apps/rook/Cargo.toml",

@@ -133,3 +133,9 @@ tempfile = "=3.27.0"
 
 # Dev tools (installed via cargo install or as dependencies)
 # cargo install cargo-hack cargo-udeps cargo-audit cargo-outdated cargo-llvm-cov cargo-spellcheck
+
+[advisories]
+# cookie 0.18.3 patches RUSTSEC-2026-0594 but is too new for the workspace's
+# 3-day publish-age cooldown (.cargo/config.toml). Remove this ignore once the
+# cooldown expires and the lock file can be re-resolved.
+ignore = ["RUSTSEC-2026-0594"]
