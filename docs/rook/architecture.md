@@ -1,5 +1,9 @@
 # Architecture
 
+For a visual overview of how Rook fits within the full Cortex monorepo, see the
+[interactive architecture diagrams](../architecture/). The [Rook internals diagram](../architecture/rook-architecture.html)
+zooms into the components, ports, and data flows covered below.
+
 ## Layer Diagram
 
 ```text

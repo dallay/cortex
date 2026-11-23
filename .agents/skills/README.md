@@ -41,6 +41,10 @@ Consequences:
 
 ## Product Skills
 
+### [archify](archify/SKILL.md)
+
+Create validated architecture, workflow, sequence, data-flow, lifecycle/state, ERD, class, tree, timeline, and waterfall diagrams as standalone HTML with dark/light themes, export, and code-backed architecture diagnosis.
+
 ### [pinned-tag](pinned-tag/SKILL.md)
 
 Pins GitHub Actions to immutable SHAs and resolves the correct reference (`v4`, `v4.2.2`, annotated tags) with `scripts/resolve-action-sha.sh`.

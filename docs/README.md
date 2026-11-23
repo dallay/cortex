@@ -1,6 +1,15 @@
 # Cortex Documentation
 
-Cortex is a Rust project that includes **Rook** (AI proxy and router) and **Huginn** (local coding agent).
+Cortex is a Rust project that includes **Rook** (AI proxy and router), **Huginn** (local coding agent), and **Muninn** (persistent memory system).
+
+## Architecture Diagrams
+
+Interactive diagrams visualize the system's architecture at different levels of detail:
+
+- **[Cortex Overview](architecture/cortex-overview.html)** — Full flow across Rook, Huginn, and Muninn
+- **[Huginn internals](architecture/huginn-architecture.html)** — Agent loop, plugin system, tools, and sessions
+- **[Muninn internals](architecture/muninn-architecture.html)** — Memory tiers, extraction, embeddings, and Neo4j
+- **[Rook internals](architecture/rook-architecture.html)** — Proxy, router, cache, audit, and providers
 
 ## Documentation structure
 
@@ -9,6 +18,12 @@ docs/
 ├── README.md              ← This file
 ├── development.md         ← Local development guide
 ├── build-strategy.md      ← Measured build/CI baseline and Phase A decisions
+├── architecture/          ← Interactive architecture diagrams
+│   ├── cortex-overview.html  ← Full monorepo flow
+│   ├── huginn-architecture.html ← Huginn internals
+│   ├── muninn-architecture.html ← Muninn internals
+│   └── rook-architecture.html  ← Rook internals
+│
 ├── development/           ← Product development runbooks
 │   ├── rook.md            ← Rook backend
 │   ├── dashboard.md       ← Rook dashboard
@@ -25,6 +40,12 @@ docs/
 │   ├── product-requirements.md ← Product requirements
 │   └── adr/               ← Rook-specific ADRs
 │       └── README.md
+│
+├── muninn/                ← Muninn documentation
+│   ├── README.md          ← Muninn main guide
+│   ├── architecture.md    ← Internal architecture
+│   ├── reference-*.md     ← Reference documentation
+│   └── specs/             ← Parity matrix and specs
 │
 ├── adr/                   ← Architecture Decision Records (general)
 │   └── README.md          ← ADR index
@@ -73,6 +94,13 @@ docs/
 2. [huginn/authoring.md](huginn/authoring.md) — How to create tools
 3. [huginn/connections.md](huginn/connections.md) — Configuring connections
 
+### For Muninn users
+
+1. [muninn/README.md](muninn/README.md) — Muninn main guide
+2. [muninn/architecture.md](muninn/architecture.md) — Internal architecture
+3. [muninn/reference-api-artifacts.md](muninn/reference-api-artifacts.md) — API by backend
+4. [muninn/reference-mcp.md](muninn/reference-mcp.md) — MCP discovery
+
 ### For developers
 
 1. [development.md](development.md) — Repository setup, test selection, and CI
@@ -88,6 +116,7 @@ docs/
 
 - [Rook ADRs](rook/adr/README.md) — Rook architecture decisions
 - [Huginn ADRs](huginn/adr/README.md) — Huginn decisions
+- [Muninn ADRs](muninn/adr/README.md) — Muninn decisions
 - [General ADRs](adr/README.md) — Shared decisions
 - [GitHub quality-ruleset operations](development/ci-quality-ruleset.md) — Maintainer-only preparation and activation procedure
 - [Contribution policies](contributing/) — Labels, Linear sync

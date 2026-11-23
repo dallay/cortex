@@ -16,6 +16,9 @@ tmp
 # Cargo.lock is committed (pins deps)
 /Cargo.toml.local
 
+# === Archify diagrams (generated artifacts) ===
+.archify/
+
 # === Node / pnpm ===
 node_modules/
 

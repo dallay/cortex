@@ -107,6 +107,10 @@ kernel. The plugin API supports trusted, statically linked extensions.
 See [Huginn architecture](architecture.md) for the crate boundaries, lifecycle,
 and component details.
 
+For a visual overview of how Huginn fits within the full Cortex monorepo, see the
+[interactive architecture diagrams](../architecture/). The [Huginn internals diagram](../architecture/huginn-architecture.html)
+zooms into the agent loop, plugin system, tools, and sessions.
+
 An opt-in [WASM Rust outline experiment](wasm-outline.md) loads one independently
 built component in headless mode. It does not change the supported native
 authoring path or accept WASM as a production runtime.

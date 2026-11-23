@@ -4,6 +4,12 @@ Muninn is Cortex's persistent memory product. The implementation lives in
 `crates/muninn`; `dev/muninn/` holds the reference oracle, capture, and
 verification tooling. Functional parity is not claimed.
 
+For a visual overview of how Muninn fits within the full Cortex monorepo, see the
+[interactive architecture diagrams](../architecture/). The [Muninn internals diagram](../architecture/muninn-architecture.html)
+zooms into the memory tiers, extraction pipeline, embeddings, and Neo4j storage.
+The [architecture deep-dive](architecture.md) covers crate structure, memory tiers,
+extraction, embeddings, and MCP integration in detail.
+
 ## Documentation policy
 
 `docs/muninn/` contains maintained official documentation in English. Identifiers,
