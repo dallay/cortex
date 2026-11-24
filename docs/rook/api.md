@@ -297,8 +297,14 @@ CSRF double-submit validation. They do not expose provider credentials.
 - `DELETE /api/codex/login/{id}` returns `204` if it cancels the pending attempt,
   or `404` if the ID does not match a pending attempt.
 
-The OpenAI browser redirect uses `GET /api/codex/callback`, without a Rook
-session cookie. It requires the pending attempt's single-use OAuth `state`.
-Invalid, expired, or replayed callbacks return `400`. Accepted callbacks return
-`303` to a static, query-free result page. The dashboard reads the outcome from
-`GET /api/codex/accounts`; neither page exposes tokens.
+The OpenAI browser redirect uses a separate loopback listener at
+`http://127.0.0.1:1455/auth/callback`, without a Rook session cookie. The
+listener exists only while a login attempt is pending and requires that
+attempt's single-use OAuth `state`. Invalid, expired, or replayed callbacks
+return `400`. A valid callback returns `303` to the same callback path without
+query data, then serves a static result page. This removes the authorization
+code and state from the browser address bar. The listener serves the result page
+for up to five seconds, then closes. Cancellation, expiration, and Rook shutdown
+also close the listener. The dashboard reads the outcome from
+`GET /api/codex/accounts`; the callback page does not expose tokens. If port 1455
+is busy, `POST /api/codex/login` returns `409 CODEX_CALLBACK_BUSY`.

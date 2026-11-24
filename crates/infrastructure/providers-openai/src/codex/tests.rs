@@ -1,7 +1,15 @@
 use super::*;
 
 const CLIENT: &str = "operator-test-client";
-const REDIRECT: &str = "http://127.0.0.1:4747/api/codex/callback";
+
+fn ephemeral() -> std::net::SocketAddr {
+    std::net::SocketAddr::from(([127, 0, 0, 1], 0))
+}
+
+fn available_loopback_addr() -> std::net::SocketAddr {
+    let listener = std::net::TcpListener::bind(ephemeral()).unwrap();
+    listener.local_addr().unwrap()
+}
 
 struct TestKey;
 impl KeyManager for TestKey {
@@ -29,17 +37,46 @@ fn start_params(login: &CodexLogin) -> std::collections::HashMap<String, String>
     url.query_pairs().into_owned().collect()
 }
 
-#[tokio::test]
-async fn direct_start_advertises_registered_pkce_callback() {
-    let root = root();
-    assert!(
-        CodexProfileStore::open(CLIENT, REDIRECT, 4748, root.path(), Arc::new(TestKey)).is_err()
+#[test]
+fn production_redirect_uri_uses_the_pinned_codex_callback() {
+    assert_eq!(rook_core::codex_accounts::CODEX_CALLBACK_PORT, 1455);
+    assert_eq!(
+        rook_core::codex_accounts::CODEX_CALLBACK_PATH,
+        "/auth/callback"
     );
-    let store =
-        CodexProfileStore::open(CLIENT, REDIRECT, 4747, root.path(), Arc::new(TestKey)).unwrap();
+    assert_eq!(
+        rook_core::codex_accounts::codex_redirect_uri(
+            rook_core::codex_accounts::CODEX_CALLBACK_PORT
+        ),
+        "http://127.0.0.1:1455/auth/callback"
+    );
+}
+
+#[tokio::test]
+async fn direct_start_advertises_the_pinned_pkce_callback() {
+    let root = root();
+    let store = CodexProfileStore::open_with_client(
+        oauth::Client::new(CLIENT).unwrap(),
+        ephemeral(),
+        root.path(),
+        Arc::new(TestKey),
+    )
+    .unwrap();
     let params = start_params(&store.start().await.unwrap());
     store.shutdown().await;
-    assert_eq!(params["redirect_uri"], REDIRECT);
+    let redirect = &params["redirect_uri"];
+    assert!(
+        redirect.starts_with("http://127.0.0.1:"),
+        "redirect_uri must use loopback IPv4: {redirect}"
+    );
+    assert!(
+        redirect.ends_with("/auth/callback"),
+        "redirect_uri must use the pinned callback path: {redirect}"
+    );
+    assert_ne!(
+        redirect, "http://127.0.0.1:0/auth/callback",
+        "redirect_uri must advertise the bound port, not port 0"
+    );
     assert_eq!(params["client_id"], CLIENT);
     assert_eq!(params["code_challenge_method"], "S256");
     assert_eq!(params["code_challenge"].len(), 43);
@@ -49,6 +86,124 @@ async fn direct_start_advertises_registered_pkce_callback() {
         Some("select_account")
     );
     assert!(!params.contains_key("code_verifier"));
+}
+
+#[tokio::test]
+async fn callback_listener_is_single_use_loopback_and_exchanges_the_exact_redirect() {
+    use wiremock::{
+        matchers::{method, path},
+        Mock, MockServer, ResponseTemplate,
+    };
+
+    let idp = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "synthetic-token",
+            "refresh_token": "synthetic-refresh-token",
+            "token_type": "Bearer",
+            "expires_in": 3600
+        })))
+        .expect(1)
+        .mount(&idp)
+        .await;
+    let root = root();
+    let store = CodexProfileStore::open_with_client(
+        oauth::Client::new(CLIENT)
+            .unwrap()
+            .with_test_token_endpoint(&format!("{}/oauth/token", idp.uri())),
+        ephemeral(),
+        root.path(),
+        Arc::new(TestKey),
+    )
+    .unwrap();
+    let login = store.start().await.unwrap();
+    let params = start_params(&login);
+    let redirect = reqwest::Url::parse(&params["redirect_uri"]).unwrap();
+    assert_eq!(redirect.host_str(), Some("127.0.0.1"));
+    assert_eq!(redirect.path(), "/auth/callback");
+    let addr: std::net::SocketAddr = format!(
+        "{}:{}",
+        redirect.host_str().unwrap(),
+        redirect.port().unwrap()
+    )
+    .parse()
+    .unwrap();
+
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    use tokio::io::AsyncWriteExt;
+    let mut slow_client = tokio::net::TcpStream::connect(addr).await.unwrap();
+    slow_client
+        .write_all(b"GET /auth/callback?state=incomplete HTTP/1.1\r\nHost: localhost\r\n")
+        .await
+        .unwrap();
+    let mut invalid_url = redirect.clone();
+    invalid_url
+        .query_pairs_mut()
+        .append_pair("state", &"x".repeat(43))
+        .append_pair("code", "synthetic-code");
+    let invalid = tokio::time::timeout(Duration::from_millis(1500), http.get(invalid_url).send())
+        .await
+        .expect("a slow peer must not block other callback requests")
+        .unwrap();
+    assert_eq!(invalid.status(), reqwest::StatusCode::BAD_REQUEST);
+    assert_eq!(invalid.headers()["cache-control"], "no-store");
+
+    let mut callback_url = redirect.clone();
+    callback_url
+        .query_pairs_mut()
+        .append_pair("state", &params["state"])
+        .append_pair("code", "synthetic-code");
+    let response = http.get(callback_url.clone()).send().await.unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::SEE_OTHER);
+    assert_eq!(response.headers()["location"], "/auth/callback");
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    assert_eq!(response.headers()["referrer-policy"], "no-referrer");
+    assert!(response.headers()["content-security-policy"]
+        .to_str()
+        .unwrap()
+        .contains("default-src 'none'"));
+    let body = response.text().await.unwrap();
+    assert!(!body.contains("synthetic-code"));
+    assert!(!body.contains("synthetic-token"));
+    let competing_result_request = http.get(redirect.clone()).send().await.unwrap();
+    assert_eq!(competing_result_request.status(), reqwest::StatusCode::OK);
+    let browser_result_request = http.get(redirect).send().await.unwrap();
+    assert_eq!(browser_result_request.status(), reqwest::StatusCode::OK);
+    let result_body = browser_result_request.text().await.unwrap();
+    assert!(!result_body.contains("synthetic-code"));
+    assert!(!result_body.contains("synthetic-token"));
+    wait_status(&store, Status::Linked).await;
+
+    let replay = http.get(callback_url).send().await.unwrap();
+    assert_eq!(replay.status(), reqwest::StatusCode::NOT_FOUND);
+    drop(slow_client);
+    store.shutdown().await;
+    let rebound = tokio::net::TcpListener::bind(addr).await;
+    assert!(rebound.is_ok(), "listener must release the callback port");
+}
+
+#[tokio::test]
+async fn callback_listener_reports_a_busy_port_without_creating_an_attempt() {
+    let occupied = tokio::net::TcpListener::bind(ephemeral()).await.unwrap();
+    let addr = occupied.local_addr().unwrap();
+    let root = root();
+    let store = CodexProfileStore::open_with_client(
+        oauth::Client::new(CLIENT).unwrap(),
+        addr,
+        root.path(),
+        Arc::new(TestKey),
+    )
+    .unwrap();
+
+    assert!(matches!(store.start().await, Err(Error::CallbackBusy)));
+    assert!(store.list().await.unwrap().attempt.is_none());
+    drop(occupied);
+    store.shutdown().await;
 }
 
 async fn wait_status(store: &CodexProfileStore, expected: Status) {
@@ -69,8 +224,13 @@ async fn wait_status(store: &CodexProfileStore, expected: Status) {
 #[tokio::test]
 async fn callback_checks_state_and_consumes_provider_errors_once() {
     let root = root();
-    let store =
-        CodexProfileStore::open(CLIENT, REDIRECT, 4747, root.path(), Arc::new(TestKey)).unwrap();
+    let store = CodexProfileStore::open_with_client(
+        oauth::Client::new(CLIENT).unwrap(),
+        ephemeral(),
+        root.path(),
+        Arc::new(TestKey),
+    )
+    .unwrap();
     let login = store.start().await.unwrap();
     let state = &start_params(&login)["state"];
     assert_ne!(state, &login.id);
@@ -123,9 +283,10 @@ async fn callback_exchanges_pkce_once_per_account_and_persists_isolated_tokens()
     let root = root();
     let open = || {
         CodexProfileStore::open_with_client(
-            oauth::Client::new(CLIENT, REDIRECT, 4747)
+            oauth::Client::new(CLIENT)
                 .unwrap()
                 .with_test_token_endpoint(&format!("{}/oauth/token", idp.uri())),
+            ephemeral(),
             root.path(),
             key.clone(),
         )
@@ -173,7 +334,7 @@ async fn callback_exchanges_pkce_once_per_account_and_persists_isolated_tokens()
         .collect();
         assert_eq!(pairs["code"], code);
         assert_eq!(pairs["grant_type"], "authorization_code");
-        assert_eq!(pairs["redirect_uri"], REDIRECT);
+        assert_eq!(pairs["redirect_uri"], params["redirect_uri"]);
         assert_eq!(pairs["client_id"], CLIENT);
         assert_eq!(
             URL_SAFE_NO_PAD.encode(Sha256::digest(pairs["code_verifier"].as_bytes())),
@@ -227,8 +388,14 @@ async fn callback_exchanges_pkce_once_per_account_and_persists_isolated_tokens()
 #[tokio::test]
 async fn expired_callback_cannot_revive_an_attempt() {
     let root = root();
-    let mut store =
-        CodexProfileStore::open(CLIENT, REDIRECT, 4747, root.path(), Arc::new(TestKey)).unwrap();
+    let callback_addr = available_loopback_addr();
+    let mut store = CodexProfileStore::open_with_client(
+        oauth::Client::new(CLIENT).unwrap(),
+        callback_addr,
+        root.path(),
+        Arc::new(TestKey),
+    )
+    .unwrap();
     Arc::get_mut(&mut store.inner).unwrap().login_timeout = Duration::ZERO;
     let login = store.start().await.unwrap();
     assert!(matches!(
@@ -241,6 +408,42 @@ async fn expired_callback_cannot_revive_an_attempt() {
         Err(Error::NotFound)
     ));
     wait_status(&store, Status::Expired).await;
+    assert!(
+        tokio::net::TcpListener::bind(callback_addr).await.is_ok(),
+        "expiration must release the callback port"
+    );
+}
+
+#[tokio::test]
+async fn cancellation_and_shutdown_release_the_callback_port() {
+    let callback_addr = available_loopback_addr();
+    let root = root();
+    let store = CodexProfileStore::open_with_client(
+        oauth::Client::new(CLIENT).unwrap(),
+        callback_addr,
+        root.path(),
+        Arc::new(TestKey),
+    )
+    .unwrap();
+    let attempt = store.start().await.unwrap();
+    store.cancel(&attempt.id).await.unwrap();
+    wait_status(&store, Status::Cancelled).await;
+    let rebound = tokio::net::TcpListener::bind(callback_addr).await.unwrap();
+    drop(rebound);
+
+    let next = store.start().await.unwrap();
+    assert_eq!(
+        start_params(&next)["redirect_uri"]
+            .parse::<reqwest::Url>()
+            .unwrap()
+            .port(),
+        Some(callback_addr.port())
+    );
+    store.shutdown().await;
+    assert!(
+        tokio::net::TcpListener::bind(callback_addr).await.is_ok(),
+        "shutdown must release the callback port"
+    );
 }
 
 #[tokio::test]
@@ -266,9 +469,10 @@ async fn upstream_redirect_is_not_followed_and_does_not_persist_a_link() {
         .await;
     let root = root();
     let store = CodexProfileStore::open_with_client(
-        oauth::Client::new(CLIENT, REDIRECT, 4747)
+        oauth::Client::new(CLIENT)
             .unwrap()
             .with_test_token_endpoint(&format!("{}/oauth/token", idp.uri())),
+        ephemeral(),
         root.path(),
         Arc::new(TestKey),
     )

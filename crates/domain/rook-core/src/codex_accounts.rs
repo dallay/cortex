@@ -44,9 +44,20 @@ pub enum CodexAccountError {
     Capacity,
     NotFound,
     Unavailable,
+    /// The loopback callback port is already in use (for example, by `codex login`).
+    CallbackBusy,
 }
 
-pub const CODEX_CALLBACK_PATH: &str = "/api/codex/callback";
+/// Loopback path pinned by the public Codex OAuth client.
+pub const CODEX_CALLBACK_PATH: &str = "/auth/callback";
+
+/// Loopback port pinned by the public Codex OAuth client.
+pub const CODEX_CALLBACK_PORT: u16 = 1455;
+
+/// The exact redirect URI the public Codex OAuth client accepts.
+pub fn codex_redirect_uri(port: u16) -> String {
+    format!("http://127.0.0.1:{port}{CODEX_CALLBACK_PATH}")
+}
 
 pub enum CodexCallback {
     Code(String),

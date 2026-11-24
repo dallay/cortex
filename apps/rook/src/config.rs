@@ -239,7 +239,6 @@ pub struct ServerConfig {
 #[serde(deny_unknown_fields)]
 pub struct CodexAccountsConfig {
     pub client_id: String,
-    pub redirect_uri: String,
     pub state_dir: std::path::PathBuf,
 }
 

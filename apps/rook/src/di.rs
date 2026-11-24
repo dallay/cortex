@@ -211,8 +211,6 @@ fn build_codex_accounts(
         Ok(Some(Arc::new(
             providers_openai::codex::CodexProfileStore::open(
                 &accounts.client_id,
-                &accounts.redirect_uri,
-                config.port,
                 &accounts.state_dir,
                 key_manager,
             )?,

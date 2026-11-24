@@ -1,41 +1,21 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, Query, State},
-    http::{
-        header::{CACHE_CONTROL, CONTENT_SECURITY_POLICY, LOCATION, REFERRER_POLICY},
-        Method, StatusCode,
-    },
-    response::{Html, IntoResponse, Response},
+    extract::{Path, State},
+    http::{header::CACHE_CONTROL, StatusCode},
     routing::{delete, get, post},
     Json, Router,
 };
-use rook_core::codex_accounts::{
-    CodexAccountError, CodexAccounts, CodexAccountsPort, CodexCallback, CodexLogin,
-    CODEX_CALLBACK_PATH,
-};
+use rook_core::codex_accounts::{CodexAccountError, CodexAccounts, CodexAccountsPort, CodexLogin};
 
 use crate::HttpError;
 
 type Accounts = Option<Arc<dyn CodexAccountsPort>>;
 type PrivateJson<T> = ([(axum::http::HeaderName, &'static str); 1], Json<T>);
 
-const CALLBACK_HEADERS: [(axum::http::HeaderName, &str); 3] = [
-    (CACHE_CONTROL, "no-store"),
-    (REFERRER_POLICY, "no-referrer"),
-    (
-        CONTENT_SECURITY_POLICY,
-        "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
-    ),
-];
-
-pub const CODEX_RESULT_PATH: &str = "/api/codex/result";
-
 pub fn router(accounts: Accounts) -> Router {
     Router::new()
         .route("/api/codex/accounts", get(list))
-        .route(CODEX_CALLBACK_PATH, get(callback))
-        .route(CODEX_RESULT_PATH, get(result_page))
         .route("/api/codex/login", post(start))
         .route("/api/codex/login/{id}", delete(cancel))
         .with_state(accounts)
@@ -64,64 +44,6 @@ async fn cancel(
 ) -> Result<StatusCode, HttpError> {
     enabled(accounts)?.cancel(&id).await.map_err(http_error)?;
     Ok(StatusCode::NO_CONTENT)
-}
-
-#[derive(serde::Deserialize)]
-struct CallbackQuery {
-    state: Option<String>,
-    code: Option<String>,
-    error: Option<String>,
-}
-
-async fn callback(
-    State(accounts): State<Accounts>,
-    method: Method,
-    query: Result<Query<CallbackQuery>, axum::extract::rejection::QueryRejection>,
-) -> Response {
-    if method != Method::GET {
-        return (StatusCode::METHOD_NOT_ALLOWED, CALLBACK_HEADERS).into_response();
-    }
-    let parse = || {
-        let Query(query) = query.ok()?;
-        let state = query.state?;
-        if state.len() != 43 {
-            return None;
-        }
-        let response = match (query.code, query.error) {
-            (Some(code), None)
-                if !code.is_empty()
-                    && code.len() <= 4096
-                    && !code.chars().any(char::is_control) =>
-            {
-                CodexCallback::Code(code)
-            }
-            (None, Some(error)) if error == "access_denied" => CodexCallback::Denied,
-            (None, Some(error)) if !error.is_empty() => CodexCallback::Failed,
-            _ => return None,
-        };
-        Some((state, response))
-    };
-    let result = match (accounts, parse()) {
-        (Some(accounts), Some((state, response))) => accounts.callback(&state, response).await,
-        _ => Err(CodexAccountError::NotFound),
-    };
-    if result.is_ok() {
-        (
-            StatusCode::SEE_OTHER,
-            CALLBACK_HEADERS,
-            [(LOCATION, CODEX_RESULT_PATH)],
-        )
-            .into_response()
-    } else {
-        (StatusCode::BAD_REQUEST, CALLBACK_HEADERS, Html("<!doctype html><html lang=en><title>Invalid Codex callback</title><p>This callback is invalid or expired. Return to the Rook dashboard.</p></html>")).into_response()
-    }
-}
-
-async fn result_page() -> impl IntoResponse {
-    (
-        CALLBACK_HEADERS,
-        Html("<!doctype html><html lang=en><title>Codex sign-in</title><p>Return to the Rook dashboard to check the result. You can close this tab.</p></html>"),
-    )
 }
 
 fn enabled(accounts: Accounts) -> Result<Arc<dyn CodexAccountsPort>, HttpError> {
@@ -154,10 +76,28 @@ fn http_error(error: CodexAccountError) -> HttpError {
             "CODEX_UNAVAILABLE",
             "Codex account linking is unavailable",
         ),
+        CodexAccountError::CallbackBusy => (
+            StatusCode::CONFLICT,
+            "CODEX_CALLBACK_BUSY",
+            "The Codex callback port 127.0.0.1:1455 is already in use",
+        ),
     };
     HttpError {
         status,
         code,
         message: message.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn busy_callback_port_returns_an_actionable_conflict() {
+        let error = http_error(CodexAccountError::CallbackBusy);
+        assert_eq!(error.status, StatusCode::CONFLICT);
+        assert_eq!(error.code, "CODEX_CALLBACK_BUSY");
+        assert!(error.message.contains("127.0.0.1:1455"));
     }
 }

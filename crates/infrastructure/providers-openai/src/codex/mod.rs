@@ -1,11 +1,13 @@
 //! Isolated Codex OAuth links. Credentials never enter the routing registry.
 
+mod listener;
 mod oauth;
 #[cfg(test)]
 mod tests;
 
 use std::{
     fs,
+    net::SocketAddr,
     os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     sync::Arc,
@@ -13,11 +15,12 @@ use std::{
 };
 
 use rook_core::codex_accounts::{
-    CodexAccount, CodexAccountError as Error, CodexAccounts, CodexAccountsPort, CodexAttempt,
-    CodexCallback, CodexLogin, CodexLoginStatus as Status,
+    codex_redirect_uri, CodexAccount, CodexAccountError as Error, CodexAccounts, CodexAccountsPort,
+    CodexAttempt, CodexCallback, CodexLogin, CodexLoginStatus as Status, CODEX_CALLBACK_PORT,
 };
 use rook_core::KeyManager;
 use shared_kernel::RequestId;
+use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 
 const MAX_ACCOUNTS: usize = 32;
@@ -33,6 +36,7 @@ struct Inner {
     client: oauth::Client,
     key_manager: Arc<dyn KeyManager>,
     root: PathBuf,
+    callback_addr: SocketAddr,
     _root_lock: fs::File,
     state: Mutex<State>,
     login_timeout: Duration,
@@ -43,19 +47,19 @@ struct State {
     attempt: Option<CodexAttempt>,
     pending: Option<oauth::Pending>,
     task: Option<tokio::task::JoinHandle<()>>,
+    listener: Option<tokio::task::JoinHandle<()>>,
     closing: bool,
 }
 
 impl CodexProfileStore {
     pub fn open(
         client_id: &str,
-        redirect_uri: &str,
-        port: u16,
         root: &Path,
         key_manager: Arc<dyn KeyManager>,
     ) -> anyhow::Result<Self> {
         Self::open_with_client(
-            oauth::Client::new(client_id, redirect_uri, port)?,
+            oauth::Client::new(client_id)?,
+            SocketAddr::from(([127, 0, 0, 1], CODEX_CALLBACK_PORT)),
             root,
             key_manager,
         )
@@ -63,6 +67,7 @@ impl CodexProfileStore {
 
     fn open_with_client(
         client: oauth::Client,
+        callback_addr: SocketAddr,
         root: &Path,
         key_manager: Arc<dyn KeyManager>,
     ) -> anyhow::Result<Self> {
@@ -97,12 +102,14 @@ impl CodexProfileStore {
                 client,
                 key_manager,
                 root,
+                callback_addr,
                 _root_lock: root_lock,
                 state: Mutex::new(State {
                     accounts,
                     attempt: None,
                     pending: None,
                     task: None,
+                    listener: None,
                     closing: false,
                 }),
                 login_timeout: LOGIN_TIMEOUT,
@@ -225,6 +232,67 @@ impl State {
             task.abort();
         }
     }
+
+    async fn stop_listener(&mut self) {
+        if let Some(listener) = self.listener.take() {
+            listener.abort();
+            let _ = listener.await;
+        }
+    }
+}
+
+impl CodexProfileStore {
+    fn from_inner(inner: Arc<Inner>) -> Self {
+        Self { inner }
+    }
+
+    async fn handle_callback(
+        &self,
+        oauth_state: &str,
+        response: CodexCallback,
+        stop_listener: bool,
+    ) -> Result<(), Error> {
+        let mut state = self.inner.state.lock().await;
+        let Some(pending) = state
+            .pending
+            .take_if(|pending| pending.matches(oauth_state))
+        else {
+            return Err(Error::NotFound);
+        };
+        state.stop_task();
+        if stop_listener {
+            state.stop_listener().await;
+        }
+        match response {
+            CodexCallback::Denied => state.finish(Status::Cancelled),
+            CodexCallback::Failed => state.finish(Status::Failed),
+            CodexCallback::Code(code) => {
+                let id = state.attempt.as_ref().expect("active attempt").id.clone();
+                let inner = self.inner.clone();
+                state.task = Some(tokio::spawn(async move {
+                    let result = inner
+                        .client
+                        .exchange(&pending.redirect_uri, &pending.verifier, &code)
+                        .await
+                        .and_then(|tokens| Ok(inner.key_manager.encrypt(&tokens)?));
+                    let mut state = inner.state.lock().await;
+                    if !state.active(&id) {
+                        return;
+                    }
+                    if result
+                        .and_then(|ciphertext| save_account(&inner.root, &id, &ciphertext))
+                        .is_ok()
+                    {
+                        state.accounts.push(CodexAccount { id });
+                        state.finish(Status::Linked);
+                    } else {
+                        state.finish(Status::Failed);
+                    }
+                }));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -253,14 +321,33 @@ impl CodexAccountsPort for CodexProfileStore {
         if state.accounts.len() >= MAX_ACCOUNTS {
             return Err(Error::Capacity);
         }
+        state.stop_listener().await;
+        let listener = TcpListener::bind(self.inner.callback_addr)
+            .await
+            .map_err(|error| {
+                if error.kind() == std::io::ErrorKind::AddrInUse {
+                    Error::CallbackBusy
+                } else {
+                    Error::Unavailable
+                }
+            })?;
+        let port = listener
+            .local_addr()
+            .map_err(|_| Error::Unavailable)?
+            .port();
+        let redirect_uri = codex_redirect_uri(port);
         let id = RequestId::new().to_string();
-        let (auth_url, pending) = self.inner.client.authorize(self.inner.login_timeout);
+        let (auth_url, pending) = self
+            .inner
+            .client
+            .authorize(&redirect_uri, self.inner.login_timeout);
         let deadline = pending.deadline;
         state.pending = Some(pending);
         state.attempt = Some(CodexAttempt {
             id: id.clone(),
             status: Status::Pending,
         });
+        state.listener = Some(listener::spawn(Arc::downgrade(&self.inner), listener));
         let inner = Arc::downgrade(&self.inner);
         let pending_id = id.clone();
         state.task = Some(tokio::spawn(async move {
@@ -269,6 +356,7 @@ impl CodexAccountsPort for CodexProfileStore {
                 let mut state = inner.state.lock().await;
                 if state.pending.is_some() && state.active(&pending_id) {
                     state.finish(Status::Expired);
+                    state.stop_listener().await;
                 }
             }
         }));
@@ -276,43 +364,7 @@ impl CodexAccountsPort for CodexProfileStore {
     }
 
     async fn callback(&self, oauth_state: &str, response: CodexCallback) -> Result<(), Error> {
-        let mut state = self.inner.state.lock().await;
-        let Some(pending) = state
-            .pending
-            .take_if(|pending| pending.matches(oauth_state))
-        else {
-            return Err(Error::NotFound);
-        };
-        state.stop_task();
-        match response {
-            CodexCallback::Denied => state.finish(Status::Cancelled),
-            CodexCallback::Failed => state.finish(Status::Failed),
-            CodexCallback::Code(code) => {
-                let id = state.attempt.as_ref().expect("active attempt").id.clone();
-                let inner = self.inner.clone();
-                state.task = Some(tokio::spawn(async move {
-                    let result = inner
-                        .client
-                        .exchange(&pending.verifier, &code)
-                        .await
-                        .and_then(|tokens| Ok(inner.key_manager.encrypt(&tokens)?));
-                    let mut state = inner.state.lock().await;
-                    if !state.active(&id) {
-                        return;
-                    }
-                    if result
-                        .and_then(|ciphertext| save_account(&inner.root, &id, &ciphertext))
-                        .is_ok()
-                    {
-                        state.accounts.push(CodexAccount { id });
-                        state.finish(Status::Linked);
-                    } else {
-                        state.finish(Status::Failed);
-                    }
-                }));
-            }
-        }
-        Ok(())
+        self.handle_callback(oauth_state, response, true).await
     }
 
     async fn cancel(&self, id: &str) -> Result<(), Error> {
@@ -322,6 +374,7 @@ impl CodexAccountsPort for CodexProfileStore {
         }
         state.stop_task();
         state.finish(Status::Cancelled);
+        state.stop_listener().await;
         Ok(())
     }
 
@@ -329,6 +382,7 @@ impl CodexAccountsPort for CodexProfileStore {
         let mut state = self.inner.state.lock().await;
         state.closing = true;
         let task = state.task.take();
+        let listener = state.listener.take();
         if state
             .attempt
             .as_ref()
@@ -337,6 +391,10 @@ impl CodexAccountsPort for CodexProfileStore {
             state.finish(Status::Cancelled);
         }
         drop(state);
+        if let Some(listener) = listener {
+            listener.abort();
+            let _ = listener.await;
+        }
         if let Some(task) = task {
             task.abort();
             let _ = task.await;

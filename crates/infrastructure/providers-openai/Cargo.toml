@@ -34,7 +34,7 @@ tracing = "0.1"
 [target.'cfg(unix)'.dependencies]
 # Codex OAuth and private state storage
 fs2 = "0.4"
-tokio = { version = "1", features = ["sync", "time"] }
+tokio = { version = "1", features = ["sync", "time", "net", "io-util"] }
 base64.workspace = true
 sha2 = "0.11"
 rand.workspace = true
