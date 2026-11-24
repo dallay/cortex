@@ -178,7 +178,7 @@ test-gm01:
 # Run the three live parity scenarios; each test owns a fresh Neo4j container.
 muninn-bolt-parity:
     @docker info > /dev/null
-    env -u MUNINN_FIXTURE_URI -u MUNINN_ISOLATION_URI -u MUNINN_PREFERENCES_URI cargo test -p muninn-neo4j --test durability_reconnect --test multi_tenant_isolation --test preference_relationships
+    env -u MUNINN_FIXTURE_URI -u MUNINN_ISOLATION_URI -u MUNINN_PREFERENCES_URI -u MUNINN_SUMMARY_URI cargo test -p muninn-neo4j --test durability_reconnect --test multi_tenant_isolation --test preference_relationships --test summary_isolation
 
 # Run the isolated GM-01 Compose capture (requires Docker + Linux arm64)
 # Usage: just run-gm01 /path/to/agent-memory-checkout /path/to/evidence-dir

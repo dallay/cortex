@@ -39,7 +39,7 @@ async fn graph_snapshot(client: &Neo4jClient) -> (Vec<BoltType>, Vec<BoltType>) 
 
 #[tokio::test]
 async fn summary_entities_are_isolated_by_owner() {
-    let Some(fixture) = DockerFixture::start("MUNINN_FIXTURE_URI") else {
+    let Some(fixture) = DockerFixture::start("MUNINN_SUMMARY_URI") else {
         return;
     };
     let client = fixture.connect_fresh().await;

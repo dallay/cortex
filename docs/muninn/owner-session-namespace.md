@@ -23,6 +23,27 @@ Operations on a relevant identity reject legacy conversations that have no
 namespace. Listings and searches exclude those conversations. Migrating data
 requires a separate explicit operation.
 
+## Legacy conversations and summary entities
+
+A conversation created before the owner namespace existed has no `owner_scope`.
+Every operation that resolves its `session_id` fails with the error
+`ambiguous legacy conversation requires explicit migration`
+(`MemoryError::invalid`). The rejection covers reads, writes, deletes,
+session-scoped searches, and the conversation summary. It applies when any
+conversation with that `session_id` lacks `owner_scope`, even when other
+conversations with the same `session_id` are scoped.
+
+The summary entity query matches `(owner_scope, session_id)`. A summary never
+returns entities of another owner and never returns entities of an unscoped
+conversation.
+
+`include_entities: false` does not avoid the rejection. The summary reads the
+conversation before it collects entities, and that read rejects the legacy
+session first. No client-side flag keeps a legacy session usable.
+
+Migration is an explicit operator action. See
+[Muninn schema operations](schema-operations.md#legacy-conversation-migration).
+
 ## Search and acceptance limits
 
 Search first attempts a global ANN query through `db.index.vector.queryNodes`
