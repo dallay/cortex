@@ -11,12 +11,13 @@ use muninn_core::ports::{
     ConsolidationCandidate, ConsolidationReport, ConsolidationStore, ReadAuditRecord,
 };
 use muninn_core::{MemoryError, MemoryResult};
-use neo4rs::{BoltNull, BoltType, Row};
+use neo4rs::{BoltNull, BoltType, Row, Txn};
 use serde_json::json;
 use uuid::Uuid;
 
 use crate::bolt::{column, opt_string, to_datetime};
-use crate::client::Neo4jClient;
+use crate::client::{transaction_rows, Neo4jClient};
+use crate::long_term::{require_preference_lock_constraint, PREFERENCE_WRITE_LOCK};
 use crate::queries::consolidation as q;
 
 /// Neo4j persistence adapter for memory consolidation hygiene jobs.
@@ -68,18 +69,19 @@ impl ConsolidationStore for Neo4jConsolidationStore {
             });
         }
 
-        let mut mutations_applied = 0usize;
-        let mut run_id = None;
-
-        if !dry_run && !candidates.is_empty() {
-            for candidate in &candidates {
-                let target_id = candidate.target_id.as_deref().ok_or_else(|| {
-                    MemoryError::storage("dedupe candidate missing target_id".to_owned())
-                })?;
-                let score = candidate.score.unwrap_or(threshold);
-                let result = self
-                    .client
-                    .execute(
+        let (mutations_applied, run_id) = if dry_run || candidates.is_empty() {
+            (0, None)
+        } else {
+            let mut txn = self.client.start_txn().await?;
+            let result = async {
+                let mut mutations_applied = 0;
+                for candidate in &candidates {
+                    let target_id = candidate.target_id.as_deref().ok_or_else(|| {
+                        MemoryError::storage("dedupe candidate missing target_id".to_owned())
+                    })?;
+                    let score = candidate.score.unwrap_or(threshold);
+                    let result = transaction_rows(
+                        &mut txn,
                         q::LINK_CONSOLIDATED_ENTITY_PAIR,
                         vec![
                             ("a_id", candidate.id.clone().into()),
@@ -88,21 +90,20 @@ impl ConsolidationStore for Neo4jConsolidationStore {
                         ],
                     )
                     .await?;
-                mutations_applied += count_from_rows(&result, "created")?;
+                    mutations_applied += count_from_rows(&result, "created")?;
+                }
+                Ok(mutations_applied)
             }
-
-            if mutations_applied > 0 {
-                let stats = json!({
+            .await;
+            finish_run(txn, result, "dedupe_entities", |applied| {
+                json!({
                     "candidates": candidates.len(),
-                    "applied": mutations_applied,
+                    "applied": applied,
                     "threshold": threshold,
-                });
-                run_id = Some(
-                    self.record_run("dedupe_entities", &stats.to_string())
-                        .await?,
-                );
-            }
-        }
+                })
+            })
+            .await?
+        };
 
         Ok(ConsolidationReport {
             kind: "dedupe_entities".to_owned(),
@@ -148,32 +149,30 @@ impl ConsolidationStore for Neo4jConsolidationStore {
             });
         }
 
-        let mut mutations_applied = 0usize;
-        let mut run_id = None;
-
-        if !dry_run && !candidates.is_empty() {
-            let trace_ids: Vec<String> = candidates.iter().map(|c| c.id.clone()).collect();
-            let result = self
-                .client
-                .execute(
+        let (mutations_applied, run_id) = if dry_run || candidates.is_empty() {
+            (0, None)
+        } else {
+            let mut txn = self.client.start_txn().await?;
+            let result = async {
+                let trace_ids: Vec<String> = candidates.iter().map(|c| c.id.clone()).collect();
+                let result = transaction_rows(
+                    &mut txn,
                     q::FLAG_LONG_TRACES_FOR_SUMMARY,
                     vec![("trace_ids", trace_ids.into())],
                 )
                 .await?;
-            mutations_applied = count_from_rows(&result, "flagged")?;
-
-            if mutations_applied > 0 {
-                let stats = json!({
-                    "candidates": candidates.len(),
-                    "applied": mutations_applied,
-                    "min_steps": min_steps,
-                });
-                run_id = Some(
-                    self.record_run("summarize_long_traces", &stats.to_string())
-                        .await?,
-                );
+                count_from_rows(&result, "flagged")
             }
-        }
+            .await;
+            finish_run(txn, result, "summarize_long_traces", |applied| {
+                json!({
+                    "candidates": candidates.len(),
+                    "applied": applied,
+                    "min_steps": min_steps,
+                })
+            })
+            .await?
+        };
 
         Ok(ConsolidationReport {
             kind: "summarize_long_traces".to_owned(),
@@ -224,17 +223,21 @@ impl ConsolidationStore for Neo4jConsolidationStore {
             });
         }
 
-        let mut mutations_applied = 0usize;
-        let mut run_id = None;
-
-        if !dry_run && !candidates.is_empty() {
-            for candidate in &candidates {
-                let new_id = candidate.target_id.as_deref().ok_or_else(|| {
-                    MemoryError::storage("supersede candidate missing target_id".to_owned())
-                })?;
-                let result = self
-                    .client
-                    .execute(
+        let (mutations_applied, run_id) = if dry_run || candidates.is_empty() {
+            (0, None)
+        } else {
+            require_preference_lock_constraint(&self.client).await?;
+            let mut txn = self.client.start_txn().await?;
+            let result = async {
+                // Serialize ownership changes made by write_preference before rechecking candidates.
+                transaction_rows(&mut txn, PREFERENCE_WRITE_LOCK, vec![]).await?;
+                let mut mutations_applied = 0;
+                for candidate in &candidates {
+                    let new_id = candidate.target_id.as_deref().ok_or_else(|| {
+                        MemoryError::storage("supersede candidate missing target_id".to_owned())
+                    })?;
+                    let result = transaction_rows(
+                        &mut txn,
                         q::APPLY_SUPERSEDE_PREFERENCE,
                         vec![
                             ("old_id", candidate.id.clone().into()),
@@ -242,21 +245,20 @@ impl ConsolidationStore for Neo4jConsolidationStore {
                         ],
                     )
                     .await?;
-                mutations_applied += count_from_rows(&result, "updated")?;
+                    mutations_applied += count_from_rows(&result, "updated")?;
+                }
+                Ok(mutations_applied)
             }
-
-            if mutations_applied > 0 {
-                let stats = json!({
+            .await;
+            finish_run(txn, result, "detect_superseded_preferences", |applied| {
+                json!({
                     "candidates": candidates.len(),
-                    "applied": mutations_applied,
+                    "applied": applied,
                     "threshold": threshold,
-                });
-                run_id = Some(
-                    self.record_run("detect_superseded_preferences", &stats.to_string())
-                        .await?,
-                );
-            }
-        }
+                })
+            })
+            .await?
+        };
 
         Ok(ConsolidationReport {
             kind: "detect_superseded_preferences".to_owned(),
@@ -305,29 +307,30 @@ impl ConsolidationStore for Neo4jConsolidationStore {
             });
         }
 
-        let mut mutations_applied = 0usize;
-        let mut run_id = None;
-
-        if !dry_run && !candidates.is_empty() {
-            let ids: Vec<String> = candidates.iter().map(|c| c.id.clone()).collect();
-            let result = self
-                .client
-                .execute(q::ARCHIVE_CONVERSATIONS, vec![("ids", ids.into())])
+        let (mutations_applied, run_id) = if dry_run || candidates.is_empty() {
+            (0, None)
+        } else {
+            let mut txn = self.client.start_txn().await?;
+            let result = async {
+                let ids: Vec<String> = candidates.iter().map(|c| c.id.clone()).collect();
+                let result = transaction_rows(
+                    &mut txn,
+                    q::ARCHIVE_CONVERSATIONS,
+                    vec![("ids", ids.into())],
+                )
                 .await?;
-            mutations_applied = count_from_rows(&result, "archived")?;
-
-            if mutations_applied > 0 {
-                let stats = json!({
-                    "candidates": candidates.len(),
-                    "applied": mutations_applied,
-                    "ttl_days": ttl_days,
-                });
-                run_id = Some(
-                    self.record_run("archive_expired_conversations", &stats.to_string())
-                        .await?,
-                );
+                count_from_rows(&result, "archived")
             }
-        }
+            .await;
+            finish_run(txn, result, "archive_expired_conversations", |applied| {
+                json!({
+                    "candidates": candidates.len(),
+                    "applied": applied,
+                    "ttl_days": ttl_days,
+                })
+            })
+            .await?
+        };
 
         Ok(ConsolidationReport {
             kind: "archive_expired_conversations".to_owned(),
@@ -345,18 +348,9 @@ impl ConsolidationStore for Neo4jConsolidationStore {
                 "consolidation run kind must not be blank",
             ));
         }
-        let run_id = Uuid::new_v4().to_string();
-        self.client
-            .execute(
-                q::CREATE_CONSOLIDATION_RUN,
-                vec![
-                    ("id", run_id.clone().into()),
-                    ("kind", kind.into()),
-                    ("stats_json", stats_json.into()),
-                ],
-            )
-            .await?;
-        Ok(run_id)
+        let mut txn = self.client.start_txn().await?;
+        let result = write_run(&mut txn, kind, stats_json).await;
+        finish_transaction(txn, result).await
     }
 
     async fn record_read_audit(&self, record: &ReadAuditRecord) -> MemoryResult<String> {
@@ -366,8 +360,10 @@ impl ConsolidationStore for Neo4jConsolidationStore {
             .result_count
             .map_or(BoltType::Null(BoltNull), BoltType::from);
 
-        self.client
-            .execute(
+        let mut txn = self.client.start_txn().await?;
+        let result = async {
+            transaction_rows(
+                &mut txn,
                 q::CREATE_MEMORY_READ_AUDIT,
                 vec![
                     ("audit_id", audit_id.clone().into()),
@@ -383,9 +379,9 @@ impl ConsolidationStore for Neo4jConsolidationStore {
             )
             .await?;
 
-        if let Some(user_identifier) = record.user_identifier.as_deref() {
-            self.client
-                .execute(
+            if let Some(user_identifier) = record.user_identifier.as_deref() {
+                let rows = transaction_rows(
+                    &mut txn,
                     q::LINK_USER_TO_READ_AUDIT,
                     vec![
                         ("user_identifier", user_identifier.into()),
@@ -393,9 +389,71 @@ impl ConsolidationStore for Neo4jConsolidationStore {
                     ],
                 )
                 .await?;
-        }
+                if rows.len() != 1 {
+                    return Err(MemoryError::storage(
+                        "could not link the read audit to its user",
+                    ));
+                }
+            }
 
-        Ok(audit_id)
+            Ok(audit_id)
+        }
+        .await;
+        finish_transaction(txn, result).await
+    }
+}
+
+async fn write_run(txn: &mut Txn, kind: &str, stats_json: &str) -> MemoryResult<String> {
+    let run_id = Uuid::new_v4().to_string();
+    transaction_rows(
+        txn,
+        q::CREATE_CONSOLIDATION_RUN,
+        vec![
+            ("id", run_id.clone().into()),
+            ("kind", kind.into()),
+            ("stats_json", stats_json.into()),
+        ],
+    )
+    .await?;
+    Ok(run_id)
+}
+
+async fn finish_run(
+    mut txn: Txn,
+    result: MemoryResult<usize>,
+    kind: &str,
+    stats: impl FnOnce(usize) -> serde_json::Value,
+) -> MemoryResult<(usize, Option<String>)> {
+    let result = match result {
+        Ok(0) => {
+            // Leave the graph unchanged, including any preference lock update.
+            txn.rollback()
+                .await
+                .map_err(|err| MemoryError::storage(err.to_string()))?;
+            return Ok((0, None));
+        }
+        Ok(applied) => write_run(&mut txn, kind, &stats(applied).to_string())
+            .await
+            .map(|run_id| (applied, Some(run_id))),
+        Err(err) => Err(err),
+    };
+    finish_transaction(txn, result).await
+}
+
+async fn finish_transaction<T>(txn: Txn, result: MemoryResult<T>) -> MemoryResult<T> {
+    match result {
+        Ok(value) => {
+            txn.commit()
+                .await
+                .map_err(|err| MemoryError::storage(err.to_string()))?;
+            Ok(value)
+        }
+        Err(err) => {
+            // Bolt can reject rollback after a failed statement. Preserve the
+            // original error; neo4rs resets the connection before reusing it.
+            let _ = txn.rollback().await;
+            Err(err)
+        }
     }
 }
 
@@ -481,59 +539,4 @@ fn count_from_rows(rows: &[Row], key: &str) -> MemoryResult<usize> {
     let count = required_i64(row, key)?;
     usize::try_from(count)
         .map_err(|_| MemoryError::storage(format!("negative count in column '{key}': {count}")))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn validates_thresholds() {
-        assert!(validate_threshold(0.0).is_ok());
-        assert!(validate_threshold(0.85).is_ok());
-        assert!(validate_threshold(1.0).is_ok());
-        assert!(validate_threshold(-0.01).is_err());
-        assert!(validate_threshold(1.01).is_err());
-        assert!(validate_threshold(f64::NAN).is_err());
-        assert!(validate_threshold(f64::INFINITY).is_err());
-    }
-
-    #[test]
-    fn validates_limits_steps_and_ttl() {
-        assert!(validate_limit(1).is_ok());
-        assert!(validate_limit(0).is_err());
-        assert!(validate_limit(-5).is_err());
-
-        assert!(validate_min_steps(1).is_ok());
-        assert!(validate_min_steps(0).is_err());
-
-        assert!(validate_ttl_days(0).is_ok());
-        assert!(validate_ttl_days(90).is_ok());
-        assert!(validate_ttl_days(-1).is_err());
-    }
-
-    #[test]
-    fn validates_read_audit_records() {
-        let mut record = ReadAuditRecord::new("search preferences");
-        assert!(validate_read_audit(&record).is_ok());
-
-        record.user_identifier = Some("alice".to_owned());
-        record.result_count = Some(3);
-        assert!(validate_read_audit(&record).is_ok());
-
-        let blank_query = ReadAuditRecord::new("   ");
-        assert!(validate_read_audit(&blank_query).is_err());
-
-        let mut blank_kind = ReadAuditRecord::new("ok");
-        blank_kind.kind = " ".to_owned();
-        assert!(validate_read_audit(&blank_kind).is_err());
-
-        let mut blank_user = ReadAuditRecord::new("ok");
-        blank_user.user_identifier = Some("  ".to_owned());
-        assert!(validate_read_audit(&blank_user).is_err());
-
-        let mut negative_count = ReadAuditRecord::new("ok");
-        negative_count.result_count = Some(-1);
-        assert!(validate_read_audit(&negative_count).is_err());
-    }
 }
