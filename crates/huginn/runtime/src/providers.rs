@@ -14,10 +14,10 @@ use huginn_core::{
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 
-pub use huginn_core::providers::{DiscoveredModel, ModelCatalog, ToolSupport};
+pub use huginn_core::providers::{
+    DiscoveredModel, ModelCatalog, ToolSupport, MAX_DISCOVERED_MODELS,
+};
 
-// Allows aggregator catalogs without removing the entry limit or the byte limit.
-const MAX_DISCOVERED_MODELS: usize = 16_384;
 const MAX_CATALOG_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Clone, Copy)]
@@ -214,6 +214,7 @@ impl ProviderAdapter for InferenceAdapter {
                 Kind::OllamaCloud => Some("https://ollama.com".into()),
             },
             allow_endpoint_edit: !matches!(self.kind, Kind::OllamaCloud),
+            allow_manual_model_when_unsupported: matches!(self.kind, Kind::OpenAi),
         }
     }
     async fn discover_models(

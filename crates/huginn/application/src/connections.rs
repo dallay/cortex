@@ -8,11 +8,12 @@ use huginn_core::{
         ConnectionsService, Secret, SecretMode, SecretReference, SecretStore,
     },
     providers::{
-        AuthenticationMethod, ConnectionIdentity, ConnectionSnapshot, ModelSelection,
-        ProviderAction, ProviderActionOutput, ProviderCatalog, ProviderCatalogService,
-        ProviderManagement, ProvidersService, SelectionMode,
+        AuthenticationMethod, ConnectionIdentity, ConnectionSnapshot, DiscoveredModel,
+        ModelCatalog, ModelSelection, ProviderAction, ProviderActionOutput, ProviderCatalog,
+        ProviderCatalogService, ProviderError, ProviderManagement, ProvidersService, SelectionMode,
+        ToolSupport,
     },
-    CancellationToken,
+    AgentError, CancellationToken,
 };
 use std::{
     collections::BTreeMap,
@@ -601,6 +602,129 @@ impl ConnectionManager {
         })
         .await
     }
+    async fn verify_connection_revision(
+        &self,
+        id: Uuid,
+        revision: Uuid,
+        cancel: &CancellationToken,
+    ) -> ConnectionResult<()> {
+        if cancel.is_cancelled() {
+            return Err(ConnectionError::Cancelled);
+        }
+        if self.access.epoch.load(Ordering::SeqCst) != self.owner || self.retired.is_cancelled() {
+            return Err(ConnectionError::Revoked);
+        }
+        let state = self.state.lock().await;
+        Self::check_state(&state)?;
+        if state
+            .metadata
+            .connections
+            .get(&id)
+            .is_some_and(|current| current.revision == revision)
+        {
+            Ok(())
+        } else {
+            Err(ConnectionError::Revoked)
+        }
+    }
+    /// Discover models for a saved connection under host authority without exposing secrets
+    /// or mutating the active selection.
+    pub async fn discover_models(
+        &self,
+        id: Uuid,
+        cancel: CancellationToken,
+    ) -> ConnectionResult<ModelCatalog> {
+        if cancel.is_cancelled() {
+            return Err(ConnectionError::Cancelled);
+        }
+        let (record, registration, descriptor) = self
+            .run_operation(async {
+                let _operation = self.operation().await?;
+                let state = self.state.lock().await;
+                Self::check_state(&state)?;
+                let record = state
+                    .metadata
+                    .connections
+                    .get(&id)
+                    .cloned()
+                    .ok_or(ConnectionError::InvalidSelection)?;
+                drop(state);
+                if record.settings.is_legacy_loopback_http() {
+                    return Err(ConnectionError::InvalidConfiguration);
+                }
+                record.settings.validate()?;
+                let (registration, descriptor) = self
+                    .catalog
+                    .adapters()
+                    .into_iter()
+                    .find(|(r, _)| r.provider == record.settings.provider)
+                    .ok_or(ConnectionError::AdapterUnavailable)?;
+                Ok((record, registration, descriptor))
+            })
+            .await?;
+        let secret = match &record.secret {
+            Some(reference) => Some(tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return Err(ConnectionError::Cancelled),
+                _ = self.retired.cancelled() => return Err(ConnectionError::Revoked),
+                result = self.access.secrets.read_mode(record.mode, reference) => result?,
+            }),
+            None if record.settings.requires_secret => return Err(ConnectionError::MissingSecret),
+            None => None,
+        };
+        self.verify_connection_revision(id, record.revision, &cancel)
+            .await?;
+        if !descriptor.models.is_empty() {
+            drop(secret);
+            return Ok(ModelCatalog::Available(
+                descriptor
+                    .models
+                    .into_iter()
+                    .map(|model| DiscoveredModel {
+                        id: model.id,
+                        tools: if model.supports_tools {
+                            ToolSupport::Supported
+                        } else {
+                            ToolSupport::Unsupported
+                        },
+                    })
+                    .collect(),
+            ));
+        }
+        let material = ConnectionMaterial {
+            settings: record.settings,
+            secret,
+        };
+        let discovery_cancel = cancel.child_token();
+        let catalog_result = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                discovery_cancel.cancel();
+                drop(material);
+                return Err(ConnectionError::Cancelled);
+            }
+            _ = self.retired.cancelled() => {
+                discovery_cancel.cancel();
+                drop(material);
+                return Err(ConnectionError::Revoked);
+            }
+            result = self.catalog.discover_models(&registration, &material, discovery_cancel.clone()) => {
+                drop(material);
+                result
+            }
+        };
+        self.verify_connection_revision(id, record.revision, &cancel)
+            .await?;
+        match catalog_result {
+            Ok(catalog) => Ok(catalog),
+            Err(AgentError::Cancelled) => Err(ConnectionError::Cancelled),
+            Err(AgentError::Provider(ProviderError::Revoked)) => Err(ConnectionError::Revoked),
+            Err(
+                AgentError::Configuration(_) | AgentError::Provider(ProviderError::InvalidMetadata),
+            ) => Err(ConnectionError::InvalidConfiguration),
+            Err(_) => Err(ConnectionError::AdapterUnavailable),
+        }
+    }
     pub async fn create(
         &self,
         settings: ConnectionSettings,
@@ -1042,6 +1166,13 @@ impl ConnectionManagement for ConnectionManager {
     }
     async fn select_model(&self, id: Uuid, model: String) -> ConnectionResult<ModelSelection> {
         self.select_model(id, model).await
+    }
+    async fn discover_models(
+        &self,
+        id: Uuid,
+        cancel: CancellationToken,
+    ) -> ConnectionResult<ModelCatalog> {
+        self.discover_models(id, cancel).await
     }
     async fn revoke(&self, id: Uuid) -> ConnectionResult<()> {
         self.revoke(id).await

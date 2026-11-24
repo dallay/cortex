@@ -1949,3 +1949,178 @@ async fn reopen_waits_for_mutation_and_cancelled_owner_cannot_invalidate_replace
     text(h.model.0.as_ref()).await.unwrap();
     h.supervisor.shutdown().await;
 }
+
+#[tokio::test]
+async fn saved_connection_discovery_uses_host_secrets_respects_cancellation_and_fails_closed_on_revocation(
+) {
+    struct DynamicAdapter {
+        seen_secret: Arc<Mutex<Option<String>>>,
+        entered: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+        block_next: Arc<std::sync::atomic::AtomicBool>,
+    }
+    #[async_trait]
+    impl ProviderAdapter for DynamicAdapter {
+        fn descriptor(&self) -> ProviderDescriptor {
+            ProviderDescriptor {
+                id: "dynamic".into(),
+                display_name: "Dynamic double".into(),
+                models: vec![],
+                authentication: vec![AuthenticationMethod::ApiKey],
+            }
+        }
+        fn has_connection_catalog(&self) -> bool {
+            true
+        }
+        async fn discover_models(
+            &self,
+            material: &ConnectionMaterial,
+            cancel: CancellationToken,
+        ) -> huginn_core::Result<ModelCatalog> {
+            *self.seen_secret.lock().unwrap() =
+                material.secret.as_ref().map(|s| s.expose().to_owned());
+            if self.block_next.swap(false, Ordering::SeqCst) {
+                self.entered.notify_one();
+                tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => return Err(huginn_core::AgentError::Cancelled),
+                    _ = self.release.notified() => {}
+                }
+            }
+            Ok(ModelCatalog::Available(vec![
+                DiscoveredModel {
+                    id: "alpha".into(),
+                    tools: ToolSupport::Supported,
+                },
+                DiscoveredModel {
+                    id: "beta".into(),
+                    tools: ToolSupport::Supported,
+                },
+            ]))
+        }
+        async fn create_model(
+            &self,
+            _: &ModelSelection,
+            _: CancellationToken,
+        ) -> huginn_core::Result<Arc<dyn ModelProvider>> {
+            Err(ProviderError::Unavailable.into())
+        }
+        async fn create_connection_model(
+            &self,
+            _: &ModelSelection,
+            _: ConnectionMaterial,
+            _: CancellationToken,
+        ) -> huginn_core::Result<Arc<dyn ModelProvider>> {
+            Ok(Arc::new(TextModel("response")))
+        }
+    }
+    struct DynamicPlugin(Arc<DynamicAdapter>);
+    #[async_trait]
+    impl huginn_core::kernel::Plugin for DynamicPlugin {
+        fn manifest(&self) -> huginn_core::kernel::Manifest {
+            huginn_core::kernel::Manifest {
+                id: "test.dynamic".into(),
+                provides: vec![],
+                requires: vec![catalog_id()],
+            }
+        }
+        async fn activate(
+            &mut self,
+            ctx: &mut huginn_core::kernel::PluginContext,
+        ) -> huginn_core::Result<()> {
+            ctx.resolve::<ProviderCatalogService>(&catalog_id())?
+                .0
+                .register(ctx, self.0.clone())?;
+            Ok(())
+        }
+    }
+
+    let store = Arc::new(Metadata::default());
+    let secrets = Secrets::new(SecretMode::Secure);
+    let access = ConnectionAccess::new(secrets.clone());
+    let seen_secret = Arc::new(Mutex::new(None));
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let block_next = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let adapter = Arc::new(DynamicAdapter {
+        seen_secret: seen_secret.clone(),
+        entered: entered.clone(),
+        release: release.clone(),
+        block_next: block_next.clone(),
+    });
+    let mut supervisor = Supervisor::default();
+    supervisor
+        .register(Box::new(ProvidersPlugin::with_credentials(access.clone())))
+        .unwrap();
+    supervisor
+        .register(Box::new(DynamicPlugin(adapter)))
+        .unwrap();
+    supervisor.start().await.unwrap();
+    let providers = supervisor
+        .resolve::<ProvidersService>(&providers_id())
+        .unwrap();
+    let catalog = supervisor
+        .resolve::<ProviderCatalogService>(&catalog_id())
+        .unwrap();
+    let manager = Arc::new(
+        ConnectionManager::open(store, access, providers.0.clone(), catalog.0.clone())
+            .await
+            .unwrap(),
+    );
+
+    let cfg = ConnectionSettings {
+        provider: "dynamic".into(),
+        endpoint: Some("https://api.example.test/v1".into()),
+        model: "alpha".into(),
+        requires_secret: true,
+        allow_loopback_http: false,
+    };
+    let record = manager.create(cfg.clone(), secret(SENTINEL)).await.unwrap();
+
+    // 1. Host resolves the stored secret and returns discovered models without mutating selection.
+    let discovered = manager
+        .discover_models(record.id, CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(matches!(discovered, ModelCatalog::Available(ref m) if m.len() == 2));
+    assert_eq!(seen_secret.lock().unwrap().as_deref(), Some(SENTINEL));
+    assert!(providers.0.diagnostic().unwrap().selection.is_none());
+
+    // 2. Locked secret store fails closed without invoking adapter discovery.
+    seen_secret.lock().unwrap().take();
+    *secrets.read_error.lock().unwrap() = Some(ConnectionError::Locked);
+    assert_eq!(
+        manager
+            .discover_models(record.id, CancellationToken::new())
+            .await,
+        Err(ConnectionError::Locked)
+    );
+    assert!(seen_secret.lock().unwrap().is_none());
+    *secrets.read_error.lock().unwrap() = None;
+
+    // 3. Cancellation interrupts in-flight discovery cleanly.
+    block_next.store(true, Ordering::SeqCst);
+    let cancel = CancellationToken::new();
+    let task_manager = manager.clone();
+    let task_cancel = cancel.clone();
+    let id = record.id;
+    let task = tokio::spawn(async move { task_manager.discover_models(id, task_cancel).await });
+    entered.notified().await;
+    cancel.cancel();
+    assert_eq!(task.await.unwrap(), Err(ConnectionError::Cancelled));
+
+    // 4. Revocation is not blocked by in-flight discovery and forces discovery to fail closed.
+    block_next.store(true, Ordering::SeqCst);
+    let task_manager = manager.clone();
+    let task = tokio::spawn(async move {
+        task_manager
+            .discover_models(id, CancellationToken::new())
+            .await
+    });
+    entered.notified().await;
+    manager.revoke(id).await.unwrap();
+    release.notify_one();
+    assert_eq!(task.await.unwrap(), Err(ConnectionError::Revoked));
+
+    supervisor.shutdown().await;
+}

@@ -273,6 +273,15 @@ pub trait ConnectionManagement: Send + Sync {
         id: uuid::Uuid,
         model: String,
     ) -> ConnectionResult<crate::providers::ModelSelection>;
+    /// Discover models for a saved connection under host authority without exposing secrets.
+    async fn discover_models(
+        &self,
+        id: uuid::Uuid,
+        cancel: CancellationToken,
+    ) -> ConnectionResult<crate::providers::ModelCatalog> {
+        let _ = (id, cancel);
+        Ok(crate::providers::ModelCatalog::Unsupported)
+    }
     async fn revoke(&self, id: uuid::Uuid) -> ConnectionResult<()>;
 }
 pub struct ConnectionsService(pub std::sync::Arc<dyn ConnectionManagement>);

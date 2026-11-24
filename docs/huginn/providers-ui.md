@@ -57,10 +57,26 @@ connection/model; revocation or credential updates block subsequent inference in
 that turn. Explicit configuration takes precedence at startup; an interactive
 choice is an intentional change for later turns.
 
-Static catalog models are shown as options. Adapters with a connection-scoped
-catalog accept a candidate identifier: this UI does not claim to have discovered
-or validated remote models. Integration and acceptance with real adapters belongs
-to P0.5, not these tests.
+Static catalog models are shown as searchable options. For adapters with a
+connection-scoped catalog (Custom OpenAI-compatible, Ollama local, and Ollama
+Cloud), `/model` discovers models from the saved connection under host authority
+(`ConnectionManagement::discover_models`) without asking for credentials again
+or exposing secrets to presentation.
+
+The `/model` searchable picker supports catalogs larger than the 256-option
+limit of ordinary choice fields, up to `MAX_DISCOVERED_MODELS` (16,384) models
+within the bounded 4 MiB catalog budget, using incremental case-insensitive
+filtering, windowed viewport rendering, and Up/Down/PageUp/PageDown/Home/End
+navigation.
+
+When `/model` is cancelled, returns an empty catalog, encounters authorization,
+transport, credential, or invalid-catalog errors, or is invalidated by
+revocation, the current selection remains unchanged and the error is shown
+explicitly. Only Custom (OpenAI-compatible) connections retain explicit manual
+model entry when remote discovery genuinely returns `ModelCatalog::Unsupported`
+(HTTP 404/405/501); authorization, transport, and invalid-catalog errors never
+fall back to manual entry. Automated tests use controlled doubles and local HTTP
+fixtures; they do not certify real providers or native OS credential stores.
 
 ## Manual test on macOS
 
