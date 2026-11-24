@@ -13,14 +13,14 @@ name: OSV-Scanner
 
 on:
   pull_request:
-    branches: ["main", "develop"]
+    branches: [ "main", "develop" ]
   merge_group:
-    branches: ["main", "develop"]
+    branches: [ "main", "develop" ]
   schedule:
     # Weekly: Tuesday 3:17 AM — aligns with security-deep.yml schedule
     - cron: "17 3 * * 2"
   push:
-    branches: ["main", "develop"]
+    branches: [ "main", "develop" ]
   workflow_dispatch:
 
 concurrency:
@@ -110,7 +110,7 @@ jobs:
   scan-pr:
     name: scan-pr / osv-scan
     if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
-    needs: [scan-pull-request, scan-merge-group]
+    needs: [ scan-pull-request, scan-merge-group ]
     runs-on: ubuntu-latest
     steps:
       - name: Require successful comparison

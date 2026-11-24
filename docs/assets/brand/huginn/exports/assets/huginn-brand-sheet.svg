@@ -10,7 +10,8 @@
   <rect fill="#1A1A1A" height="40" stroke="#888" stroke-width="1" width="210" x="900" y="440"/>
   <rect fill="#F7F5F2" height="40" stroke="#888" stroke-width="1" width="210" x="1130" y="440"/>
   <rect fill="#E84A3C" height="40" stroke="#888" stroke-width="1" width="210" x="1360" y="440"/>
-  <svg height="164.27758816837314" viewBox="0 0 1758 380" width="760" x="60" xmlns="http://www.w3.org/2000/svg"
+  <svg height="164.27758816837314" viewBox="0 0 1758 380" width="760" x="60"
+    xmlns="http://www.w3.org/2000/svg"
     y="120">
     <g transform="translate(80,80) scale(0.6094182825484764) translate(-87,-166)">
       <path d="M87,166 L149,323 L225,381 L225,478 L301,527 L301,289 L144,196 Z" fill="#F7F5F2"/>
@@ -22,7 +23,8 @@
     <rect fill="#E84A3C" height="165.0" width="90.0" x="1588.2382271468143" y="134.5"/>
     <title>Huginn</title>
   </svg>
-  <svg height="164.27758816837314" viewBox="0 0 1758 380" width="760" x="60" xmlns="http://www.w3.org/2000/svg"
+  <svg height="164.27758816837314" viewBox="0 0 1758 380" width="760" x="60"
+    xmlns="http://www.w3.org/2000/svg"
     y="620">
     <g transform="translate(80,80) scale(0.6094182825484764) translate(-87,-166)">
       <path d="M87,166 L149,323 L225,381 L225,478 L301,527 L301,289 L144,196 Z" fill="#1A1A1A"/>
@@ -74,7 +76,8 @@
     <rect fill="#1A1A1A" height="1024" rx="192" width="1024"/>
     <title>Huginn</title>
   </svg>
-  <svg height="208.57777777777778" viewBox="0 0 450 361" width="260" x="900" xmlns="http://www.w3.org/2000/svg"
+  <svg height="208.57777777777778" viewBox="0 0 450 361" width="260" x="900"
+    xmlns="http://www.w3.org/2000/svg"
     y="620">
     <g transform="translate(0,0) scale(1.0) translate(-87,-166)">
       <path d="M87,166 L149,323 L225,381 L225,478 L301,527 L301,289 L144,196 Z" fill="#1A1A1A"/>
@@ -82,7 +85,8 @@
     </g>
     <title>Huginn</title>
   </svg>
-  <svg height="104.28888888888889" viewBox="0 0 450 361" width="130" x="1250" xmlns="http://www.w3.org/2000/svg"
+  <svg height="104.28888888888889" viewBox="0 0 450 361" width="130" x="1250"
+    xmlns="http://www.w3.org/2000/svg"
     y="620">
     <g transform="translate(0,0) scale(1.0) translate(-87,-166)">
       <path d="M87,166 L149,323 L225,381 L225,478 L301,527 L301,289 L144,196 Z" fill="#000"/>
@@ -90,7 +94,8 @@
     </g>
     <title>Huginn</title>
   </svg>
-  <svg height="38.50666666666667" viewBox="0 0 450 361" width="48" x="1250" xmlns="http://www.w3.org/2000/svg"
+  <svg height="38.50666666666667" viewBox="0 0 450 361" width="48" x="1250"
+    xmlns="http://www.w3.org/2000/svg"
     y="760">
     <g transform="translate(0,0) scale(1.0) translate(-87,-166)">
       <path d="M87,166 L149,323 L225,381 L225,478 L301,527 L301,289 L144,196 Z" fill="#000"/>

@@ -5,13 +5,15 @@ const {t} = useI18n();
 </script>
 
 <template>
-  <div class="relative overflow-hidden rounded-lg border bg-gradient-to-r from-background to-muted/30 p-6">
+  <div
+    class="relative overflow-hidden rounded-lg border bg-gradient-to-r from-background to-muted/30 p-6">
     <div class="flex flex-col gap-4">
       <!-- Header -->
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-3">
           <img alt="Rook" class="block h-8 w-auto dark:hidden" src="/rook-lockup-horizontal.svg"/>
-          <img alt="Rook" class="hidden h-8 w-auto dark:block" src="/rook-lockup-horizontal-dark.svg"/>
+          <img alt="Rook" class="hidden h-8 w-auto dark:block"
+               src="/rook-lockup-horizontal-dark.svg"/>
         </div>
         <div class="text-right">
           <p class="text-xs font-medium text-muted-foreground">{{ t("home.ecosystem") }}</p>

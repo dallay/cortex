@@ -47,12 +47,12 @@ You do not need to disclose a disability to report an accessibility issue. If yo
 
 We classify accessibility barriers by how strongly they affect a user's ability to complete a task. Maintainers assign or confirm severity during triage; reporters do not need to.
 
-| Level | Definition | Example |
-|---|---|---|
-| Critical | Content or function is completely inaccessible; no workaround exists. | A form submit button has no label and cannot be activated by keyboard. |
-| High | Content or function is difficult to access; a cumbersome workaround may exist. | Focus order jumps illogically through a form, making tab navigation confusing. |
-| Medium | Accessibility feature is missing or incomplete; task is still completable. | An icon-only button lacks an accessible name for screen readers. |
-| Low | Minor improvement opportunity; no significant barrier. | A decorative image has an empty alt attribute rather than alt="". |
+| Level    | Definition                                                                     | Example                                                                        |
+|----------|--------------------------------------------------------------------------------|--------------------------------------------------------------------------------|
+| Critical | Content or function is completely inaccessible; no workaround exists.          | A form submit button has no label and cannot be activated by keyboard.         |
+| High     | Content or function is difficult to access; a cumbersome workaround may exist. | Focus order jumps illogically through a form, making tab navigation confusing. |
+| Medium   | Accessibility feature is missing or incomplete; task is still completable.     | An icon-only button lacks an accessible name for screen readers.               |
+| Low      | Minor improvement opportunity; no significant barrier.                         | A decorative image has an empty alt attribute rather than alt="".              |
 
 ### How we respond
 
@@ -76,13 +76,13 @@ This document is reviewed periodically and updated as the project evolves. When 
 
 We test and support the following environments:
 
-| Category | Supported |
-|---|---|
-| Browsers | Chrome, Firefox, Safari, Edge — current and previous versions |
-| Operating systems | macOS, Windows, Linux, iOS, Android |
-| Input methods | Keyboard, mouse, touch, stylus |
-| Assistive tech | VoiceOver (macOS/iOS), NVDA (Windows), TalkBack (Android), screen magnifiers |
-| Devices | Desktop, laptop, tablet, mobile |
+| Category          | Supported                                                                    |
+|-------------------|------------------------------------------------------------------------------|
+| Browsers          | Chrome, Firefox, Safari, Edge — current and previous versions                |
+| Operating systems | macOS, Windows, Linux, iOS, Android                                          |
+| Input methods     | Keyboard, mouse, touch, stylus                                               |
+| Assistive tech    | VoiceOver (macOS/iOS), NVDA (Windows), TalkBack (Android), screen magnifiers |
+| Devices           | Desktop, laptop, tablet, mobile                                              |
 
 The Rook dashboard is a web application and is the primary focus of accessibility testing. CLI tools (Rook CLI, Huginn) are tested for keyboard operability and terminal compatibility. Combinations not listed here have not been
 formally evaluated.

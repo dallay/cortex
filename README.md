@@ -40,9 +40,9 @@ The AI Infrastructure Stack for Production
 
 - [What is Cortex?](#-what-is-cortex)
 - [Products](#-products)
-  - [Rook — AI Proxy & Router](#%EF%B8%8F-rook--ai-proxy--router)
-  - [Huginn — Local Coding Agent](#-huginn--local-coding-agent)
-  - [Muninn — Persistent Memory](#-muninn--persistent-memory)
+    - [Rook — AI Proxy & Router](#%EF%B8%8F-rook--ai-proxy--router)
+    - [Huginn — Local Coding Agent](#-huginn--local-coding-agent)
+    - [Muninn — Persistent Memory](#-muninn--persistent-memory)
 - [Why Cortex?](#-why-cortex)
 - [Quick Start](#-quick-start)
 - [Architecture](#-architecture)
@@ -77,11 +77,11 @@ Cortex is a **production-ready AI infrastructure stack** built in Rust that hand
 
 ### The Three Products
 
-| Product         | Purpose          | What it does                                                          |
-|-----------------|------------------|-----------------------------------------------------------------------|
-| **🛡️ Rook**     | AI Proxy         | Routes requests, handles fallbacks, caches responses, logs everything |
-| **🤖 Huginn**   | Coding Agent     | Your local AI coding partner with native tool access                  |
-| **🧠 Muninn**   | Persistent Memory| Three-tier memory system with Neo4j graph storage and MCP integration |
+| Product       | Purpose           | What it does                                                          |
+|---------------|-------------------|-----------------------------------------------------------------------|
+| **🛡️ Rook**   | AI Proxy          | Routes requests, handles fallbacks, caches responses, logs everything |
+| **🤖 Huginn** | Coding Agent      | Your local AI coding partner with native tool access                  |
+| **🧠 Muninn** | Persistent Memory | Three-tier memory system with Neo4j graph storage and MCP integration |
 
 ---
 
@@ -225,14 +225,14 @@ Muninn is a persistent memory system that provides AI agents with three-tier mem
 
 #### Key Features
 
-| Feature                | Description                                                                               |
-|------------------------|-------------------------------------------------------------------------------------------|
-| 🧠 **Three Tiers**     | Short-term, long-term, and reasoning memory with automatic consolidation                  |
-| 🔗 **Graph Storage**   | Neo4j graph database for entities, facts, and relationships                               |
-| 🔍 **Semantic Search** | Vector embeddings for similarity-based retrieval (OpenAI, MiniLM, Hash)                   |
-| 🔌 **MCP Server**      | Exposes memory tools via Model Context Protocol for agent integration                     |
-| 🤖 **Entity Extraction**| NLP-based (Spacy) and LLM-based entity and relationship extraction                       |
-| 🔄 **Consolidation**   | Automatic deduplication, summarization, and entity resolution                            |
+| Feature                  | Description                                                              |
+|--------------------------|--------------------------------------------------------------------------|
+| 🧠 **Three Tiers**       | Short-term, long-term, and reasoning memory with automatic consolidation |
+| 🔗 **Graph Storage**     | Neo4j graph database for entities, facts, and relationships              |
+| 🔍 **Semantic Search**   | Vector embeddings for similarity-based retrieval (OpenAI, MiniLM, Hash)  |
+| 🔌 **MCP Server**        | Exposes memory tools via Model Context Protocol for agent integration    |
+| 🤖 **Entity Extraction** | NLP-based (Spacy) and LLM-based entity and relationship extraction       |
+| 🔄 **Consolidation**     | Automatic deduplication, summarization, and entity resolution            |
 
 📖 [Docs](docs/muninn/README.md) · [Architecture](docs/muninn/architecture.md) · [API Reference](docs/muninn/reference-api-artifacts.md)
 
@@ -577,10 +577,10 @@ MIT License. See [LICENSE](LICENSE). By contributing to Cortex, you agree that y
 
 ## 👥 Community
 
-| Channel                                             | Purpose                                                        |
-|-----------------------------------------------------|----------------------------------------------------------------|
-| [Issues](https://github.com/dallay/cortex/issues)   | Bug reports, accessibility issues, and feature requests   |
-| [DeepWiki](https://deepwiki.com/dallay/cortex)      | AI-powered docs                                                |
+| Channel                                           | Purpose                                                 |
+|---------------------------------------------------|---------------------------------------------------------|
+| [Issues](https://github.com/dallay/cortex/issues) | Bug reports, accessibility issues, and feature requests |
+| [DeepWiki](https://deepwiki.com/dallay/cortex)    | AI-powered docs                                         |
 
 ---
 

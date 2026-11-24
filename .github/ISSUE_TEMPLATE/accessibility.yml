@@ -1,7 +1,7 @@
 name: Accessibility Issue
 description: Report an accessibility barrier or improvement opportunity
 title: "[Accessibility] "
-labels: ["accessibility", "type/bug"]
+labels: [ "accessibility", "type/bug" ]
 body:
   - type: markdown
     attributes:

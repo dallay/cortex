@@ -76,10 +76,10 @@ python3 -m unittest dev/bazel/test_generate_build_files.py
 
 The tooling that maintains the Bazel graph is covered by the same suite as the code it generates:
 
-| Target | Covers |
-| --- | --- |
+| Target                                  | Covers                                      |
+|-----------------------------------------|---------------------------------------------|
 | `//dev/bazel:test_generate_build_files` | The unit tests of `generate_build_files.py` |
-| `//dev/bazel:test_check_inventory` | The unit tests of `check_inventory.py` |
+| `//dev/bazel:test_check_inventory`      | The unit tests of `check_inventory.py`      |
 
 ```sh
 bazel test //dev/bazel:all --lockfile_mode=error
@@ -141,8 +141,8 @@ Inventory coverage: 264/265 mapped; 1 reviewed exclusions.
 
 The excluded targets are:
 
-| Cargo target | Reason |
-| --- | --- |
+| Cargo target                                   | Reason                                                                                                                                                               |
+|------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `crates/muninn/c1-exporter` `export_minilm_c1` | The binary requires the non-default `cpu-f32` feature, whose optional `candle-*`, `safetensors`, and `tokenizers` dependencies are not vendored by `crate_universe`. |
 
 The root `BUILD.bazel` now exports `dev/muninn/fixtures/**`. The generator detects those exported

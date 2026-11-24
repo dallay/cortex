@@ -1,28 +1,41 @@
 <?xml version='1.0' encoding='utf-8'?>
-<svg xmlns:affinity="https://www.affinity.studio/" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:bevel;stroke-miterlimit:1.5;" height="1080"
+<svg xmlns:affinity="https://www.affinity.studio/"
+  style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:bevel;stroke-miterlimit:1.5;"
+  height="1080"
   version="1.1" viewBox="0 0 8000 4500" width="1920" xmlns="http://www.w3.org/2000/svg"
   xml:space="preserve"><clipPath id="_clip1"><rect height="4500" width="8000" x="0" y="0" /></clipPath>
   <g clip-path="url(#_clip1)"><g><g><path style="fill:none;stroke:#a8a8a8;stroke-width:4.17px;" d="M533.333,750l0,3000"/><rect
-    style="fill:#fff;fill-opacity:0.1;" height="750" width="1066.667" x="0" y="0"/><rect style="fill:#fff;fill-opacity:0.1;" height="750" width="1066.667" x="0" y="3750" /><text
-    style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:54.167px;" x="490.328px"
+    style="fill:#fff;fill-opacity:0.1;" height="750" width="1066.667" x="0" y="0"/><rect
+    style="fill:#fff;fill-opacity:0.1;" height="750" width="1066.667" x="0" y="3750"/><text
+    style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:54.167px;"
+    x="490.328px"
     y="394.466px"><tspan style="letter-spacing:1.35px">№</tspan>
     1</text><text
-    style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:87.5px;" x="500.991px"
+    style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:87.5px;"
+    x="500.991px"
     y="4156.189px">©</text></g><g><path style="fill:none;stroke:#a8a8a8;stroke-width:4.17px;" d="M7466.667,750l0,3000"/>
     <rect style="fill:#fff;fill-opacity:0.1;" height="750" width="1066.667" x="6933.333" y="3750"/>
-    <rect style="fill:#fff;fill-opacity:0.1;" height="750" width="1066.667" x="6933.333" y="-0" />
-    <text style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:54.167px;letter-spacing:1.35px;" x="7368.363px"
+    <rect style="fill:#fff;fill-opacity:0.1;" height="750" width="1066.667" x="6933.333" y="-0"/>
+    <text
+      style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:54.167px;letter-spacing:1.35px;"
+      x="7368.363px"
       y="394.374px">GOAL<tspan
       style="letter-spacing:0px">S</tspan></text>
-    <text style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:54.167px;" x="7436.767px"
+    <text
+      style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:54.167px;"
+      x="7436.767px"
       y="4144.136px"><tspan style="letter-spacing:1.35px">0</tspan>
       2</text></g></g>
     <g transform="matrix(4.166667,0,0,4.166667,-82670.522522,-39322.92482)"><text style="font-family:'ArialMT', 'Arial', sans-serif;font-size:89px;letter-spacing:-2.67px;" x="20276.36px" y="9809.026px">Build a precise, ownabl<tspan
       style="letter-spacing:0px">e</tspan></text>
-      <text style="font-family:'ArialMT', 'Arial', sans-serif;font-size:89px;letter-spacing:-2.67px;" x="20276.36px"
+      <text
+        style="font-family:'ArialMT', 'Arial', sans-serif;font-size:89px;letter-spacing:-2.67px;"
+        x="20276.36px"
         y="9915.826px">identity from the MUNIN<tspan
         style="letter-spacing:-0px">N</tspan></text>
-      <text style="font-family:'ArialMT', 'Arial', sans-serif;font-size:89px;letter-spacing:-2.67px;" x="20276.36px"
+      <text
+        style="font-family:'ArialMT', 'Arial', sans-serif;font-size:89px;letter-spacing:-2.67px;"
+        x="20276.36px"
         y="10022.626px">mark<tspan
         style="letter-spacing:0px">.</tspan></text></g>
     <path
@@ -37,24 +50,37 @@
       y="3487.728px">Clear at every size</text>
     <text style="font-family:'ArialMT', 'Arial', sans-serif;font-size:54.167px;" x="3891.669px"
       y="3487.728px">Distinctive silhouette</text>
-    <text style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:87.5px;" x="1811.151px"
+    <text style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:87.5px;"
+      x="1811.151px"
       y="3156.151px">SECONDA<tspan
       style="letter-spacing:-3.25px">R</tspan>
       <tspan style="letter-spacing:1.67px">Y</tspan>
       <tspan style="letter-spacing:1.58px"> </tspan>OBJECTIVES</text>
-    <text style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:54.167px;letter-spacing:1.35px;" x="1802.903px"
+    <text
+      style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:54.167px;letter-spacing:1.35px;"
+      x="1802.903px"
       y="3498.228px">│ <tspan
       style="letter-spacing:-0px">1</tspan></text>
-    <text style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:54.167px;letter-spacing:1.35px;" x="3667.5px"
+    <text
+      style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:54.167px;letter-spacing:1.35px;"
+      x="3667.5px"
       y="3498.228px">│ <tspan
       style="letter-spacing:-0px">2</tspan></text>
-    <text style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:54.167px;letter-spacing:1.35px;" x="5532.098px"
+    <text
+      style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:54.167px;letter-spacing:1.35px;"
+      x="5532.098px"
       y="3498.228px">│ <tspan
       style="letter-spacing:-0px">3</tspan></text>
-    <text style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:87.5px;" x="1808.118px"
+    <text style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:87.5px;"
+      x="1808.118px"
       y="989.65px">MAIN GOAL</text>
-    <text style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:229.167px;" x="1205.791px"
+    <text
+      style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:229.167px;"
+      x="1205.791px"
       y="1022.954px">●</text>
-    <text style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:229.167px;" x="1216.477px"
+    <text
+      style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:229.167px;"
+      x="1216.477px"
       y="3192.385px">♦</text></g>
-  <rect style="fill:none;" height="4500" id="_02---Goals" width="8000" x="0" y="0" affinity:id="02 – Goals" /></svg>
+  <rect style="fill:none;" height="4500" id="_02---Goals" width="8000" x="0" y="0"
+    affinity:id="02 – Goals"/></svg>

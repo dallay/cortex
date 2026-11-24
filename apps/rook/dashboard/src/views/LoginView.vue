@@ -69,8 +69,10 @@ async function submitLogin() {
       <template v-if="auth.bootstrapRequired">
         <div class="space-y-2 text-center">
           <div class="flex justify-center mb-2">
-            <img alt="Rook" class="block h-14 w-auto dark:hidden" src="/rook-lockup-horizontal.svg"/>
-            <img alt="Rook" class="hidden h-14 w-auto dark:block" src="/rook-lockup-horizontal-dark.svg"/>
+            <img alt="Rook" class="block h-14 w-auto dark:hidden"
+                 src="/rook-lockup-horizontal.svg"/>
+            <img alt="Rook" class="hidden h-14 w-auto dark:block"
+                 src="/rook-lockup-horizontal-dark.svg"/>
           </div>
           <div class="flex justify-center">
             <ShieldCheck class="h-8 w-8 text-primary"/>
@@ -135,8 +137,10 @@ async function submitLogin() {
       <template v-else>
         <div class="space-y-2 text-center">
           <div class="flex justify-center mb-2">
-            <img alt="Rook" class="block h-14 w-auto dark:hidden" src="/rook-lockup-horizontal.svg"/>
-            <img alt="Rook" class="hidden h-14 w-auto dark:block" src="/rook-lockup-horizontal-dark.svg"/>
+            <img alt="Rook" class="block h-14 w-auto dark:hidden"
+                 src="/rook-lockup-horizontal.svg"/>
+            <img alt="Rook" class="hidden h-14 w-auto dark:block"
+                 src="/rook-lockup-horizontal-dark.svg"/>
           </div>
           <div class="flex justify-center">
             <Lock class="h-8 w-8 text-primary"/>

@@ -1,30 +1,45 @@
 <?xml version='1.0' encoding='utf-8'?>
-<svg xmlns:affinity="https://www.affinity.studio/" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;" height="1080"
+<svg xmlns:affinity="https://www.affinity.studio/"
+  style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;"
+  height="1080"
   version="1.1" viewBox="0 0 8000 4500" width="1920" xmlns="http://www.w3.org/2000/svg"
   xml:space="preserve"><clipPath id="_clip1"><rect height="4500" width="8000" x="0" y="0" /></clipPath>
   <g clip-path="url(#_clip1)"><g transform="matrix(4.166667,0,0,4.166667,-701.008325,-2645.299025)"><text style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:144px;letter-spacing:-5.76px;fill:#fff;" x="414.554px" y="1069.145px">ROO<tspan
-      style="letter-spacing:0px">K</tspan></text>
-      <text style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:144px;letter-spacing:-5.76px;fill:#fff;" x="414.554px"
+    style="letter-spacing:0px">K</tspan></text>
+      <text
+        style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:144px;letter-spacing:-5.76px;fill:#fff;"
+        x="414.554px"
         y="1225.145px"><tspan style="letter-spacing:-8.36px">V</tspan>
         <tspan style="letter-spacing:-3.16px">i</tspan>sual identit
         <tspan style="letter-spacing:0px">y</tspan></text>
-      <text style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:144px;letter-spacing:-5.76px;fill:#fff;" x="414.554px"
+      <text
+        style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:144px;letter-spacing:-5.76px;fill:#fff;"
+        x="414.554px"
         y="1381.145px">Syste<tspan
         style="letter-spacing:0px">m</tspan></text></g>
     <rect style="fill-opacity:0.1;" height="750" width="1066.667" x="-0" y="3750"/>
     <rect style="fill-opacity:0.1;" height="750" width="1066.667" x="-0" y="0"/>
-    <rect height="4500" width="8000" x="-0" y="-0" />
-    <text style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:54.167px;letter-spacing:1.35px;fill:#fff;" x="1044.037px"
+    <rect height="4500" width="8000" x="-0" y="-0"/>
+    <text
+      style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:54.167px;letter-spacing:1.35px;fill:#fff;"
+      x="1044.037px"
       y="4144.374px">ROOK — IDENTIT<tspan
       style="letter-spacing:0px">Y</tspan></text>
-    <text style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:54.167px;fill:#fff;" x="490.328px"
+    <text
+      style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:54.167px;fill:#fff;"
+      x="490.328px"
       y="394.466px"><tspan style="letter-spacing:1.35px">№</tspan>
       1</text>
-    <text style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:54.167px;letter-spacing:1.35px;fill:#fff;" x="1118.449px"
+    <text
+      style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:54.167px;letter-spacing:1.35px;fill:#fff;"
+      x="1118.449px"
       y="394.374px">IDENTIT<tspan
       style="letter-spacing:0.38px">Y</tspan>
       <tspan style="letter-spacing:2.33px"> </tspan>SYSTE
       <tspan style="letter-spacing:0px">M</tspan></text>
-    <text style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:87.5px;fill:#fff;" x="498.803px"
+    <text
+      style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:87.5px;fill:#fff;"
+      x="498.803px"
       y="4160.356px">©</text></g>
-  <rect style="fill:none;" height="4500" id="_01---Intro" width="8000" x="0" y="0" affinity:id="01 – Intro" /></svg>
+  <rect style="fill:none;" height="4500" id="_01---Intro" width="8000" x="0" y="0"
+    affinity:id="01 – Intro"/></svg>

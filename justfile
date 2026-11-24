@@ -184,12 +184,12 @@ muninn-bolt-parity:
 # Usage: just run-gm01 /path/to/agent-memory-checkout /path/to/evidence-dir
 run-gm01 reference evidence:
     @echo "{{ YELLOW }}Running GM-01 capture...{{ RESET }}"
-    PYTHONPATH=dev/muninn python3 dev/muninn/gm01_runner.py --reference {{quote(reference)}} --evidence {{quote(evidence)}}
+    PYTHONPATH=dev/muninn python3 dev/muninn/gm01_runner.py --reference {{ quote(reference) }} --evidence {{ quote(evidence) }}
 
 # Offline GM-01 differential comparison of two capture files
 # Usage: just diff-gm01 /path/to/reference.json /path/to/rust.json
 diff-gm01 reference candidate:
-    PYTHONPATH=dev/muninn python3 dev/muninn/gm01_differential.py {{quote(reference)}} {{quote(candidate)}}
+    PYTHONPATH=dev/muninn python3 dev/muninn/gm01_differential.py {{ quote(reference) }} {{ quote(candidate) }}
 
 # Generate HTML code coverage report with llvm-cov
 coverage:

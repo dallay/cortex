@@ -36,17 +36,22 @@ function fallback(reason) {
 
 function parseMetadata(raw) {
   const value = typeof raw === 'string' ? JSON.parse(raw) : raw;
-  if (!value || !Array.isArray(value.packages) || !Array.isArray(value.workspace_members)
+  if (!value || !Array.isArray(value.packages) || !Array.isArray(
+          value.workspace_members)
       || !value.resolve || !Array.isArray(value.resolve.nodes)) {
-    throw new Error('cargo metadata has an invalid packages/workspace_members/resolve shape');
+    throw new Error(
+        'cargo metadata has an invalid packages/workspace_members/resolve shape');
   }
   const packages = new Map();
   for (const pkg of value.packages) {
-    if (!pkg || typeof pkg.id !== 'string' || typeof pkg.name !== 'string' || typeof pkg.manifest_path !== 'string' || !Array.isArray(pkg.dependencies)) {
+    if (!pkg || typeof pkg.id !== 'string' || typeof pkg.name !== 'string'
+        || typeof pkg.manifest_path !== 'string' || !Array.isArray(
+            pkg.dependencies)) {
       throw new Error('cargo metadata contains an invalid package entry');
     }
     const root = path.posix.dirname(pkg.manifest_path.replaceAll('\\', '/'));
-    packages.set(pkg.id, {id: pkg.id, name: pkg.name, root, dependencies: pkg.dependencies});
+    packages.set(pkg.id,
+        {id: pkg.id, name: pkg.name, root, dependencies: pkg.dependencies});
   }
   const members = new Set(value.workspace_members);
   if (!members.size || [...members].some((id) => !packages.has(id))) {
@@ -55,24 +60,38 @@ function parseMetadata(raw) {
   const resolved = new Map();
   for (const node of value.resolve.nodes) {
     if (!node || typeof node.id !== 'string' || !Array.isArray(node.deps)) {
-      throw new Error('cargo metadata contains an invalid resolved dependency node');
+      throw new Error(
+          'cargo metadata contains an invalid resolved dependency node');
     }
     const edges = new Set();
     for (const dep of node.deps) {
-      if (!dep || typeof dep.pkg !== 'string' || !Array.isArray(dep.dep_kinds)) {
-        throw new Error(`cargo metadata contains an invalid resolved dependency in ${node.id}`);
+      if (!dep || typeof dep.pkg !== 'string' || !Array.isArray(
+          dep.dep_kinds)) {
+        throw new Error(
+            `cargo metadata contains an invalid resolved dependency in ${node.id}`);
       }
-      if (!packages.has(dep.pkg)) throw new Error(`resolved dependency package is missing: ${dep.pkg}`);
+      if (!packages.has(dep.pkg)) {
+        throw new Error(
+            `resolved dependency package is missing: ${dep.pkg}`);
+      }
       for (const kind of dep.dep_kinds) {
-        if (!kind || !(kind.kind === null || kind.kind === 'normal' || kind.kind === 'build' || kind.kind === 'dev')) {
-          throw new Error(`cargo metadata contains an invalid dependency kind in ${node.id}`);
+        if (!kind || !(kind.kind === null || kind.kind === 'normal' || kind.kind
+            === 'build' || kind.kind === 'dev')) {
+          throw new Error(
+              `cargo metadata contains an invalid dependency kind in ${node.id}`);
         }
-        if (kind.kind === null || kind.kind === 'normal' || kind.kind === 'build' || kind.kind === 'dev') edges.add(dep.pkg);
+        if (kind.kind === null || kind.kind === 'normal' || kind.kind
+            === 'build' || kind.kind === 'dev') {
+          edges.add(dep.pkg);
+        }
       }
     }
     resolved.set(node.id, edges);
   }
-  if ([...members].some((id) => !resolved.has(id))) throw new Error('cargo metadata has missing workspace dependency nodes');
+  if ([...members].some((id) => !resolved.has(id))) {
+    throw new Error(
+        'cargo metadata has missing workspace dependency nodes');
+  }
   return {packages, members, resolved};
 }
 
@@ -83,7 +102,8 @@ function resolveAffected(changedPaths, rawMetadata, repoRoot = '.') {
     }
     const normalizedPaths = [];
     for (const input of changedPaths) {
-      if (typeof input !== 'string' || input.length === 0 || input.includes('\0') || input.startsWith('/') || /^[A-Za-z]:/.test(input)) {
+      if (typeof input !== 'string' || input.length === 0 || input.includes(
+          '\0') || input.startsWith('/') || /^[A-Za-z]:/.test(input)) {
         return fallback(`ambiguous changed path: ${String(input)}`);
       }
       const changed = path.posix.normalize(input.replaceAll('\\', '/'));
@@ -99,30 +119,47 @@ function resolveAffected(changedPaths, rawMetadata, repoRoot = '.') {
       normalizedPaths.push(changed);
     }
     if (normalizedPaths.every(isDocumentationPath)) {
-      return {mode: 'docs-only', packages: [], reason: 'documentation-only changes do not select Rust crates'};
+      return {
+        mode: 'docs-only',
+        packages: [],
+        reason: 'documentation-only changes do not select Rust crates'
+      };
     }
     const metadata = parseMetadata(rawMetadata);
     const root = path.resolve(repoRoot).replaceAll('\\', '/');
-    const memberPackages = [...metadata.members].map((id) => metadata.packages.get(id)).filter((pkg) => pkg.root.startsWith(`${root}/`) || pkg.root === root);
+    const memberPackages = [...metadata.members].map(
+        (id) => metadata.packages.get(id)).filter(
+        (pkg) => pkg.root.startsWith(`${root}/`) || pkg.root === root);
     const roots = memberPackages.map((pkg) => ({
       ...pkg,
       relativeRoot: path.posix.relative(root, pkg.root),
     }));
-    if (roots.some((pkg) => pkg.relativeRoot.startsWith('../') || path.posix.isAbsolute(pkg.relativeRoot))) {
+    if (roots.some(
+        (pkg) => pkg.relativeRoot.startsWith('../') || path.posix.isAbsolute(
+            pkg.relativeRoot))) {
       throw new Error('workspace package manifest is outside repository root');
     }
     const direct = new Set();
     for (const changed of normalizedPaths) {
-      if (isDocumentationPath(changed)) continue;
+      if (isDocumentationPath(changed)) {
+        continue;
+      }
       const owners = roots.filter((pkg) => pkg.relativeRoot !== ''
-          && (changed === pkg.relativeRoot || changed.startsWith(`${pkg.relativeRoot}/`)));
+          && (changed === pkg.relativeRoot || changed.startsWith(
+              `${pkg.relativeRoot}/`)));
       if (changed === 'Cargo.toml' || /(^|\/)Cargo\.toml$/.test(changed)) {
         return fallback(`package manifest changed: ${changed}`);
       }
-      if (!owners.length) return fallback(`unmapped changed path: ${changed}`);
+      if (!owners.length) {
+        return fallback(`unmapped changed path: ${changed}`);
+      }
       const deepest = Math.max(...owners.map((pkg) => pkg.relativeRoot.length));
-      const nearest = owners.filter((pkg) => pkg.relativeRoot.length === deepest);
-      if (nearest.length !== 1) return fallback(`ambiguous package ownership: ${changed}`);
+      const nearest = owners.filter(
+          (pkg) => pkg.relativeRoot.length === deepest);
+      if (nearest.length !== 1) {
+        return fallback(
+            `ambiguous package ownership: ${changed}`);
+      }
       direct.add(nearest[0].id);
     }
     const affected = new Set(direct);
@@ -130,9 +167,14 @@ function resolveAffected(changedPaths, rawMetadata, repoRoot = '.') {
     while (changed) {
       changed = false;
       for (const pkg of memberPackages) {
-        if (affected.has(pkg.id)) continue;
+        if (affected.has(pkg.id)) {
+          continue;
+        }
         const edges = metadata.resolved.get(pkg.id);
-        if (!edges) throw new Error(`missing resolved dependency node for ${pkg.id}`);
+        if (!edges) {
+          throw new Error(
+              `missing resolved dependency node for ${pkg.id}`);
+        }
         for (const dependencyId of edges) {
           if (affected.has(dependencyId)) {
             affected.add(pkg.id);
@@ -143,23 +185,39 @@ function resolveAffected(changedPaths, rawMetadata, repoRoot = '.') {
       }
     }
     const names = [...affected].map((id) => metadata.packages.get(id).name);
-    if (names.some((name) => typeof name !== 'string')) throw new Error('workspace package has no name');
+    if (names.some((name) => typeof name !== 'string')) {
+      throw new Error(
+          'workspace package has no name');
+    }
     names.sort();
-    return {mode: 'packages', packages: names, reason: 'changed package paths and reverse dependency closure'};
+    return {
+      mode: 'packages',
+      packages: names,
+      reason: 'changed package paths and reverse dependency closure'
+    };
   } catch (error) {
-    return fallback(`resolver error: ${error instanceof Error ? error.message : String(error)}`);
+    return fallback(
+        `resolver error: ${error instanceof Error ? error.message : String(
+            error)}`);
   }
 }
 
 function run(command, args, cwd) {
-  const result = spawnSync(command, args, {cwd, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024});
-  if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(`${command} exited ${result.status}: ${(result.stderr || '').trim()}`);
+  const result = spawnSync(command, args,
+      {cwd, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024});
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(
+        `${command} exited ${result.status}: ${(result.stderr || '').trim()}`);
+  }
   return result.stdout;
 }
 
 function parseNameStatusDiff(output) {
-  if (typeof output !== 'string' || (output.length > 0 && !output.endsWith('\0'))) {
+  if (typeof output !== 'string' || (output.length > 0 && !output.endsWith(
+      '\0'))) {
     throw new Error('malformed git diff name-status output');
   }
   const fields = output.length === 0 ? [] : output.slice(0, -1).split('\0');
@@ -173,8 +231,14 @@ function parseNameStatusDiff(output) {
       paths.push(fields[i++], fields[i++]);
       continue;
     }
-    if (!/^[ADMTUXB]$/.test(status)) throw new Error(`invalid status record in git diff: ${status}`);
-    if (i >= fields.length || !fields[i]) throw new Error('incomplete path record in git diff');
+    if (!/^[ADMTUXB]$/.test(status)) {
+      throw new Error(
+          `invalid status record in git diff: ${status}`);
+    }
+    if (i >= fields.length || !fields[i]) {
+      throw new Error(
+          'incomplete path record in git diff');
+    }
     paths.push(fields[i++]);
   }
   return paths;
@@ -184,7 +248,9 @@ function changedPathsFromDiff(base, head, cwd) {
   if (!/^[0-9a-f]{40,64}$/i.test(base) || !/^[0-9a-f]{40,64}$/i.test(head)) {
     throw new Error('base/head must be full hexadecimal Git object IDs');
   }
-  const output = run('git', ['diff', '--name-status', '-z', '--find-renames', `${base}...${head}`], cwd);
+  const output = run('git',
+      ['diff', '--name-status', '-z', '--find-renames', `${base}...${head}`],
+      cwd);
   return parseNameStatusDiff(output);
 }
 
@@ -196,31 +262,46 @@ function main() {
     const paths = changedPathsFromDiff(base, head, cwd);
     plan = resolveAffected(paths, null, cwd);
     if (plan.mode !== 'docs-only') {
-      const metadata = run('cargo', ['metadata', '--format-version', '1', '--all-features'], cwd);
+      const metadata = run('cargo',
+          ['metadata', '--format-version', '1', '--all-features'], cwd);
       plan = resolveAffected(paths, metadata, cwd);
     }
   } catch (error) {
-    plan = fallback(`resolver error: ${error instanceof Error ? error.message : String(error)}`);
+    plan = fallback(
+        `resolver error: ${error instanceof Error ? error.message : String(
+            error)}`);
   }
   const output = process.env.GITHUB_OUTPUT;
   if (output) {
     try {
       fs.appendFileSync(output, `mode=${plan.mode}\n`);
     } catch (error) {
-      process.stderr.write(`Could not append affected-crate mode to job outputs: ${error.message}\n`);
+      process.stderr.write(
+          `Could not append affected-crate mode to job outputs: ${error.message}\n`);
     }
   }
   const summary = process.env.GITHUB_STEP_SUMMARY;
-  const markdown = `## Affected crates (shadow mode)\n\n- **Plan:** ${plan.packages.join(', ')}\n- **Mode:** ${plan.mode}\n- **Reason:** ${plan.reason.replace(/[\r\n]/g, ' ')}\n\nThis plan is informational. Existing workspace checks remain unchanged.\n`;
+  const markdown = `## Affected crates (shadow mode)\n\n- **Plan:** ${plan.packages.join(
+      ', ')}\n- **Mode:** ${plan.mode}\n- **Reason:** ${plan.reason.replace(
+      /[\r\n]/g,
+      ' ')}\n\nThis plan is informational. Existing workspace checks remain unchanged.\n`;
   if (summary) {
     try {
       fs.appendFileSync(summary, markdown);
     } catch (error) {
-      process.stderr.write(`Could not append affected-crate plan to job summary: ${error.message}\n`);
+      process.stderr.write(
+          `Could not append affected-crate plan to job summary: ${error.message}\n`);
     }
   }
   process.stdout.write(markdown);
 }
 
-if (require.main === module) main();
-module.exports = {changedPathsFromDiff, parseMetadata, parseNameStatusDiff, resolveAffected};
+if (require.main === module) {
+  main();
+}
+module.exports = {
+  changedPathsFromDiff,
+  parseMetadata,
+  parseNameStatusDiff,
+  resolveAffected
+};

@@ -12,10 +12,10 @@ Releases and no release tags are published for Rook or Huginn. The
 each product; a manifest version is not evidence of a released, supported
 distribution.
 
-| Product | Public release status | Security maintenance commitment |
-|---------|-----------------------|---------------------------------|
-| Rook | No published GitHub Release | No supported released version; reports about current development code are welcome |
-| Huginn | No published GitHub Release | No supported released version; reports about current development code are welcome |
+| Product | Public release status       | Security maintenance commitment                                                   |
+|---------|-----------------------------|-----------------------------------------------------------------------------------|
+| Rook    | No published GitHub Release | No supported released version; reports about current development code are welcome |
+| Huginn  | No published GitHub Release | No supported released version; reports about current development code are welcome |
 
 Cortex is an ecosystem and repository, **not** a separately versioned product.
 Other components, including Muninn and internal crates, are within the scope of
@@ -56,8 +56,7 @@ report that never leaves the advisory draft.
 
 Cortex has no dedicated security team and no security-specific mailbox. Security
 triage is owned by the repository maintainers: the repository owner (`dallay`)
-and the maintainers with merge and release access, currently Yuniel Acosta
-(`@yuniel-acosta`). [`CONTRIBUTING.md`](CONTRIBUTING.md) requires at least one
+and the maintainers with merge and release access, currently Yuniel Acosta (`@yuniel-acosta`). [`CONTRIBUTING.md`](CONTRIBUTING.md) requires at least one
 maintainer approval before a merge, and the same maintainer set authorizes
 releases through [the release contract](docs/releasing.md).
 
@@ -130,8 +129,7 @@ an exploitable vulnerability.
   them. Removing the line from a later commit does not revoke the credential.
 - Review dependency updates and lockfile changes in
   [`Cargo.lock`](Cargo.lock) and [`pnpm-lock.yaml`](pnpm-lock.yaml).
-  [Renovate](renovate.json) opens dependency and vulnerability-update PRs; it is
-  **not** an approval or release gate.
+  [Renovate](renovate.json) opens dependency and vulnerability-update PRs; it is **not** an approval or release gate.
 - The Cargo three-day publish-age cooldown is configured in
   [`.cargo/config.toml`](.cargo/config.toml). It reduces early adoption of
   suspicious releases but is **not** a substitute for audits or review; it
@@ -174,16 +172,16 @@ The table reflects the **configured workflows**, not a claim that every run
 is successful or that every GitHub security setting is enabled. Each row states
 whether the control **blocks** on a finding or only **reports** one.
 
-| Control | Current scope and enforcement |
-|---------|-------------------------------|
-| `cargo audit` | Job `audit` in `ci.yml` checks Rust dependencies when backend or GitHub files change. **Blocking**: the job fails on a vulnerability, with one documented exception — `RUSTSEC-2026-0594` (`cookie < 0.18.3`) is ignored until the workspace publish-age cooldown allows `Cargo.lock` to be re-resolved. |
-| Semgrep | Job `semgrep-pr` scans Rust, Dockerfile, and GitHub Actions rules at `--severity ERROR` when backend, Docker, or GitHub files change. **Blocking**: an explicit step fails the job on unsuppressed findings. This is not a general TypeScript/Vue SAST guarantee. |
-| Gitleaks | Job `gitleaks-pr` scans the pull-request commit range, or the full history on a push, with `--exit-code 1`. **Blocking**. The separate history scans in `security-deep.yml` are reporting-only. |
-| Trivy | Job `trivy-fs` scans filesystem dependencies and misconfigurations at `HIGH,CRITICAL` severity with `ignore-unfixed: true` when backend, frontend, Docker, or GitHub files change. **Reporting-only**: the action runs with `exit-code: '0'`, so findings are published as SARIF and do not fail the job. |
-| OSV-Scanner | A separate workflow ([`osv-scanner.yml`](.github/workflows/osv-scanner.yml)) scans `Cargo.lock`, `pnpm-lock.yaml`, and other lockfiles on pull requests, pushes, merge queues, and a weekly Tuesday 03:17 UTC schedule. Its pull-request job is designed to fail on newly introduced vulnerabilities, but it is **not** part of the `CI / Required` aggregate in `ci.yml`; whether it blocks a merge depends on repository branch-protection settings. |
-| GitGuardian | A separate reusable workflow runs for push and eligible PRs, but excludes fork PRs and Dependabot PRs; effectiveness depends on the configured secret and on the shared workflow `dallay/common-actions`. |
-| SonarCloud | Job `sonar` fails when `SONAR_TOKEN` is missing, so the analysis is a **blocking** step for pull requests and for backend, frontend, or GitHub changes. The quality-gate wait is deliberately disabled in CI, so the project quality gate does **not** block a merge and SonarCloud is not evidence of a completed security audit. |
-| Renovate | Dependency PRs, vulnerability-update PRs, and lockfile maintenance; review and merge are separate human or repository-policy decisions. It is not a scanner and not a release gate. |
+| Control       | Current scope and enforcement                                                                                                                                                                                                                                                                                                                                                                                                                          |
+|---------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `cargo audit` | Job `audit` in `ci.yml` checks Rust dependencies when backend or GitHub files change. **Blocking**: the job fails on a vulnerability, with one documented exception — `RUSTSEC-2026-0594` (`cookie < 0.18.3`) is ignored until the workspace publish-age cooldown allows `Cargo.lock` to be re-resolved.                                                                                                                                               |
+| Semgrep       | Job `semgrep-pr` scans Rust, Dockerfile, and GitHub Actions rules at `--severity ERROR` when backend, Docker, or GitHub files change. **Blocking**: an explicit step fails the job on unsuppressed findings. This is not a general TypeScript/Vue SAST guarantee.                                                                                                                                                                                      |
+| Gitleaks      | Job `gitleaks-pr` scans the pull-request commit range, or the full history on a push, with `--exit-code 1`. **Blocking**. The separate history scans in `security-deep.yml` are reporting-only.                                                                                                                                                                                                                                                        |
+| Trivy         | Job `trivy-fs` scans filesystem dependencies and misconfigurations at `HIGH,CRITICAL` severity with `ignore-unfixed: true` when backend, frontend, Docker, or GitHub files change. **Reporting-only**: the action runs with `exit-code: '0'`, so findings are published as SARIF and do not fail the job.                                                                                                                                              |
+| OSV-Scanner   | A separate workflow ([`osv-scanner.yml`](.github/workflows/osv-scanner.yml)) scans `Cargo.lock`, `pnpm-lock.yaml`, and other lockfiles on pull requests, pushes, merge queues, and a weekly Tuesday 03:17 UTC schedule. Its pull-request job is designed to fail on newly introduced vulnerabilities, but it is **not** part of the `CI / Required` aggregate in `ci.yml`; whether it blocks a merge depends on repository branch-protection settings. |
+| GitGuardian   | A separate reusable workflow runs for push and eligible PRs, but excludes fork PRs and Dependabot PRs; effectiveness depends on the configured secret and on the shared workflow `dallay/common-actions`.                                                                                                                                                                                                                                              |
+| SonarCloud    | Job `sonar` fails when `SONAR_TOKEN` is missing, so the analysis is a **blocking** step for pull requests and for backend, frontend, or GitHub changes. The quality-gate wait is deliberately disabled in CI, so the project quality gate does **not** block a merge and SonarCloud is not evidence of a completed security audit.                                                                                                                     |
+| Renovate      | Dependency PRs, vulnerability-update PRs, and lockfile maintenance; review and merge are separate human or repository-policy decisions. It is not a scanner and not a release gate.                                                                                                                                                                                                                                                                    |
 
 Source of truth: [`ci.yml`](.github/workflows/ci.yml),
 [`gitguardian-scan.yml`](.github/workflows/gitguardian-scan.yml),
@@ -206,8 +204,7 @@ frontend dependency risk should not be described as covered by such a job.
 The [release workflow](.github/workflows/release.yml) defines tagged source
 verification and product-specific builds. Its npm and container publication
 steps require the `RELEASE_PUBLICATION_ENABLED` repository variable; the
-Release Please release-creation step does not. These are intended controls,
-**not proof of published artifacts or reproducible builds**.
+Release Please release-creation step does not. These are intended controls, **not proof of published artifacts or reproducible builds**.
 Follow [`docs/releasing.md`](docs/releasing.md) and verify the release
 preflight before making distribution security claims.
 

@@ -1,5 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
-<svg xmlns:affinity="https://www.affinity.studio/" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;" height="1080"
+<svg xmlns:affinity="https://www.affinity.studio/"
+  style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;"
+  height="1080"
   version="1.1" viewBox="0 0 8000 4500" width="1920" xmlns="http://www.w3.org/2000/svg"
   xml:space="preserve"><clipPath id="_clip1"><rect height="4500" width="8000" x="0" y="-0" /></clipPath>
   <g clip-path="url(#_clip1)"><path style="fill:#6f3;fill-opacity:0.1;" d="M8000,750l0,-750l-8000,0l0,750l8000,0Z"/>
@@ -9,7 +11,7 @@
     <path style="fill:#e2ffd9;fill-opacity:0;" d="M0,2723.784l0,100l8000,0l0,-100l-8000,0Z"/>
     <path style="fill:#e2ffd9;fill-opacity:0;" d="M0,2200l0,100l8000,0l0,-100l-8000,0Z"/>
     <path style="fill:#e2ffd9;fill-opacity:0;" d="M0,1676.216l0,100l8000,0l0,-100l-8000,0Z"/>
-    <rect style="fill:#f00;fill-opacity:0.1;" height="3000" width="645.833" x="1066.667" y="750" />
+    <rect style="fill:#f00;fill-opacity:0.1;" height="3000" width="645.833" x="1066.667" y="750"/>
     <rect style="fill:#f00;fill-opacity:0.1;" height="3000" width="645.833" x="1812.5" y="750"/>
     <rect style="fill:#f00;fill-opacity:0.1;" height="3000" width="645.833" x="2558.333" y="750"/>
     <rect style="fill:#f00;fill-opacity:0.1;" height="3000" width="645.833" x="3304.167" y="750"/>
@@ -26,4 +28,5 @@
     <rect style="fill:#6f3;fill-opacity:0.1;" height="4500" width="100" x="6187.5" y="0"/>
     <rect style="fill:#6f3;fill-opacity:0.1;" height="4500" width="1066.667" x="0" y="-0"/>
     <rect style="fill:#6f3;fill-opacity:0.1;" height="4500" width="1066.667" x="6933.333" y="0"/></g>
-  <rect style="fill:none;" height="4500" id="GRID-II---8-COL---16:9" width="8000" x="0" y="-0" affinity:id="GRID II – 8 COL - 16:9" /></svg>
+  <rect style="fill:none;" height="4500" id="GRID-II---8-COL---16:9" width="8000" x="0" y="-0"
+    affinity:id="GRID II – 8 COL - 16:9"/></svg>

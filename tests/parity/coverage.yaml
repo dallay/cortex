@@ -196,17 +196,17 @@ mcp:
     core:
       status: PASS
       tools: 6
-      transports: ["stdio", "HTTP"]
+      transports: [ "stdio", "HTTP" ]
       evidence: "docs/muninn/reference-mcp.md"
     extended_no_backend:
       status: PASS
       tools: 16
-      transports: ["stdio", "HTTP"]
+      transports: [ "stdio", "HTTP" ]
       evidence: "docs/muninn/reference-mcp.md"
     extended_nams_offline:
       status: PASS
       tools: 20
-      transports: ["stdio", "HTTP"]
+      transports: [ "stdio", "HTTP" ]
       evidence: "docs/muninn/reference-mcp.md"
   invocation:
     status: UNVERIFIABLE

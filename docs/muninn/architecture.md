@@ -91,11 +91,11 @@ Entity extraction transforms raw conversation text into structured knowledge:
 
 Semantic search is powered by vector embeddings with multiple backend options:
 
-| Backend | Type | Dimensions | Use Case |
-|---------|------|------------|----------|
-| OpenAI | Cloud API | 1536 | Production semantic search |
-| MiniLM | Local inference | 384 | Offline and privacy-sensitive use |
-| Hash | Deterministic | N/A | Fallback and testing |
+| Backend | Type            | Dimensions | Use Case                          |
+|---------|-----------------|------------|-----------------------------------|
+| OpenAI  | Cloud API       | 1536       | Production semantic search        |
+| MiniLM  | Local inference | 384        | Offline and privacy-sensitive use |
+| Hash    | Deterministic   | N/A        | Fallback and testing              |
 
 Embeddings are generated for entity text and stored alongside graph nodes for ANN (Approximate Nearest Neighbor) and EXACT search operations.
 

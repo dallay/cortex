@@ -1,12 +1,12 @@
 # Build strategy: measured baseline and Phase A decisions
 
-| Field | Value |
-| --- | --- |
-| Status | MEASURED / PHASE A IN PROGRESS |
-| Date | 2026-11-18 |
-| Supersedes | Internal research v2 (2026-10-10), not previously tracked in this repository |
-| Owner | Yuniel Acosta |
-| Next review | After Phase A tasks T2–T4 land and CI is re-measured |
+| Field       | Value                                                                        |
+|-------------|------------------------------------------------------------------------------|
+| Status      | MEASURED / PHASE A IN PROGRESS                                               |
+| Date        | 2026-11-18                                                                   |
+| Supersedes  | Internal research v2 (2026-10-10), not previously tracked in this repository |
+| Owner       | Yuniel Acosta                                                                |
+| Next review | After Phase A tasks T2–T4 land and CI is re-measured                         |
 
 This document is **not** an ADR and does not authorize a migration. It records the
 measured state, the decisions taken so far, and the gate for evaluating Bazel.
@@ -32,26 +32,26 @@ Method: `gh api` over completed `pull_request` runs of `.github/workflows/ci.yml
 successful conclusions only. Job durations come from `started_at`/`completed_at`;
 wall-clock comes from `created_at`/`updated_at`. Sample: 8 runs, 2026-11-17/18.
 
-| Metric | Value |
-| --- | --- |
-| Wall-clock per PR (median) | **35.3 min** |
-| Runner queue time | ~0.2 min |
-| Critical path (run 44266590987) | 33.0 min |
+| Metric                          | Value        |
+|---------------------------------|--------------|
+| Wall-clock per PR (median)      | **35.3 min** |
+| Runner queue time               | ~0.2 min     |
+| Critical path (run 44266590987) | 33.0 min     |
 
 Job medians:
 
-| Job | Median |
-| --- | --- |
-| `Test (Rust)` | 13.1 min |
-| `SonarCloud` | 11.3 min |
-| `Coverage (Rust)` | 10.1 min |
-| `Test (E2E)` | 8.5 min |
-| `Test Huginn Seatbelt (macOS)` | 3.0 min |
-| `Clippy` | 2.2 min |
-| `Doc` | 1.9 min |
-| `Check` | 1.8 min |
-| `Security / Semgrep` | 1.0 min |
-| `Audit` | 0.7 min |
+| Job                            | Median   |
+|--------------------------------|----------|
+| `Test (Rust)`                  | 13.1 min |
+| `SonarCloud`                   | 11.3 min |
+| `Coverage (Rust)`              | 10.1 min |
+| `Test (E2E)`                   | 8.5 min  |
+| `Test Huginn Seatbelt (macOS)` | 3.0 min  |
+| `Clippy`                       | 2.2 min  |
+| `Doc`                          | 1.9 min  |
+| `Check`                        | 1.8 min  |
+| `Security / Semgrep`           | 1.0 min  |
+| `Audit`                        | 0.7 min  |
 
 Critical path of a representative run:
 
@@ -68,16 +68,16 @@ branch-protection estimate of 28–32 min for backend PRs was low by ~10%.
 
 Step-level durations from two representative runs confirm where the work goes:
 
-| Job / step | Run A | Run B |
-| --- | --- | --- |
-| `Test (Rust)` → `Run unit and integration tests` (first) | 431 s | 437 s |
+| Job / step                                                   | Run A | Run B |
+|--------------------------------------------------------------|-------|-------|
+| `Test (Rust)` → `Run unit and integration tests` (first)     | 431 s | 437 s |
 | `Test (Rust)` → `Run unit and integration tests` (duplicate) | 104 s | 111 s |
-| `Test (Rust)` → `Run doctests` | 118 s | 119 s |
-| `Coverage (Rust)` → `Generate coverage report` | 545 s | 543 s |
-| `SonarCloud` → `Generate Rust coverage` | 483 s | 564 s |
-| `SonarCloud` → `Generate frontend coverage` | 23 s | 31 s |
-| `SonarCloud` → `SonarQube Scan` | 85 s | 88 s |
-| `coverage` / `sonar` → `Install cargo-llvm-cov` | 0.0 s | 0.0 s |
+| `Test (Rust)` → `Run doctests`                               | 118 s | 119 s |
+| `Coverage (Rust)` → `Generate coverage report`               | 545 s | 543 s |
+| `SonarCloud` → `Generate Rust coverage`                      | 483 s | 564 s |
+| `SonarCloud` → `Generate frontend coverage`                  | 23 s  | 31 s  |
+| `SonarCloud` → `SonarQube Scan`                              | 85 s  | 88 s  |
+| `coverage` / `sonar` → `Install cargo-llvm-cov`              | 0.0 s | 0.0 s |
 
 ## 3. Findings
 
@@ -93,8 +93,7 @@ The critical path is dominated by **repeated work, not by a missing build graph*
 4. `coverage` and `sonar` compile `cargo-llvm-cov` from source on every run through
    `cargo install`. This adds setup time to both jobs when the Cargo cache is cold.
 
-Quantified: the duplicated `test` step costs **~105 s per PR**. `SonarCloud` spends
-**~510 s** regenerating Rust and frontend coverage, against **~87 s** for the scan itself.
+Quantified: the duplicated `test` step costs **~105 s per PR**. `SonarCloud` spends **~510 s** regenerating Rust and frontend coverage, against **~87 s** for the scan itself.
 `Coverage (Rust)` spends **~545 s** re-running an already-passed suite.
 
 Our own hypothesis did not survive contact with the data: the `Install cargo-llvm-cov`

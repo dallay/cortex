@@ -1,65 +1,89 @@
 <?xml version='1.0' encoding='utf-8'?>
-<svg xmlns:affinity="https://www.affinity.studio/" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:bevel;stroke-miterlimit:1.5;" height="1080"
+<svg xmlns:affinity="https://www.affinity.studio/"
+  style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:bevel;stroke-miterlimit:1.5;"
+  height="1080"
   version="1.1" viewBox="0 0 8000 4500" width="1920" xmlns="http://www.w3.org/2000/svg"
   xml:space="preserve"><clipPath id="_clip1"><rect height="4500" width="8000" x="0" y="0" /></clipPath>
   <g clip-path="url(#_clip1)"><g><g><path style="fill:none;stroke:#a8a8a8;stroke-width:4.17px;" d="M533.333,750l0,3000"/><rect
-    style="fill:#fff;fill-opacity:0.1;" height="750" width="1066.667" x="-0" y="0"/><rect style="fill:#fff;fill-opacity:0.1;" height="750" width="1066.667" x="-0" y="3750" /><text
-    style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:54.167px;" x="490.328px"
+    style="fill:#fff;fill-opacity:0.1;" height="750" width="1066.667" x="-0" y="0"/><rect
+    style="fill:#fff;fill-opacity:0.1;" height="750" width="1066.667" x="-0" y="3750"/><text
+    style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:54.167px;"
+    x="490.328px"
     y="394.466px"><tspan style="letter-spacing:1.35px">№</tspan>
     1</text><text
-    style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:87.5px;" x="500.991px"
+    style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:87.5px;"
+    x="500.991px"
     y="4156.189px">©</text></g><g><path style="fill:none;stroke:#a8a8a8;stroke-width:4.17px;" d="M7466.667,750l0,3000"/>
     <rect style="fill:#fff;fill-opacity:0.1;" height="750" width="1066.667" x="6933.333" y="3750"/>
-    <rect style="fill:#fff;fill-opacity:0.1;" height="750" width="1066.667" x="6933.333" y="0" />
-    <text style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:54.167px;letter-spacing:1.35px;" x="7270.355px"
+    <rect style="fill:#fff;fill-opacity:0.1;" height="750" width="1066.667" x="6933.333" y="0"/>
+    <text
+      style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:54.167px;letter-spacing:1.35px;"
+      x="7270.355px"
       y="394.387px">TYPOGRAPH<tspan
       style="letter-spacing:0px">Y</tspan></text>
-    <text style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:54.167px;" x="7436.621px"
+    <text
+      style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:54.167px;"
+      x="7436.621px"
       y="4144.136px"><tspan style="letter-spacing:1.35px">0</tspan>
       8</text></g></g>
     <g id="muninn"><g id="muninn-·-Isotype" affinity:id="muninn · Isotype"><path d="M2240.452,1570.54c-6.292,-71.365 -51.329,-172.727 -160.252,-177.614c-160.577,0.432 -183.853,124.666 -168.758,179.693c12.663,46.226 46.28,83.083 94.046,78.897c47.766,-4.185 83.759,-46.389 78.897,-94.073c-0.836,-50.574 42.068,-49.25 43.365,6.696c1.756,74.47 -48.549,139.84 -122.748,146.374c-74.2,6.48 -133.98,-49.332 -146.402,-122.748c-7.507,-44.552 1.026,-129.904 76.793,-196.597c97.367,-85.703 203.428,17.065 194.814,-121.965c-8.694,-140.3 -43.959,-143.269 -134.899,-197.919c-60.132,-36.155 -70.419,-93.505 -67.044,-115.97c0.135,-1.08 0.135,-2.701 -1.998,-1.35c-56.325,35.372 -56.783,100.229 -23.87,150.775c15.796,24.221 48.44,36.694 51.789,75.037c4.564,52.005 -25.354,67.881 -50.007,89.347c-24.625,21.466 -53.949,44.498 -98.178,89.995c-70.635,72.688 -89.212,164.546 -83.568,242.391c6.237,71.337 40.826,133.413 91.642,176.049c50.897,42.663 118.051,65.911 189.388,59.647c71.365,-6.264 133.413,-40.854 176.102,-91.697c42.635,-50.871 67.126,-103.631 60.889,-174.969Z" id="Llama" /><path
-      style="fill:#e84a3c;" d="M2115.109,1176.833c-18.888,-54.053 -55.371,-66.83 -119.801,-105.549c-60.132,-36.155 -70.419,-93.505 -67.044,-115.97c0.135,-1.08 0.135,-2.701 -1.998,-1.35c-55.206,34.67 -56.743,97.664 -25.792,147.747l214.635,75.122Z"
+      style="fill:#e84a3c;"
+      d="M2115.109,1176.833c-18.888,-54.053 -55.371,-66.83 -119.801,-105.549c-60.132,-36.155 -70.419,-93.505 -67.044,-115.97c0.135,-1.08 0.135,-2.701 -1.998,-1.35c-55.206,34.67 -56.743,97.664 -25.792,147.747l214.635,75.122Z"
       id="Punta-coral"
       affinity:id="Punta coral"/></g>
-      <path d="M2431.283,1686.962l0,-591.949l178.882,0l107.414,403.79l106.187,-403.79l179.283,0l0,591.949l-111.032,0l0,-465.967l-117.506,465.967l-115.077,0l-117.105,-465.967l0,465.967l-111.045,0Zm971.925,0l0,-64.206c-15.622,22.884 -36.141,40.922 -61.583,54.114c-25.442,13.193 -52.292,19.782 -80.551,19.782c-28.814,0 -54.657,-6.331 -77.528,-18.981c-22.884,-12.65 -39.449,-30.417 -49.669,-53.3c-10.234,-22.884 -15.35,-54.502 -15.35,-94.894l0,-271.347l113.475,0l0,197.049c0,60.304 2.08,97.258 6.254,110.852c4.174,13.593 11.771,24.357 22.819,32.303c11.035,7.934 25.028,11.9 41.994,11.9c19.382,0 36.735,-5.311 52.086,-15.945c15.338,-10.634 25.843,-23.827 31.489,-39.565c5.66,-15.751 8.476,-54.321 8.476,-115.697l0,-180.898l113.475,0l0,428.831l-105.386,0Zm612.946,0l-113.462,0l0,-218.86c0,-46.297 -2.429,-76.248 -7.262,-89.842c-4.845,-13.593 -12.727,-24.15 -23.633,-31.696c-10.893,-7.533 -24.021,-11.306 -39.371,-11.306c-19.64,0 -37.278,5.388 -52.887,16.152c-15.622,10.763 -26.321,25.041 -32.109,42.808c-5.789,17.767 -8.683,50.6 -8.683,98.525l0,194.22l-113.462,0l0,-428.831l105.399,0l0,63.004c37.42,-48.455 84.518,-72.695 141.32,-72.695c25.028,0 47.912,4.51 68.651,13.529c20.726,9.019 36.399,20.532 47.033,34.526c10.634,13.994 18.038,29.887 22.212,47.654c4.174,17.767 6.254,43.196 6.254,76.313l0,266.501Zm115.09,-486.977l0,-104.972l113.462,0l0,104.972l-113.462,0Zm0,486.977l0,-428.831l113.462,0l0,428.831l-113.462,0Zm619.807,0l-113.462,0l0,-218.86c0,-46.297 -2.429,-76.248 -7.262,-89.842c-4.845,-13.593 -12.727,-24.15 -23.633,-31.696c-10.893,-7.533 -24.021,-11.306 -39.371,-11.306c-19.64,0 -37.278,5.388 -52.887,16.152c-15.622,10.763 -26.321,25.041 -32.109,42.808c-5.789,17.767 -8.683,50.6 -8.683,98.525l0,194.22l-113.462,0l0,-428.831l105.399,0l0,63.004c37.42,-48.455 84.518,-72.695 141.32,-72.695c25.028,0 47.912,4.51 68.651,13.529c20.726,9.019 36.399,20.532 47.033,34.526c10.634,13.994 18.038,29.887 22.212,47.654c4.174,17.767 6.254,43.196 6.254,76.313l0,266.501Zm505.144,0l-113.462,0l0,-218.86c0,-46.297 -2.429,-76.248 -7.262,-89.842c-4.845,-13.593 -12.727,-24.15 -23.633,-31.696c-10.893,-7.533 -24.021,-11.306 -39.371,-11.306c-19.64,0 -37.278,5.388 -52.887,16.152c-15.622,10.763 -26.321,25.041 -32.109,42.808c-5.789,17.767 -8.683,50.6 -8.683,98.525l0,194.22l-113.462,0l0,-428.831l105.399,0l0,63.004c37.42,-48.455 84.518,-72.695 141.32,-72.695c25.028,0 47.912,4.51 68.651,13.529c20.726,9.019 36.399,20.532 47.033,34.526c10.634,13.994 18.038,29.887 22.212,47.654c4.174,17.767 6.254,43.196 6.254,76.313l0,266.501Z" id="Muninn-·-Wordmark-provisional"
+      <path
+        d="M2431.283,1686.962l0,-591.949l178.882,0l107.414,403.79l106.187,-403.79l179.283,0l0,591.949l-111.032,0l0,-465.967l-117.506,465.967l-115.077,0l-117.105,-465.967l0,465.967l-111.045,0Zm971.925,0l0,-64.206c-15.622,22.884 -36.141,40.922 -61.583,54.114c-25.442,13.193 -52.292,19.782 -80.551,19.782c-28.814,0 -54.657,-6.331 -77.528,-18.981c-22.884,-12.65 -39.449,-30.417 -49.669,-53.3c-10.234,-22.884 -15.35,-54.502 -15.35,-94.894l0,-271.347l113.475,0l0,197.049c0,60.304 2.08,97.258 6.254,110.852c4.174,13.593 11.771,24.357 22.819,32.303c11.035,7.934 25.028,11.9 41.994,11.9c19.382,0 36.735,-5.311 52.086,-15.945c15.338,-10.634 25.843,-23.827 31.489,-39.565c5.66,-15.751 8.476,-54.321 8.476,-115.697l0,-180.898l113.475,0l0,428.831l-105.386,0Zm612.946,0l-113.462,0l0,-218.86c0,-46.297 -2.429,-76.248 -7.262,-89.842c-4.845,-13.593 -12.727,-24.15 -23.633,-31.696c-10.893,-7.533 -24.021,-11.306 -39.371,-11.306c-19.64,0 -37.278,5.388 -52.887,16.152c-15.622,10.763 -26.321,25.041 -32.109,42.808c-5.789,17.767 -8.683,50.6 -8.683,98.525l0,194.22l-113.462,0l0,-428.831l105.399,0l0,63.004c37.42,-48.455 84.518,-72.695 141.32,-72.695c25.028,0 47.912,4.51 68.651,13.529c20.726,9.019 36.399,20.532 47.033,34.526c10.634,13.994 18.038,29.887 22.212,47.654c4.174,17.767 6.254,43.196 6.254,76.313l0,266.501Zm115.09,-486.977l0,-104.972l113.462,0l0,104.972l-113.462,0Zm0,486.977l0,-428.831l113.462,0l0,428.831l-113.462,0Zm619.807,0l-113.462,0l0,-218.86c0,-46.297 -2.429,-76.248 -7.262,-89.842c-4.845,-13.593 -12.727,-24.15 -23.633,-31.696c-10.893,-7.533 -24.021,-11.306 -39.371,-11.306c-19.64,0 -37.278,5.388 -52.887,16.152c-15.622,10.763 -26.321,25.041 -32.109,42.808c-5.789,17.767 -8.683,50.6 -8.683,98.525l0,194.22l-113.462,0l0,-428.831l105.399,0l0,63.004c37.42,-48.455 84.518,-72.695 141.32,-72.695c25.028,0 47.912,4.51 68.651,13.529c20.726,9.019 36.399,20.532 47.033,34.526c10.634,13.994 18.038,29.887 22.212,47.654c4.174,17.767 6.254,43.196 6.254,76.313l0,266.501Zm505.144,0l-113.462,0l0,-218.86c0,-46.297 -2.429,-76.248 -7.262,-89.842c-4.845,-13.593 -12.727,-24.15 -23.633,-31.696c-10.893,-7.533 -24.021,-11.306 -39.371,-11.306c-19.64,0 -37.278,5.388 -52.887,16.152c-15.622,10.763 -26.321,25.041 -32.109,42.808c-5.789,17.767 -8.683,50.6 -8.683,98.525l0,194.22l-113.462,0l0,-428.831l105.399,0l0,63.004c37.42,-48.455 84.518,-72.695 141.32,-72.695c25.028,0 47.912,4.51 68.651,13.529c20.726,9.019 36.399,20.532 47.033,34.526c10.634,13.994 18.038,29.887 22.212,47.654c4.174,17.767 6.254,43.196 6.254,76.313l0,266.501Z"
+        id="Muninn-·-Wordmark-provisional"
         affinity:id="Muninn · Wordmark provisional"/></g>
     <g transform="matrix(4.166667,0,0,4.166667,-83418.168636,-37428.800811)"><text style="font-family:'ArialMT', 'Arial', sans-serif;font-size:13px;" x="20276.36px" y="9754.586px">Custom vector curves and straight cuts form the MUNINN</text>
       <text style="font-family:'ArialMT', 'Arial', sans-serif;font-size:13px;" x="20276.36px"
         y="9774.736px">wordmark.</text></g>
     <path style="fill:none;stroke:#808080;stroke-width:4.17px;stroke-linecap:round;"
       d="M6720.833,2504.431l212.5,0"/>
-    <text style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:120.833px;letter-spacing:18.13px;" x="4318.601px"
+    <text
+      style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:120.833px;letter-spacing:18.13px;"
+      x="4318.601px"
       y="3263.004px">ABCDEFGHIJKLMNOPQRST<tspan
       x="6325.804px " y="3263.004px ">U</tspan>VWXY
       <tspan style="letter-spacing:-0px">Z</tspan></text>
-    <text style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:120.833px;letter-spacing:18.13px;" x="4788.247px"
+    <text
+      style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:120.833px;letter-spacing:18.13px;"
+      x="4788.247px"
       y="3501.142px">abcdefghijklmnopqrst<tspan
       x="6412.889px " y="3501.142px ">u</tspan>vwxy
       <tspan style="letter-spacing:-0px">z</tspan></text>
-    <text style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:120.833px;letter-spacing:18.12px;" x="6098.191px"
+    <text
+      style="font-family:'Arial-BoldMT', 'Arial', sans-serif;font-weight:700;font-size:120.833px;letter-spacing:18.12px;"
+      x="6098.191px"
       y="3743.604px">012345678<tspan
       style="letter-spacing:-0px">9</tspan></text>
     <text style="font-family:'ArialMT', 'Arial', sans-serif;font-size:87.5px;" x="1062.437px"
       y="2883.335px"><tspan style="letter-spacing:-1.58px">W</tspan>
       <tspan style="letter-spacing:1.58px">o</tspan>rdmark construction</text>
-    <text style="font-family:'ArialMT', 'Arial', sans-serif;font-size:54.167px;fill:#808080;" x="6559.086px"
+    <text style="font-family:'ArialMT', 'Arial', sans-serif;font-size:54.167px;fill:#808080;"
+      x="6559.086px"
       y="1364.266px">Letterform source</text>
     <text style="font-family:'ArialMT', 'Arial', sans-serif;font-size:87.5px;" x="6324.209px"
       y="1584.392px">Original vector drawing</text>
     <text style="font-family:'ArialMT', 'Arial', sans-serif;font-size:87.5px;" x="6056.453px"
       y="2883.292px">Brand letterforms</text>
-    <text style="font-family:'ArialMT', 'Arial', sans-serif;font-size:54.167px;fill:#808080;" x="3517.308px"
+    <text style="font-family:'ArialMT', 'Arial', sans-serif;font-size:54.167px;fill:#808080;"
+      x="3517.308px"
       y="789.435px">Logo form</text>
-    <text style="font-family:'ArialMT', 'Arial', sans-serif;font-size:54.167px;fill:#808080;" x="1062.488px"
+    <text style="font-family:'ArialMT', 'Arial', sans-serif;font-size:54.167px;fill:#808080;"
+      x="1062.488px"
       y="2286.689px"><tspan style="letter-spacing:-2.99px">V</tspan>
       <tspan style="letter-spacing:2.99px">e</tspan>ctor shapes · scalable</text>
-    <text style="font-family:'ArialMT', 'Arial', sans-serif;font-size:54.167px;fill:#808080;" x="6715.767px"
+    <text style="font-family:'ArialMT', 'Arial', sans-serif;font-size:54.167px;fill:#808080;"
+      x="6715.767px"
       y="789.435px"><tspan style="letter-spacing:-2.99px">T</tspan>
       <tspan style="letter-spacing:2.99px">y</tspan>peface</text>
     <text style="font-family:'ArialMT', 'Arial', sans-serif;font-size:87.5px;" x="6338.692px"
       y="1009.308px">Custom wordmark</text>
-    <text style="font-family:'ArialMT', 'Arial', sans-serif;font-size:54.167px;fill:#808080;" x="6599.235px"
+    <text style="font-family:'ArialMT', 'Arial', sans-serif;font-size:54.167px;fill:#808080;"
+      x="6599.235px"
       y="1950.714px">Drawing style</text>
     <text style="font-family:'ArialMT', 'Arial', sans-serif;font-size:87.5px;" x="6306.478px"
       y="2170.858px">Provisional lettering</text></g>
-  <rect style="fill:none;" height="4500" id="_08---Typography" width="8000" x="0" y="0" affinity:id="08 – Typography" /></svg>
+  <rect style="fill:none;" height="4500" id="_08---Typography" width="8000" x="0" y="0"
+    affinity:id="08 – Typography"/></svg>

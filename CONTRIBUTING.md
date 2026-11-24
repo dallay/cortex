@@ -7,10 +7,10 @@ Thank you for your interest in contributing to Cortex! We welcome contributions 
 - [Code of Conduct](#code-of-conduct)
 - [Ground Rules](#ground-rules)
 - [How to Contribute](#how-to-contribute)
-  - [Reporting Bugs](#reporting-bugs)
-  - [Suggesting Features](#suggesting-features)
-  - [Reporting Accessibility Issues](#reporting-accessibility-issues)
-  - [Submitting Pull Requests](#submitting-pull-requests)
+    - [Reporting Bugs](#reporting-bugs)
+    - [Suggesting Features](#suggesting-features)
+    - [Reporting Accessibility Issues](#reporting-accessibility-issues)
+    - [Submitting Pull Requests](#submitting-pull-requests)
 - [Development Workflow](#development-workflow)
 - [Code Style](#code-style)
 - [Pull Request Process](#pull-request-process)
@@ -76,8 +76,8 @@ Our PR template includes checklists for accessibility (for UI changes) and quali
 2. **Follow Rust best practices** and project conventions defined in [.agents/AGENTS.md](.agents/AGENTS.md).
 3. **Write tests** for new behavior. See the [Development Guide](docs/development.md) for testing strategies.
 4. **Run focused checks** during iteration:
-   - Rust: `cargo test -p <package>`
-   - Dashboard: `pnpm --filter @dallay/rook-dashboard exec vitest run`
+    - Rust: `cargo test -p <package>`
+    - Dashboard: `pnpm --filter @dallay/rook-dashboard exec vitest run`
 5. **Run full CI locally** before submitting: `just ci-local`
 6. **Update documentation** as needed.
 
@@ -113,12 +113,12 @@ See our [Accessibility Statement](ACCESSIBILITY.md) for our commitment and guide
 
 Cortex uses structured issue templates to help contributors provide the right information:
 
-| Template | Purpose |
-|----------|---------|
-| [Bug Report](.github/ISSUE_TEMPLATE/bug.yml) | Report unexpected behavior or errors |
-| [Feature Request](.github/ISSUE_TEMPLATE/feature.yml) | Suggest new features or improvements |
-| [Technical Task](.github/ISSUE_TEMPLATE/technical-task.yml) | Propose technical improvements or refactors |
-| [Accessibility Issue](.github/ISSUE_TEMPLATE/accessibility.yml) | Report accessibility barriers |
+| Template                                                        | Purpose                                     |
+|-----------------------------------------------------------------|---------------------------------------------|
+| [Bug Report](.github/ISSUE_TEMPLATE/bug.yml)                    | Report unexpected behavior or errors        |
+| [Feature Request](.github/ISSUE_TEMPLATE/feature.yml)           | Suggest new features or improvements        |
+| [Technical Task](.github/ISSUE_TEMPLATE/technical-task.yml)     | Propose technical improvements or refactors |
+| [Accessibility Issue](.github/ISSUE_TEMPLATE/accessibility.yml) | Report accessibility barriers               |
 
 ### Issue Classification
 

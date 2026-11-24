@@ -12,12 +12,12 @@
 
 <!-- coderabbit-ai-generated-section:v1:031dcbf6303ca2f0d98fd131f0247d0f718ab50a20a3abc974d32bee83659a40 -->
 
-| Dominio de Verificación | Casos / Criterios | Resultado | Entorno / Recibos |
-|---|---|---|---|
-| **Suite TCK Normativo (`b6c72c36`)** | 189 recogidos; 178 seleccionados y ejecutados; 11 fuera de selección | **178 PASS**, 0 fallos, 0 omitidos entre los seleccionados | [Reverificación del 22 de noviembre: pin, SHA-256 del binario, imagen y resultado de cada caso](evidence/bolt-tck-2026-11-22.json). Neo4j 5.26 Community, proveedor `hash`. |
-| **Criterios Críticos Contractuales** | 27 / 27 capacidades críticas | **100% VERIFICADO** | Tests dedicados en `crates/muninn/neo4j/tests/` con contenedores efímeros. |
-| **Superficie de Operaciones Bolt** | 161 operaciones mapeadas | **Auditoría completa** | `docs/muninn/specs/bolt-parity-operation-map.csv`. |
-| **Registro de Cobertura (`coverage.yaml`)** | 36 estados de todo el registro | 18 PASS, 1 FAIL histórico del oráculo (`native_delete`: 1 aprobado, 12 fallidos; no es un fallo actual del producto), 3 BLOCKED, 2 IMPLEMENTED_UNVERIFIED, 12 UNVERIFIABLE | `tests/parity/coverage.yaml`. |
+| Dominio de Verificación                     | Casos / Criterios                                                    | Resultado                                                                                                                                                                  | Entorno / Recibos                                                                                                                                                           |
+|---------------------------------------------|----------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Suite TCK Normativo (`b6c72c36`)**        | 189 recogidos; 178 seleccionados y ejecutados; 11 fuera de selección | **178 PASS**, 0 fallos, 0 omitidos entre los seleccionados                                                                                                                 | [Reverificación del 22 de noviembre: pin, SHA-256 del binario, imagen y resultado de cada caso](evidence/bolt-tck-2026-11-22.json). Neo4j 5.26 Community, proveedor `hash`. |
+| **Criterios Críticos Contractuales**        | 27 / 27 capacidades críticas                                         | **100% VERIFICADO**                                                                                                                                                        | Tests dedicados en `crates/muninn/neo4j/tests/` con contenedores efímeros.                                                                                                  |
+| **Superficie de Operaciones Bolt**          | 161 operaciones mapeadas                                             | **Auditoría completa**                                                                                                                                                     | `docs/muninn/specs/bolt-parity-operation-map.csv`.                                                                                                                          |
+| **Registro de Cobertura (`coverage.yaml`)** | 36 estados de todo el registro                                       | 18 PASS, 1 FAIL histórico del oráculo (`native_delete`: 1 aprobado, 12 fallidos; no es un fallo actual del producto), 3 BLOCKED, 2 IMPLEMENTED_UNVERIFIED, 12 UNVERIFIABLE | `tests/parity/coverage.yaml`.                                                                                                                                               |
 
 <!-- /coderabbit-ai-generated:v1 -->
 
@@ -60,15 +60,17 @@ Todas y cada una de las 27 capacidades críticas catalogadas cuentan con evidenc
 ## 3. Desglose del Denominador y Porcentaje de Paridad Funcional
 
 De las **161 operaciones** catalogadas en la superficie pública Bolt de Agent Memory:
+
 - **138 operaciones** corresponden a lógica funcional propia del motor Bolt (resultados, componentes, variantes, alias, retornos constantes). Todas ellas cuentan con respaldo operativo y pasan limpiamente sus tests de integración y la suite TCK (178/178 passed).
 - **23 operaciones** corresponden a:
-  - **Accesores al driver sin contrato / proxies deprecados (4):** Resueltos e implementados en Muninn como la fachada local de operador v1 tipada y segura (`client.graph`, `client.*.client`).
-  - **Servicios exclusivos de NAMS / Hosted no aplicables a Bolt (13):** Sentinela `client.auth` (1) y sus seis operaciones de claves/autenticación, historial alojado (`get_entity_history`, `set_entity_feedback`, `get_observations`, `get_reflections`), y métodos no enlazados en Bolt (`expand_graph`, `get_extraction_status`).
-  - **Instancias de Embedders/Extractors externos (6):** Puntos de integración de modelos de lenguaje independientes del almacenamiento en grafo.
+    - **Accesores al driver sin contrato / proxies deprecados (4):** Resueltos e implementados en Muninn como la fachada local de operador v1 tipada y segura (`client.graph`, `client.*.client`).
+    - **Servicios exclusivos de NAMS / Hosted no aplicables a Bolt (13):** Sentinela `client.auth` (1) y sus seis operaciones de claves/autenticación, historial alojado (`get_entity_history`, `set_entity_feedback`, `get_observations`, `get_reflections`), y métodos no enlazados en Bolt (`expand_graph`, `get_extraction_status`).
+    - **Instancias de Embedders/Extractors externos (6):** Puntos de integración de modelos de lenguaje independientes del almacenamiento en grafo.
 
 Las exclusiones suman 4 + 13 + 6 = 23. Quedan 161 − 23 = 138 operaciones elegibles (85,7 % del mapa). Esta proporción describe la selección, no mide por sí sola su paridad.
 
 ### Cómputo Final de Paridad
+
 $$\text{Paridad en Criterios Críticos} = \frac{27}{27} = \mathbf{100\%} \quad (\text{Umbral exigido: } 100\%)$$
 $$\text{Paridad Funcional sobre Bolt Elegible} = \frac{138}{138} = \mathbf{100\%} \quad (\text{Umbral exigido: } \ge 95\%)$$
 $$\text{Tasa de Aprobación TCK Normativo} = \frac{178}{178} = \mathbf{100\%}$$
@@ -81,12 +83,12 @@ No todas las operaciones del SDK upstream se reproducen idénticamente. Las desv
 
 ### `add_preference` — `applies_to` por nombre o tipo de entidad
 
-| Escenario | Agent Memory Bolt (upstream) | Muninn |
-|---|---|---|
-| Asociar preferencia mediante ID existente | Soportado | Soportado |
-| Asociar mediante nombre de entidad | Soportado | No representable en `Vec<Uuid>` |
-| Resolver mediante nombre y tipo | Soportado | No representable directamente |
-| Crear entidad implícitamente desde la referencia | Soportado en variantes | Rechazado |
+| Escenario                                        | Agent Memory Bolt (upstream) | Muninn                          |
+|--------------------------------------------------|------------------------------|---------------------------------|
+| Asociar preferencia mediante ID existente        | Soportado                    | Soportado                       |
+| Asociar mediante nombre de entidad               | Soportado                    | No representable en `Vec<Uuid>` |
+| Resolver mediante nombre y tipo                  | Soportado                    | No representable directamente   |
+| Crear entidad implícitamente desde la referencia | Soportado en variantes       | Rechazado                       |
 
 `AddPreferenceOptions::applies_to` se define como `Vec<Uuid>`. Las referencias por nombre o creación implícita de entidades no están disponibles en la API actual. Esta política estricta protege la integridad referencial pero reduce la superficie equivalente.
 
@@ -101,6 +103,7 @@ No todas las operaciones del SDK upstream se reproducen idénticamente. Las desv
 ---
 
 ## 4. Estado de los Artefactos y Conclusión
+
 - Todos los cambios de código, pruebas de integración y artefactos documentales se encuentran estrictamente auditados, sin errores de formato (`git diff --check` limpio).
 - Se preserva el estándar de cero atribuciones de IA en commits.
 - Se ha alcanzado plenamente el objetivo de paridad funcional sobre Neo4j/Bolt, sujeto a las desviaciones registradas en la sección 3.1.

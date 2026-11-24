@@ -139,12 +139,12 @@ Providers return one of: `Healthy { provider, latency_ms }`, `Unhealthy { provid
 Ollama reaches a fixed set of built-in destinations, plus the origins the
 operator grants for the connection.
 
-| Origin                                                                 | Behavior                   |
-|-------------------------------------------------------------------------|----------------------------|
-| `http://localhost:11434`, `http://127.0.0.1:11434`, `http://[::1]:11434` | Allowed without a grant   |
-| `https://localhost:11434`, `https://127.0.0.1:11434`, `https://[::1]:11434` | Allowed without a grant   |
-| `https://ollama.com` (Ollama Cloud)                                     | Allowed without a grant   |
-| Any other host, port, or URL                                            | Requires an operator grant |
+| Origin                                                                      | Behavior                   |
+|-----------------------------------------------------------------------------|----------------------------|
+| `http://localhost:11434`, `http://127.0.0.1:11434`, `http://[::1]:11434`    | Allowed without a grant    |
+| `https://localhost:11434`, `https://127.0.0.1:11434`, `https://[::1]:11434` | Allowed without a grant    |
+| `https://ollama.com` (Ollama Cloud)                                         | Allowed without a grant    |
+| Any other host, port, or URL                                                | Requires an operator grant |
 
 A custom origin needs a grant in `[provider_endpoint_policy]`, keyed by the
 immutable connection UUID. The grant lists the exact origin: scheme, host,
