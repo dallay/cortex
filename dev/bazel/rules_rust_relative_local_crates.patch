@@ -1,0 +1,62 @@
+diff --git a/crate_universe/extensions.bzl b/crate_universe/extensions.bzl
+--- a/crate_universe/extensions.bzl
++++ b/crate_universe/extensions.bzl
+@@ -708,10 +708,11 @@
+         print("WARN: {}".format(warning))
+ 
+     crates_dir = tag_path.get_child(cfg.name)
++    workspace_prefix = str(nonhermetic_root_bazel_workspace_dir) + "/"
+     hub_contents = {
+         "BUILD.bazel": module_ctx.read(crates_dir.get_child("BUILD.bazel")),
+         "alias_rules.bzl": module_ctx.read(crates_dir.get_child("alias_rules.bzl")),
+-        "crates.bzl": module_ctx.read(crates_dir.get_child("crates.bzl")),
++        "crates.bzl": module_ctx.read(crates_dir.get_child("crates.bzl")).replace(workspace_prefix, "workspace://"),
+         "defs.bzl": module_ctx.read(crates_dir.get_child("defs.bzl")),
+     }
+ 
+@@ -784,6 +785,10 @@
+                 **kwargs
+             )
+         elif "Path" in repo:
++            path = repo["Path"]["path"]
++            if path.startswith(workspace_prefix):
++                path = "workspace://" + path[len(workspace_prefix):]
++                crate = dict(crate, repository = {"Path": {"path": path}})
+             options = {
+                 "config": render_config,
+                 "crate_context": crate,
+@@ -796,7 +801,7 @@
+             local_crate_mirror(
+                 name = crate_repo_name,
+                 options_json = json.encode(options),
+-                path = repo["Path"]["path"],
++                path = path,
+                 **kwargs
+             )
+         else:
+diff --git a/crate_universe/private/local_crate_mirror.bzl b/crate_universe/private/local_crate_mirror.bzl
+--- a/crate_universe/private/local_crate_mirror.bzl
++++ b/crate_universe/private/local_crate_mirror.bzl
+@@ -6,7 +6,11 @@
+ load("//rust/platform:triple.bzl", "get_host_triple")
+ 
+ def _local_crate_mirror_impl(repository_ctx):
+-    path = repository_ctx.path(repository_ctx.attr.path)
++    source_path = repository_ctx.attr.path
++    if source_path.startswith("workspace://"):
++        path = repository_ctx.workspace_root.get_child(source_path[len("workspace://"):])
++    else:
++        path = repository_ctx.path(source_path)
+ 
+     host_triple = get_host_triple(repository_ctx)
+ 
+@@ -56,8 +60,7 @@
+             doc = "JSON serialized instance of a crate_universe::context::SingleBuildFileRenderContext",
+         ),
+         "path": attr.string(
+-            # TODO: Verify what happens if this is not an absolute path.
+-            doc = "Absolute path to the crate source directory whose contents will be copied into the mirror repository.",
++            doc = "Absolute path or workspace:// path to the crate source directory.",
+         ),
+         "quiet": attr.bool(
+             doc = "If stdout and stderr should not be printed to the terminal.",

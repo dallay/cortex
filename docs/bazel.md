@@ -45,7 +45,7 @@ For Cargo manifest changes, refresh the Crate Universe graph while keeping exist
 
 ```sh
 CARGO_BAZEL_REPIN=workspace bazel mod deps --lockfile_mode=update
-bazel mod deps --lockfile_mode=update
+env -u CARGO_BAZEL_REPIN bazel mod deps --lockfile_mode=update
 ```
 
 Review `Cargo.Bazel.lock` and `MODULE.bazel.lock` after the refresh. The second command runs without

@@ -785,7 +785,9 @@ pub fn load_ontology<P: AsRef<Path>>(path: P) -> Result<OntologyDocument, String
     } else if suffix == "yaml" || suffix == "yml" {
         let content = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
-        serde_saphyr::from_str::<serde_json::Value>(&content)
+        let mut options = serde_saphyr::Options::default();
+        options.strict_booleans = true;
+        serde_saphyr::from_str_with_options::<serde_json::Value>(&content, options)
             .map_err(|e| format!("Failed to parse YAML {}: {e}", path.display()))?
     } else {
         return Err(format!(
@@ -1401,6 +1403,21 @@ enable_subtypes: false
         assert_eq!(doc.entity_types.len(), 1);
         assert_eq!(doc.entity_types[0].label, "Person");
         assert_eq!(doc.entity_types[0].properties[0].name, "age");
+    }
+
+    #[test]
+    fn load_ontology_legacy_yaml_preserves_unquoted_no() {
+        let file = tempfile::Builder::new().suffix(".yml").tempfile().unwrap();
+        std::fs::write(
+            file.path(),
+            "name: no\nentity_types:\n  - name: Person\n    subtypes: [Student]\nenable_subtypes: true\n",
+        )
+        .unwrap();
+
+        let doc = load_ontology(file.path()).unwrap();
+        assert_eq!(doc.domain.id, "no");
+        assert_eq!(doc.entity_types.len(), 2);
+        assert_eq!(doc.entity_types[1].subtype.as_deref(), Some("STUDENT"));
     }
 
     #[test]
