@@ -76,6 +76,15 @@ regexes = [
   '''(?i)^token\s*=\s*"[a-z0-9]{20,}''',
 ]
 
+[[rules.allowlists]]
+description = "JavaScript variable named 'token' in Archify-generated architecture diagram HTML files"
+condition = "AND"
+regexTarget = "match"
+paths = ['''^docs/architecture/.*\.html$''']
+regexes = [
+  '''(?i)token\s*=\s*relationshipTokenGeometry''',
+]
+
 [[rules]]
 id = "openai_gcp_hf_api_key"
 description = "OpenAI/GCP/Hugging Face API Key pattern"

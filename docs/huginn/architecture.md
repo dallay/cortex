@@ -2,6 +2,10 @@
 
 Technical deep-dive into Huginn's internal design and component interactions.
 
+For a visual overview of how Huginn fits within the full Cortex monorepo, see the
+[interactive architecture diagrams](../architecture/). The [Huginn internals diagram](../architecture/huginn-architecture.html)
+zooms into the agent loop, plugin system, tools, and sessions covered below.
+
 ## Crate Structure
 
 Huginn follows a layered architecture with clear separation between domain contracts, application logic, runtime implementations, and presentation:

@@ -18,7 +18,7 @@ The AI Infrastructure Stack for Production
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/dallay/cortex)
 
-**Rook** — AI Proxy & Router · **Huginn** — Local Coding Agent
+**Rook** — AI Proxy & Router · **Huginn** — Local Coding Agent · **Muninn** — Persistent Memory
 
 </div>
 
@@ -30,7 +30,8 @@ The AI Infrastructure Stack for Production
   <a href="#-why-cortex"><b>Why Cortex</b></a> •
   <a href="#-quick-start"><b>Quick Start</b></a> •
   <a href="#-architecture"><b>Architecture</b></a> •
-  <a href="#-documentation"><b>Docs</b></a>
+  <a href="#-documentation"><b>Docs</b></a> •
+  <a href="docs/architecture/"><b>Diagrams</b></a>
 </p>
 
 ---
@@ -41,6 +42,7 @@ The AI Infrastructure Stack for Production
 - [Products](#-products)
   - [Rook — AI Proxy & Router](#%EF%B8%8F-rook--ai-proxy--router)
   - [Huginn — Local Coding Agent](#-huginn--local-coding-agent)
+  - [Muninn — Persistent Memory](#-muninn--persistent-memory)
 - [Why Cortex?](#-why-cortex)
 - [Quick Start](#-quick-start)
 - [Architecture](#-architecture)
@@ -73,12 +75,13 @@ Cortex is a **production-ready AI infrastructure stack** built in Rust that hand
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### The Two Products
+### The Three Products
 
-| Product       | Purpose      | What it does                                                          |
-|---------------|--------------|-----------------------------------------------------------------------|
-| **🛡️ Rook**   | AI Proxy     | Routes requests, handles fallbacks, caches responses, logs everything |
-| **🤖 Huginn** | Coding Agent | Your local AI coding partner with native tool access                  |
+| Product         | Purpose          | What it does                                                          |
+|-----------------|------------------|-----------------------------------------------------------------------|
+| **🛡️ Rook**     | AI Proxy         | Routes requests, handles fallbacks, caches responses, logs everything |
+| **🤖 Huginn**   | Coding Agent     | Your local AI coding partner with native tool access                  |
+| **🧠 Muninn**   | Persistent Memory| Three-tier memory system with Neo4j graph storage and MCP integration |
 
 ---
 
@@ -184,6 +187,54 @@ Huginn is a Rust-powered coding assistant that runs locally with access to your 
 | 📋 **Scoped Context**  | Per-repo `AGENTS.md` for instructions                                                     |
 
 📖 [Docs](docs/huginn/README.md) · [TUI Guide](docs/huginn/README.md#-tui-guide) · [MCP Setup](docs/huginn/README.md#-mcp-integration)
+
+---
+
+### 🧠 Muninn — Persistent Memory
+
+> *"Give your AI agents a memory that lasts."*
+
+Muninn is a persistent memory system that provides AI agents with three-tier memory backed by a Neo4j graph database.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                                                                          │
+│   Muninn: Three-Tier Memory System                                       │
+│                                                                          │
+│   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐              │
+│   │  Short-Term  │──▶│  Long-Term   │──▶│   Reasoning  │              │
+│   │   Memory     │   │   Memory     │   │   Memory     │              │
+│   │              │   │              │   │              │              │
+│   │ Conversations│   │  Entities    │   │   Traces     │              │
+│   │  Context     │   │  Facts       │   │  Tool Calls  │              │
+│   │  Messages    │   │  Relations   │   │   Plans      │              │
+│   └──────────────┘   └──────┬───────┘   └──────┬───────┘              │
+│                              │                  │                       │
+│                              ▼                  ▼                       │
+│                      ┌─────────────────────────────────┐              │
+│                      │        Neo4j Graph DB           │              │
+│                      │   Entities · Relationships      │              │
+│                      │   Embeddings · Vector Index     │              │
+│                      └─────────────────────────────────┘              │
+│                                                                          │
+│   Extraction: NLP (Spacy) / LLM  ·  Embeddings: OpenAI / MiniLM / Hash │
+│   MCP Server: Memory tools for Huginn and other agents                  │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Key Features
+
+| Feature                | Description                                                                               |
+|------------------------|-------------------------------------------------------------------------------------------|
+| 🧠 **Three Tiers**     | Short-term, long-term, and reasoning memory with automatic consolidation                  |
+| 🔗 **Graph Storage**   | Neo4j graph database for entities, facts, and relationships                               |
+| 🔍 **Semantic Search** | Vector embeddings for similarity-based retrieval (OpenAI, MiniLM, Hash)                   |
+| 🔌 **MCP Server**      | Exposes memory tools via Model Context Protocol for agent integration                     |
+| 🤖 **Entity Extraction**| NLP-based (Spacy) and LLM-based entity and relationship extraction                       |
+| 🔄 **Consolidation**   | Automatic deduplication, summarization, and entity resolution                            |
+
+📖 [Docs](docs/muninn/README.md) · [Architecture](docs/muninn/architecture.md) · [API Reference](docs/muninn/reference-api-artifacts.md)
 
 ---
 
@@ -318,6 +369,13 @@ xdg-open http://localhost:3773/dashboard/
 
 ## 🏗️ Architecture
 
+Explore the system visually with our [interactive architecture diagrams](docs/architecture/):
+
+- **[Cortex Overview](docs/architecture/cortex-overview.html)** — Full flow across all products
+- **[Huginn internals](docs/architecture/huginn-architecture.html)** — Agent loop, plugins, tools
+- **[Muninn internals](docs/architecture/muninn-architecture.html)** — Memory tiers, extraction, Neo4j
+- **[Rook internals](docs/architecture/rook-architecture.html)** — Proxy, router, cache, providers
+
 ### Project Structure
 
 ```
@@ -335,7 +393,10 @@ cortex/
 │   │       ├── src/stores/     # Pinia state
 │   │       └── e2e/            # Playwright tests
 │   │
-│   └── huginn/                 # 🤖 Huginn binary
+│   ├── huginn/                 # 🤖 Huginn binary
+│   │   └── src/
+│   │
+│   └── muninn/                 # 🧠 Muninn binary
 │       └── src/
 │
 ├── crates/
@@ -358,17 +419,37 @@ cortex/
 │   │   ├── cache-memory/       # TTL cache
 │   │   └── transport-axum/     # HTTP transport
 │   │
-│   └── huginn/                 # 🤖 Huginn runtime
-│       └── runtime/
+│   ├── huginn/                 # 🤖 Huginn crates
+│   │   ├── core/               # Domain contracts
+│   │   ├── application/        # Use cases
+│   │   ├── runtime/            # Implementations
+│   │   └── presentation/       # TUI
+│   │
+│   └── muninn/                 # 🧠 Muninn crates
+│       ├── core/               # Memory contracts
+│       ├── application/        # Memory service
+│       ├── neo4j/              # Graph DB adapter
+│       ├── mcp/                # MCP server
+│       └── providers/          # Embedding backends
 │
 ├── docs/                       # 📖 Documentation
+│   ├── architecture/           # Interactive diagrams
+│   │   ├── cortex-overview.html
+│   │   ├── huginn-architecture.html
+│   │   ├── muninn-architecture.html
+│   │   └── rook-architecture.html
 │   ├── rook/                   # Rook docs
 │   │   ├── architecture.md
 │   │   ├── api.md
 │   │   ├── configuration.md
 │   │   ├── providers.md
 │   │   └── deployment.md
-│   └── huginn/                 # Huginn docs
+│   ├── huginn/                 # Huginn docs
+│   │   ├── architecture.md
+│   │   └── ...
+│   └── muninn/                 # Muninn docs
+│       ├── architecture.md
+│       └── ...
 │
 └── dev/                        # 🐳 Testing
     ├── compose.yml             # Smoke test

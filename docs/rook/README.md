@@ -2,6 +2,11 @@
 
 Rook is Cortex's main component: a high-performance AI proxy and router written in Rust.
 
+For a visual overview of how Rook fits within the full Cortex monorepo, see the
+[interactive architecture diagrams](../architecture/). The [Rook internals diagram](../architecture/rook-architecture.html)
+zooms into the proxy, router, cache, audit, and provider layers covered in the
+[architecture deep-dive](architecture.md).
+
 ## Quick guide
 
 ```bash
