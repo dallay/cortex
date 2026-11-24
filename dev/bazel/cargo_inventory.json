@@ -1836,6 +1836,13 @@
     },
     {
       "kinds": "test",
+      "label": "//crates/muninn/neo4j:consolidation_queries",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "consolidation_queries"
+    },
+    {
+      "kinds": "test",
       "label": "//crates/muninn/neo4j:cross_memory_edges",
       "manifest": "crates/muninn/neo4j/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",

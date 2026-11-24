@@ -98,7 +98,9 @@ ORDER BY score DESC, old_id ASC, new_id ASC
 LIMIT $limit
 ";
 
-/// Mark an older preference as superseded by a newer preference.
+/// Mark an older preference as superseded by a newer preference, rechecking
+/// exact owner-set equality at write time so concurrent ownership changes
+/// cannot cross tenant boundaries.
 pub const APPLY_SUPERSEDE_PREFERENCE: &str = "
 MATCH (old:Preference {id: $old_id})
 MATCH (new:Preference {id: $new_id})

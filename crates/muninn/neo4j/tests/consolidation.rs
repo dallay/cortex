@@ -12,6 +12,7 @@ use muninn_neo4j::{
 };
 use neo4rs::BoltType;
 use serde_json::Value;
+use tokio::time::Instant;
 
 #[path = "common/fixture.rs"]
 mod fixture;
@@ -41,15 +42,16 @@ async fn graph_snapshot(client: &Neo4jClient) -> (Vec<BoltType>, Vec<BoltType>) 
 }
 
 async fn wait_for_candidates(
+    deadline: Instant,
+    job: &str,
     mut read: impl AsyncFnMut() -> MemoryResult<ConsolidationReport>,
 ) -> ConsolidationReport {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     let mut last_result = None;
     loop {
         match tokio::time::timeout_at(deadline, read()).await {
             Ok(Ok(report)) if report.candidates_found > 0 => return report,
             Ok(result) => last_result = Some(result),
-            Err(_) => panic!("consolidation candidates did not become ready: {last_result:?}"),
+            Err(_) => panic!("{job} candidates did not become ready: {last_result:?}"),
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -312,18 +314,22 @@ async fn consolidation_persists_mutations_and_audit_nodes() {
         .await
         .unwrap();
 
+    // Candidate probes share a deadline while the vector indexes catch up.
     let before_readiness = graph_snapshot(&client).await;
-    let dedupe_dry =
-        wait_for_candidates(|| consolidation.dedupe_entities(Some(0.95), Some(10), Some(true)))
-            .await;
-    let traces_dry =
-        wait_for_candidates(|| consolidation.summarize_long_traces(Some(3), Some(10), Some(true)))
-            .await;
-    let prefs_dry = wait_for_candidates(|| {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let dedupe_dry = wait_for_candidates(deadline, "dedupe", || {
+        consolidation.dedupe_entities(Some(0.95), Some(10), Some(true))
+    })
+    .await;
+    let traces_dry = wait_for_candidates(deadline, "traces", || {
+        consolidation.summarize_long_traces(Some(3), Some(10), Some(true))
+    })
+    .await;
+    let prefs_dry = wait_for_candidates(deadline, "preferences", || {
         consolidation.detect_superseded_preferences(Some(0.95), Some(10), Some(true))
     })
     .await;
-    let archive_dry = wait_for_candidates(|| {
+    let archive_dry = wait_for_candidates(deadline, "archive", || {
         consolidation.archive_expired_conversations(Some(90), Some(10), Some(true))
     })
     .await;

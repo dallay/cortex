@@ -15,6 +15,10 @@ fn preference_supersession_enforces_same_owner_scope() {
     assert!(FIND_SUPERSEDED_PREFERENCES.contains("HAS_PREFERENCE"));
     assert!(FIND_SUPERSEDED_PREFERENCES.contains("WHERE old_owners = new_owners"));
     assert!(!FIND_SUPERSEDED_PREFERENCES.contains("ABOUT"));
+    assert!(APPLY_SUPERSEDE_PREFERENCE.contains("size(old_owners) = size(new_owners)"));
+    assert!(
+        APPLY_SUPERSEDE_PREFERENCE.contains("all(owner IN old_owners WHERE owner IN new_owners)")
+    );
     assert!(APPLY_SUPERSEDE_PREFERENCE.contains("MERGE (old)-[:SUPERSEDED_BY]->(new)"));
     assert!(APPLY_SUPERSEDE_PREFERENCE.contains("old.valid_until"));
 }
