@@ -18,13 +18,14 @@
 //! * Returns a [`ConsolidationReport`] with per-candidate breakdown.
 //! * Writes a `(:ConsolidationRun)` audit node when `dry_run = false`.
 
-use chrono::Utc;
+use std::sync::Arc;
+
 use muninn_core::ports::{
-    ConsolidationReport, ConsolidationStore, LongTermStore, ReasoningStore, ShortTermStore,
+    ConsolidationReport, ConsolidationStore, LongTermStore, ReadAuditRecord, ReasoningStore,
+    ShortTermStore,
 };
 use muninn_core::MemoryResult;
 use serde_json::json;
-use uuid::Uuid;
 
 /// Default similarity threshold for entity deduplication.
 pub const DEFAULT_DEDUPE_THRESHOLD: f64 = 0.85;
@@ -52,7 +53,7 @@ pub struct ConsolidationMemory {
     reasoning: Option<Box<dyn ReasoningStore>>,
     #[allow(dead_code)]
     short_term: Option<Box<dyn ShortTermStore>>,
-    consolidation: Box<dyn ConsolidationStore>,
+    consolidation: Arc<dyn ConsolidationStore>,
 }
 
 impl ConsolidationMemory {
@@ -67,12 +68,17 @@ impl ConsolidationMemory {
             long_term: Some(long_term),
             reasoning: Some(reasoning),
             short_term: Some(short_term),
-            consolidation,
+            consolidation: Arc::from(consolidation),
         }
     }
 
     /// Create a consolidation orchestrator with only a consolidation store.
     pub fn from_store(consolidation: Box<dyn ConsolidationStore>) -> Self {
+        Self::from_arc(Arc::from(consolidation))
+    }
+
+    /// Create a consolidation orchestrator backed by a shared store handle.
+    pub fn from_arc(consolidation: Arc<dyn ConsolidationStore>) -> Self {
         Self {
             long_term: None,
             reasoning: None,
@@ -95,19 +101,16 @@ impl ConsolidationMemory {
         let limit = limit.unwrap_or(DEFAULT_CONSOLIDATION_LIMIT);
         let dry_run = dry_run.unwrap_or(true);
 
-        let report = self
+        let mut report = self
             .consolidation
             .dedupe_entities(threshold, limit, dry_run)
             .await?;
 
-        if !dry_run && !report.candidates.is_empty() {
+        if !dry_run && !report.candidates.is_empty() && report.run_id.is_none() {
             let run_id = self.record_run("dedupe_entities", &report).await?;
-            let mut report = report;
             report.run_id = Some(run_id);
-            Ok(report)
-        } else {
-            Ok(report)
         }
+        Ok(report)
     }
 
     /// Find traces with many steps that haven't been summarized.
@@ -124,19 +127,16 @@ impl ConsolidationMemory {
         let limit = limit.unwrap_or(DEFAULT_CONSOLIDATION_LIMIT);
         let dry_run = dry_run.unwrap_or(true);
 
-        let report = self
+        let mut report = self
             .consolidation
             .summarize_long_traces(min_steps, limit, dry_run)
             .await?;
 
-        if !dry_run && !report.candidates.is_empty() {
+        if !dry_run && !report.candidates.is_empty() && report.run_id.is_none() {
             let run_id = self.record_run("summarize_long_traces", &report).await?;
-            let mut report = report;
             report.run_id = Some(run_id);
-            Ok(report)
-        } else {
-            Ok(report)
         }
+        Ok(report)
     }
 
     /// Find preferences with near-duplicate content.
@@ -154,21 +154,18 @@ impl ConsolidationMemory {
         let limit = limit.unwrap_or(DEFAULT_CONSOLIDATION_LIMIT);
         let dry_run = dry_run.unwrap_or(true);
 
-        let report = self
+        let mut report = self
             .consolidation
             .detect_superseded_preferences(threshold, limit, dry_run)
             .await?;
 
-        if !dry_run && !report.candidates.is_empty() {
+        if !dry_run && !report.candidates.is_empty() && report.run_id.is_none() {
             let run_id = self
                 .record_run("detect_superseded_preferences", &report)
                 .await?;
-            let mut report = report;
             report.run_id = Some(run_id);
-            Ok(report)
-        } else {
-            Ok(report)
         }
+        Ok(report)
     }
 
     /// Archive conversations older than the given TTL.
@@ -185,21 +182,18 @@ impl ConsolidationMemory {
         let limit = limit.unwrap_or(DEFAULT_CONSOLIDATION_LIMIT);
         let dry_run = dry_run.unwrap_or(true);
 
-        let report = self
+        let mut report = self
             .consolidation
             .archive_expired_conversations(ttl_days, limit, dry_run)
             .await?;
 
-        if !dry_run && !report.candidates.is_empty() {
+        if !dry_run && !report.candidates.is_empty() && report.run_id.is_none() {
             let run_id = self
                 .record_run("archive_expired_conversations", &report)
                 .await?;
-            let mut report = report;
             report.run_id = Some(run_id);
-            Ok(report)
-        } else {
-            Ok(report)
         }
+        Ok(report)
     }
 
     /// Run all four consolidation jobs in sequence.
@@ -226,10 +220,13 @@ impl ConsolidationMemory {
         Ok(reports)
     }
 
-    /// Write a `:ConsolidationRun` audit node and return its ID.
+    /// Persist an explicit `:MemoryReadAudit` node (`BOLT-08-11`).
+    pub async fn record_read_audit(&self, record: &ReadAuditRecord) -> MemoryResult<String> {
+        self.consolidation.record_read_audit(record).await
+    }
+
+    /// Write a `:ConsolidationRun` audit node through the store and return its ID.
     async fn record_run(&self, kind: &str, report: &ConsolidationReport) -> MemoryResult<String> {
-        let run_id = Uuid::new_v4().to_string();
-        let now = Utc::now();
         let stats = json!({
             "kind": kind,
             "candidates_found": report.candidates_found,
@@ -244,10 +241,9 @@ impl ConsolidationMemory {
             })).collect::<Vec<_>>(),
         });
 
-        // Use the consolidation store to record the audit node
-        // The implementation handles the actual Cypher execution
-        let _ = (kind, &stats, &run_id, &now);
-        Ok(run_id)
+        self.consolidation
+            .record_run(kind, &stats.to_string())
+            .await
     }
 }
 
@@ -304,15 +300,40 @@ impl ConsolidationOptions {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
     use muninn_core::ports::ConsolidationCandidate;
+    use uuid::Uuid;
 
-    /// A minimal test implementation of ConsolidationStore.
+    /// A minimal test implementation of ConsolidationStore that records audit writes.
     struct TestConsolidationStore {
         entity_count: usize,
         trace_count: usize,
         pref_count: usize,
         conversation_count: usize,
+        prepopulate_run_id: bool,
+        recorded_runs: Arc<Mutex<Vec<(String, String)>>>,
+        recorded_read_audits: Arc<Mutex<Vec<ReadAuditRecord>>>,
+    }
+
+    impl TestConsolidationStore {
+        fn new(
+            entity_count: usize,
+            trace_count: usize,
+            pref_count: usize,
+            conversation_count: usize,
+        ) -> Self {
+            Self {
+                entity_count,
+                trace_count,
+                pref_count,
+                conversation_count,
+                prepopulate_run_id: false,
+                recorded_runs: Arc::new(Mutex::new(Vec::new())),
+                recorded_read_audits: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
     }
 
     #[async_trait::async_trait]
@@ -342,8 +363,12 @@ mod tests {
                 dry_run,
                 candidates_found: candidates.len(),
                 mutations_applied: if dry_run { 0 } else { candidates.len() },
+                run_id: if !dry_run && self.prepopulate_run_id && !candidates.is_empty() {
+                    Some("store-run-id".to_owned())
+                } else {
+                    None
+                },
                 candidates,
-                run_id: None,
             })
         }
 
@@ -430,150 +455,41 @@ mod tests {
                 run_id: None,
             })
         }
-    }
 
-    /// Direct test harness that only requires ConsolidationStore.
-    /// Avoids depending on the complex LongTermStore/ReasoningStore/ShortTermStore traits.
-    struct TestHarness {
-        store: Box<dyn ConsolidationStore>,
-    }
-
-    impl TestHarness {
-        fn new(store: impl ConsolidationStore + 'static) -> Self {
-            Self {
-                store: Box::new(store),
-            }
+        async fn record_run(&self, kind: &str, stats_json: &str) -> MemoryResult<String> {
+            self.recorded_runs
+                .lock()
+                .unwrap()
+                .push((kind.to_owned(), stats_json.to_owned()));
+            Ok(Uuid::new_v4().to_string())
         }
 
-        async fn dedupe_entities(
-            &self,
-            threshold: Option<f64>,
-            limit: Option<i64>,
-            dry_run: Option<bool>,
-        ) -> MemoryResult<ConsolidationReport> {
-            let threshold = threshold.unwrap_or(DEFAULT_DEDUPE_THRESHOLD);
-            let limit = limit.unwrap_or(DEFAULT_CONSOLIDATION_LIMIT);
-            let dry_run = dry_run.unwrap_or(true);
-            let report = self
-                .store
-                .dedupe_entities(threshold, limit, dry_run)
-                .await?;
-            if !dry_run && !report.candidates.is_empty() {
-                let run_id = Uuid::new_v4().to_string();
-                let mut report = report;
-                report.run_id = Some(run_id);
-                Ok(report)
-            } else {
-                Ok(report)
-            }
-        }
-
-        async fn summarize_long_traces(
-            &self,
-            min_steps: Option<i64>,
-            limit: Option<i64>,
-            dry_run: Option<bool>,
-        ) -> MemoryResult<ConsolidationReport> {
-            let min_steps = min_steps.unwrap_or(DEFAULT_MIN_TRACE_STEPS);
-            let limit = limit.unwrap_or(DEFAULT_CONSOLIDATION_LIMIT);
-            let dry_run = dry_run.unwrap_or(true);
-            let report = self
-                .store
-                .summarize_long_traces(min_steps, limit, dry_run)
-                .await?;
-            if !dry_run && !report.candidates.is_empty() {
-                let run_id = Uuid::new_v4().to_string();
-                let mut report = report;
-                report.run_id = Some(run_id);
-                Ok(report)
-            } else {
-                Ok(report)
-            }
-        }
-
-        async fn detect_superseded_preferences(
-            &self,
-            threshold: Option<f64>,
-            limit: Option<i64>,
-            dry_run: Option<bool>,
-        ) -> MemoryResult<ConsolidationReport> {
-            let threshold = threshold.unwrap_or(DEFAULT_SUPERSEDE_THRESHOLD);
-            let limit = limit.unwrap_or(DEFAULT_CONSOLIDATION_LIMIT);
-            let dry_run = dry_run.unwrap_or(true);
-            let report = self
-                .store
-                .detect_superseded_preferences(threshold, limit, dry_run)
-                .await?;
-            if !dry_run && !report.candidates.is_empty() {
-                let run_id = Uuid::new_v4().to_string();
-                let mut report = report;
-                report.run_id = Some(run_id);
-                Ok(report)
-            } else {
-                Ok(report)
-            }
-        }
-
-        async fn archive_expired_conversations(
-            &self,
-            ttl_days: Option<i64>,
-            limit: Option<i64>,
-            dry_run: Option<bool>,
-        ) -> MemoryResult<ConsolidationReport> {
-            let ttl_days = ttl_days.unwrap_or(DEFAULT_CONVERSATION_TTL_DAYS);
-            let limit = limit.unwrap_or(DEFAULT_CONSOLIDATION_LIMIT);
-            let dry_run = dry_run.unwrap_or(true);
-            let report = self
-                .store
-                .archive_expired_conversations(ttl_days, limit, dry_run)
-                .await?;
-            if !dry_run && !report.candidates.is_empty() {
-                let run_id = Uuid::new_v4().to_string();
-                let mut report = report;
-                report.run_id = Some(run_id);
-                Ok(report)
-            } else {
-                Ok(report)
-            }
-        }
-
-        async fn run_all(&self, dry_run: Option<bool>) -> MemoryResult<Vec<ConsolidationReport>> {
-            let dry_run = dry_run.unwrap_or(true);
-            let mut reports = Vec::new();
-            reports.push(self.dedupe_entities(None, None, Some(dry_run)).await?);
-            reports.push(
-                self.summarize_long_traces(None, None, Some(dry_run))
-                    .await?,
-            );
-            reports.push(
-                self.detect_superseded_preferences(None, None, Some(dry_run))
-                    .await?,
-            );
-            reports.push(
-                self.archive_expired_conversations(None, None, Some(dry_run))
-                    .await?,
-            );
-            Ok(reports)
+        async fn record_read_audit(&self, record: &ReadAuditRecord) -> MemoryResult<String> {
+            self.recorded_read_audits
+                .lock()
+                .unwrap()
+                .push(record.clone());
+            Ok(Uuid::new_v4().to_string())
         }
     }
 
-    fn build_harness(
+    fn build_memory(
         entity_count: usize,
         trace_count: usize,
         pref_count: usize,
         conv_count: usize,
-    ) -> TestHarness {
-        TestHarness::new(TestConsolidationStore {
+    ) -> ConsolidationMemory {
+        ConsolidationMemory::from_store(Box::new(TestConsolidationStore::new(
             entity_count,
             trace_count,
             pref_count,
-            conversation_count: conv_count,
-        })
+            conv_count,
+        )))
     }
 
     #[tokio::test]
     async fn dedupe_entities_dry_run_returns_candidates() {
-        let h = build_harness(5, 0, 0, 0);
+        let h = build_memory(5, 0, 0, 0);
         let report = h
             .dedupe_entities(Some(0.85), Some(10), Some(true))
             .await
@@ -583,12 +499,15 @@ mod tests {
         assert!(report.dry_run);
         assert_eq!(report.candidates_found, 5);
         assert_eq!(report.mutations_applied, 0);
+        assert!(report.run_id.is_none());
         assert!(report.candidates.iter().all(|c| c.kind == "merge"));
     }
 
     #[tokio::test]
-    async fn dedupe_entities_execute_applies_mutations() {
-        let h = build_harness(3, 0, 0, 0);
+    async fn dedupe_entities_execute_applies_mutations_and_records_run() {
+        let store = TestConsolidationStore::new(3, 0, 0, 0);
+        let runs = store.recorded_runs.clone();
+        let h = ConsolidationMemory::from_store(Box::new(store));
         let report = h
             .dedupe_entities(Some(0.85), Some(10), Some(false))
             .await
@@ -597,11 +516,46 @@ mod tests {
         assert!(!report.dry_run);
         assert_eq!(report.mutations_applied, 3);
         assert!(report.run_id.is_some());
+        let recorded = runs.lock().unwrap();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].0, "dedupe_entities");
+    }
+
+    #[tokio::test]
+    async fn does_not_double_record_when_store_returns_run_id() {
+        let mut store = TestConsolidationStore::new(2, 0, 0, 0);
+        store.prepopulate_run_id = true;
+        let runs = store.recorded_runs.clone();
+        let h = ConsolidationMemory::from_store(Box::new(store));
+
+        let report = h.dedupe_entities(None, None, Some(false)).await.unwrap();
+        assert_eq!(report.run_id.as_deref(), Some("store-run-id"));
+        assert!(
+            runs.lock().unwrap().is_empty(),
+            "orchestrator must not duplicate ConsolidationRun when store already persisted one"
+        );
+    }
+
+    #[tokio::test]
+    async fn record_read_audit_delegates_to_store() {
+        let store = TestConsolidationStore::new(0, 0, 0, 0);
+        let audits = store.recorded_read_audits.clone();
+        let h = ConsolidationMemory::from_store(Box::new(store));
+
+        let mut record = ReadAuditRecord::new("preference lookup");
+        record.user_identifier = Some("alice".to_owned());
+        record.result_count = Some(2);
+        let audit_id = h.record_read_audit(&record).await.unwrap();
+
+        assert!(!audit_id.is_empty());
+        let recorded = audits.lock().unwrap();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0], record);
     }
 
     #[tokio::test]
     async fn summarize_long_traces_finds_candidates() {
-        let h = build_harness(0, 4, 0, 0);
+        let h = build_memory(0, 4, 0, 0);
         let report = h
             .summarize_long_traces(Some(10), Some(10), Some(true))
             .await
@@ -614,7 +568,7 @@ mod tests {
 
     #[tokio::test]
     async fn detect_superseded_preferences_finds_candidates() {
-        let h = build_harness(0, 0, 6, 0);
+        let h = build_memory(0, 0, 6, 0);
         let report = h
             .detect_superseded_preferences(Some(0.90), Some(10), Some(true))
             .await
@@ -627,7 +581,7 @@ mod tests {
 
     #[tokio::test]
     async fn archive_expired_conversations_finds_candidates() {
-        let h = build_harness(0, 0, 0, 8);
+        let h = build_memory(0, 0, 0, 8);
         let report = h
             .archive_expired_conversations(Some(90), Some(10), Some(true))
             .await
@@ -640,7 +594,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_all_executes_all_jobs() {
-        let h = build_harness(2, 3, 4, 5);
+        let h = build_memory(2, 3, 4, 5);
         let reports = h.run_all(Some(true)).await.unwrap();
 
         assert_eq!(reports.len(), 4);
@@ -652,7 +606,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_all_defaults_to_dry_run() {
-        let h = build_harness(2, 1, 1, 1);
+        let h = build_memory(2, 1, 1, 1);
         let reports = h.run_all(None).await.unwrap();
 
         assert!(reports.iter().all(|r| r.dry_run));
@@ -677,7 +631,7 @@ mod tests {
 
     #[tokio::test]
     async fn empty_store_returns_empty_report() {
-        let h = build_harness(0, 0, 0, 0);
+        let h = build_memory(0, 0, 0, 0);
         let report = h.dedupe_entities(None, None, None).await.unwrap();
         assert_eq!(report.candidates_found, 0);
         assert!(report.candidates.is_empty());
@@ -685,14 +639,14 @@ mod tests {
 
     #[tokio::test]
     async fn limit_restricts_candidates() {
-        let h = build_harness(100, 0, 0, 0);
+        let h = build_memory(100, 0, 0, 0);
         let report = h.dedupe_entities(None, Some(5), None).await.unwrap();
         assert_eq!(report.candidates_found, 5);
     }
 
     #[tokio::test]
     async fn candidate_has_required_fields() {
-        let h = build_harness(1, 0, 0, 0);
+        let h = build_memory(1, 0, 0, 0);
         let report = h.dedupe_entities(None, None, None).await.unwrap();
         let candidate = &report.candidates[0];
         assert!(!candidate.id.is_empty());
@@ -728,21 +682,18 @@ mod tests {
 
     #[tokio::test]
     async fn consolidation_memory_methods_directly_exercise_orchestrator() {
-        let store = Box::new(TestConsolidationStore {
-            entity_count: 2,
-            trace_count: 2,
-            pref_count: 2,
-            conversation_count: 2,
-        });
-        let memory = ConsolidationMemory::from_store(store);
+        let store = TestConsolidationStore::new(2, 2, 2, 2);
+        let runs = store.recorded_runs.clone();
+        let memory = ConsolidationMemory::from_store(Box::new(store));
 
         // Dry run
         let reports = memory.run_all(Some(true)).await.unwrap();
         assert_eq!(reports.len(), 4);
         assert!(reports.iter().all(|r| r.dry_run));
         assert!(reports.iter().all(|r| r.run_id.is_none()));
+        assert!(runs.lock().unwrap().is_empty());
 
-        // Mutating run (records run_id)
+        // Mutating run (records run_id via store)
         let dedupe = memory
             .dedupe_entities(None, None, Some(false))
             .await
@@ -770,5 +721,7 @@ mod tests {
             .unwrap();
         assert!(!convs.dry_run);
         assert!(convs.run_id.is_some());
+
+        assert_eq!(runs.lock().unwrap().len(), 4);
     }
 }

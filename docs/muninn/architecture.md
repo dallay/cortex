@@ -112,20 +112,20 @@ The graph database stores all persistent memory data using a Cypher-based schema
 
 Muninn exposes its memory capabilities through the Model Context Protocol (MCP):
 
-- **Tools**: Memory read, write, search, and consolidation operations
-- **Transport**: stdio and HTTP sessions
-- **Discovery**: Runtime registries with profile-based tool exposure
-- **Core tools**: 6 essential memory operations
-- **Extended tools**: 16+ advanced operations (extraction, enrichment, etc.)
+- **Implemented (`crates/muninn/mcp`)**: Protocol framing, stdio transport, runtime tool registries (`core`, `extended`, `extended-platinum`, `scoped-retrieval`), prompt/resource definitions, and search handler wiring in the `apps/muninn` CLI.
+- **Target / In Progress**: Full production handler wiring in `apps/muninn` for all 6 core tools (read, write, search, consolidation) and 16+ extended tools, HTTP session transport, and end-to-end MCP authorization.
 
 ## Consolidation
 
-Automatic consolidation maintains memory quality over time:
+Explicit, dry-runnable consolidation hygiene jobs maintain memory quality over time (`ConsolidationMemory` + `Neo4jConsolidationStore`):
 
-- **Deduplication**: Identifies and merges duplicate entities
-- **Summarization**: Compresses conversation history into concise summaries
-- **Entity Resolution**: Links entities across sessions using name normalization and external data
-- **Enrichment**: Enhances entities with geocoding, Wikidata, and other external sources
+- **Implemented**:
+  - **Entity Deduplication (`dedupe_entities`)**: Finds high-similarity entity pairs via `entity_embedding_idx` and flags them with `:SAME_AS` (`status = 'auto_consolidated'`).
+  - **Long Trace Flagging (`summarize_long_traces`)**: Identifies reasoning traces exceeding a step threshold and marks `summarization_pending = true`.
+  - **Preference Supersession (`detect_superseded_preferences`)**: Detects newer near-duplicate preferences within the same category and owner namespace and links `:SUPERSEDED_BY` with `valid_until`.
+  - **Conversation Archival (`archive_expired_conversations`)**: Marks expired conversations with `archived = true` and `archived_at` without deleting data.
+  - **Persistent Audit Nodes**: Mutating runs persist `:ConsolidationRun` nodes; explicit read audits persist `:MemoryReadAudit` nodes with optional `(:User)-[:PERFORMED_READ]` edges (`BOLT-08-11`).
+- **Target / In Progress**: Scheduled/automatic background execution (jobs are currently caller-invoked and default to `dry_run = true`), LLM-driven trace summarization, and automated legacy conversation migration tooling.
 
 ## Health and Observability
 

@@ -543,9 +543,25 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Install Gitleaks CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz \
-            | tar -xzf - -C /usr/local/bin gitleaks
+          set -euo pipefail
+          archive="$(mktemp)"
+          trap 'rm -f "$archive"' EXIT
+          if ! gh release download v8.28.0 \
+            --repo gitleaks/gitleaks \
+            --pattern gitleaks_8.28.0_linux_x64.tar.gz \
+            --output "$archive" \
+            --clobber; then
+            curl -sSfL \
+              --retry 5 \
+              --retry-all-errors \
+              --retry-delay 2 \
+              -o "$archive" \
+              https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz
+          fi
+          tar -xzf "$archive" -C /usr/local/bin gitleaks
           gitleaks --version
       - name: Analyze commit history
         env:
@@ -564,7 +580,7 @@ jobs:
             --report-path reports/gitleaks/gitleaks-pr.sarif \
             --exit-code 1
       - name: Upload Gitleaks SARIF
-        if: always()
+        if: always() && hashFiles('reports/gitleaks/gitleaks-pr.sarif') != ''
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e
         with:
           sarif_file: reports/gitleaks/gitleaks-pr.sarif
@@ -684,6 +700,16 @@ jobs:
         options: >-
           --tmpfs /data:rw,noexec,nosuid,size=1g
           --tmpfs /logs:rw,noexec,nosuid,size=256m
+      consolidation:
+        image: neo4j:5.26-community@sha256:414adfe41c6ff32abb752be37f265c77607c166cab298f65a917fc4f05776218
+        env:
+          NEO4J_db_transaction_timeout: 5s
+          NEO4J_db_lock_acquisition_timeout: 5s
+          NEO4J_db_transaction_monitor_check_interval: 500ms
+          NEO4J_AUTH: neo4j/${{ github.run_id }}-${{ github.run_attempt }}-coverage
+        options: >-
+          --tmpfs /data:rw,noexec,nosuid,size=1g
+          --tmpfs /logs:rw,noexec,nosuid,size=256m
     needs: [ changes, build-dashboard, test ]
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.github == 'true'
     permissions:
@@ -693,9 +719,11 @@ jobs:
       NEO4J_FIXTURE_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}-coverage
       MUNINN_FIXTURE_URI: bolt://neo4j:7687
       MUNINN_FIXTURE_DISPOSABLE: '1'
+      MUNINN_REQUIRE_NEO4J: '1'
       MUNINN_ISOLATION_URI: bolt://isolation:7687
       MUNINN_PREFERENCES_URI: bolt://preferences:7687
       MUNINN_SUMMARY_URI: bolt://summary:7687
+      MUNINN_CONSOLIDATION_URI: bolt://consolidation:7687
       MUNINN_FIXTURE_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}-coverage
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

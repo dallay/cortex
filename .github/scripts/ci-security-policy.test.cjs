@@ -25,8 +25,9 @@ it('describes both product versions as pre-GA without inventing support',
       assert.doesNotMatch(security, /(?:>=\s*2\.x|1\.x).*:white_check_mark:/);
 
       for (const product of ['Rook', 'Huginn']) {
-        assert.ok(
-            security.includes(`| ${product} | No published GitHub Release |`),
+        assert.match(
+            security,
+            new RegExp(`\\|\\s*${product}\\s*\\|\\s*No published GitHub Release\\s*\\|`),
             `${product} must have its own honest support row`);
         const version = manifest[`apps/${product.toLowerCase()}`];
         assert.ok(security.includes(`tracks \`${version}\` for`),

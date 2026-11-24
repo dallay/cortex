@@ -14,7 +14,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::bolt::{column, opt_string, opt_vector, row_values, to_json, Props};
-use crate::client::{Neo4jClient, Params};
+use crate::client::{transaction_rows, Neo4jClient, Params};
 use crate::queries::long_term as q;
 
 #[derive(Clone)]
@@ -28,7 +28,18 @@ const NULL: BoltType = BoltType::Null(BoltNull);
 /// `limit: 3`).
 const DUPLICATE_CANDIDATES: i64 = 3;
 
-const PREFERENCE_WRITE_LOCK: &str = "MERGE (l:PreferenceWriteLock {id:'preferences'}) SET l.version = coalesce(l.version, 0) + 1 RETURN l.version AS version";
+pub(crate) const PREFERENCE_WRITE_LOCK: &str = "MERGE (l:PreferenceWriteLock {id:'preferences'}) SET l.version = coalesce(l.version, 0) + 1 RETURN l.version AS version";
+
+pub(crate) async fn require_preference_lock_constraint(client: &Neo4jClient) -> MemoryResult<()> {
+    let constraints = client.execute(
+            "SHOW CONSTRAINTS YIELD type, labelsOrTypes, properties WHERE type = 'UNIQUENESS' AND labelsOrTypes = ['PreferenceWriteLock'] AND properties = ['id'] RETURN type", vec![]).await?;
+    if constraints.len() != 1 {
+        return Err(MemoryError::storage(
+            "preference write lock requires its unique constraint; run schema setup",
+        ));
+    }
+    Ok(())
+}
 
 const PREFERENCE_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -80,30 +91,6 @@ async fn preference_transaction_rows<T>(
 ) -> MemoryResult<Vec<Row>> {
     control.check()?;
     transaction_rows(txn, cypher, params).await
-}
-
-async fn transaction_rows(
-    txn: &mut neo4rs::Txn,
-    cypher: &str,
-    params: Params,
-) -> MemoryResult<Vec<Row>> {
-    let mut query = neo4rs::Query::new(cypher.to_owned());
-    for (name, value) in params {
-        query = query.param(name, value);
-    }
-    let mut stream = txn
-        .execute(query)
-        .await
-        .map_err(|e| MemoryError::storage(e.to_string()))?;
-    let mut rows = Vec::new();
-    while let Some(row) = stream
-        .next(txn.handle())
-        .await
-        .map_err(|e| MemoryError::storage(e.to_string()))?
-    {
-        rows.push(row);
-    }
-    Ok(rows)
 }
 
 fn fact_params(fact: &Fact) -> Params {
@@ -318,13 +305,7 @@ impl Neo4jLongTermStore {
         control.check()?;
         self.require_preference_timeouts().await?;
         control.check()?;
-        let constraints = self.client.execute(
-            "SHOW CONSTRAINTS YIELD type, labelsOrTypes, properties WHERE type = 'UNIQUENESS' AND labelsOrTypes = ['PreferenceWriteLock'] AND properties = ['id'] RETURN type", vec![]).await?;
-        if constraints.len() != 1 {
-            return Err(MemoryError::storage(
-                "preference write lock requires its unique constraint; run schema setup",
-            ));
-        }
+        require_preference_lock_constraint(&self.client).await?;
         control.check()?;
         self.client.start_txn().await
     }
