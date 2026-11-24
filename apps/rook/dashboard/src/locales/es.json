@@ -177,6 +177,24 @@
 		"budgetValidation": "Escribe importes positivos con un máximo de 6 decimales. El límite por solicitud no puede superar el presupuesto total."
 	},
 	"providers": {
+		"codex": {
+			"title": "Cuentas de Codex",
+			"description": "Vincula cuentas de ChatGPT en el navegador. Las cuentas vinculadas no atienden solicitudes a modelos en Rook.",
+			"localOnly": "Un operador debe habilitar Codex. Abre el panel en el mismo equipo que el servidor de Rook.",
+			"accounts": "Cuentas de Codex vinculadas",
+			"accountId": "Cuenta {id}",
+			"empty": "No hay cuentas de Codex vinculadas.",
+			"start": "Vincular una cuenta de ChatGPT",
+			"continue": "Continuar con ChatGPT (nueva pestaña)",
+			"error": "Rook no pudo cargar o cambiar las cuentas de Codex. Comprueba el estado y vuelve a intentarlo.",
+			"status": {
+				"pending": "A la espera del inicio de sesión en ChatGPT.",
+				"linked": "Cuenta de ChatGPT vinculada.",
+				"cancelled": "Inicio de sesión cancelado.",
+				"expired": "El inicio de sesión caducó. Inícialo de nuevo.",
+				"failed": "No se pudo iniciar sesión. Vuelve a intentarlo o pide al operador que revise el registro OAuth."
+			}
+		},
 		"description": "Configura tus proveedores AI y su estado",
 		"add": "Añadir Proveedor",
 		"addProvider": "Agregar proveedor",

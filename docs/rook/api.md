@@ -282,3 +282,23 @@ A client adopts the CSRF replacement pair returned by a state-changing response 
 handlers issue tokens for the resulting session context. In particular, a successful logout can return no replacement pair if the server cannot generate the anonymous token, even when the request carried a valid pair. After such a logout, the client must call public `GET /login` to obtain a fresh anonymous CSRF pair before its next state-changing request.
 
 For first-run installation, use the bootstrap API above. For pre-seeding an admin password in a controlled environment, use `rook seed-admin` with the `$ROOK_SEED_PASSWORD` environment variable set.
+
+### Codex account management
+
+These endpoints require a Management session. `POST` and `DELETE` also require
+CSRF double-submit validation. They do not expose provider credentials.
+
+- `GET /api/codex/accounts` returns `enabled`, `accounts` (each with a local
+  `id`), and `attempt` (`null`, or `id` and `status`). Attempt statuses are
+  `pending`, `linked`, `cancelled`, `expired`, and `failed`.
+- `POST /api/codex/login` returns `id` and the OpenAI `authUrl`. It returns
+  `409` when an attempt is pending or the account limit has been reached. It
+  returns `503` when linking is disabled or unavailable.
+- `DELETE /api/codex/login/{id}` returns `204` if it cancels the pending attempt,
+  or `404` if the ID does not match a pending attempt.
+
+The OpenAI browser redirect uses `GET /api/codex/callback`, without a Rook
+session cookie. It requires the pending attempt's single-use OAuth `state`.
+Invalid, expired, or replayed callbacks return `400`. Accepted callbacks return
+`303` to a static, query-free result page. The dashboard reads the outcome from
+`GET /api/codex/accounts`; neither page exposes tokens.

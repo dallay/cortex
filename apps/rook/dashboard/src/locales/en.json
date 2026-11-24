@@ -132,6 +132,24 @@
 		"budgetValidation": "Enter positive amounts with at most 6 decimal places. The per-request limit must not exceed the total budget."
 	},
 	"providers": {
+		"codex": {
+			"title": "Codex accounts",
+			"description": "Link ChatGPT accounts in your browser. Linked accounts do not serve model requests in Rook.",
+			"localOnly": "An operator must enable Codex. Open the dashboard on the same host as the Rook server.",
+			"accounts": "Linked Codex accounts",
+			"accountId": "Account {id}",
+			"empty": "No Codex accounts are linked.",
+			"start": "Link a ChatGPT account",
+			"continue": "Continue with ChatGPT (new tab)",
+			"error": "Rook could not load or change the Codex accounts. Check the current status and try again.",
+			"status": {
+				"pending": "Waiting for ChatGPT sign-in.",
+				"linked": "ChatGPT account linked.",
+				"cancelled": "Sign-in cancelled.",
+				"expired": "Sign-in expired. Start again to retry.",
+				"failed": "Sign-in failed. Try again or ask the operator to check the OAuth registration."
+			}
+		},
 		"description": "Configure your AI providers and their status",
 		"add": "Add Provider",
 		"addProvider": "Add Provider",

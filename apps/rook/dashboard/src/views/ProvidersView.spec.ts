@@ -253,6 +253,20 @@ describe("ProvidersView descriptor requests", () => {
 		expect(state.providersFetch).toHaveBeenCalledTimes(2);
 	});
 
+	it("opens a dedicated Codex dialog instead of the API key form", async () => {
+		const wrapper = mountView();
+		wrapper
+			.findComponent({ name: "ProviderCategorySection" })
+			.vm.$emit("add", "openai-codex");
+		await flushPromises();
+		expect(
+			wrapper.findComponent({ name: "AddProviderDialog" }).props("open"),
+		).toBe(false);
+		expect(
+			wrapper.findComponent({ name: "CodexAccountsDialog" }).props("open"),
+		).toBe(true);
+	});
+
 	it("opens and closes AddProviderDialog on section add, saved, and deleted events", async () => {
 		const wrapper = mountView();
 		const section = wrapper.findComponent({ name: "ProviderCategorySection" });

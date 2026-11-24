@@ -660,3 +660,47 @@ There is no minimum provider requirement at startup — the registry starts empt
 ```
 
 See `dev/e2e/run-api-keys-e2e.sh` for the full script.
+
+### Codex account linking (local only)
+
+Rook requires an operator-provided OpenAI OAuth client registration that permits
+an authorization code flow with PKCE (`S256`) and the exact loopback redirect below.
+Do not reuse a client ID from another application or the Codex CLI. A ChatGPT
+account or an OpenAI API key alone is not an OAuth client registration. If OpenAI
+has not provisioned a compatible registration for you, leave linking disabled.
+
+Run Rook as an unprivileged Unix user. Create a dedicated state directory owned
+by that user with permissions `0700`. Supply a dedicated random passphrase in
+`ROOK_CODEX_ENCRYPTION_PASSPHRASE` and a random 16-byte salt, encoded as
+unpadded base64url, in `ROOK_CODEX_ENCRYPTION_SALT`. Preserve both securely across
+restarts. Do not set either value in the dashboard.
+
+```toml
+[server]
+host = "127.0.0.1"
+port = 8080
+
+[server.codex_accounts]
+client_id = "<operator-registered-client-id>"
+redirect_uri = "http://127.0.0.1:8080/api/codex/callback"
+state_dir = "/absolute/path/to/rook-codex-state"
+```
+
+Omit `[server.codex_accounts]` to disable linking. Rook rejects a non-Unix host,
+a non-loopback listener, port zero, and a redirect URI that does not exactly
+match the configured listener and callback path. The callback uses Rook's
+existing listener; it does not open a second port. Do not publish or reverse-proxy
+the listener. Open the dashboard in a browser that shares Rook's loopback network.
+Remote browsers and ordinary container port mappings are not supported. The
+dashboard provider catalog also requires `[provider_crud] enabled = true`. If you
+configure `[rate_limiting.ip_limits]`, use a positive `requests_per_minute` so
+that the browser can reach the callback without a session cookie.
+
+Rook allows one pending attempt per instance. An unused authorization expires
+after five minutes. Rook stores up to 32 links, each with a generated local ID
+and separate encrypted credentials. A record confirms a successful code exchange;
+it does not assert a verified email, plan, or distinct identity at OpenAI. Rook
+does not refresh tokens or check their current validity. Linked records survive
+restarts. Pending attempts do not. Disabling linking does not delete or revoke
+any account. The OAuth store does not read or migrate existing Codex CLI profiles
+or Rook provider connections. Protect the state directory and its backups.

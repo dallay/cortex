@@ -435,3 +435,16 @@ The provider registry is populated from the database on startup via `refresh_reg
 4. Add to `Cargo.toml` workspace members
 5. Add match arm in `apps/rook/src/di.rs` → `build_provider_from_connection()`
 6. Add tests
+
+### OpenAI Codex accounts
+
+In **OAuth Providers**, select **OpenAI Codex**, start a new ChatGPT login, then
+follow **Continue with ChatGPT** to open the official sign-in in a new tab. The
+dialog shows local link IDs and the current attempt status. To link another
+account, select it on the OpenAI sign-in page. Use **Cancel** to
+stop a pending attempt. This feature requires the local-only operator setup
+in [Configuration](configuration.md#codex-account-linking-local-only).
+
+Linked accounts do not provide inference, create a routing connection, or
+change an existing provider connection. To use OpenAI models with an API key,
+continue to use **OpenAI** under **API Key Providers**.

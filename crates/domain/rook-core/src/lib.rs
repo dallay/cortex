@@ -60,3 +60,5 @@ mod api_key_tests {
         assert!(ApiKeyScope::parse("read").is_err()); // non-canonical → UnknownScope
     }
 }
+
+pub mod codex_accounts;

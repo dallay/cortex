@@ -8,6 +8,7 @@ pub mod anthropic_adapter;
 pub mod api_key_dto;
 pub mod authz;
 pub mod bootstrap_helpers;
+mod codex_routes;
 pub mod combo_dto;
 pub mod combo_routes;
 pub mod handlers;

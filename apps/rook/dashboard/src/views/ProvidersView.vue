@@ -18,6 +18,7 @@ import {SearchX} from "@lucide/vue";
 import {computed, onMounted, ref} from "vue";
 import {useI18n} from "vue-i18n";
 import AddProviderDialog from "@/components/AddProviderDialog.vue";
+import CodexAccountsDialog from "@/components/CodexAccountsDialog.vue";
 import CompatibleConnectionsSection from "@/components/CompatibleConnectionsSection.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import ErrorBanner from "@/components/ErrorBanner.vue";
@@ -101,7 +102,13 @@ const visibleSections = computed(() => {
 const addDialogOpen = ref(false);
 const addDialogKind = ref<ProviderKind | undefined>(undefined);
 
+const codexDialogOpen = ref(false);
+
 function openAddDialog(kind: ProviderKind) {
+  if (kind === "openai-codex") {
+    codexDialogOpen.value = true;
+    return;
+  }
   addDialogKind.value = kind;
   addDialogOpen.value = true;
 }
@@ -170,6 +177,8 @@ function onDeleted() {
         </template>
       </EmptyState>
     </template>
+
+    <CodexAccountsDialog v-model:open="codexDialogOpen" />
 
     <AddProviderDialog
       v-model:open="addDialogOpen"

@@ -409,6 +409,12 @@ pub async fn middleware(
 
 pub fn classify_route(method: &Method, path: &str) -> AuthTier {
     if method == Method::OPTIONS
+        || (method == Method::GET
+            && matches!(
+                path,
+                rook_core::codex_accounts::CODEX_CALLBACK_PATH
+                    | crate::codex_routes::CODEX_RESULT_PATH
+            ))
         || path == "/"
         || path == "/health"
         || path == "/status"

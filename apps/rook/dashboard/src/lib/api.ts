@@ -469,6 +469,15 @@ export interface ProviderConnectionResponse {
 	oauthTenantId?: string | null;
 }
 
+export interface CodexAccountsResponse {
+	enabled: boolean;
+	accounts: { id: string }[];
+	attempt: {
+		id: string;
+		status: "pending" | "linked" | "cancelled" | "expired" | "failed";
+	} | null;
+}
+
 export const OAUTH_FLOW_TYPES = {
 	AUTHORIZATION_CODE: "authorizationCode",
 	DEVICE_CODE: "deviceCode",
@@ -757,7 +766,8 @@ function createApiClient() {
 	function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 		const method = (options.method || "GET").toUpperCase();
 		const isStateChanging = ["POST", "PUT", "DELETE", "PATCH"].includes(method);
-		if (!isStateChanging) return performRequest<T>(path, options);
+		if (!isStateChanging)
+			return performRequest<T>(path, options, options.signal ?? undefined);
 
 		// Response headers may rotate the token. Serialize mutations so the next
 		// request cannot dispatch with a token that predates the prior response.
@@ -1067,6 +1077,20 @@ function createApiClient() {
 					body: JSON.stringify(payload),
 				},
 			);
+		},
+
+		getCodexAccounts(signal: AbortSignal): Promise<CodexAccountsResponse> {
+			return request("/api/codex/accounts", { signal });
+		},
+
+		startCodexLogin(): Promise<{ id: string; authUrl: string }> {
+			return request("/api/codex/login", { method: "POST" });
+		},
+
+		cancelCodexLogin(id: string): Promise<void> {
+			return request(`/api/codex/login/${encodeURIComponent(id)}`, {
+				method: "DELETE",
+			});
 		},
 
 		async startOAuthFlow(
