@@ -28,7 +28,7 @@ const NULL: BoltType = BoltType::Null(BoltNull);
 /// `limit: 3`).
 const DUPLICATE_CANDIDATES: i64 = 3;
 
-const PREFERENCE_WRITE_LOCK: &str = "MERGE (l:PreferenceWriteLock {id:'preferences'}) SET l.version = coalesce(l.version, 0) + 1 RETURN l.version AS version";
+pub(crate) const PREFERENCE_WRITE_LOCK: &str = "MERGE (l:PreferenceWriteLock {id:'preferences'}) SET l.version = coalesce(l.version, 0) + 1 RETURN l.version AS version";
 
 const PREFERENCE_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
 

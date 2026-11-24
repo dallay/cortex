@@ -98,11 +98,19 @@ ORDER BY score DESC, old_id ASC, new_id ASC
 LIMIT $limit
 ";
 
-/// Mark an older preference as superseded by a newer preference.
+/// Mark an older preference as superseded by a newer preference, rechecking
+/// exact owner-set equality at write time so concurrent ownership changes
+/// cannot cross tenant boundaries.
 pub const APPLY_SUPERSEDE_PREFERENCE: &str = "
 MATCH (old:Preference {id: $old_id})
 MATCH (new:Preference {id: $new_id})
 WHERE NOT (old)-[:SUPERSEDED_BY]->()
+OPTIONAL MATCH (u_old:User)-[:HAS_PREFERENCE]->(old)
+OPTIONAL MATCH (u_new:User)-[:HAS_PREFERENCE]->(new)
+WITH old, new,
+     collect(DISTINCT u_old.identifier) AS old_owners,
+     collect(DISTINCT u_new.identifier) AS new_owners
+WHERE old_owners = new_owners
 MERGE (old)-[:SUPERSEDED_BY]->(new)
 SET old.valid_until = coalesce(old.valid_until, datetime())
 RETURN count(old) AS updated
@@ -184,6 +192,7 @@ mod tests {
         assert!(FIND_SUPERSEDED_PREFERENCES.contains("HAS_PREFERENCE"));
         assert!(FIND_SUPERSEDED_PREFERENCES.contains("WHERE old_owners = new_owners"));
         assert!(!FIND_SUPERSEDED_PREFERENCES.contains("ABOUT"));
+        assert!(APPLY_SUPERSEDE_PREFERENCE.contains("WHERE old_owners = new_owners"));
         assert!(APPLY_SUPERSEDE_PREFERENCE.contains("MERGE (old)-[:SUPERSEDED_BY]->(new)"));
         assert!(APPLY_SUPERSEDE_PREFERENCE.contains("old.valid_until"));
     }

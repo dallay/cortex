@@ -144,12 +144,38 @@ async fn consolidation_persists_mutations_and_audit_nodes() {
         .await
         .unwrap();
 
-    // Wait briefly for Neo4j vector indexes to populate the newly created nodes.
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // Poll read-only dry-run candidate queries until Neo4j vector indexes have
+    // indexed the newly created Entity and Preference nodes.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let (dedupe_ready, prefs_ready) = loop {
+        let dedupe_probe = consolidation
+            .dedupe_entities(Some(0.95), Some(10), Some(true))
+            .await
+            .unwrap();
+        let prefs_probe = consolidation
+            .detect_superseded_preferences(Some(0.95), Some(10), Some(true))
+            .await
+            .unwrap();
+        if dedupe_probe.candidates_found > 0 && prefs_probe.candidates_found > 0 {
+            break (dedupe_probe, prefs_probe);
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for vector index readiness; last observed dedupe_candidates={}, preference_candidates={}",
+            dedupe_probe.candidates_found,
+            prefs_probe.candidates_found
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    };
 
     let before_dry_run = graph_snapshot(&client).await;
 
     // --- Dry-run checks: must find candidates and make zero graph mutations ---
+    assert!(dedupe_ready.dry_run);
+    assert_eq!(dedupe_ready.candidates_found, 1);
+    assert_eq!(dedupe_ready.mutations_applied, 0);
+    assert!(dedupe_ready.run_id.is_none());
+
     let dedupe_dry = consolidation
         .dedupe_entities(Some(0.95), Some(10), Some(true))
         .await
@@ -168,6 +194,11 @@ async fn consolidation_persists_mutations_and_audit_nodes() {
     assert_eq!(traces_dry.candidates[0].id, "trace-long");
     assert_eq!(traces_dry.mutations_applied, 0);
     assert!(traces_dry.run_id.is_none());
+
+    assert!(prefs_ready.dry_run);
+    assert_eq!(prefs_ready.candidates_found, 1);
+    assert_eq!(prefs_ready.mutations_applied, 0);
+    assert!(prefs_ready.run_id.is_none());
 
     let prefs_dry = consolidation
         .detect_superseded_preferences(Some(0.95), Some(10), Some(true))
