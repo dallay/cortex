@@ -424,15 +424,86 @@ def validate(report, root=ROOT):
     return counts
 
 
+def summarize_report(report):
+    """Compute deterministic summary counts directly from the curated JSON artifact."""
+    entries = report.get("entries")
+    if not isinstance(entries, list):
+        fail("entries debe ser una lista")
+    counts = {
+        "entries": len(entries),
+        "mapped_reference_test": 0,
+        "failed_reference_test": 0,
+        "planned_test": 0,
+        "rejected_association": 0,
+    }
+    mapped_operations = set()
+    for entry in entries:
+        kind = entry.get("kind")
+        if kind not in counts:
+            fail(f"Tipo de enlace desconocido: {kind}")
+        counts[kind] += 1
+        if kind == "mapped_reference_test":
+            mapped_operations.add(entry.get("operation"))
+    counts["mapped_operations"] = len(mapped_operations)
+    return counts
+
+
+def render_markdown(report):
+    """Render the canonical Markdown summary directly from api-test-traceability.json."""
+    counts = summarize_report(report)
+    return (
+        "# API / TCK / integration traceability\n"
+        "\n"
+        "Generated from `docs/muninn/specs/api-test-traceability.json` by "
+        "`dev/muninn/api_test_traceability.py`. Do not edit manually.\n"
+        "\n"
+        f"- **Schema version:** `{report['schema_version']}`\n"
+        f"- **Scope:** `{report['scope']}`\n"
+        f"- **Reference commit (`agent-memory`):** `{report['reference_commit']}`\n"
+        f"- **Reference TCK commit (`agent-memory-tck`):** `{report['tck_commit']}`\n"
+        f"- **Execution this run:** `{report['execution_this_run']}`\n"
+        f"- **Parity claim:** `{str(report['parity_claim']).lower()}`\n"
+        f"- **Curated entries:** `{counts['entries']}`\n"
+        f"- **Distinct positive mapped operations:** `{counts['mapped_operations']}`\n"
+        "\n"
+        "| Entry kind | Count |\n"
+        "|------------|------:|\n"
+        f"| `mapped_reference_test` | {counts['mapped_reference_test']} |\n"
+        f"| `failed_reference_test` | {counts['failed_reference_test']} |\n"
+        f"| `planned_test` | {counts['planned_test']} |\n"
+        f"| `rejected_association` | {counts['rejected_association']} |\n"
+        "\n"
+        "This artifact tracks curated reference traceability only. It is not a\n"
+        "product TCK execution report and does not establish functional parity.\n"
+    )
+
+
+def validate_markdown_sync(report, markdown_text):
+    """Fail closed if api-test-traceability.md diverges from api-test-traceability.json."""
+    expected = render_markdown(report)
+    if markdown_text.strip() != expected.strip():
+        fail(
+            "Markdown de trazabilidad desincronizado respecto a api-test-traceability.json; "
+            "regenerar desde el JSON canónico"
+        )
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="Valida el sidecar sin escribir")
+    parser.add_argument("--check-md", action="store_true", help="Valida sincronía de api-test-traceability.md sin caché TCK")
     args = parser.parse_args(argv)
-    if not args.check:
-        parser.error("solo se admite --check; el sidecar se revisa manualmente")
+    if not args.check and not args.check_md:
+        parser.error("solo se admite --check o --check-md; el sidecar se revisa manualmente")
     try:
         report = read_json(REPORT)
+        md_path = ROOT / "docs/muninn/specs/api-test-traceability.md"
+        if args.check_md:
+            validate_markdown_sync(report, md_path.read_text(encoding="utf-8"))
+            print(json.dumps(summarize_report(report), sort_keys=True))
+            return 0
         counts = validate(report)
+        validate_markdown_sync(report, md_path.read_text(encoding="utf-8"))
     except TraceabilityError as error:
         parser.exit(1, f"Trazabilidad inválida: {error}\n")
     print(json.dumps(counts, sort_keys=True))

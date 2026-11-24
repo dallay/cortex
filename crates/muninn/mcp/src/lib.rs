@@ -6,10 +6,16 @@
 //! - [`prompts`] — MCP prompt definitions
 //! - [`resources`] — MCP resource definitions
 
+pub mod auth;
 pub mod observer;
 pub mod preference_detector;
 pub mod prompts;
 pub mod resources;
+
+pub use auth::{
+    authorize_bearer_header, normalize_transport, AuthError, McpHttpAuthMode, McpHttpConfig,
+    McpTransport, RedactedToken, TokenVerifier, VerifiedPrincipal,
+};
 
 pub use observer::{MemoryObserver, Observation, ObserverConfig, SessionContext};
 pub use preference_detector::{DetectedPreference, PreferenceDetector};

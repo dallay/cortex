@@ -1,0 +1,7 @@
+change: muninn-eval-memory-api
+current_phase: verify
+completed: [ propose, tasks, apply ]
+status: working
+next: verify
+updated: 2026-11-24
+# EvalMemory product API and unit tests implemented, strictly separate from H5 and Huginn benchmarking.

@@ -16,6 +16,7 @@ pub mod query;
 pub mod reasoning;
 pub mod schema;
 pub mod short_term;
+pub mod spatial;
 
 pub use client::{Neo4jClient, Neo4jConfig};
 pub use consolidation::Neo4jConsolidationStore;
@@ -25,3 +26,4 @@ pub use query::Neo4jCypherQuery;
 pub use reasoning::Neo4jReasoningStore;
 pub use schema::{SchemaManager, DEFAULT_VECTOR_DIMENSIONS};
 pub use short_term::Neo4jShortTermStore;
+pub use spatial::Neo4jSpatialStore;

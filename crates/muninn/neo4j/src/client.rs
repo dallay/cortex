@@ -1,5 +1,7 @@
 //! Thin Neo4j client used by every store.
 
+use async_trait::async_trait;
+use muninn_core::ports::WriteExecutor;
 use muninn_core::{MemoryError, MemoryResult};
 use neo4rs::{BoltType, ConfigBuilder, Graph, Query, Row};
 
@@ -240,4 +242,37 @@ pub(crate) async fn transaction_rows(
 
 fn storage_error(error: neo4rs::Error) -> MemoryError {
     MemoryError::storage(error.to_string())
+}
+
+#[async_trait]
+impl WriteExecutor for Neo4jClient {
+    async fn execute_write(
+        &self,
+        cypher: &str,
+        params: &serde_json::Map<String, serde_json::Value>,
+    ) -> MemoryResult<()> {
+        let mut query = Query::new(cypher.to_owned());
+        for (name, value) in params {
+            query = query.param(name.as_str(), crate::bolt::from_json(value));
+        }
+        let mut txn = self.start_txn().await?;
+        let outcome = async {
+            let mut stream = txn.execute(query).await.map_err(storage_error)?;
+            while stream
+                .next(txn.handle())
+                .await
+                .map_err(storage_error)?
+                .is_some()
+            {}
+            Ok::<_, MemoryError>(())
+        }
+        .await;
+        match outcome {
+            Ok(()) => txn.commit().await.map_err(storage_error),
+            Err(error) => {
+                let _ = txn.rollback().await;
+                Err(error)
+            }
+        }
+    }
 }

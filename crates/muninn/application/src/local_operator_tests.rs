@@ -591,3 +591,331 @@ impl ReasoningStore for Store {
         unreachable!("unexpected entity_provenance")
     }
 }
+
+struct AtomicShortTermStore {
+    fail_next_atomic: std::sync::atomic::AtomicBool,
+    atomic_calls: std::sync::atomic::AtomicUsize,
+    append_calls: std::sync::atomic::AtomicUsize,
+    committed_messages: Mutex<Vec<MessageRecord>>,
+    committed_batches: Mutex<Vec<muninn_core::ports::AtomicExtractionBatch>>,
+}
+
+impl Default for AtomicShortTermStore {
+    fn default() -> Self {
+        Self {
+            fail_next_atomic: std::sync::atomic::AtomicBool::new(false),
+            atomic_calls: std::sync::atomic::AtomicUsize::new(0),
+            append_calls: std::sync::atomic::AtomicUsize::new(0),
+            committed_messages: Mutex::new(Vec::new()),
+            committed_batches: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+fn atomic_record_to_message(
+    record: &MessageRecord,
+    conversation_id: Uuid,
+) -> MemoryResult<Message> {
+    Ok(Message {
+        id: record.id,
+        role: record.role.parse()?,
+        content: record.content.clone(),
+        conversation_id: Some(conversation_id),
+        created_at: record.timestamp.unwrap_or_else(chrono::Utc::now),
+        embedding: record.embedding.clone(),
+        metadata: record.metadata.clone(),
+    })
+}
+
+#[async_trait]
+impl ShortTermStore for AtomicShortTermStore {
+    async fn ensure_conversation(
+        &self,
+        _: &str,
+        _: Option<Uuid>,
+        _: &OwnerScope,
+    ) -> MemoryResult<Uuid> {
+        Ok(CONVERSATION)
+    }
+    async fn find_by_operation_key(
+        &self,
+        conversation_id: Uuid,
+        _: &OwnerScope,
+        operation_key: &str,
+    ) -> MemoryResult<Option<KeyedMessage>> {
+        let committed = self.committed_messages.lock().unwrap();
+        let found = committed
+            .iter()
+            .find(|r| r.operation_key.as_deref() == Some(operation_key));
+        match found {
+            Some(record) => Ok(Some(KeyedMessage {
+                message: atomic_record_to_message(record, conversation_id)?,
+                operation_payload: record.operation_payload.clone(),
+            })),
+            None => Ok(None),
+        }
+    }
+    async fn append_message(
+        &self,
+        conversation_id: Uuid,
+        _: &OwnerScope,
+        record: &MessageRecord,
+    ) -> MemoryResult<Message> {
+        self.append_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.committed_messages.lock().unwrap().push(record.clone());
+        atomic_record_to_message(record, conversation_id)
+    }
+    async fn append_message_atomic(
+        &self,
+        conversation_id: Uuid,
+        _: &OwnerScope,
+        record: &MessageRecord,
+        extraction: &muninn_core::ports::AtomicExtractionBatch,
+    ) -> MemoryResult<Option<Message>> {
+        self.atomic_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if self
+            .fail_next_atomic
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(MemoryError::storage("simulated extraction write failure"));
+        }
+        let mut committed = self.committed_messages.lock().unwrap();
+        if let Some(key) = record.operation_key.as_deref() {
+            if let Some(existing) = committed
+                .iter()
+                .find(|r| r.operation_key.as_deref() == Some(key))
+            {
+                if existing.operation_payload != record.operation_payload {
+                    return Err(MemoryError::invalid(
+                        "operation_key conflicts with an existing payload or conversation scope",
+                    ));
+                }
+                return Ok(Some(atomic_record_to_message(existing, conversation_id)?));
+            }
+        }
+        committed.push(record.clone());
+        self.committed_batches
+            .lock()
+            .unwrap()
+            .push(extraction.clone());
+        Ok(Some(atomic_record_to_message(record, conversation_id)?))
+    }
+    async fn append_messages(
+        &self,
+        _: Uuid,
+        _: &OwnerScope,
+        _: &[MessageRecord],
+    ) -> MemoryResult<Vec<Message>> {
+        unreachable!()
+    }
+    async fn get_conversation(
+        &self,
+        session: &str,
+        _: Option<Uuid>,
+        _: &OwnerScope,
+        _: Option<i64>,
+    ) -> MemoryResult<Option<Conversation>> {
+        Ok(Some(Conversation {
+            id: CONVERSATION,
+            ..Conversation::empty(session)
+        }))
+    }
+    async fn get_conversation_by_id(
+        &self,
+        _: Uuid,
+        _: &OwnerScope,
+    ) -> MemoryResult<Option<Conversation>> {
+        Ok(None)
+    }
+    async fn append_observation(&self, _: &Observation, _: &OwnerScope) -> MemoryResult<()> {
+        unreachable!()
+    }
+    async fn list_observations(
+        &self,
+        _: Uuid,
+        _: &OwnerScope,
+        _: i64,
+        _: i64,
+    ) -> MemoryResult<Vec<Observation>> {
+        unreachable!()
+    }
+    async fn list_conversations(&self, _: &OwnerScope, _: i64) -> MemoryResult<Vec<Conversation>> {
+        unreachable!()
+    }
+    async fn search_messages(
+        &self,
+        _: &[f64],
+        _: Option<&str>,
+        _: &OwnerScope,
+        _: i64,
+        _: f64,
+        _: &Metadata,
+    ) -> MemoryResult<Vec<ScoredMessage>> {
+        unreachable!()
+    }
+    async fn list_sessions(
+        &self,
+        _: &SessionQuery,
+        _: &OwnerScope,
+    ) -> MemoryResult<Vec<SessionInfo>> {
+        unreachable!()
+    }
+    async fn delete_message(&self, _: Uuid, _: &OwnerScope, _: bool) -> MemoryResult<bool> {
+        unreachable!()
+    }
+    async fn clear_session(&self, _: &str, _: &OwnerScope) -> MemoryResult<()> {
+        unreachable!()
+    }
+    async fn delete_conversation(&self, _: Uuid, _: &OwnerScope) -> MemoryResult<()> {
+        unreachable!()
+    }
+    async fn summary_entities(&self, _: &str, _: &OwnerScope) -> MemoryResult<Vec<String>> {
+        unreachable!()
+    }
+}
+
+struct CountingExtractor {
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait]
+impl muninn_core::extraction::EntityExtractor for CountingExtractor {
+    async fn extract(
+        &self,
+        text: &str,
+        _: &muninn_core::extraction::ExtractOptions,
+    ) -> MemoryResult<muninn_core::extraction::ExtractionResult> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(muninn_core::extraction::ExtractionResult {
+            source_text: Some(text.to_owned()),
+            entities: vec![
+                muninn_core::extraction::ExtractedEntity {
+                    name: "Alice".into(),
+                    entity_type: "PERSON".into(),
+                    subtype: None,
+                    start_pos: Some(0),
+                    end_pos: Some(5),
+                    confidence: 0.95,
+                    extractor: Some("test".into()),
+                },
+                muninn_core::extraction::ExtractedEntity {
+                    name: "Neo4j".into(),
+                    entity_type: "ORGANIZATION".into(),
+                    subtype: None,
+                    start_pos: Some(15),
+                    end_pos: Some(20),
+                    confidence: 0.95,
+                    extractor: Some("test".into()),
+                },
+            ],
+            relations: vec![muninn_core::extraction::ExtractedRelation {
+                source: "Alice".into(),
+                target: "Neo4j".into(),
+                relation_type: "WORKS_AT".into(),
+                confidence: 0.95,
+            }],
+            preferences: vec![],
+        })
+    }
+}
+
+#[tokio::test]
+async fn atomic_ingestion_commits_single_txn_and_rolls_back_without_orphans() {
+    use std::sync::atomic::Ordering;
+
+    let short_term = Arc::new(AtomicShortTermStore::default());
+    let shared = Arc::new(Store::default());
+    let extractor = Arc::new(CountingExtractor {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let client = MemoryClient::read_only(
+        MemoryPorts {
+            short_term: short_term.clone(),
+            long_term: shared.clone(),
+            reasoning: shared,
+            embedder: None,
+            cypher_query: None,
+        },
+        &MemoryOptions { multi_tenant: true },
+    )
+    .with_extractor(extractor.clone());
+
+    let opts = crate::AddMessageOptions {
+        operation_key: Some("op-atomic-1".into()),
+        user_identifier: Some("owner-a".into()),
+        extraction_mode: Some(muninn_core::extraction::ExtractionMode::Auto),
+        generate_embedding: false,
+        ..Default::default()
+    };
+
+    // 1. Mid-transaction extraction failure rolls back completely (zero orphan messages).
+    short_term.fail_next_atomic.store(true, Ordering::SeqCst);
+    let err = client
+        .short_term()
+        .add_message(
+            "s-1",
+            MessageRole::User,
+            "Alice works at Neo4j",
+            opts.clone(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, MemoryError::Storage(_)), "{err:?}");
+    assert!(short_term.committed_messages.lock().unwrap().is_empty());
+    assert_eq!(short_term.append_calls.load(Ordering::SeqCst), 0);
+
+    // 2. Retry with same operation_key succeeds atomically in one call.
+    let first = client
+        .short_term()
+        .add_message(
+            "s-1",
+            MessageRole::User,
+            "Alice works at Neo4j",
+            opts.clone(),
+        )
+        .await
+        .expect("retry commits atomically");
+    assert_eq!(short_term.atomic_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(short_term.append_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(short_term.committed_messages.lock().unwrap().len(), 1);
+    {
+        let batches = short_term.committed_batches.lock().unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].entities.len(), 2);
+        assert_eq!(batches[0].relations.len(), 1);
+    }
+
+    // 3. Post-commit replay with identical operation_key returns existing message without re-extracting.
+    let calls_before_replay = extractor.calls.load(Ordering::SeqCst);
+    let replayed = client
+        .short_term()
+        .add_message("s-1", MessageRole::User, "Alice works at Neo4j", opts)
+        .await
+        .expect("idempotent replay succeeds");
+    assert_eq!(replayed.id, first.id);
+    assert_eq!(extractor.calls.load(Ordering::SeqCst), calls_before_replay);
+
+    // 4. Reusing operation_key with different content fails closed.
+    let conflict = client
+        .short_term()
+        .add_message(
+            "s-1",
+            MessageRole::User,
+            "Different content",
+            crate::AddMessageOptions {
+                operation_key: Some("op-atomic-1".into()),
+                user_identifier: Some("owner-a".into()),
+                extraction_mode: Some(muninn_core::extraction::ExtractionMode::Auto),
+                generate_embedding: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(conflict, MemoryError::InvalidInput(_)),
+        "{conflict:?}"
+    );
+}

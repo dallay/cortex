@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use muninn_core::codec::{deserialize_metadata, python_json_dumps, serialize_metadata};
 use muninn_core::model::{Conversation, Message, Metadata, Observation, SessionInfo};
 use muninn_core::ports::{
-    EmbeddingIdentity, KeyedMessage, MessageRecord, OwnerScope, ScoredMessage, SessionQuery,
-    ShortTermStore,
+    AtomicExtractionBatch, EmbeddingIdentity, KeyedMessage, MessageRecord, OwnerScope,
+    ScoredMessage, SessionQuery, ShortTermStore,
 };
 use muninn_core::{MemoryError, MemoryResult};
 use neo4rs::{BoltMap, BoltNull, BoltType, Row};
@@ -27,7 +27,8 @@ async fn exact_with_budget<T>(
 }
 
 use crate::bolt::{column, opt_string, opt_vector, row_values, Props};
-use crate::client::{Neo4jClient, Params};
+use crate::client::{transaction_rows, Neo4jClient, Params};
+use crate::queries::long_term as lq;
 use crate::queries::short_term as q;
 
 const LEGACY_CONFLICT: &str = "
@@ -331,6 +332,221 @@ impl ShortTermStore for Neo4jShortTermStore {
         // Keep the caller's metadata object rather than its JSON round trip.
         stored.metadata = message.metadata.clone();
         Ok(stored)
+    }
+
+    async fn append_message_atomic(
+        &self,
+        conversation_id: Uuid,
+        scope: &OwnerScope,
+        message: &MessageRecord,
+        extraction: &AtomicExtractionBatch,
+    ) -> MemoryResult<Option<Message>> {
+        validate_record_identity(message)?;
+        if message.operation_key.is_some() != message.operation_payload.is_some() {
+            return Err(MemoryError::invalid(
+                "operation_key and operation_payload must be provided together",
+            ));
+        }
+        let cypher = if message.operation_key.is_some() {
+            q::CREATE_KEYED_MESSAGE
+        } else {
+            q::CREATE_MESSAGE
+        };
+        let mut txn = self.client.start_txn().await?;
+        let outcome = async {
+            let legacy = transaction_rows(
+                &mut txn,
+                LEGACY_CONFLICT,
+                legacy_params(None, Some(conversation_id), None),
+            )
+            .await?;
+            if !legacy.is_empty() {
+                return Err(MemoryError::invalid(
+                    "ambiguous legacy conversation requires explicit migration",
+                ));
+            }
+            let rows = transaction_rows(
+                &mut txn,
+                cypher,
+                vec![
+                    ("conversation_id", conversation_id.to_string().into()),
+                    ("owner_scope", scope.storage_key().into()),
+                    ("id", message.id.to_string().into()),
+                    ("role", message.role.as_str().into()),
+                    ("content", message.content.as_str().into()),
+                    ("embedding", opt_vector(message.embedding.as_deref())),
+                    (
+                        "embedding_identity",
+                        opt_string(message.embedding_identity.as_ref().map(|i| i.key())),
+                    ),
+                    (
+                        "embedding_dimensions",
+                        message
+                            .embedding_identity
+                            .as_ref()
+                            .map(|i| BoltType::from(i.dimensions() as i64))
+                            .unwrap_or(BoltType::Null(BoltNull)),
+                    ),
+                    ("metadata", metadata_param(&message.metadata)),
+                    (
+                        "operation_key",
+                        opt_string(message.operation_key.as_deref()),
+                    ),
+                    (
+                        "operation_payload",
+                        opt_string(message.operation_payload.as_deref()),
+                    ),
+                ],
+            )
+            .await?;
+            let row = rows.first().ok_or_else(|| {
+                if message.operation_key.is_some() {
+                    MemoryError::invalid(
+                        "operation_key conflicts with an existing payload or conversation scope",
+                    )
+                } else {
+                    MemoryError::not_found(format!("conversation {conversation_id}"))
+                }
+            })?;
+            let mut stored = message_from_value(&column(row, "m")?, Some(conversation_id))?;
+            stored.metadata = message.metadata.clone();
+
+            let null = BoltType::Null(BoltNull);
+            for (entity_id, provenance) in &extraction.existing_mentions {
+                transaction_rows(
+                    &mut txn,
+                    lq::LINK_MESSAGE_TO_ENTITY,
+                    vec![
+                        ("message_id", stored.id.to_string().into()),
+                        ("entity_id", entity_id.to_string().into()),
+                        ("confidence", provenance.confidence.into()),
+                        (
+                            "start_pos",
+                            provenance
+                                .start_pos
+                                .map_or_else(|| null.clone(), Into::into),
+                        ),
+                        (
+                            "end_pos",
+                            provenance.end_pos.map_or_else(|| null.clone(), Into::into),
+                        ),
+                        ("derived", provenance.derived.into()),
+                        ("extractor", opt_string(provenance.extractor.as_deref())),
+                        ("support", provenance.support.into()),
+                        ("source_message_ids", vec![stored.id.to_string()].into()),
+                        ("evidence", opt_string(provenance.evidence.as_deref())),
+                    ],
+                )
+                .await?;
+            }
+
+            let mut names = std::collections::HashMap::new();
+            for item in &extraction.entities {
+                let entity = &item.entity;
+                let entity_cypher =
+                    lq::create_entity_query(&entity.entity_type, entity.subtype.as_deref());
+                let aliases: Vec<BoltType> = entity
+                    .aliases
+                    .iter()
+                    .map(|alias| BoltType::from(alias.as_str()))
+                    .collect();
+                let entity_rows = transaction_rows(
+                    &mut txn,
+                    &entity_cypher,
+                    vec![
+                        ("id", entity.id.to_string().into()),
+                        ("name", entity.name.as_str().into()),
+                        ("type", entity.entity_type.as_str().into()),
+                        ("subtype", opt_string(entity.subtype.as_deref())),
+                        (
+                            "canonical_name",
+                            opt_string(entity.canonical_name.as_deref()),
+                        ),
+                        ("description", opt_string(entity.description.as_deref())),
+                        ("embedding", opt_vector(entity.embedding.as_deref())),
+                        ("confidence", entity.confidence.into()),
+                        ("aliases", BoltType::List(aliases.into())),
+                        ("metadata", metadata_param(&entity.metadata)),
+                        ("location", null.clone()),
+                    ],
+                )
+                .await?;
+                let entity_row = entity_rows
+                    .first()
+                    .ok_or_else(|| MemoryError::storage("entity upsert returned no row"))?;
+                let stored_entity = crate::long_term::entity_from_value(&column(entity_row, "e")?)?;
+                let provenance = &item.provenance;
+                transaction_rows(
+                    &mut txn,
+                    lq::LINK_MESSAGE_TO_ENTITY,
+                    vec![
+                        ("message_id", stored.id.to_string().into()),
+                        ("entity_id", stored_entity.id.to_string().into()),
+                        ("confidence", provenance.confidence.into()),
+                        (
+                            "start_pos",
+                            provenance
+                                .start_pos
+                                .map_or_else(|| null.clone(), Into::into),
+                        ),
+                        (
+                            "end_pos",
+                            provenance.end_pos.map_or_else(|| null.clone(), Into::into),
+                        ),
+                        ("derived", provenance.derived.into()),
+                        ("extractor", opt_string(provenance.extractor.as_deref())),
+                        ("support", provenance.support.into()),
+                        ("source_message_ids", vec![stored.id.to_string()].into()),
+                        ("evidence", opt_string(provenance.evidence.as_deref())),
+                    ],
+                )
+                .await?;
+                names.insert(entity.name.clone(), stored_entity.id);
+            }
+
+            for relation in &extraction.relations {
+                if let (Some(source_id), Some(target_id)) = (
+                    names.get(&relation.source_name),
+                    names.get(&relation.target_name),
+                ) {
+                    transaction_rows(
+                        &mut txn,
+                        lq::CREATE_ENTITY_RELATIONSHIP,
+                        vec![
+                            ("id", Uuid::new_v4().to_string().into()),
+                            ("source_id", source_id.to_string().into()),
+                            ("target_id", target_id.to_string().into()),
+                            ("relation_type", relation.relation_type.as_str().into()),
+                            ("description", null.clone()),
+                            ("confidence", relation.confidence.into()),
+                            ("derived", false.into()),
+                            ("extractor", null.clone()),
+                            ("message_id", null.clone()),
+                            ("evidence", null.clone()),
+                            ("valid_from", null.clone()),
+                            ("valid_until", null.clone()),
+                            ("properties", null.clone()),
+                        ],
+                    )
+                    .await?;
+                }
+            }
+            Ok(stored)
+        }
+        .await;
+
+        match outcome {
+            Ok(stored) => {
+                txn.commit()
+                    .await
+                    .map_err(|err| MemoryError::storage(err.to_string()))?;
+                Ok(Some(stored))
+            }
+            Err(error) => {
+                let _ = txn.rollback().await;
+                Err(error)
+            }
+        }
     }
 
     async fn append_messages(

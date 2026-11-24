@@ -1,12 +1,21 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use axum::extract::{DefaultBodyLimit, State};
+use axum::http::{header, HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
+use axum::{Json, Router};
 use muninn_application::{
-    LongTermMemory, SearchMessagesOptions, SearchPreferencesOptions, ShortTermMemory,
+    AddEntityOptions, AddFactOptions, AddMessageOptions, AddPreferenceOptions, LongTermMemory,
+    SearchEntitiesOptions, SearchMessagesOptions, SearchPreferencesOptions, ShortTermMemory,
 };
+use muninn_core::model::MessageRole;
 use muninn_core::ports::{Embedder, LongTermStore, OwnerScope, ShortTermStore};
-use muninn_mcp::{Catalog, Server, ToolHandler};
-use serde_json::Value;
+use muninn_mcp::{
+    authorize_bearer_header, Catalog, McpHttpConfig, Server, ToolHandler, MAX_RESULT_BYTES,
+};
+use serde_json::{json, Value};
 
 #[derive(Clone)]
 pub struct HostOwnerScope(String);
@@ -192,6 +201,414 @@ fn register_tools(
     Ok(server)
 }
 
+#[async_trait]
+trait CoreMemoryOps: Send + Sync {
+    async fn search(&self, owner: &str, query: &str, limit: i64) -> Result<Value, String>;
+    async fn get_context(
+        &self,
+        owner: &str,
+        session_id: Option<&str>,
+        query: Option<&str>,
+        limit: i64,
+    ) -> Result<Value, String>;
+    async fn store_message(
+        &self,
+        owner: &str,
+        session_id: &str,
+        role: MessageRole,
+        content: &str,
+    ) -> Result<Value, String>;
+    async fn add_entity(
+        &self,
+        name: &str,
+        entity_type: &str,
+        description: Option<&str>,
+    ) -> Result<Value, String>;
+    async fn add_preference(
+        &self,
+        owner: &str,
+        category: &str,
+        preference: &str,
+        context: Option<&str>,
+    ) -> Result<Value, String>;
+    async fn add_fact(&self, subject: &str, predicate: &str, object: &str)
+        -> Result<Value, String>;
+}
+
+struct ApplicationCoreOps {
+    short_term: ShortTermMemory,
+    long_term: LongTermMemory,
+}
+
+#[async_trait]
+impl CoreMemoryOps for ApplicationCoreOps {
+    async fn search(&self, owner: &str, query: &str, limit: i64) -> Result<Value, String> {
+        let messages = self
+            .short_term
+            .search_messages(
+                query,
+                &SearchMessagesOptions {
+                    user_identifier: Some(owner.to_owned()),
+                    limit,
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|_| "Message search failed".to_owned())?;
+        let preferences = self
+            .long_term
+            .search_preferences(
+                query,
+                &SearchPreferencesOptions {
+                    user_identifier: Some(owner.to_owned()),
+                    limit,
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|_| "Preference search failed".to_owned())?;
+        let entities = self
+            .long_term
+            .search_entities(
+                query,
+                &SearchEntitiesOptions {
+                    limit,
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|_| "Entity search failed".to_owned())?;
+        Ok(json!({
+            "messages": messages,
+            "preferences": preferences,
+            "entities": entities,
+        }))
+    }
+
+    async fn get_context(
+        &self,
+        owner: &str,
+        session_id: Option<&str>,
+        query: Option<&str>,
+        limit: i64,
+    ) -> Result<Value, String> {
+        let conversation = match session_id {
+            Some(sid) => Some(
+                self.short_term
+                    .get_conversation(sid, None, Some(owner), Some(limit))
+                    .await
+                    .map_err(|_| "Conversation lookup failed".to_owned())?,
+            ),
+            None => None,
+        };
+        let preferences = match query {
+            Some(q) if !q.trim().is_empty() => self
+                .long_term
+                .search_preferences(
+                    q,
+                    &SearchPreferencesOptions {
+                        user_identifier: Some(owner.to_owned()),
+                        limit,
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(|_| "Preference lookup failed".to_owned())?,
+            _ => self
+                .long_term
+                .get_preferences_for(owner, true)
+                .await
+                .map_err(|_| "Preference lookup failed".to_owned())?,
+        };
+        Ok(json!({
+            "conversation": conversation,
+            "preferences": preferences,
+        }))
+    }
+
+    async fn store_message(
+        &self,
+        owner: &str,
+        session_id: &str,
+        role: MessageRole,
+        content: &str,
+    ) -> Result<Value, String> {
+        let stored = self
+            .short_term
+            .add_message(
+                session_id,
+                role,
+                content,
+                AddMessageOptions {
+                    user_identifier: Some(owner.to_owned()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|_| "Storing message failed".to_owned())?;
+        serde_json::to_value(stored).map_err(|_| "Message encoding failed".to_owned())
+    }
+
+    async fn add_entity(
+        &self,
+        name: &str,
+        entity_type: &str,
+        description: Option<&str>,
+    ) -> Result<Value, String> {
+        let (entity, _) = self
+            .long_term
+            .add_entity(
+                name,
+                entity_type,
+                AddEntityOptions {
+                    description: description.map(str::to_owned),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|_| "Adding entity failed".to_owned())?;
+        serde_json::to_value(entity).map_err(|_| "Entity encoding failed".to_owned())
+    }
+
+    async fn add_preference(
+        &self,
+        owner: &str,
+        category: &str,
+        preference: &str,
+        context: Option<&str>,
+    ) -> Result<Value, String> {
+        let pref = self
+            .long_term
+            .add_preference(
+                category,
+                preference,
+                AddPreferenceOptions {
+                    context: context.map(str::to_owned),
+                    user_identifier: Some(owner.to_owned()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|_| "Adding preference failed".to_owned())?;
+        serde_json::to_value(pref).map_err(|_| "Preference encoding failed".to_owned())
+    }
+
+    async fn add_fact(
+        &self,
+        subject: &str,
+        predicate: &str,
+        object: &str,
+    ) -> Result<Value, String> {
+        let fact = self
+            .long_term
+            .add_fact(subject, predicate, object, AddFactOptions::default())
+            .await
+            .map_err(|_| "Adding fact failed".to_owned())?;
+        serde_json::to_value(fact).map_err(|_| "Fact encoding failed".to_owned())
+    }
+}
+
+fn reject_scope_override(arguments: &Value) -> Result<&serde_json::Map<String, Value>, String> {
+    let obj = arguments
+        .as_object()
+        .ok_or_else(|| "Invalid arguments".to_owned())?;
+    if obj.contains_key("user_identifier") || obj.contains_key("owner_scope") {
+        return Err("Model-supplied owner scope override is forbidden".to_owned());
+    }
+    Ok(obj)
+}
+
+fn required_non_empty<'a>(
+    obj: &'a serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<&'a str, String> {
+    obj.get(key)
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| format!("Field '{key}' is required and must be non-empty"))
+}
+
+struct CoreTool {
+    kind: &'static str,
+    ops: Arc<dyn CoreMemoryOps>,
+    scope: HostOwnerScope,
+}
+
+#[async_trait]
+impl ToolHandler for CoreTool {
+    async fn call(&self, arguments: &Value) -> Result<Value, String> {
+        let obj = reject_scope_override(arguments)?;
+        let owner = self.scope.user_identifier();
+        match self.kind {
+            "memory_search" => {
+                let query = required_non_empty(obj, "query")?;
+                self.ops
+                    .search(owner, query, result_limit(arguments)?)
+                    .await
+            }
+            "memory_get_context" => {
+                let session_id = obj.get("session_id").and_then(Value::as_str);
+                let query = obj.get("query").and_then(Value::as_str);
+                let limit = obj
+                    .get("max_items")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(10)
+                    .clamp(1, 20);
+                self.ops.get_context(owner, session_id, query, limit).await
+            }
+            "memory_store_message" => {
+                let session_id = obj
+                    .get("session_id")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or("default");
+                let content = required_non_empty(obj, "content")?;
+                let role: MessageRole = obj
+                    .get("role")
+                    .and_then(Value::as_str)
+                    .unwrap_or("user")
+                    .parse()
+                    .map_err(|_| "Invalid message role".to_owned())?;
+                self.ops
+                    .store_message(owner, session_id, role, content)
+                    .await
+            }
+            "memory_add_entity" => {
+                let name = required_non_empty(obj, "name")?;
+                let entity_type = obj
+                    .get("type")
+                    .or_else(|| obj.get("entity_type"))
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.trim().is_empty())
+                    .ok_or_else(|| "Field 'type' is required".to_owned())?;
+                let description = obj.get("description").and_then(Value::as_str);
+                self.ops.add_entity(name, entity_type, description).await
+            }
+            "memory_add_preference" => {
+                let category = required_non_empty(obj, "category")?;
+                let preference = required_non_empty(obj, "preference")?;
+                let context = obj.get("context").and_then(Value::as_str);
+                self.ops
+                    .add_preference(owner, category, preference, context)
+                    .await
+            }
+            "memory_add_fact" => {
+                let subject = required_non_empty(obj, "subject")?;
+                let predicate = required_non_empty(obj, "predicate")?;
+                let object = required_non_empty(obj, "object")?;
+                self.ops.add_fact(subject, predicate, object).await
+            }
+            _ => Err("Unknown MCP core tool".to_owned()),
+        }
+    }
+}
+
+/// Build the opt-in MCP `core` profile server (6 tools) preserving host-bound immutable `OwnerScope`.
+pub fn core_server(
+    owner: HostOwnerScope,
+    short_term_store: Arc<dyn ShortTermStore>,
+    long_term_store: Arc<dyn LongTermStore>,
+    embedder: Option<Arc<dyn Embedder>>,
+) -> Result<Server, &'static str> {
+    let long_term = LongTermMemory::new(long_term_store, embedder.clone(), true)
+        .map_err(|_| "LongTermMemory requires atomic preference write support")?;
+    let ops: Arc<dyn CoreMemoryOps> = Arc::new(ApplicationCoreOps {
+        short_term: ShortTermMemory::new(short_term_store, embedder, true),
+        long_term,
+    });
+    register_core_tools(owner, ops)
+}
+
+#[derive(Clone)]
+struct McpHttpState {
+    server: Arc<tokio::sync::Mutex<Server>>,
+    config: McpHttpConfig,
+    owner: HostOwnerScope,
+}
+
+/// Build the Streamable HTTP MCP Axum router with fail-closed bearer authentication.
+///
+/// Validates `config.validate()` upfront so non-loopback static-token configs
+/// fail closed before any socket is bound.
+pub fn http_router(
+    server: Server,
+    config: McpHttpConfig,
+    owner: HostOwnerScope,
+) -> Result<Router, &'static str> {
+    config.validate().map_err(|err| err.public_message())?;
+    let state = McpHttpState {
+        server: Arc::new(tokio::sync::Mutex::new(server)),
+        config,
+        owner,
+    };
+    Ok(Router::new()
+        .route("/health", get(http_health))
+        .route("/mcp", post(http_mcp_dispatch))
+        .layer(DefaultBodyLimit::max(MAX_RESULT_BYTES))
+        .with_state(state))
+}
+
+async fn http_health() -> impl IntoResponse {
+    (StatusCode::OK, Json(json!({ "status": "ok" })))
+}
+
+async fn http_mcp_dispatch(
+    State(state): State<McpHttpState>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Response {
+    let auth_header = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+    if let Err(err) =
+        authorize_bearer_header(auth_header, &state.config, state.owner.user_identifier()).await
+    {
+        let status = StatusCode::from_u16(err.status_code()).unwrap_or(StatusCode::UNAUTHORIZED);
+        let body = Json(json!({ "error": err.public_message() }));
+        if status == StatusCode::UNAUTHORIZED {
+            return (
+                status,
+                [(header::WWW_AUTHENTICATE, "Bearer realm=\"muninn-mcp\"")],
+                body,
+            )
+                .into_response();
+        }
+        return (status, body).into_response();
+    }
+
+    let mut server = state.server.lock().await;
+    match server.handle(payload).await {
+        Some(response) => (StatusCode::OK, Json(response)).into_response(),
+        None => StatusCode::ACCEPTED.into_response(),
+    }
+}
+
+fn register_core_tools(
+    owner: HostOwnerScope,
+    ops: Arc<dyn CoreMemoryOps>,
+) -> Result<Server, &'static str> {
+    let mut server = Server::default();
+    for tool_name in [
+        "memory_search",
+        "memory_get_context",
+        "memory_store_message",
+        "memory_add_entity",
+        "memory_add_preference",
+        "memory_add_fact",
+    ] {
+        server.register(
+            Catalog::Core,
+            tool_name,
+            Box::new(CoreTool {
+                kind: tool_name,
+                ops: ops.clone(),
+                scope: owner.clone(),
+            }),
+        )?;
+    }
+    Ok(server)
+}
+
 #[cfg(test)]
 fn test_server(
     owner: HostOwnerScope,
@@ -329,6 +746,194 @@ mod tests {
             names,
             ["muninn_search_messages", "muninn_search_preferences"]
         );
+    }
+
+    struct FakeCoreOps(Mutex<Vec<(String, String)>>);
+
+    #[async_trait]
+    impl super::CoreMemoryOps for FakeCoreOps {
+        async fn search(
+            &self,
+            owner: &str,
+            query: &str,
+            _: i64,
+        ) -> Result<serde_json::Value, String> {
+            self.0.lock().unwrap().push(("search".into(), owner.into()));
+            Ok(json!({"owner": owner, "query": query}))
+        }
+        async fn get_context(
+            &self,
+            owner: &str,
+            _: Option<&str>,
+            _: Option<&str>,
+            _: i64,
+        ) -> Result<serde_json::Value, String> {
+            self.0
+                .lock()
+                .unwrap()
+                .push(("context".into(), owner.into()));
+            Ok(json!({"owner": owner}))
+        }
+        async fn store_message(
+            &self,
+            owner: &str,
+            _: &str,
+            _: muninn_core::model::MessageRole,
+            _: &str,
+        ) -> Result<serde_json::Value, String> {
+            self.0.lock().unwrap().push(("store".into(), owner.into()));
+            Ok(json!({"owner": owner}))
+        }
+        async fn add_entity(
+            &self,
+            name: &str,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<serde_json::Value, String> {
+            self.0.lock().unwrap().push(("entity".into(), name.into()));
+            Ok(json!({"name": name}))
+        }
+        async fn add_preference(
+            &self,
+            owner: &str,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<serde_json::Value, String> {
+            self.0
+                .lock()
+                .unwrap()
+                .push(("preference".into(), owner.into()));
+            Ok(json!({"owner": owner}))
+        }
+        async fn add_fact(
+            &self,
+            subject: &str,
+            _: &str,
+            _: &str,
+        ) -> Result<serde_json::Value, String> {
+            self.0.lock().unwrap().push(("fact".into(), subject.into()));
+            Ok(json!({"subject": subject}))
+        }
+    }
+
+    #[tokio::test]
+    async fn core_profile_registers_six_tools_and_blocks_scope_override() {
+        let fake = Arc::new(FakeCoreOps(Mutex::new(Vec::new())));
+        let mut server = super::register_core_tools(
+            HostOwnerScope::parse(Some("owner-a")).unwrap(),
+            fake.clone(),
+        )
+        .unwrap();
+        let list = server
+            .handle(call("tools/list", "", json!({})))
+            .await
+            .unwrap();
+        let names: Vec<_> = list["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names.len(), 6);
+        for expected in [
+            "memory_search",
+            "memory_get_context",
+            "memory_store_message",
+            "memory_add_entity",
+            "memory_add_preference",
+            "memory_add_fact",
+        ] {
+            assert!(names.contains(&expected), "missing core tool {expected}");
+        }
+
+        // Cross-tenant override attempt is rejected fail-closed.
+        let rejected = server
+            .handle(call(
+                "tools/call",
+                "memory_store_message",
+                json!({"content": "hi", "user_identifier": "owner-b"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(rejected["result"]["isError"], true);
+
+        // Authorized call binds host owner.
+        let ok = server
+            .handle(call(
+                "tools/call",
+                "memory_store_message",
+                json!({"content": "hi"}),
+            ))
+            .await
+            .unwrap();
+        assert_ne!(ok["result"]["isError"], true);
+        assert_eq!(
+            *fake.0.lock().unwrap(),
+            vec![("store".into(), "owner-a".into())]
+        );
+    }
+
+    #[tokio::test]
+    async fn streamable_http_enforces_bearer_auth_and_rejects_non_loopback_static_token() {
+        use axum::http::{header, StatusCode};
+        use muninn_mcp::{McpHttpAuthMode, McpHttpConfig, RedactedToken};
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+        let owner = HostOwnerScope::parse(Some("owner-a")).unwrap();
+        let token = RedactedToken::new("local-dev-bearer-token-1234").unwrap();
+
+        // Non-loopback static token fails closed before creating router.
+        let fake = Arc::new(FakeCoreOps(Mutex::new(Vec::new())));
+        let server = super::register_core_tools(owner.clone(), fake.clone()).unwrap();
+        let non_loopback = McpHttpConfig {
+            bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8765),
+            auth: McpHttpAuthMode::LoopbackStaticToken {
+                token: token.clone(),
+            },
+        };
+        assert!(super::http_router(server, non_loopback, owner.clone()).is_err());
+
+        // Loopback static token router validates cleanly and handler enforces bearer auth.
+        let server = super::register_core_tools(owner.clone(), fake).unwrap();
+        let loopback = McpHttpConfig {
+            bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8765),
+            auth: McpHttpAuthMode::LoopbackStaticToken { token },
+        };
+        assert!(super::http_router(server, loopback.clone(), owner.clone()).is_ok());
+
+        let fake2 = Arc::new(FakeCoreOps(Mutex::new(Vec::new())));
+        let state = super::McpHttpState {
+            server: Arc::new(tokio::sync::Mutex::new(
+                super::register_core_tools(owner.clone(), fake2).unwrap(),
+            )),
+            config: loopback,
+            owner,
+        };
+
+        // Missing Authorization -> 401 with WWW-Authenticate: Bearer.
+        let unauth_resp = super::http_mcp_dispatch(
+            axum::extract::State(state.clone()),
+            axum::http::HeaderMap::new(),
+            axum::Json(call("tools/list", "", json!({}))),
+        )
+        .await;
+        assert_eq!(unauth_resp.status(), StatusCode::UNAUTHORIZED);
+        assert!(unauth_resp.headers().contains_key(header::WWW_AUTHENTICATE));
+
+        // Valid Authorization -> 200 OK.
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            "Bearer local-dev-bearer-token-1234".parse().unwrap(),
+        );
+        let auth_resp = super::http_mcp_dispatch(
+            axum::extract::State(state),
+            headers,
+            axum::Json(call("tools/list", "", json!({}))),
+        )
+        .await;
+        assert_eq!(auth_resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]

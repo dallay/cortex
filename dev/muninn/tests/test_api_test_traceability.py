@@ -167,6 +167,18 @@ class ApiTraceabilityTests(unittest.TestCase):
         with self.assertRaisesRegex(traceability.TraceabilityError, "Diagnóstico"):
             traceability.validate(corrupted)
 
+    def test_markdown_summary_matches_curated_json_artifact(self):
+        report = json.loads(REPORT.read_text(encoding="utf-8"))
+        markdown_path = ROOT / "docs/muninn/specs/api-test-traceability.md"
+        markdown_text = markdown_path.read_text(encoding="utf-8")
+        traceability.validate_markdown_sync(report, markdown_text)
+
+    def test_markdown_sync_rejects_stale_or_inflated_claims(self):
+        report = json.loads(REPORT.read_text(encoding="utf-8"))
+        stale_md = "# API / TCK / integration traceability\n189 passed, 322 rows\n"
+        with self.assertRaisesRegex(traceability.TraceabilityError, "Markdown"):
+            traceability.validate_markdown_sync(report, stale_md)
+
 
 if __name__ == "__main__":
     unittest.main()
