@@ -32,5 +32,5 @@ pub use memory::{
 pub use model::ConversationSummary;
 pub use ports::{
     ConsolidationCandidate, ConsolidationReport, ConsolidationStore, GraphMaintenance,
-    LongTermStore, ReasoningStore, Scored, ShortTermStore,
+    LongTermStore, ReadAuditRecord, ReasoningStore, Scored, ShortTermStore,
 };

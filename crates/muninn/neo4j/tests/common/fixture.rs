@@ -47,11 +47,16 @@ impl DockerFixture {
                 None,
             )
         } else {
+            let require_neo4j = std::env::var("MUNINN_REQUIRE_NEO4J").as_deref() == Ok("1");
             if !Command::new("docker")
                 .arg("info")
                 .output()
                 .is_ok_and(|out| out.status.success())
             {
+                assert!(
+                    !require_neo4j,
+                    "MUNINN_REQUIRE_NEO4J=1 is set, but Docker is unavailable and neither {uri_variable} nor MUNINN_FIXTURE_URI was provided"
+                );
                 eprintln!("Skipping live test: start Docker or supply a disposable Neo4j fixture");
                 return None;
             }

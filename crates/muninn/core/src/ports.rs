@@ -891,6 +891,34 @@ impl Default for ConsolidationReport {
     }
 }
 
+/// Request to record an explicit `:MemoryReadAudit` event (`BOLT-08-11`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadAuditRecord {
+    /// Free-text label for the read (e.g. query string or API endpoint name).
+    pub query: String,
+    /// Optional `:User` identifier to link via `(:User)-[:PERFORMED_READ]->(:MemoryReadAudit)`.
+    pub user_identifier: Option<String>,
+    /// Audit category (e.g. `"memory.read"`, `"preference.read"`).
+    pub kind: String,
+    /// Optional record count returned by the read.
+    pub result_count: Option<i64>,
+    /// Optional JSON-serialized metadata attached to the audit node.
+    pub metadata_json: Option<String>,
+}
+
+impl ReadAuditRecord {
+    /// Construct a read audit record with default kind `"memory.read"`.
+    pub fn new(query: impl Into<String>) -> Self {
+        Self {
+            query: query.into(),
+            user_identifier: None,
+            kind: "memory.read".to_owned(),
+            result_count: None,
+            metadata_json: None,
+        }
+    }
+}
+
 /// Persistence port for memory consolidation — idempotent, dry-runnable
 /// hygiene jobs over the knowledge graph.
 ///
@@ -930,6 +958,13 @@ pub trait ConsolidationStore: Send + Sync {
         limit: i64,
         dry_run: bool,
     ) -> MemoryResult<ConsolidationReport>;
+
+    /// Persist a `:ConsolidationRun` audit node and return its run ID.
+    async fn record_run(&self, kind: &str, stats_json: &str) -> MemoryResult<String>;
+
+    /// Persist an explicit `:MemoryReadAudit` node and optionally link it to a
+    /// `:User` via `[:PERFORMED_READ]`, returning the audit ID (`BOLT-08-11`).
+    async fn record_read_audit(&self, record: &ReadAuditRecord) -> MemoryResult<String>;
 }
 
 #[cfg(test)]

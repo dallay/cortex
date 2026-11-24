@@ -2,10 +2,13 @@
 
 use std::sync::Arc;
 
-use muninn_core::ports::{Embedder, LongTermStore, ReasoningStore, ShortTermStore};
+use muninn_core::ports::{
+    ConsolidationStore, Embedder, LongTermStore, ReasoningStore, ShortTermStore,
+};
 use muninn_core::query::CypherQuery;
 use muninn_core::{MemoryError, MemoryResult};
 
+use crate::consolidation::ConsolidationMemory;
 use crate::local_operator::{LocalOperator, LocalOperatorView};
 use crate::long_term::LongTermMemory;
 use crate::reasoning::ReasoningMemory;
@@ -31,6 +34,7 @@ pub struct MemoryClient {
     short_term: ShortTermMemory,
     long_term: LongTermMemory,
     reasoning: ReasoningMemory,
+    consolidation: Option<ConsolidationMemory>,
     cypher_query: Option<Arc<dyn CypherQuery>>,
     local_operator_owner: Option<String>,
     local_operator_writes: bool,
@@ -73,6 +77,7 @@ impl MemoryClient {
                 options.multi_tenant,
             ),
             reasoning: ReasoningMemory::new(ports.reasoning, ports.embedder, options.multi_tenant),
+            consolidation: None,
             cypher_query: ports.cypher_query,
             local_operator_owner: None,
             local_operator_writes: writes,
@@ -140,6 +145,12 @@ impl MemoryClient {
         LocalOperatorView::new(self)
     }
 
+    /// Wire a consolidation store into the client (`client.consolidation()`).
+    pub fn with_consolidation(mut self, store: Arc<dyn ConsolidationStore>) -> Self {
+        self.consolidation = Some(ConsolidationMemory::from_arc(store));
+        self
+    }
+
     pub const fn short_term(&self) -> &ShortTermMemory {
         &self.short_term
     }
@@ -150,6 +161,10 @@ impl MemoryClient {
 
     pub const fn reasoning(&self) -> &ReasoningMemory {
         &self.reasoning
+    }
+
+    pub const fn consolidation(&self) -> Option<&ConsolidationMemory> {
+        self.consolidation.as_ref()
     }
 
     pub async fn cypher(

@@ -183,4 +183,25 @@ async fn summary_entities_are_isolated_by_owner() {
     assert!(error
         .to_string()
         .contains("ambiguous legacy conversation requires explicit migration"));
+
+    // Public API must reject ambiguous legacy conversations for both
+    // include_entities=true and include_entities=false.
+    for include_entities in [true, false] {
+        let api_error = short_term
+            .get_conversation_summary(
+                session,
+                Some("owner-a"),
+                100,
+                include_entities,
+                None::<fn(String) -> String>,
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            api_error
+                .to_string()
+                .contains("ambiguous legacy conversation requires explicit migration"),
+            "expected legacy rejection for include_entities={include_entities}, got: {api_error}"
+        );
+    }
 }

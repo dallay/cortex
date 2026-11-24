@@ -6,6 +6,7 @@
 
 pub mod bolt;
 pub mod client;
+pub mod consolidation;
 pub mod long_term;
 pub mod maintenance;
 mod migrations;
@@ -17,6 +18,7 @@ pub mod schema;
 pub mod short_term;
 
 pub use client::{Neo4jClient, Neo4jConfig};
+pub use consolidation::Neo4jConsolidationStore;
 pub use long_term::Neo4jLongTermStore;
 pub use maintenance::Neo4jMaintenance;
 pub use query::Neo4jCypherQuery;
