@@ -52,7 +52,7 @@ Todas y cada una de las 27 capacidades críticas catalogadas cuentan con evidenc
 23. **`BOLT-07-08` (Enlace de Tool Call a Mensaje):** Verificado en `crates/muninn/neo4j/tests/reasoning_execution.rs`.
 24. **`BOLT-07-09` (Enlace de Paso a Entidad):** Verificado en `crates/muninn/neo4j/tests/reasoning_execution.rs`.
 25. **`BOLT-08-04` (Escritura Diferida / Buffer):** Verificado en `crates/muninn/bridge/tests/buffered.rs`.
-26. **`BOLT-08-05` (Consolidación Automática `dedupe_entities`):** Verificado en `crates/muninn/application/src/consolidation.rs`.
+26. **`BOLT-08-05` / `BOLT-08-11` (Consolidación Persistente y Auditoría de Lectura):** Implementado en `crates/muninn/neo4j/src/consolidation.rs` (`Neo4jConsolidationStore`), orquestado en `crates/muninn/application/src/consolidation.rs` (`ConsolidationMemory`), y verificado contra Neo4j en `crates/muninn/neo4j/tests/consolidation.rs` (incluye `:SAME_AS`, `summarization_pending`, `:SUPERSEDED_BY` con aislamiento por propietario, `archived`, `:ConsolidationRun` y `:MemoryReadAudit`).
 27. **`BOLT-08-06` (Adopción de Grafo Existente `adopt_existing_graph`):** Verificado en `crates/muninn/neo4j/src/schema.rs` y queries canónicas de migración.
 
 ---
@@ -102,8 +102,8 @@ No todas las operaciones del SDK upstream se reproducen idénticamente. Las desv
 
 ---
 
-## 4. Estado de los Artefactos y Conclusión
+## 4. Estado de los Artefactos y Alcance Real
 
-- Todos los cambios de código, pruebas de integración y artefactos documentales se encuentran estrictamente auditados, sin errores de formato (`git diff --check` limpio).
-- Se preserva el estándar de cero atribuciones de IA en commits.
-- Se ha alcanzado plenamente el objetivo de paridad funcional sobre Neo4j/Bolt, sujeto a las desviaciones registradas en la sección 3.1.
+- Todos los cambios de código, pruebas de integración y artefactos documentales se mantienen auditados y sin atribuciones de IA en commits.
+- La ejecución obligatoria de pruebas Bolt contra Neo4j (`just muninn-bolt-parity` y CI) activa `MUNINN_REQUIRE_NEO4J=1` para impedir retornos anticipados silenciosos cuando falta Docker o un fixture.
+- **Nota de alcance (segunda auditoría funcional):** Este informe cubre únicamente la superficie Bolt/Neo4j evaluada contra el TCK normativo y las pruebas de integración listadas arriba. No acredita paridad funcional global del 95 % fuera de ese alcance (por ejemplo: cableado completo de handlers MCP en la CLI productiva, aislamiento global de reasoning, adopción automatizada de grafos existentes, `EvalMemory` o migración automatizada de conversaciones legacy).

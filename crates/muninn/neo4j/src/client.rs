@@ -221,6 +221,23 @@ impl Neo4jClient {
     }
 }
 
+pub(crate) async fn transaction_rows(
+    txn: &mut neo4rs::Txn,
+    cypher: &str,
+    params: Params,
+) -> MemoryResult<Vec<Row>> {
+    let mut query = neo4rs::Query::new(cypher.to_owned());
+    for (name, value) in params {
+        query = query.param(name, value);
+    }
+    let mut stream = txn.execute(query).await.map_err(storage_error)?;
+    let mut rows = Vec::new();
+    while let Some(row) = stream.next(txn.handle()).await.map_err(storage_error)? {
+        rows.push(row);
+    }
+    Ok(rows)
+}
+
 fn storage_error(error: neo4rs::Error) -> MemoryError {
     MemoryError::storage(error.to_string())
 }
