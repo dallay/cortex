@@ -2124,3 +2124,182 @@ async fn saved_connection_discovery_uses_host_secrets_respects_cancellation_and_
 
     supervisor.shutdown().await;
 }
+
+#[tokio::test]
+async fn discover_models_handles_static_catalog_no_auth_errors_and_pre_cancelled() {
+    struct ConfigurableAdapter {
+        error_mode: Arc<AtomicUsize>,
+    }
+    #[async_trait]
+    impl ProviderAdapter for ConfigurableAdapter {
+        fn descriptor(&self) -> ProviderDescriptor {
+            ProviderDescriptor {
+                id: "configurable".into(),
+                display_name: "Configurable".into(),
+                models: vec![],
+                authentication: vec![AuthenticationMethod::None],
+            }
+        }
+        fn has_connection_catalog(&self) -> bool {
+            true
+        }
+        async fn discover_models(
+            &self,
+            material: &ConnectionMaterial,
+            _: CancellationToken,
+        ) -> huginn_core::Result<ModelCatalog> {
+            assert!(material.secret.is_none());
+            match self.error_mode.load(Ordering::SeqCst) {
+                0 => Ok(ModelCatalog::Available(vec![DiscoveredModel {
+                    id: "local-1".into(),
+                    tools: ToolSupport::Unknown,
+                }])),
+                1 => Err(huginn_core::AgentError::Configuration("bad cfg".into())),
+                2 => Err(ProviderError::Revoked.into()),
+                _ => Err(ProviderError::Unavailable.into()),
+            }
+        }
+        async fn create_model(
+            &self,
+            _: &ModelSelection,
+            _: CancellationToken,
+        ) -> huginn_core::Result<Arc<dyn ModelProvider>> {
+            Err(ProviderError::Unavailable.into())
+        }
+        async fn create_connection_model(
+            &self,
+            _: &ModelSelection,
+            _: ConnectionMaterial,
+            _: CancellationToken,
+        ) -> huginn_core::Result<Arc<dyn ModelProvider>> {
+            Ok(Arc::new(TextModel("ok")))
+        }
+    }
+    struct ConfigurablePlugin(Arc<ConfigurableAdapter>);
+    #[async_trait]
+    impl huginn_core::kernel::Plugin for ConfigurablePlugin {
+        fn manifest(&self) -> huginn_core::kernel::Manifest {
+            huginn_core::kernel::Manifest {
+                id: "test.configurable".into(),
+                provides: vec![],
+                requires: vec![catalog_id()],
+            }
+        }
+        async fn activate(
+            &mut self,
+            ctx: &mut huginn_core::kernel::PluginContext,
+        ) -> huginn_core::Result<()> {
+            ctx.resolve::<ProviderCatalogService>(&catalog_id())?
+                .0
+                .register(ctx, self.0.clone())?;
+            Ok(())
+        }
+    }
+
+    let store = Arc::new(Metadata::default());
+    let mut h = open(store.clone(), Secrets::new(SecretMode::Secure)).await;
+    let error_mode = Arc::new(AtomicUsize::new(0));
+    h.supervisor
+        .register(Box::new(ConfigurablePlugin(Arc::new(
+            ConfigurableAdapter {
+                error_mode: error_mode.clone(),
+            },
+        ))))
+        .unwrap();
+    h.supervisor.start().await.unwrap();
+
+    // 1. Pre-cancelled token fails immediately with Cancelled.
+    let cancelled = CancellationToken::new();
+    cancelled.cancel();
+    assert_eq!(
+        h.manager
+            .discover_models(uuid::Uuid::new_v4(), cancelled)
+            .await,
+        Err(ConnectionError::Cancelled)
+    );
+
+    // 2. Unknown connection ID returns InvalidSelection.
+    assert_eq!(
+        h.manager
+            .discover_models(uuid::Uuid::new_v4(), CancellationToken::new())
+            .await,
+        Err(ConnectionError::InvalidSelection)
+    );
+
+    // 3. Static-catalog adapter returns its static models after checking readiness.
+    let static_rec = h.manager.create(settings(), secret("k")).await.unwrap();
+    let static_models = h
+        .manager
+        .discover_models(static_rec.id, CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(matches!(static_models, ModelCatalog::Available(ref m) if m.len() == 2));
+
+    // 4. No-auth dynamic connection succeeds and maps adapter errors cleanly.
+    let no_auth = h
+        .manager
+        .create(
+            ConnectionSettings {
+                provider: "configurable".into(),
+                endpoint: Some("http://127.0.0.1:11434".into()),
+                model: "local-1".into(),
+                requires_secret: false,
+                allow_loopback_http: true,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        h.manager
+            .discover_models(no_auth.id, CancellationToken::new())
+            .await,
+        Ok(ModelCatalog::Available(_))
+    ));
+    error_mode.store(1, Ordering::SeqCst);
+    assert_eq!(
+        h.manager
+            .discover_models(no_auth.id, CancellationToken::new())
+            .await,
+        Err(ConnectionError::InvalidConfiguration)
+    );
+    error_mode.store(2, Ordering::SeqCst);
+    assert_eq!(
+        h.manager
+            .discover_models(no_auth.id, CancellationToken::new())
+            .await,
+        Err(ConnectionError::Revoked)
+    );
+    error_mode.store(3, Ordering::SeqCst);
+    assert_eq!(
+        h.manager
+            .discover_models(no_auth.id, CancellationToken::new())
+            .await,
+        Err(ConnectionError::AdapterUnavailable)
+    );
+
+    // 5. Removing the adapter causes AdapterUnavailable.
+    h.supervisor.remove("test.configurable").await.unwrap();
+    assert_eq!(
+        h.manager
+            .discover_models(no_auth.id, CancellationToken::new())
+            .await,
+        Err(ConnectionError::AdapterUnavailable)
+    );
+
+    // 6. Legacy loopback HTTP record fails closed with InvalidConfiguration.
+    {
+        let mut doc = store.value.lock().unwrap();
+        let rec = doc.connections.get_mut(&no_auth.id).unwrap();
+        rec.settings.allow_loopback_http = false;
+    }
+    let reopened = reopen(&h, store).await.unwrap();
+    assert_eq!(
+        reopened
+            .discover_models(no_auth.id, CancellationToken::new())
+            .await,
+        Err(ConnectionError::InvalidConfiguration)
+    );
+
+    h.supervisor.shutdown().await;
+}

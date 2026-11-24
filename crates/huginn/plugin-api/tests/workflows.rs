@@ -691,6 +691,21 @@ fn searchable_workflow_admits_large_catalogs_within_bounds_while_plain_choices_s
             kind: FieldKind::Choice(over_limit),
             initial: String::new(),
         }],
+        handler.clone(),
+    )
+    .is_err());
+
+    // Exceeding the 4 MiB total text budget across searchable options is rejected.
+    let huge_options: Vec<String> = (0..100).map(|_| "x".repeat(50_000)).collect();
+    assert!(Workflow::new_searchable(
+        "Over byte budget",
+        "",
+        vec![Field {
+            id: "model".into(),
+            label: "Model".into(),
+            kind: FieldKind::Choice(huge_options),
+            initial: String::new(),
+        }],
         handler,
     )
     .is_err());

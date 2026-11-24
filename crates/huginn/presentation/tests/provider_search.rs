@@ -235,3 +235,51 @@ async fn searchable_metadata_without_a_choice_preserves_text_entry() {
         "plain tex"
     );
 }
+
+#[tokio::test]
+async fn page_and_home_end_keys_navigate_large_searchable_list() {
+    let options: Vec<String> = (0..30).map(|i| format!("model-{i:02}")).collect();
+    let (_supervisor, ui, captured) = setup(vec![field("model", FieldKind::Choice(options))]).await;
+    key(&ui, KeyCode::PageDown);
+    assert_eq!(
+        ui.lock()
+            .workflow()
+            .unwrap()
+            .search_window(8)
+            .selected_match,
+        10
+    );
+    key(&ui, KeyCode::PageUp);
+    assert_eq!(
+        ui.lock()
+            .workflow()
+            .unwrap()
+            .search_window(8)
+            .selected_match,
+        0
+    );
+    key(&ui, KeyCode::End);
+    assert_eq!(
+        ui.lock()
+            .workflow()
+            .unwrap()
+            .search_window(8)
+            .selected_match,
+        29
+    );
+    key(&ui, KeyCode::Home);
+    assert_eq!(
+        ui.lock()
+            .workflow()
+            .unwrap()
+            .search_window(8)
+            .selected_match,
+        0
+    );
+    key(&ui, KeyCode::PageDown);
+    submit(&ui).await;
+    assert_eq!(
+        captured.lock().unwrap().as_ref().unwrap().public["model"],
+        "10"
+    );
+}

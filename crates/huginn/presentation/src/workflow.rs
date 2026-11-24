@@ -754,5 +754,44 @@ mod tests {
 
         host.backspace();
         assert_eq!(host.search_window(16).total_matches, 10);
+        // Backspacing all the way to empty restores all 600 options.
+        for _ in 0..10 {
+            host.backspace();
+        }
+        assert_eq!(host.search_query(), "");
+        assert_eq!(host.search_window(16).total_matches, 600);
+        // Control-only input and backspace on empty query are harmless no-ops.
+        host.insert("\n\t\x1b");
+        host.backspace();
+        assert_eq!(host.search_query(), "");
+        // Empty matches make page/jump safe no-ops.
+        host.insert("no-such-model");
+        assert_eq!(host.search_window(16).total_matches, 0);
+        host.page_choice(true, 10);
+        host.jump_choice(true);
+    }
+
+    #[test]
+    fn non_searchable_and_choice_free_workflows_return_empty_search_windows() {
+        let mut plain = HostWorkflow::new(form());
+        assert_eq!(plain.search_window(8).total_options, 0);
+        plain.page_choice(true, 10);
+        plain.jump_choice(true);
+
+        let text_only = Workflow::new_searchable(
+            "Text",
+            "",
+            vec![Field {
+                id: "name".into(),
+                label: "Name".into(),
+                kind: FieldKind::Text,
+                initial: String::new(),
+            }],
+            Arc::new(|_, _| Box::pin(async { Ok(CommandResult::Dismiss) })),
+        )
+        .unwrap();
+        let host = HostWorkflow::new(text_only);
+        assert_eq!(host.search_window(8).total_options, 0);
+        assert!(host.search_rows().is_empty());
     }
 }

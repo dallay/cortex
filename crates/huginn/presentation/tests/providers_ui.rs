@@ -25,6 +25,7 @@ struct Manager {
     fail: AtomicBool,
     uncertain: AtomicBool,
     recovery_fail: AtomicBool,
+    discovery: Mutex<Option<ConnectionResult<ModelCatalog>>>,
 }
 #[async_trait]
 impl ConnectionManagement for Manager {
@@ -112,6 +113,17 @@ impl ConnectionManagement for Manager {
             model,
         })
     }
+    async fn discover_models(
+        &self,
+        _: uuid::Uuid,
+        _: CancellationToken,
+    ) -> ConnectionResult<ModelCatalog> {
+        self.discovery
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or(Ok(ModelCatalog::Unsupported))
+    }
     async fn revoke(&self, id: uuid::Uuid) -> ConnectionResult<()> {
         self.records
             .lock()
@@ -128,6 +140,12 @@ struct Catalog(
     Vec<(ProviderRegistration, ProviderDescriptor)>,
 );
 impl ProviderCatalog for Catalog {
+    fn onboarding(&self, registration: &ProviderRegistration) -> Result<ProviderOnboarding> {
+        Ok(ProviderOnboarding {
+            allow_manual_model_when_unsupported: registration.provider == "custom-dyn",
+            ..ProviderOnboarding::default()
+        })
+    }
     fn adapters(&self) -> Vec<(ProviderRegistration, ProviderDescriptor)> {
         let mut adapters = vec![(
             self.1.clone(),
@@ -1357,4 +1375,242 @@ async fn revoking_provider_ui_removes_history_and_does_not_recover_old_drafts_on
     assert!(!snapshot.2.join(" ").contains("draft.example.invalid"));
     assert_eq!(snapshot.2[4], "API key: ");
     assert!(manager.records.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn model_command_covers_dynamic_discovery_outcomes_and_manual_entry_boundaries() {
+    let custom_reg = ProviderRegistration::new("custom-dyn".into(), 1);
+    let ollama_reg = ProviderRegistration::new("ollama-dyn".into(), 1);
+    let (_supervisor, ui, manager) = setup_with_catalog(
+        vec![AuthenticationMethod::ApiKey],
+        vec![
+            (
+                custom_reg,
+                ProviderDescriptor {
+                    id: "custom-dyn".into(),
+                    display_name: "Custom dynamic".into(),
+                    models: vec![],
+                    authentication: vec![AuthenticationMethod::ApiKey],
+                },
+            ),
+            (
+                ollama_reg,
+                ProviderDescriptor {
+                    id: "ollama-dyn".into(),
+                    display_name: "Ollama dynamic".into(),
+                    models: vec![],
+                    authentication: vec![AuthenticationMethod::None],
+                },
+            ),
+        ],
+    )
+    .await;
+
+    let custom_id = uuid::Uuid::new_v4();
+    let ollama_id = uuid::Uuid::new_v4();
+    let missing_id = uuid::Uuid::new_v4();
+    {
+        let mut records = manager.records.lock().unwrap();
+        records.insert(
+            custom_id,
+            ConnectionRecord {
+                id: custom_id,
+                revision: uuid::Uuid::new_v4(),
+                settings: ConnectionSettings {
+                    provider: "custom-dyn".into(),
+                    endpoint: Some("https://api.example.test/v1".into()),
+                    model: "m1".into(),
+                    requires_secret: true,
+                    allow_loopback_http: false,
+                },
+                secret: Some(SecretReference::new()),
+                mode: SecretMode::Secure,
+            },
+        );
+        records.insert(
+            ollama_id,
+            ConnectionRecord {
+                id: ollama_id,
+                revision: uuid::Uuid::new_v4(),
+                settings: ConnectionSettings {
+                    provider: "ollama-dyn".into(),
+                    endpoint: Some("http://127.0.0.1:11434".into()),
+                    model: "llama".into(),
+                    requires_secret: false,
+                    allow_loopback_http: true,
+                },
+                secret: None,
+                mode: SecretMode::Secure,
+            },
+        );
+        records.insert(
+            missing_id,
+            ConnectionRecord {
+                id: missing_id,
+                revision: uuid::Uuid::new_v4(),
+                settings: ConnectionSettings {
+                    provider: "gone-adapter".into(),
+                    endpoint: Some("https://gone.example.test".into()),
+                    model: "x".into(),
+                    requires_secret: false,
+                    allow_loopback_http: false,
+                },
+                secret: None,
+                mode: SecretMode::Secure,
+            },
+        );
+    }
+
+    let index_of = |target: uuid::Uuid| -> usize {
+        manager
+            .records
+            .lock()
+            .unwrap()
+            .keys()
+            .position(|id| *id == target)
+            .unwrap()
+    };
+    let open_connection = |ui: &Arc<Ui>, target_idx: usize| {
+        ui.dispatch_command("/model");
+        target_idx
+    };
+
+    // 1. Missing adapter fails closed inline.
+    let idx = open_connection(&ui, index_of(missing_id));
+    settle(&ui).await;
+    for _ in 0..idx {
+        ui.lock().workflow_mut().unwrap().choice(true);
+    }
+    submit(&ui).await;
+    assert!(ui
+        .lock()
+        .workflow()
+        .unwrap()
+        .error_message()
+        .unwrap()
+        .contains("provider registration unavailable"));
+    ui.cancel_workflow();
+
+    // 2. Empty, oversized, unavailable, invalid, and locked errors stay on connection form.
+    let over_limit: Vec<DiscoveredModel> = (0..=MAX_DISCOVERED_MODELS)
+        .map(|i| DiscoveredModel {
+            id: format!("m{i}"),
+            tools: ToolSupport::Unknown,
+        })
+        .collect();
+    for (outcome, expected) in [
+        (Ok(ModelCatalog::Available(vec![])), "No models available"),
+        (
+            Ok(ModelCatalog::Available(over_limit)),
+            "supported catalog limit",
+        ),
+        (
+            Ok(ModelCatalog::Unavailable),
+            "Cannot reach the provider or authenticate",
+        ),
+        (Ok(ModelCatalog::Invalid), "invalid model catalog"),
+        (Err(ConnectionError::Locked), "locked or inaccessible"),
+    ] {
+        *manager.discovery.lock().unwrap() = Some(outcome);
+        let idx = open_connection(&ui, index_of(custom_id));
+        settle(&ui).await;
+        for _ in 0..idx {
+            ui.lock().workflow_mut().unwrap().choice(true);
+        }
+        submit(&ui).await;
+        let state = ui.lock();
+        let form = state.workflow().unwrap();
+        assert_eq!(form.workflow.title(), "Providers");
+        assert!(
+            form.error_message().unwrap().contains(expected),
+            "{:?}",
+            form.error_message()
+        );
+        drop(state);
+        ui.cancel_workflow();
+    }
+
+    // 3. Cancelled discovery stays fail-closed without mutating selection.
+    *manager.discovery.lock().unwrap() = Some(Err(ConnectionError::Cancelled));
+    let idx = open_connection(&ui, index_of(custom_id));
+    settle(&ui).await;
+    for _ in 0..idx {
+        ui.lock().workflow_mut().unwrap().choice(true);
+    }
+    submit(&ui).await;
+    assert!(manager.selected.lock().unwrap().is_none());
+    ui.cancel_workflow();
+
+    // 4. Unsupported on Ollama dynamic fails closed without manual entry.
+    *manager.discovery.lock().unwrap() = Some(Ok(ModelCatalog::Unsupported));
+    let idx = open_connection(&ui, index_of(ollama_id));
+    settle(&ui).await;
+    for _ in 0..idx {
+        ui.lock().workflow_mut().unwrap().choice(true);
+    }
+    submit(&ui).await;
+    assert!(ui
+        .lock()
+        .workflow()
+        .unwrap()
+        .error_message()
+        .unwrap()
+        .contains("Model discovery is unsupported"));
+    ui.cancel_workflow();
+
+    // 5. Unsupported on Custom dynamic opens manual entry; handles select failure and success.
+    let idx = open_connection(&ui, index_of(custom_id));
+    settle(&ui).await;
+    for _ in 0..idx {
+        ui.lock().workflow_mut().unwrap().choice(true);
+    }
+    submit(&ui).await;
+    assert_eq!(
+        ui.lock().workflow().unwrap().workflow.title(),
+        "Next-turn model (manual entry)"
+    );
+    manager.fail.store(true, Ordering::SeqCst);
+    submit(&ui).await;
+    assert!(ui.lock().workflow().unwrap().error_message().is_some());
+    manager.fail.store(false, Ordering::SeqCst);
+    {
+        let mut state = ui.lock();
+        let form = state.workflow_mut().unwrap();
+        form.backspace();
+        form.backspace();
+        form.insert("manual-2");
+    }
+    submit(&ui).await;
+    assert_eq!(
+        *manager.selected.lock().unwrap(),
+        Some((custom_id, "manual-2".into()))
+    );
+
+    // 6. Available models on Custom dynamic opens searchable picker; handles select failure and success.
+    *manager.discovery.lock().unwrap() = Some(Ok(ModelCatalog::Available(vec![
+        DiscoveredModel {
+            id: "alpha".into(),
+            tools: ToolSupport::Unknown,
+        },
+        DiscoveredModel {
+            id: "beta".into(),
+            tools: ToolSupport::Unknown,
+        },
+    ])));
+    let idx = open_connection(&ui, index_of(custom_id));
+    settle(&ui).await;
+    for _ in 0..idx {
+        ui.lock().workflow_mut().unwrap().choice(true);
+    }
+    submit(&ui).await;
+    ui.lock().workflow_mut().unwrap().insert("beta");
+    manager.fail.store(true, Ordering::SeqCst);
+    submit(&ui).await;
+    assert!(ui.lock().workflow().unwrap().error_message().is_some());
+    manager.fail.store(false, Ordering::SeqCst);
+    submit(&ui).await;
+    assert_eq!(
+        *manager.selected.lock().unwrap(),
+        Some((custom_id, "beta".into()))
+    );
 }
