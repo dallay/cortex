@@ -79,7 +79,7 @@ const oauthExpiry = computed(() => {
         <div class="flex items-center gap-2 flex-wrap">
           <span class="font-medium truncate">{{ connection.name }}</span>
           <Badge v-if="!enabled" variant="secondary">
-            {{ t('providers.form.enabled') }}
+            {{ t('providers.compatible.disabled') }}
           </Badge>
         </div>
         <div class="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">

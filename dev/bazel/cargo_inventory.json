@@ -1983,6 +1983,13 @@
     },
     {
       "kinds": "test",
+      "label": "//crates/muninn/neo4j:summary_isolation",
+      "manifest": "crates/muninn/neo4j/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/muninn/neo4j#muninn-neo4j@0.0.1",
+      "target": "summary_isolation"
+    },
+    {
+      "kinds": "test",
       "label": "//crates/muninn/observability:global_tracer_default",
       "manifest": "crates/muninn/observability/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/muninn/observability#muninn-observability@0.0.1",

@@ -70,6 +70,40 @@ Do not delete objects, data, or the marker as routine recovery. `clear_all_data`
 deletes memories but preserves `MuninnSchema` nodes; it is not a schema-history
 reset mechanism.
 
+## Legacy conversation migration
+
+`SchemaManager::setup_all` never writes `owner_scope`. A conversation created
+before the owner namespace existed stays unscoped, and every operation that
+resolves its `session_id` fails with
+`ambiguous legacy conversation requires explicit migration`.
+
+No automated migration ships with Muninn. The required action is an explicit
+operator migration that assigns the correct `owner_scope` to each legacy
+conversation before the session is used again.
+
+1. Retain a verified backup of the database.
+2. List the unscoped conversations and their sessions:
+   `MATCH (c:Conversation) WHERE c.owner_scope IS NULL RETURN c.id, c.session_id`.
+3. Determine the owner of every listed session. The identifier supplied by the
+   caller is not authentication, and the legacy rows carry no owner evidence.
+   A session that belongs to no owner takes the `unowned` namespace.
+4. Write the scope with the storage encoding the application uses: `unowned`
+   for the ownerless namespace, `owned:<identifier>` otherwise. Keep the
+   identifier exact, including any whitespace.
+   `MATCH (c:Conversation) WHERE c.id = $id SET c.owner_scope = $owner_scope`.
+5. Resolve the duplicates before writing. The composite uniqueness of
+   `(owner_scope, session_id)` rejects a legacy conversation that would land
+   on a session already owned by the target scope. Merge or remove the
+   duplicate in a separate, authorized operation.
+6. Verify that the list is empty:
+   `MATCH (c:Conversation) WHERE c.owner_scope IS NULL RETURN count(c)`.
+
+The migration is not part of schema initialization, and the schema manager does
+not perform it. It changes stored data, so it needs the same backup and
+authorization as any other data operation. See
+[Owner, session, and namespace boundaries](owner-session-namespace.md#legacy-conversations-and-summary-entities)
+for the rejection that the migration removes.
+
 ## Startup and commands
 
 `apps/muninn/src/main.rs` constructs `MemoryClient` with
