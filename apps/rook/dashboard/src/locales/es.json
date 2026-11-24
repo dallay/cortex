@@ -180,7 +180,8 @@
 		"codex": {
 			"title": "Cuentas de Codex",
 			"description": "Vincula cuentas de ChatGPT en el navegador. Las cuentas vinculadas no atienden solicitudes a modelos en Rook.",
-			"localOnly": "Un operador debe habilitar Codex. Abre el panel en el mismo equipo que el servidor de Rook.",
+			"disabled": "La vinculación de cuentas de Codex no está configurada en este servidor de Rook. Un operador debe añadir [server.codex_accounts] y reiniciar Rook.",
+			"remoteBrowser": "Abre el panel en el mismo equipo que el servidor de Rook para vincular una cuenta de ChatGPT.",
 			"accounts": "Cuentas de Codex vinculadas",
 			"accountId": "Cuenta {id}",
 			"empty": "No hay cuentas de Codex vinculadas.",

@@ -6,6 +6,7 @@ import LoadingState from "@/components/LoadingState.vue";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { type CodexAccountsResponse, useApi } from "@/lib/api";
+import { isLoopbackBrowser } from "@/lib/browserHost";
 
 const open = defineModel<boolean>("open", { required: true });
 const { t } = useI18n();
@@ -14,7 +15,7 @@ const snapshot = ref<CodexAccountsResponse>();
 const login = ref<{ id: string; authUrl: string }>();
 const busy = ref(false);
 const error = ref(false);
-const browserIsLocal = ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
+const browserIsLocal = isLoopbackBrowser();
 const pending = computed(() => snapshot.value?.attempt?.status === "pending" ? snapshot.value.attempt : undefined);
 const link = computed(() => pending.value?.id === login.value?.id ? login.value?.authUrl : undefined);
 let timer: ReturnType<typeof setTimeout> | undefined;
@@ -98,8 +99,11 @@ onScopeDispose(() => { dialogGeneration++; stopRefresh(); });
       <ErrorBanner v-if="error" :message="t('providers.codex.error')" @retry="retry" />
       <LoadingState v-if="!snapshot && !error" />
       <template v-if="snapshot">
-        <p v-if="!snapshot.enabled || !browserIsLocal" class="text-sm text-muted-foreground">
-          {{ t('providers.codex.localOnly') }}
+        <p v-if="!snapshot.enabled" class="text-sm text-muted-foreground">
+          {{ t('providers.codex.disabled') }}
+        </p>
+        <p v-else-if="!browserIsLocal" class="text-sm text-muted-foreground">
+          {{ t('providers.codex.remoteBrowser') }}
         </p>
         <p v-if="snapshot.attempt" role="status" class="text-sm">
           {{ t(`providers.codex.status.${snapshot.attempt.status}`) }}

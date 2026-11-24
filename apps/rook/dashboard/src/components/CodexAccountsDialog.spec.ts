@@ -11,6 +11,9 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/api", () => ({ useApi: () => api }));
 
+const browser = vi.hoisted(() => ({ isLoopbackBrowser: vi.fn(() => true) }));
+vi.mock("@/lib/browserHost", () => browser);
+
 function mountDialog() {
 	return mount(CodexAccountsDialog, {
 		props: { open: true },
@@ -29,6 +32,7 @@ function mountDialog() {
 
 afterEach(() => {
 	vi.resetAllMocks();
+	browser.isLoopbackBrowser.mockReturnValue(true);
 });
 
 describe("Codex accounts dialog", () => {
@@ -108,7 +112,7 @@ describe("Codex accounts dialog", () => {
 		}
 	});
 
-	it("does not start login when the operator has not enabled Codex", async () => {
+	it("explains that the operator has not configured Codex", async () => {
 		api.getCodexAccounts.mockResolvedValueOnce({
 			enabled: false,
 			accounts: [],
@@ -117,7 +121,28 @@ describe("Codex accounts dialog", () => {
 		const wrapper = mountDialog();
 		try {
 			await flushPromises();
-			expect(wrapper.text()).toContain("An operator must enable Codex");
+			expect(wrapper.text()).toContain("not configured on this Rook server");
+			expect(wrapper.text()).not.toContain("same host as the Rook server");
+			expect(wrapper.find("button, a").exists()).toBe(false);
+		} finally {
+			wrapper.unmount();
+		}
+	});
+
+	it("explains that linking requires a browser on the Rook host", async () => {
+		browser.isLoopbackBrowser.mockReturnValue(false);
+		api.getCodexAccounts.mockResolvedValueOnce({
+			enabled: true,
+			accounts: [],
+			attempt: null,
+		});
+		const wrapper = mountDialog();
+		try {
+			await flushPromises();
+			expect(wrapper.text()).toContain("same host as the Rook server");
+			expect(wrapper.text()).not.toContain(
+				"not configured on this Rook server",
+			);
 			expect(wrapper.find("button, a").exists()).toBe(false);
 		} finally {
 			wrapper.unmount();

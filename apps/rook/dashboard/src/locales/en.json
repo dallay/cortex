@@ -135,7 +135,8 @@
 		"codex": {
 			"title": "Codex accounts",
 			"description": "Link ChatGPT accounts in your browser. Linked accounts do not serve model requests in Rook.",
-			"localOnly": "An operator must enable Codex. Open the dashboard on the same host as the Rook server.",
+			"disabled": "Codex account linking is not configured on this Rook server. An operator must add [server.codex_accounts] and restart Rook.",
+			"remoteBrowser": "Open the dashboard on the same host as the Rook server to link a ChatGPT account.",
 			"accounts": "Linked Codex accounts",
 			"accountId": "Account {id}",
 			"empty": "No Codex accounts are linked.",
