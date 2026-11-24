@@ -63,6 +63,11 @@ impl PartialEq for Workflow {
     }
 }
 impl Eq for Workflow {}
+/// Default bound for ordinary (non-searchable) choice fields.
+const MAX_PLAIN_CHOICES: usize = 256;
+/// Total text budget across all options of a searchable choice field, aligned with catalog response bounds.
+const MAX_SEARCHABLE_CHOICE_BYTES: usize = 4 * 1024 * 1024;
+
 impl Workflow {
     pub fn new(
         title: impl Into<String>,
@@ -70,11 +75,31 @@ impl Workflow {
         fields: Vec<Field>,
         handler: WorkflowHandler,
     ) -> Result<Self> {
+        Self::build(title, body, fields, handler, false)
+    }
+    /// Construct a searchable workflow whose first choice field may carry up to
+    /// `MAX_DISCOVERED_MODELS` options within the bounded text budget.
+    pub fn new_searchable(
+        title: impl Into<String>,
+        body: impl Into<String>,
+        fields: Vec<Field>,
+        handler: WorkflowHandler,
+    ) -> Result<Self> {
+        Self::build(title, body, fields, handler, true)
+    }
+    fn build(
+        title: impl Into<String>,
+        body: impl Into<String>,
+        fields: Vec<Field>,
+        handler: WorkflowHandler,
+        searchable: bool,
+    ) -> Result<Self> {
         if fields.len() > 32 {
             return Err(error("form needs at most 32 fields"));
         }
         let mut ids = std::collections::BTreeSet::new();
         let mut checked = Vec::new();
+        let mut searchable_choice_used = false;
         for mut field in fields {
             if !identifier(&field.id) || !ids.insert(field.id.clone()) {
                 return Err(error("invalid or duplicate form field"));
@@ -89,11 +114,32 @@ impl Workflow {
                     return Err(error("secret defaults are forbidden"));
                 }
                 FieldKind::Choice(choices) => {
-                    if choices.is_empty() || choices.len() > 256 {
-                        return Err(error("choice field needs 1..256 choices"));
-                    }
-                    for choice in choices.iter_mut() {
-                        *choice = text(choice)?;
+                    let is_searchable_choice = searchable && !searchable_choice_used;
+                    if is_searchable_choice {
+                        searchable_choice_used = true;
+                        let max_choices = huginn_core::providers::MAX_DISCOVERED_MODELS;
+                        if choices.is_empty() || choices.len() > max_choices {
+                            return Err(error(format!(
+                                "searchable choice field needs 1..{max_choices} choices"
+                            )));
+                        }
+                        let mut total_bytes = 0usize;
+                        for choice in choices.iter_mut() {
+                            *choice = text(choice)?;
+                            total_bytes = total_bytes
+                                .checked_add(choice.len())
+                                .ok_or_else(|| error("searchable choices exceed input budget"))?;
+                            if total_bytes > MAX_SEARCHABLE_CHOICE_BYTES {
+                                return Err(error("searchable choices exceed input budget"));
+                            }
+                        }
+                    } else {
+                        if choices.is_empty() || choices.len() > MAX_PLAIN_CHOICES {
+                            return Err(error("choice field needs 1..256 choices"));
+                        }
+                        for choice in choices.iter_mut() {
+                            *choice = text(choice)?;
+                        }
                     }
                     if !field.initial.is_empty()
                         && field
@@ -116,7 +162,7 @@ impl Workflow {
                 fields: checked,
                 handler,
                 overlay_kind: None,
-                searchable: false,
+                searchable,
                 without_history: false,
             }),
             registration: None,

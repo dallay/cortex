@@ -151,6 +151,10 @@ impl Payload {
         match key.code {
             KeyCode::Down if form.searching() => form.choice(true),
             KeyCode::Up if form.searching() => form.choice(false),
+            KeyCode::PageDown if form.searching() => form.page_choice(true, 10),
+            KeyCode::PageUp if form.searching() => form.page_choice(false, 10),
+            KeyCode::Home if form.searching() => form.jump_choice(false),
+            KeyCode::End if form.searching() => form.jump_choice(true),
             KeyCode::Tab | KeyCode::Down => form.navigate(true),
             KeyCode::BackTab | KeyCode::Up => form.navigate(false),
             KeyCode::Left => form.choice(false),

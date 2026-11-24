@@ -4,6 +4,17 @@ use huginn_plugin_api::v1::{CommandResult, FieldKind, FormInput, Workflow};
 use tokio::sync::oneshot;
 use zeroize::{Zeroize, Zeroizing};
 
+/// Bounded viewport slice of a searchable choice field, avoiding per-frame full-catalog clones.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SearchWindow {
+    pub query: String,
+    pub total_options: usize,
+    pub total_matches: usize,
+    pub selected_match: usize,
+    pub offset: usize,
+    pub rows: Vec<(String, bool)>,
+}
+
 pub struct HostWorkflow {
     pub workflow: Workflow,
     pub selected: usize,
@@ -13,6 +24,8 @@ pub struct HostWorkflow {
     history: Vec<Stage>,
     forward: Vec<Draft>,
     query: String,
+    search_index: Vec<String>,
+    filtered: Vec<usize>,
 }
 pub struct Stage {
     workflow: Workflow,
@@ -88,6 +101,21 @@ impl HostWorkflow {
                 FieldKind::Choice(_) => Value::Choice(field.initial.parse().unwrap_or(0)),
             })
             .collect();
+        let (search_index, filtered) = if workflow.is_searchable() {
+            workflow
+                .fields()
+                .iter()
+                .find_map(|field| match &field.kind {
+                    FieldKind::Choice(options) => Some((
+                        options.iter().map(|opt| opt.to_lowercase()).collect(),
+                        (0..options.len()).collect(),
+                    )),
+                    _ => None,
+                })
+                .unwrap_or_default()
+        } else {
+            (Vec::new(), Vec::new())
+        };
         Self {
             workflow,
             selected: 0,
@@ -97,6 +125,8 @@ impl HostWorkflow {
             history: Vec::new(),
             forward: Vec::new(),
             query: String::new(),
+            search_index,
+            filtered,
         }
     }
     fn stage(&mut self) -> Stage {
@@ -134,6 +164,7 @@ impl HostWorkflow {
         self.selected = stage.selected;
         self.query = stage.query;
         self.forward = stage.forward;
+        self.rebuild_filter(false);
     }
     pub(crate) fn inherit_history(&mut self, mut history: Vec<Stage>) {
         if !self.workflow.retains_history() {
@@ -158,6 +189,7 @@ impl HostWorkflow {
                 self.selected = draft.selected;
                 self.query = draft.query;
                 self.forward = draft.forward;
+                self.rebuild_filter(false);
             }
         }
         self.history = history;
@@ -191,20 +223,30 @@ impl HostWorkflow {
     pub fn search_query(&self) -> &str {
         &self.query
     }
-    fn filtered_indices(&self) -> Vec<usize> {
-        let Some(field) = self.search_field() else {
-            return Vec::new();
-        };
-        let FieldKind::Choice(options) = &self.workflow.fields()[field].kind else {
-            return Vec::new();
-        };
+    fn rebuild_filter(&mut self, narrowed: bool) {
+        if self.search_field().is_none() {
+            self.filtered.clear();
+            return;
+        }
+        if self.query.is_empty() {
+            self.filtered.clear();
+            self.filtered.extend(0..self.search_index.len());
+            return;
+        }
         let query = self.query.to_lowercase();
-        options
-            .iter()
-            .enumerate()
-            .filter(|(_, option)| option.to_lowercase().contains(&query))
-            .map(|(index, _)| index)
-            .collect()
+        if narrowed {
+            self.filtered
+                .retain(|&index| self.search_index[index].contains(&query));
+        } else {
+            self.filtered.clear();
+            self.filtered.extend(
+                self.search_index
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, option)| option.contains(&query))
+                    .map(|(index, _)| index),
+            );
+        }
     }
     pub fn search_rows(&self) -> Vec<(String, bool)> {
         let Some(field) = self.search_field() else {
@@ -216,14 +258,65 @@ impl HostWorkflow {
         let Value::Choice(selected) = self.values[field] else {
             return Vec::new();
         };
-        self.filtered_indices()
-            .into_iter()
-            .map(|index| (options[index].clone(), index == selected))
+        self.filtered
+            .iter()
+            .map(|&index| (options[index].clone(), index == selected))
             .collect()
     }
+    /// Project at most `max_rows` matching rows centered around the selected match.
+    pub fn search_window(&self, max_rows: usize) -> SearchWindow {
+        let Some(field) = self.search_field() else {
+            return SearchWindow {
+                query: self.query.clone(),
+                total_options: 0,
+                total_matches: 0,
+                selected_match: 0,
+                offset: 0,
+                rows: Vec::new(),
+            };
+        };
+        let FieldKind::Choice(options) = &self.workflow.fields()[field].kind else {
+            return SearchWindow {
+                query: self.query.clone(),
+                total_options: 0,
+                total_matches: 0,
+                selected_match: 0,
+                offset: 0,
+                rows: Vec::new(),
+            };
+        };
+        let Value::Choice(selected) = self.values[field] else {
+            return SearchWindow {
+                query: self.query.clone(),
+                total_options: options.len(),
+                total_matches: 0,
+                selected_match: 0,
+                offset: 0,
+                rows: Vec::new(),
+            };
+        };
+        let total_matches = self.filtered.len();
+        let selected_match = self.filtered.binary_search(&selected).unwrap_or(0);
+        let limit = max_rows.max(1);
+        let max_offset = total_matches.saturating_sub(limit);
+        let offset = selected_match.saturating_sub(limit / 2).min(max_offset);
+        let end = offset.saturating_add(limit).min(total_matches);
+        let rows = self.filtered[offset..end]
+            .iter()
+            .map(|&index| (options[index].clone(), index == selected))
+            .collect();
+        SearchWindow {
+            query: self.query.clone(),
+            total_options: options.len(),
+            total_matches,
+            selected_match,
+            offset,
+            rows,
+        }
+    }
     fn filter_selection(&mut self) {
-        if let (Some(field), Some(index)) = (self.search_field(), self.filtered_indices().first()) {
-            self.values[field] = Value::Choice(*index);
+        if let (Some(field), Some(&index)) = (self.search_field(), self.filtered.first()) {
+            self.values[field] = Value::Choice(index);
         }
     }
     pub const fn is_pending(&self) -> bool {
@@ -269,12 +362,17 @@ impl HostWorkflow {
             return;
         }
         if self.searching() {
+            let mut appended = false;
             for ch in text.chars().filter(|ch| !ch.is_control()) {
                 if self.query.len() + ch.len_utf8() <= 4096 {
                     self.query.push(ch);
+                    appended = true;
                 }
             }
-            self.filter_selection();
+            if appended {
+                self.rebuild_filter(true);
+                self.filter_selection();
+            }
             return;
         }
         let Some(value) = self.values.get_mut(self.selected) else {
@@ -298,8 +396,10 @@ impl HostWorkflow {
             return;
         }
         if self.searching() {
-            self.query.pop();
-            self.filter_selection();
+            if self.query.pop().is_some() {
+                self.rebuild_filter(false);
+                self.filter_selection();
+            }
             return;
         }
         match self.values.get_mut(self.selected) {
@@ -335,16 +435,15 @@ impl HostWorkflow {
             return;
         }
         if self.searching() {
-            let indices = self.filtered_indices();
-            if indices.is_empty() {
+            if self.filtered.is_empty() {
                 return;
             }
             if let Value::Choice(index) = &mut self.values[self.selected] {
-                let position = indices.iter().position(|row| row == index).unwrap_or(0);
-                *index = indices[if right {
-                    (position + 1) % indices.len()
+                let position = self.filtered.binary_search(index).unwrap_or(0);
+                *index = self.filtered[if right {
+                    (position + 1) % self.filtered.len()
                 } else {
-                    (position + indices.len() - 1) % indices.len()
+                    (position + self.filtered.len() - 1) % self.filtered.len()
                 }];
             }
             return;
@@ -360,6 +459,34 @@ impl HostWorkflow {
                     index.checked_sub(1).unwrap_or(choices.len() - 1)
                 };
             }
+        }
+    }
+    pub fn page_choice(&mut self, down: bool, step: usize) {
+        if self.is_pending() || !self.searching() || self.filtered.is_empty() {
+            return;
+        }
+        if let Value::Choice(index) = &mut self.values[self.selected] {
+            let position = self.filtered.binary_search(index).unwrap_or(0);
+            let next = if down {
+                position
+                    .saturating_add(step.max(1))
+                    .min(self.filtered.len() - 1)
+            } else {
+                position.saturating_sub(step.max(1))
+            };
+            *index = self.filtered[next];
+        }
+    }
+    pub fn jump_choice(&mut self, end: bool) {
+        if self.is_pending() || !self.searching() || self.filtered.is_empty() {
+            return;
+        }
+        if let Value::Choice(index) = &mut self.values[self.selected] {
+            *index = if end {
+                *self.filtered.last().unwrap()
+            } else {
+                self.filtered[0]
+            };
         }
     }
     pub(crate) fn prepare_submission(&mut self) -> Option<PreparedSubmission> {
@@ -381,7 +508,7 @@ impl HostWorkflow {
             self.error = Some(format!("{} is required.", field.0.label));
             return None;
         }
-        if self.search_field().is_some() && self.filtered_indices().is_empty() {
+        if self.search_field().is_some() && self.filtered.is_empty() {
             return None;
         }
         let mut input = FormInput::default();
@@ -575,5 +702,96 @@ mod tests {
         let mut barrier = HostWorkflow::new(form().without_history());
         barrier.inherit_history(next.take_history());
         assert!(!barrier.can_go_back());
+    }
+
+    #[test]
+    fn large_searchable_catalog_windows_and_pages_without_full_clone() {
+        let options: Vec<String> = (0..600).map(|i| format!("vendor/model-{i:04}")).collect();
+        let workflow = Workflow::new_searchable(
+            "Next-turn model",
+            "",
+            vec![Field {
+                id: "model".into(),
+                label: "Model".into(),
+                kind: FieldKind::Choice(options),
+                initial: "450".into(),
+            }],
+            Arc::new(|_, _| Box::pin(async { Ok(CommandResult::Dismiss) })),
+        )
+        .unwrap();
+        let mut host = HostWorkflow::new(workflow);
+
+        let initial = host.search_window(16);
+        assert_eq!(initial.total_options, 600);
+        assert_eq!(initial.total_matches, 600);
+        assert_eq!(initial.selected_match, 450);
+        assert_eq!(initial.rows.len(), 16);
+        assert!(initial
+            .rows
+            .iter()
+            .any(|(label, selected)| label == "vendor/model-0450" && *selected));
+
+        host.page_choice(true, 10);
+        assert!(matches!(host.values[0], Value::Choice(460)));
+        host.page_choice(false, 25);
+        assert!(matches!(host.values[0], Value::Choice(435)));
+        host.jump_choice(false);
+        assert!(matches!(host.values[0], Value::Choice(0)));
+        host.jump_choice(true);
+        assert!(matches!(host.values[0], Value::Choice(599)));
+
+        // Incremental narrowing and backspace restoration.
+        host.insert("MODEL-04");
+        let narrowed = host.search_window(16);
+        assert_eq!(narrowed.total_options, 600);
+        assert_eq!(narrowed.total_matches, 100);
+        assert!(matches!(host.values[0], Value::Choice(400)));
+        host.insert("87");
+        let exact = host.search_window(16);
+        assert_eq!(exact.total_matches, 1);
+        assert_eq!(exact.rows, vec![("vendor/model-0487".into(), true)]);
+        assert!(matches!(host.values[0], Value::Choice(487)));
+
+        host.backspace();
+        assert_eq!(host.search_window(16).total_matches, 10);
+        // Backspacing all the way to empty restores all 600 options.
+        for _ in 0..10 {
+            host.backspace();
+        }
+        assert_eq!(host.search_query(), "");
+        assert_eq!(host.search_window(16).total_matches, 600);
+        // Control-only input and backspace on empty query are harmless no-ops.
+        host.insert("\n\t\x1b");
+        host.backspace();
+        assert_eq!(host.search_query(), "");
+        // Empty matches make page/jump safe no-ops.
+        host.insert("no-such-model");
+        assert_eq!(host.search_window(16).total_matches, 0);
+        host.page_choice(true, 10);
+        host.jump_choice(true);
+    }
+
+    #[test]
+    fn non_searchable_and_choice_free_workflows_return_empty_search_windows() {
+        let mut plain = HostWorkflow::new(form());
+        assert_eq!(plain.search_window(8).total_options, 0);
+        plain.page_choice(true, 10);
+        plain.jump_choice(true);
+
+        let text_only = Workflow::new_searchable(
+            "Text",
+            "",
+            vec![Field {
+                id: "name".into(),
+                label: "Name".into(),
+                kind: FieldKind::Text,
+                initial: String::new(),
+            }],
+            Arc::new(|_, _| Box::pin(async { Ok(CommandResult::Dismiss) })),
+        )
+        .unwrap();
+        let host = HostWorkflow::new(text_only);
+        assert_eq!(host.search_window(8).total_options, 0);
+        assert!(host.search_rows().is_empty());
     }
 }

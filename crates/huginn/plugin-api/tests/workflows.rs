@@ -623,3 +623,90 @@ async fn cancellation_and_revocation_prevent_pending_dismiss() {
         assert!(matches!(result, Err(huginn_core::AgentError::Cancelled)));
     }
 }
+
+#[test]
+fn searchable_workflow_admits_large_catalogs_within_bounds_while_plain_choices_stay_at_256() {
+    let handler: WorkflowHandler = Arc::new(|_, _| Box::pin(async { Ok(CommandResult::Dismiss) }));
+    let choices_257: Vec<String> = (0..257).map(|i| format!("model-{i:04}")).collect();
+    assert!(Workflow::new(
+        "Plain",
+        "",
+        vec![Field {
+            id: "model".into(),
+            label: "Model".into(),
+            kind: FieldKind::Choice(choices_257.clone()),
+            initial: String::new(),
+        }],
+        handler.clone(),
+    )
+    .is_err());
+
+    let choices_500: Vec<String> = (0..500).map(|i| format!("model-{i:04}")).collect();
+    let searchable = Workflow::new_searchable(
+        "Searchable",
+        "",
+        vec![Field {
+            id: "model".into(),
+            label: "Model".into(),
+            kind: FieldKind::Choice(choices_500),
+            initial: "420".into(),
+        }],
+        handler.clone(),
+    )
+    .expect("searchable picker accepts >256 models within MAX_DISCOVERED_MODELS");
+    assert!(searchable.is_searchable());
+
+    // Secondary choice fields remain bounded at 256 even in a searchable workflow.
+    assert!(Workflow::new_searchable(
+        "Two choices",
+        "",
+        vec![
+            Field {
+                id: "model".into(),
+                label: "Model".into(),
+                kind: FieldKind::Choice(vec!["a".into()]),
+                initial: String::new(),
+            },
+            Field {
+                id: "extra".into(),
+                label: "Extra".into(),
+                kind: FieldKind::Choice(choices_257),
+                initial: String::new(),
+            },
+        ],
+        handler.clone(),
+    )
+    .is_err());
+
+    // Exceeding MAX_DISCOVERED_MODELS is rejected.
+    let over_limit: Vec<String> = (0..=huginn_core::providers::MAX_DISCOVERED_MODELS)
+        .map(|i| format!("m{i}"))
+        .collect();
+    assert!(Workflow::new_searchable(
+        "Over limit",
+        "",
+        vec![Field {
+            id: "model".into(),
+            label: "Model".into(),
+            kind: FieldKind::Choice(over_limit),
+            initial: String::new(),
+        }],
+        handler.clone(),
+    )
+    .is_err());
+
+    // Exceeding the 4 MiB total text budget across searchable options is rejected.
+    let huge_options: Vec<String> = (0..100).map(|_| "x".repeat(50_000)).collect();
+    assert!(Workflow::new_searchable(
+        "Over byte budget",
+        "",
+        vec![Field {
+            id: "model".into(),
+            label: "Model".into(),
+            kind: FieldKind::Choice(huge_options),
+            initial: String::new(),
+        }],
+        handler,
+    )
+    .is_err());
+}

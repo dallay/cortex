@@ -106,6 +106,9 @@ pub enum ProviderError {
     InvalidMetadata,
 }
 
+/// Maximum number of models accepted in a single discovered catalog.
+pub const MAX_DISCOVERED_MODELS: usize = 16_384;
+
 /// Public onboarding hints. Secret values must never occur in this metadata.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProviderOnboarding {
@@ -113,6 +116,9 @@ pub struct ProviderOnboarding {
     pub authentication: Option<Vec<AuthenticationMethod>>,
     pub default_endpoint: Option<String>,
     pub allow_endpoint_edit: bool,
+    /// True only for adapters whose connection-scoped factory permits an explicit
+    /// manual model ID when remote discovery returns `ModelCatalog::Unsupported`.
+    pub allow_manual_model_when_unsupported: bool,
 }
 impl Default for ProviderOnboarding {
     fn default() -> Self {
@@ -120,6 +126,7 @@ impl Default for ProviderOnboarding {
             authentication: None,
             default_endpoint: None,
             allow_endpoint_edit: true,
+            allow_manual_model_when_unsupported: false,
         }
     }
 }

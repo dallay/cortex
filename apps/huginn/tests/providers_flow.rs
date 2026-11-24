@@ -1207,3 +1207,366 @@ async fn updating_a_connection_reports_the_same_precise_endpoint_problem() {
     );
     drop(h);
 }
+
+#[tokio::test]
+async fn model_command_searches_large_catalog_without_reentering_credentials_and_pins_active_turn()
+{
+    let root = tempfile::tempdir().unwrap();
+    let calls = Arc::new(Mutex::new(Vec::<(Option<String>, String)>::new()));
+    let capture = calls.clone();
+    let catalog_auth = Arc::new(Mutex::new(Vec::<Option<String>>::new()));
+    let capture_auth = catalog_auth.clone();
+    let models_payload: Vec<Value> = (0..400)
+        .map(|i| json!({"id": format!("model-{i:03}")}))
+        .collect();
+    let router = Router::new()
+        .route(
+            "/v1/models",
+            get(move |headers: HeaderMap| {
+                let capture_auth = capture_auth.clone();
+                let models_payload = models_payload.clone();
+                async move {
+                    capture_auth.lock().unwrap().push(
+                        headers
+                            .get("authorization")
+                            .and_then(|v| v.to_str().ok())
+                            .map(str::to_owned),
+                    );
+                    Json(json!({"data": models_payload}))
+                }
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                let capture = capture.clone();
+                async move {
+                    let model = body["model"].as_str().unwrap_or("").to_owned();
+                    capture.lock().unwrap().push((
+                        headers
+                            .get("authorization")
+                            .and_then(|v| v.to_str().ok())
+                            .map(str::to_owned),
+                        model.clone(),
+                    ));
+                    (
+                        [("content-type", "text/event-stream")],
+                        format!(
+                            "data: {{\"choices\":[{{\"delta\":{{\"content\":\"ok-{model}\"}},\"finish_reason\":\"stop\"}}]}}\n\ndata: [DONE]\n\n"
+                        ),
+                    )
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+
+    let h = open(root.path(), Secrets::new(SecretMode::Secure)).await;
+    // Save connection with model-001 (without selecting).
+    let record = h
+        .manager
+        .create(
+            ConnectionSettings {
+                provider: "openai".into(),
+                endpoint: Some(endpoint),
+                model: "model-001".into(),
+                requires_secret: true,
+                allow_loopback_http: true,
+            },
+            Some(Secret::new(A.into()).unwrap()),
+        )
+        .await
+        .unwrap();
+    h.manager.select(record.id).await.unwrap();
+
+    // Pin active turn on model-001.
+    let pinned = h
+        .model
+        .0
+        .pin_turn(CancellationToken::new())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(answer(pinned.as_ref()).await.unwrap(), "ok-model-001");
+
+    // Open /model and search the 400-model catalog without re-entering credentials.
+    command(&h.ui, "/model").await;
+    submit(&h.ui).await; // pick the saved connection -> triggers host-authoritative discovery
+    {
+        let mut state = h.ui.lock();
+        let form = state.workflow_mut().expect("model picker open");
+        assert!(form.searching(), "model picker must be searchable");
+        let window = form.search_window(16);
+        assert_eq!(window.total_options, 400);
+        assert_eq!(window.total_matches, 400);
+        assert_eq!(window.rows.len(), 16);
+        assert_eq!(form.snapshot().2[0], "Model: model-001");
+        form.insert("MODEL-38");
+        assert_eq!(form.search_window(16).total_matches, 10);
+        form.insert("7");
+        assert_eq!(form.search_rows(), vec![("model-387".into(), true)]);
+        drop(state);
+    }
+    submit(&h.ui).await;
+
+    // Active pinned turn retains model-001; next turn uses model-387.
+    assert_eq!(answer(pinned.as_ref()).await.unwrap(), "ok-model-001");
+    assert_eq!(answer(h.model.0.as_ref()).await.unwrap(), "ok-model-387");
+    assert!(catalog_auth
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|auth| auth.as_deref() == Some(&format!("Bearer {A}"))));
+    assert_eq!(
+        calls
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, model)| model.as_str())
+            .collect::<Vec<_>>(),
+        vec!["model-001", "model-001", "model-387"]
+    );
+
+    // Revoking the connection immediately blocks the pinned turn with no fallback.
+    logout(&h, record.id).await;
+    let count_before = calls.lock().unwrap().len();
+    assert!(answer(pinned.as_ref()).await.is_err());
+    assert_eq!(calls.lock().unwrap().len(), count_before);
+
+    assert_surfaces(&h, root.path()).await;
+    drop(h);
+    server.abort();
+}
+
+#[tokio::test]
+async fn model_command_preserves_selection_on_cancel_empty_and_failures_without_manual_fallback() {
+    use axum::http::StatusCode;
+
+    #[derive(Clone, Copy)]
+    enum Mode {
+        Normal,
+        Empty,
+        Unauthorized,
+        Forbidden,
+        ServerError,
+        InvalidJson,
+    }
+    let root = tempfile::tempdir().unwrap();
+    let mode = Arc::new(Mutex::new(Mode::Normal));
+    let route_mode = mode.clone();
+    let router = Router::new()
+        .route(
+            "/v1/models",
+            get(move || {
+                let current = *route_mode.lock().unwrap();
+                async move {
+                    match current {
+                        Mode::Normal => (
+                            StatusCode::OK,
+                            r#"{"data":[{"id":"alpha"},{"id":"beta"}]}"#.to_owned(),
+                        ),
+                        Mode::Empty => (StatusCode::OK, r#"{"data":[]}"#.to_owned()),
+                        Mode::Unauthorized => (StatusCode::UNAUTHORIZED, "denied".to_owned()),
+                        Mode::Forbidden => (StatusCode::FORBIDDEN, "forbidden".to_owned()),
+                        Mode::ServerError => (StatusCode::INTERNAL_SERVER_ERROR, "boom".to_owned()),
+                        Mode::InvalidJson => (StatusCode::OK, "{not-json".to_owned()),
+                    }
+                }
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            post(|Json(body): Json<Value>| async move {
+                let model = body["model"].as_str().unwrap_or("");
+                (
+                    [("content-type", "text/event-stream")],
+                    format!(
+                        "data: {{\"choices\":[{{\"delta\":{{\"content\":\"ok-{model}\"}},\"finish_reason\":\"stop\"}}]}}\n\ndata: [DONE]\n\n"
+                    ),
+                )
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+
+    let h = open(root.path(), Secrets::new(SecretMode::Secure)).await;
+    let record = h
+        .manager
+        .create(
+            ConnectionSettings {
+                provider: "openai".into(),
+                endpoint: Some(endpoint),
+                model: "alpha".into(),
+                requires_secret: true,
+                allow_loopback_http: true,
+            },
+            Some(Secret::new(A.into()).unwrap()),
+        )
+        .await
+        .unwrap();
+    h.manager.select(record.id).await.unwrap();
+
+    // 1. Cancellation at the model picker leaves alpha selected.
+    command(&h.ui, "/model").await;
+    submit(&h.ui).await;
+    h.ui.lock().workflow_mut().unwrap().insert("beta");
+    h.ui.cancel_workflow();
+    assert!(h.ui.lock().workflow().is_none());
+    assert_eq!(answer(h.model.0.as_ref()).await.unwrap(), "ok-alpha");
+
+    // 2. Empty, auth (401/403), transport/500, and invalid catalogs all fail closed
+    //    without falling back to manual entry and without changing selection.
+    for (failure_mode, expected_snippet) in [
+        (Mode::Empty, "No models available"),
+        (
+            Mode::Unauthorized,
+            "Cannot reach the provider or authenticate",
+        ),
+        (Mode::Forbidden, "Cannot reach the provider or authenticate"),
+        (
+            Mode::ServerError,
+            "Cannot reach the provider or authenticate",
+        ),
+        (Mode::InvalidJson, "invalid model catalog"),
+    ] {
+        *mode.lock().unwrap() = failure_mode;
+        command(&h.ui, "/model").await;
+        submit(&h.ui).await;
+        {
+            let state = h.ui.lock();
+            let form = state
+                .workflow()
+                .expect("connection form stays open on error");
+            assert_eq!(
+                form.workflow.title(),
+                "Providers",
+                "failure must never fall back to manual model entry"
+            );
+            let error = form.error_message().expect("clear inline error");
+            assert!(error.contains(expected_snippet), "{error}");
+            assert!(error.contains("Current selection unchanged"), "{error}");
+            assert!(!error.contains(A));
+            drop(state);
+        }
+        h.ui.cancel_workflow();
+    }
+
+    // Current selection remained alpha throughout.
+    *mode.lock().unwrap() = Mode::Normal;
+    assert_eq!(answer(h.model.0.as_ref()).await.unwrap(), "ok-alpha");
+    assert_surfaces(&h, root.path()).await;
+    drop(h);
+    server.abort();
+}
+
+#[tokio::test]
+async fn model_command_retains_manual_entry_only_for_custom_unsupported_not_ollama() {
+    use axum::http::StatusCode;
+
+    let root = tempfile::tempdir().unwrap();
+    let router = Router::new()
+        .route("/v1/models", get(|| async { StatusCode::NOT_FOUND }))
+        .route("/api/tags", get(|| async { StatusCode::NOT_FOUND }))
+        .route(
+            "/v1/chat/completions",
+            post(|Json(body): Json<Value>| async move {
+                let model = body["model"].as_str().unwrap_or("");
+                (
+                    [("content-type", "text/event-stream")],
+                    format!(
+                        "data: {{\"choices\":[{{\"delta\":{{\"content\":\"manual-{model}\"}},\"finish_reason\":\"stop\"}}]}}\n\ndata: [DONE]\n\n"
+                    ),
+                )
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+
+    let h = open(root.path(), Secrets::new(SecretMode::Secure)).await;
+    let custom = h
+        .manager
+        .create(
+            ConnectionSettings {
+                provider: "openai".into(),
+                endpoint: Some(format!("{base}/v1")),
+                model: "initial-custom".into(),
+                requires_secret: true,
+                allow_loopback_http: true,
+            },
+            Some(Secret::new(A.into()).unwrap()),
+        )
+        .await
+        .unwrap();
+    let ollama = h
+        .manager
+        .create(
+            ConnectionSettings {
+                provider: "ollama".into(),
+                endpoint: Some(base),
+                model: "initial-ollama".into(),
+                requires_secret: false,
+                allow_loopback_http: true,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+    let records = h.manager.list().await.unwrap();
+    let custom_idx = records.iter().position(|r| r.id == custom.id).unwrap();
+    let ollama_idx = records.iter().position(|r| r.id == ollama.id).unwrap();
+
+    // 1. Custom with 404 /models retains explicit manual model entry.
+    command(&h.ui, "/model").await;
+    for _ in 0..custom_idx {
+        h.ui.lock().workflow_mut().unwrap().choice(true);
+    }
+    submit(&h.ui).await;
+    {
+        let state = h.ui.lock();
+        let form = state.workflow().expect("manual model form open");
+        assert_eq!(form.workflow.title(), "Next-turn model (manual entry)");
+        assert!(!form.searching());
+        drop(state);
+    }
+    replace(&h.ui, "initial-custom", "custom-manual-42");
+    submit(&h.ui).await;
+    assert_eq!(
+        answer(h.model.0.as_ref()).await.unwrap(),
+        "manual-custom-manual-42"
+    );
+
+    // 2. Ollama local with 404 /api/tags does NOT fall back to manual entry and leaves selection unchanged.
+    command(&h.ui, "/model").await;
+    for _ in 0..ollama_idx {
+        h.ui.lock().workflow_mut().unwrap().choice(true);
+    }
+    submit(&h.ui).await;
+    {
+        let state = h.ui.lock();
+        let form = state.workflow().expect("connection form stays open");
+        assert_eq!(form.workflow.title(), "Providers");
+        let error = form.error_message().expect("clear error");
+        assert!(error.contains("Model discovery is unsupported"), "{error}");
+        assert!(error.contains("Current selection unchanged"), "{error}");
+        drop(state);
+    }
+    h.ui.cancel_workflow();
+    assert_eq!(
+        answer(h.model.0.as_ref()).await.unwrap(),
+        "manual-custom-manual-42"
+    );
+
+    assert_surfaces(&h, root.path()).await;
+    drop(h);
+    server.abort();
+}

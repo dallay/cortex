@@ -687,7 +687,7 @@ enum OverlayView {
         usize,
         bool,
         Option<String>,
-        Option<(String, Vec<(String, bool)>)>,
+        Option<crate::workflow::SearchWindow>,
         /// The selected field is the searchable one.
         bool,
     ),
@@ -737,7 +737,7 @@ impl View {
                             form.error_message().map(str::to_owned),
                             form.workflow
                                 .is_searchable()
-                                .then(|| (form.search_query().to_owned(), form.search_rows())),
+                                .then(|| form.search_window(128)),
                             form.searching(),
                         )
                     }
@@ -1294,21 +1294,29 @@ impl Driver {
                     }),
             );
         }
-        if let Some((query, options)) = searchable {
+        if let Some(window) = searchable {
             let rendered_fields = lines.len().saturating_sub(header);
             let option_budget = remaining.saturating_sub(rendered_fields);
             if show_search {
-                lines.push(format!("Search: {}", safe(query)));
+                let suffix = if window.total_matches != window.total_options
+                    || window.total_matches > option_budget
+                {
+                    format!(" ({}/{})", window.total_matches, window.total_options)
+                } else {
+                    String::new()
+                };
+                lines.push(format!("Search: {}{suffix}", safe(&window.query)));
             }
-            let selected = options
+            let selected = window
+                .rows
                 .iter()
                 .position(|(_, selected)| *selected)
                 .unwrap_or(0);
             let start = selected.saturating_sub(option_budget.saturating_sub(1));
-            if options.is_empty() {
+            if window.rows.is_empty() {
                 lines.push("No matching options".into());
             }
-            for (label, selected) in options.iter().skip(start).take(option_budget) {
+            for (label, selected) in window.rows.iter().skip(start).take(option_budget) {
                 lines.push(format!(
                     "{} {}",
                     if *selected { ">" } else { " " },
@@ -1336,7 +1344,7 @@ impl Driver {
         let hint = if fields.is_empty() {
             "Enter submits · Esc back/cancel"
         } else if *searching {
-            "Type filters searchable choices · ↑↓ choice · Tab field · Enter submits"
+            "Type filters searchable choices · ↑↓/PgUp/PgDn choice · Tab field · Enter submits"
         } else {
             "Type enters the field · ↑↓ field · ←→ choice · Enter submits"
         };
@@ -2097,6 +2105,22 @@ mod tests {
         );
     }
 
+    fn test_search_window(
+        query: impl Into<String>,
+        rows: Vec<(String, bool)>,
+    ) -> crate::workflow::SearchWindow {
+        let total = rows.len();
+        let selected_match = rows.iter().position(|(_, selected)| *selected).unwrap_or(0);
+        crate::workflow::SearchWindow {
+            query: query.into(),
+            total_options: total,
+            total_matches: total,
+            selected_match,
+            offset: 0,
+            rows,
+        }
+    }
+
     #[test]
     fn searchable_single_field_keeps_pending_and_recoverable_errors_visible() {
         for (pending, error, expected) in [
@@ -2114,7 +2138,7 @@ mod tests {
                 0,
                 pending,
                 error,
-                Some((String::new(), vec![("Local".into(), true)])),
+                Some(test_search_window("", vec![("Local".into(), true)])),
                 true,
             ));
             assert!(frame_text(&view, 100, 30).contains(expected));
@@ -2130,7 +2154,7 @@ mod tests {
             0,
             false,
             None,
-            Some(("local".into(), vec![("Local".into(), true)])),
+            Some(test_search_window("local", vec![("Local".into(), true)])),
             true,
         ));
         let output = frame_text(&view, 100, 30);
@@ -2148,8 +2172,8 @@ mod tests {
             0,
             false,
             Some("Catalog unavailable".into()),
-            Some((
-                String::new(),
+            Some(test_search_window(
+                "",
                 vec![("Local".into(), true), ("Remote".into(), false)],
             )),
             true,
@@ -2170,8 +2194,8 @@ mod tests {
             1,
             false,
             None,
-            Some((
-                String::new(),
+            Some(test_search_window(
+                "",
                 vec![("Local".into(), true), ("Remote".into(), false)],
             )),
             false,
@@ -2194,7 +2218,7 @@ mod tests {
             0,
             false,
             Some("Catalog unavailable".into()),
-            Some((String::new(), vec![("Local".into(), true)])),
+            Some(test_search_window("", vec![("Local".into(), true)])),
             true,
         ));
         let output = frame_text(&view, 20, 8);
@@ -2211,8 +2235,8 @@ mod tests {
             0,
             false,
             Some("Catalog unavailable".into()),
-            Some((
-                String::new(),
+            Some(test_search_window(
+                "",
                 vec![("Local".into(), true), ("Remote".into(), false)],
             )),
             true,
@@ -2231,7 +2255,7 @@ mod tests {
             0,
             false,
             None,
-            Some((String::new(), vec![("Local".into(), true)])),
+            Some(test_search_window("", vec![("Local".into(), true)])),
             true,
         ));
         let output = frame_text(&searchable, 100, 30);
@@ -2270,7 +2294,7 @@ mod tests {
             0,
             false,
             None,
-            Some((String::new(), options)),
+            Some(test_search_window("", options)),
             true,
         ));
         for height in [30, 14] {
@@ -2280,6 +2304,33 @@ mod tests {
                 "height={height}: {output}"
             );
         }
+    }
+
+    #[test]
+    fn large_search_window_shows_match_counts_and_keeps_selected_row_visible() {
+        let rows = (380..396)
+            .map(|i| (format!("model-{i:04}"), i == 387))
+            .collect();
+        let view = test_view(OverlayView::Workflow(
+            "Next-turn model".into(),
+            "Choose".into(),
+            vec!["Model: model-0387".into()],
+            0,
+            false,
+            None,
+            Some(crate::workflow::SearchWindow {
+                query: "38".into(),
+                total_options: 500,
+                total_matches: 16,
+                selected_match: 7,
+                offset: 0,
+                rows,
+            }),
+            true,
+        ));
+        let output = frame_text(&view, 80, 16);
+        assert!(output.contains("Search: 38 (16/500)"), "{output}");
+        assert!(output.contains("> model-0387"), "{output}");
     }
 
     #[test]

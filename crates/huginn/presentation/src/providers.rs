@@ -752,7 +752,7 @@ impl Management {
             String::new()
         };
         Ok(CommandResult::Workflow(Workflow::new("Providers", format!("Selection affects the NEXT turn, not the model pinned in an active turn. Revocation blocks subsequent inference even in that turn. Local cancellation does not prove remote revocation.{diagnostics}"), fields,
-                                                 Arc::new(move |input, _| {
+                                                 Arc::new(move |input, cancel| {
                                                      let management = management.clone();
                                                      let record = records.get(index(&input, "connection")).cloned();
                                                      Box::pin(async move {
@@ -774,7 +774,7 @@ impl Management {
                                                                  _ => {}
                                                              }
                                                          }
-                                                         management.model_form(record)
+                                                         management.model_form(record, cancel).await
                                                      })
                                                  }))?.with_overlay_kind(command_surface(command))?))
     }
@@ -793,8 +793,12 @@ impl Management {
                 })
             }))?.with_overlay_kind(OverlayKind::Confirm)?))
     }
-    fn model_form(&self, record: ConnectionRecord) -> Result<CommandResult> {
-        let Some((_, descriptor)) = self
+    async fn model_form(
+        &self,
+        record: ConnectionRecord,
+        cancel: huginn_core::CancellationToken,
+    ) -> Result<CommandResult> {
+        let Some((registration, descriptor)) = self
             .catalog
             .adapters()
             .into_iter()
@@ -802,39 +806,112 @@ impl Management {
         else {
             return Ok(failure(ConnectionError::AdapterUnavailable));
         };
-        let field = if descriptor.models.is_empty() {
-            field(
-                "model",
-                "Model ID (candidate)",
-                FieldKind::Text,
-                record.settings.model.clone(),
-            )
-        } else {
-            let mut field = choice(
-                "model",
-                "Model",
-                descriptor.models.iter().map(|m| m.id.clone()).collect(),
-            );
-            field.initial = descriptor
-                .models
-                .iter()
-                .position(|model| model.id == record.settings.model)
-                .unwrap_or(0)
-                .to_string();
-            field
-        };
+        if !descriptor.models.is_empty() {
+            let labels: Vec<String> = descriptor.models.iter().map(|m| m.id.clone()).collect();
+            return self.searchable_model_picker(record, labels);
+        }
+        match self.connections.discover_models(record.id, cancel).await {
+            Ok(ModelCatalog::Available(models)) if models.is_empty() => Ok(form_error(
+                "No models available for this connection. Install a model or check the provider account. Current selection unchanged.",
+            )),
+            Ok(ModelCatalog::Available(models)) => {
+                let labels: Vec<String> = models.into_iter().map(|m| m.id).collect();
+                if labels.len() > huginn_core::providers::MAX_DISCOVERED_MODELS {
+                    return Ok(form_error(
+                        "Provider returned more models than the supported catalog limit. Current selection unchanged.",
+                    ));
+                }
+                self.searchable_model_picker(record, labels)
+            }
+            Ok(ModelCatalog::Unsupported) => {
+                let allow_manual = self
+                    .catalog
+                    .onboarding(&registration)
+                    .map(|onboarding| onboarding.allow_manual_model_when_unsupported)
+                    .unwrap_or(false);
+                if allow_manual {
+                    self.manual_model_form(record)
+                } else {
+                    Ok(form_error(
+                        "Model discovery is unsupported by this provider. Current selection unchanged.",
+                    ))
+                }
+            }
+            Ok(ModelCatalog::Unavailable) => Ok(form_error(
+                "Cannot reach the provider or authenticate for model discovery. Check the endpoint, service, and credentials. Current selection unchanged.",
+            )),
+            Ok(ModelCatalog::Invalid) => Ok(form_error(
+                "Provider returned an invalid model catalog. Current selection unchanged.",
+            )),
+            Err(ConnectionError::Cancelled) => Err(huginn_core::AgentError::Cancelled),
+            Err(error) => Ok(failure(error)),
+        }
+    }
+    fn searchable_model_picker(
+        &self,
+        record: ConnectionRecord,
+        labels: Vec<String>,
+    ) -> Result<CommandResult> {
+        let mut model_field = choice("model", "Model", labels.clone());
+        model_field.initial = labels
+            .iter()
+            .position(|model| model == &record.settings.model)
+            .unwrap_or(0)
+            .to_string();
         let management = self.clone();
-        Ok(CommandResult::Workflow(Workflow::new("Next-turn model", "The current turn keeps its pinned connection/model. No remote availability is promised.", vec![field], Arc::new(move |mut input, _| {
-            let management = management.clone();
-            let descriptor = descriptor.clone();
-            let id = record.id;
-            Box::pin(async move {
-                let model = if descriptor.models.is_empty() { value(&mut input, "model") } else { descriptor.models.get(index(&input, "model")).map(|m| m.id.clone()).unwrap_or_default() };
-                Ok(match management.connections.select_model(id, model).await {
-                    Ok(_) => notice("Model selected for the NEXT turn. An active turn keeps its pinned model; no restart needed."),
-                    Err(error) => failure(error),
-                })
-            })
-        }))?.with_overlay_kind(OverlayKind::ModelPicker)?))
+        let id = record.id;
+        Ok(CommandResult::Workflow(
+            Workflow::new_searchable(
+                "Next-turn model",
+                "Search and select a model for the NEXT turn. The current turn keeps its pinned connection/model. Esc goes back; Ctrl+C cancels.",
+                vec![model_field],
+                Arc::new(move |input, _| {
+                    let management = management.clone();
+                    let selected = labels.get(index(&input, "model")).cloned();
+                    Box::pin(async move {
+                        let Some(model) = selected else {
+                            return Ok(failure(ConnectionError::InvalidSelection));
+                        };
+                        Ok(match management.connections.select_model(id, model).await {
+                            Ok(_) => notice(
+                                "Model selected for the NEXT turn. An active turn keeps its pinned model; no restart needed.",
+                            ),
+                            Err(error) => failure(error),
+                        })
+                    })
+                }),
+            )?
+            .with_overlay_kind(OverlayKind::ModelPicker)?,
+        ))
+    }
+    fn manual_model_form(&self, record: ConnectionRecord) -> Result<CommandResult> {
+        let model_field = field(
+            "model",
+            "Model ID (manual; discovery unsupported)",
+            FieldKind::Text,
+            record.settings.model.clone(),
+        );
+        let management = self.clone();
+        let id = record.id;
+        Ok(CommandResult::Workflow(
+            Workflow::new(
+                "Next-turn model (manual entry)",
+                "Model discovery is unsupported by this Custom endpoint. Enter a model ID for the NEXT turn. The current turn keeps its pinned connection/model.",
+                vec![model_field],
+                Arc::new(move |mut input, _| {
+                    let management = management.clone();
+                    Box::pin(async move {
+                        let model = value(&mut input, "model");
+                        Ok(match management.connections.select_model(id, model).await {
+                            Ok(_) => notice(
+                                "Model selected for the NEXT turn. An active turn keeps its pinned model; no restart needed.",
+                            ),
+                            Err(error) => failure(error),
+                        })
+                    })
+                }),
+            )?
+            .with_overlay_kind(OverlayKind::ModelPicker)?,
+        ))
     }
 }

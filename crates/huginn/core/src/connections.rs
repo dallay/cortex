@@ -273,6 +273,15 @@ pub trait ConnectionManagement: Send + Sync {
         id: uuid::Uuid,
         model: String,
     ) -> ConnectionResult<crate::providers::ModelSelection>;
+    /// Discover models for a saved connection under host authority without exposing secrets.
+    async fn discover_models(
+        &self,
+        id: uuid::Uuid,
+        cancel: CancellationToken,
+    ) -> ConnectionResult<crate::providers::ModelCatalog> {
+        let _ = (id, cancel);
+        Ok(crate::providers::ModelCatalog::Unsupported)
+    }
     async fn revoke(&self, id: uuid::Uuid) -> ConnectionResult<()>;
 }
 pub struct ConnectionsService(pub std::sync::Arc<dyn ConnectionManagement>);
@@ -378,5 +387,51 @@ mod tests {
             None
         );
         assert_eq!(endpoint_problem(&settings(None, false)), None);
+    }
+
+    #[tokio::test]
+    async fn default_discover_models_returns_unsupported() {
+        struct Stub;
+        #[async_trait]
+        impl ConnectionManagement for Stub {
+            fn subscribe(
+                &self,
+            ) -> tokio::sync::watch::Receiver<crate::providers::ConnectionSnapshot> {
+                unreachable!()
+            }
+            async fn recover(&self) -> ConnectionResult<()> {
+                unreachable!()
+            }
+            async fn list(&self) -> ConnectionResult<Vec<ConnectionRecord>> {
+                unreachable!()
+            }
+            async fn status(&self, _: uuid::Uuid) -> ConnectionResult<()> {
+                unreachable!()
+            }
+            async fn save(
+                &self,
+                _: Option<uuid::Uuid>,
+                _: ConnectionSettings,
+                _: Option<Secret>,
+                _: SecretMode,
+            ) -> ConnectionResult<ConnectionRecord> {
+                unreachable!()
+            }
+            async fn select_model(
+                &self,
+                _: uuid::Uuid,
+                _: String,
+            ) -> ConnectionResult<crate::providers::ModelSelection> {
+                unreachable!()
+            }
+            async fn revoke(&self, _: uuid::Uuid) -> ConnectionResult<()> {
+                unreachable!()
+            }
+        }
+        assert_eq!(
+            Stub.discover_models(uuid::Uuid::new_v4(), CancellationToken::new())
+                .await,
+            Ok(crate::providers::ModelCatalog::Unsupported)
+        );
     }
 }
