@@ -894,7 +894,7 @@ jobs:
         uses: SonarSource/sonarqube-scan-action@e805d875275f728fac1885b413934be6d7c63f65 # v8.4.1
         # Note: sonar.qualitygate.wait removed because the SonarCloud project-level
         # quality gate (New Code Coverage >= 80%) fails for large PRs that add
-        # new crates (Muninn ontology, observability, MCP extensions) which are
+        # new crates (Muninn observability and MCP extensions) which remain
         # excluded from analysis but still counted as new code. The gate can be
         # reviewed manually at: https://sonarcloud.io/project/settings?id=dallay_cortex
         with:

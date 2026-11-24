@@ -88,10 +88,12 @@ it('names a triage owner instead of promising an unnamed response', () => {
   assert.doesNotMatch(security, /within \d+ (?:business )?(?:hours|days)/i);
 });
 
-it('reports the documented cargo audit exception instead of hiding it', () => {
+it('keeps cargo audit blocking without advisory exceptions', () => {
   const ci = read('.github/workflows/ci.yml');
-  assert.match(ci, /cargo audit --ignore RUSTSEC-2026-0594/);
-  assert.match(security, /RUSTSEC-2026-0594/);
+  assert.match(ci, /run: cargo audit\s*$/m);
+  assert.doesNotMatch(ci, /cargo audit\s+--ignore/);
+  assert.doesNotMatch(security, /RUSTSEC-2026-0594/);
+  assert.match(security, /runs without advisory exceptions/i);
   assert.match(security, /Blocking/);
 });
 
