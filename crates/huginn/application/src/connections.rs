@@ -615,6 +615,12 @@ impl ConnectionManager {
             return Err(ConnectionError::Revoked);
         }
         let state = self.state.lock().await;
+        if cancel.is_cancelled() {
+            return Err(ConnectionError::Cancelled);
+        }
+        if self.access.epoch.load(Ordering::SeqCst) != self.owner || self.retired.is_cancelled() {
+            return Err(ConnectionError::Revoked);
+        }
         Self::check_state(&state)?;
         if state
             .metadata
@@ -637,8 +643,11 @@ impl ConnectionManager {
         if cancel.is_cancelled() {
             return Err(ConnectionError::Cancelled);
         }
-        let (record, registration, descriptor) = self
-            .run_operation(async {
+        let (record, registration, descriptor) = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(ConnectionError::Cancelled),
+            _ = self.retired.cancelled() => return Err(ConnectionError::Revoked),
+            result = self.run_operation(async {
                 let _operation = self.operation().await?;
                 let state = self.state.lock().await;
                 Self::check_state(&state)?;
@@ -660,8 +669,8 @@ impl ConnectionManager {
                     .find(|(r, _)| r.provider == record.settings.provider)
                     .ok_or(ConnectionError::AdapterUnavailable)?;
                 Ok((record, registration, descriptor))
-            })
-            .await?;
+            }) => result?,
+        };
         let secret = match &record.secret {
             Some(reference) => Some(tokio::select! {
                 biased;
