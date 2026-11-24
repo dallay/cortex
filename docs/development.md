@@ -98,7 +98,7 @@ Consult `.github/workflows/ci.yml` and `justfile` for the source-of-truth sequen
 
 ## Dependency cooldown
 
-Cargo resolves crates with a publish-age cooldown. `.cargo/config.toml` sets `registry.global-min-publish-age = "3 days"`, so Cargo skips crate versions with a `pubtime` less than three days ago and reports the versions it held back. Versions without a `pubtime` in the registry index and versions already recorded in `Cargo.lock` are not held back by this cooldown.
+Cargo resolves crates with a publish-age cooldown. `.cargo/config.toml` sets `registry.global-min-publish-age = "14 days"`, so Cargo skips crate versions with a `pubtime` less than 14 days ago and reports the versions it held back. Versions without a `pubtime` in the registry index and versions already recorded in `Cargo.lock` are not held back by this cooldown.
 
 ```bash
 # Show the versions Cargo skipped and why
@@ -114,7 +114,7 @@ The cooldown requires Cargo 1.100 or newer, and `rust-toolchain.toml` pins that 
 
 `cargo install` ignores the cooldown, for the installed crate and for its dependencies. CI therefore pins the tool versions it installs (`cargo-audit`, `cargo-llvm-cov`) in `.github/workflows/ci.yml`. Update those pins deliberately.
 
-Renovate applies the same three-day window to the dependency pull requests it opens, so automation and Cargo agree on when a release becomes eligible.
+Renovate applies the same 14-day window to the dependency pull requests it opens, so automation and Cargo agree on when a release becomes eligible.
 
 ## Git hooks
 

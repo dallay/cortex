@@ -115,7 +115,7 @@ impl OsSecrets {
         #[cfg(target_os = "macos")]
         let store = apple_native_keyring_store::keychain::Store::new();
         #[cfg(target_os = "linux")]
-        let store = zbus_secret_service_keyring_store::Store::new();
+        let store = dbus_secret_service_keyring_store::Store::new();
         let store = store.map_err(Self::error)?;
         store
             .build(

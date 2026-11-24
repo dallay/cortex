@@ -49,7 +49,9 @@ apple-native-keyring-store = { version = "=1.0.2", features = ["keychain"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring-core = "=1.0.1"
-zbus-secret-service-keyring-store = { version = "=1.0.1", features = ["crypto-rust"] }
+# Keep the adapter's semver range on a release outside the Cargo cooldown.
+dbus-secret-service = "=4.1.0"
+dbus-secret-service-keyring-store = { version = "=1.0.1", features = ["crypto-rust"] }
 
 [[test]]
 name = "tls_transport"

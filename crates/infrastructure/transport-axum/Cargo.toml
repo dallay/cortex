@@ -46,8 +46,8 @@ hex = "0.4"
 dashmap = "6"
 
 [dev-dependencies]
-axum-test = "=21.1.0"
 http-body-util = "=0.1.5"
+tower = { version = "0.5", features = ["util"] }
 encryption-inmemory = { path = "../encryption-inmemory" }
 cache-memory = { path = "../cache-memory" }
 providers-openai = { path = "../providers-openai" }

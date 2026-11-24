@@ -41,6 +41,16 @@ lockfile. To intentionally update Bazel dependencies, review changes to `MODULE.
 `bazel mod deps --lockfile_mode=update`; do not update Cargo or pnpm lockfiles as a side effect of
 this bootstrap.
 
+For Cargo manifest changes, refresh the Crate Universe graph while keeping existing crate versions:
+
+```sh
+CARGO_BAZEL_REPIN=workspace bazel mod deps --lockfile_mode=update
+bazel mod deps --lockfile_mode=update
+```
+
+Review `Cargo.Bazel.lock` and `MODULE.bazel.lock` after the refresh. The second command runs without
+the temporary repin setting so its value is not recorded in `MODULE.bazel.lock`.
+
 ## What the graph models
 
 The generator in `dev/bazel/` derives one `BUILD.bazel` per Cargo package from
