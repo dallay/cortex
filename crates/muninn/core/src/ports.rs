@@ -178,6 +178,483 @@ impl OwnerScope {
     }
 }
 
+/// Scope classification for Muninn memory tiers (`SDD-1D`, `F-04`).
+///
+/// Prevents blindly imposing single-user `OwnerScope` onto shared knowledge
+/// while enforcing strict isolation for private and administrative records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MemoryKind {
+    Conversation,
+    Message,
+    Preference,
+    ReasoningTrace,
+    ReasoningStep,
+    ToolCall,
+    SharedKnowledge,
+    ReferenceEntity,
+    AuditRecord,
+}
+
+/// Access boundary class derived from [`MemoryKind`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MemoryScopeClass {
+    Private,
+    Workspace,
+    Global,
+    RestrictedAdmin,
+}
+
+/// Operation kind evaluated by [`MemoryAccessPolicy`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AccessOperation {
+    Read,
+    Write,
+}
+
+/// Verified caller identity and administrative privilege at a trust boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccessContext {
+    pub caller: OwnerScope,
+    pub workspace: Option<String>,
+    pub is_admin: bool,
+}
+
+impl AccessContext {
+    pub const fn user(caller: OwnerScope) -> Self {
+        Self {
+            caller,
+            workspace: None,
+            is_admin: false,
+        }
+    }
+
+    pub const fn admin(caller: OwnerScope) -> Self {
+        Self {
+            caller,
+            workspace: None,
+            is_admin: true,
+        }
+    }
+
+    pub fn with_workspace(mut self, workspace: &str) -> MemoryResult<Self> {
+        if workspace.trim().is_empty() {
+            return Err(MemoryError::invalid(
+                "workspace identifier must not be blank",
+            ));
+        }
+        self.workspace = Some(workspace.to_owned());
+        Ok(self)
+    }
+}
+
+/// Target resource descriptor evaluated against [`AccessContext`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetResource {
+    pub kind: MemoryKind,
+    pub owner: OwnerScope,
+    pub workspace: Option<String>,
+}
+
+impl TargetResource {
+    pub const fn private(kind: MemoryKind, owner: OwnerScope) -> Self {
+        Self {
+            kind,
+            owner,
+            workspace: None,
+        }
+    }
+
+    pub fn workspace(kind: MemoryKind, workspace: &str) -> MemoryResult<Self> {
+        if workspace.trim().is_empty() {
+            return Err(MemoryError::invalid(
+                "workspace identifier must not be blank",
+            ));
+        }
+        Ok(Self {
+            kind,
+            owner: OwnerScope::unowned(),
+            workspace: Some(workspace.to_owned()),
+        })
+    }
+
+    pub const fn global(kind: MemoryKind) -> Self {
+        Self {
+            kind,
+            owner: OwnerScope::unowned(),
+            workspace: None,
+        }
+    }
+
+    pub const fn restricted_admin(kind: MemoryKind) -> Self {
+        Self {
+            kind,
+            owner: OwnerScope::unowned(),
+            workspace: None,
+        }
+    }
+}
+
+/// Central authorization policy mapping [`MemoryKind`] to [`MemoryScopeClass`].
+pub struct MemoryAccessPolicy;
+
+impl MemoryAccessPolicy {
+    pub const fn classify(kind: MemoryKind) -> MemoryScopeClass {
+        match kind {
+            MemoryKind::Conversation
+            | MemoryKind::Message
+            | MemoryKind::Preference
+            | MemoryKind::ReasoningTrace
+            | MemoryKind::ReasoningStep
+            | MemoryKind::ToolCall => MemoryScopeClass::Private,
+            MemoryKind::SharedKnowledge => MemoryScopeClass::Workspace,
+            MemoryKind::ReferenceEntity => MemoryScopeClass::Global,
+            MemoryKind::AuditRecord => MemoryScopeClass::RestrictedAdmin,
+        }
+    }
+
+    pub fn authorize(
+        operation: AccessOperation,
+        context: &AccessContext,
+        target: &TargetResource,
+    ) -> MemoryResult<()> {
+        match Self::classify(target.kind) {
+            MemoryScopeClass::Private => {
+                if context.caller == target.owner {
+                    Ok(())
+                } else {
+                    Err(MemoryError::invalid(
+                        "cross-owner access to private memory is forbidden",
+                    ))
+                }
+            }
+            MemoryScopeClass::Workspace => match (&context.workspace, &target.workspace) {
+                (Some(caller_ws), Some(target_ws))
+                    if !caller_ws.trim().is_empty() && caller_ws == target_ws =>
+                {
+                    Ok(())
+                }
+                _ => Err(MemoryError::invalid(
+                    "workspace scope mismatch for shared knowledge",
+                )),
+            },
+            MemoryScopeClass::Global => match operation {
+                AccessOperation::Read => Ok(()),
+                AccessOperation::Write if context.is_admin => Ok(()),
+                AccessOperation::Write => Err(MemoryError::invalid(
+                    "administrative privilege required to mutate global reference entities",
+                )),
+            },
+            MemoryScopeClass::RestrictedAdmin => {
+                if context.is_admin {
+                    Ok(())
+                } else {
+                    Err(MemoryError::invalid(
+                        "administrative privilege required for restricted audit records",
+                    ))
+                }
+            }
+        }
+    }
+}
+
+/// Validated WGS-84 geographic coordinate pair (`BOLT-08-03`, `BOLT-08-14`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GeoPoint {
+    pub latitude: f64,
+    pub longitude: f64,
+}
+
+impl GeoPoint {
+    pub fn new(latitude: f64, longitude: f64) -> MemoryResult<Self> {
+        if !latitude.is_finite() || !(-90.0..=90.0).contains(&latitude) {
+            return Err(MemoryError::invalid(
+                "latitude must be finite and within [-90.0, 90.0]",
+            ));
+        }
+        if !longitude.is_finite() || !(-180.0..=180.0).contains(&longitude) {
+            return Err(MemoryError::invalid(
+                "longitude must be finite and within [-180.0, 180.0]",
+            ));
+        }
+        Ok(Self {
+            latitude,
+            longitude,
+        })
+    }
+}
+
+/// Validated geographic bounding box (`BOLT-08-03`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BoundingBox {
+    pub min_lat: f64,
+    pub min_lon: f64,
+    pub max_lat: f64,
+    pub max_lon: f64,
+}
+
+impl BoundingBox {
+    pub fn new(min_lat: f64, min_lon: f64, max_lat: f64, max_lon: f64) -> MemoryResult<Self> {
+        let _ = GeoPoint::new(min_lat, min_lon)?;
+        let _ = GeoPoint::new(max_lat, max_lon)?;
+        if min_lat > max_lat || min_lon > max_lon {
+            return Err(MemoryError::invalid(
+                "bounding box min coordinates must not exceed max coordinates",
+            ));
+        }
+        Ok(Self {
+            min_lat,
+            min_lon,
+            max_lat,
+            max_lon,
+        })
+    }
+}
+
+/// Spatial search hit ordered by distance (`BOLT-08-03`).
+#[derive(Debug, Clone)]
+pub struct SpatialLocationHit {
+    pub entity: Entity,
+    pub coordinates: GeoPoint,
+    pub distance_km: f64,
+}
+
+/// Session-scoped location projection via `EXTRACTED_FROM` (`BOLT-08-13`).
+#[derive(Debug, Clone)]
+pub struct SessionLocation {
+    pub entity: Entity,
+    pub coordinates: Option<GeoPoint>,
+    pub conversation_ids: Vec<Uuid>,
+}
+
+/// Persistence port for geographic retrieval and location projection (`BOLT-08-03/13/14`).
+#[async_trait]
+pub trait SpatialStore: Send + Sync {
+    async fn search_locations_near(
+        &self,
+        center: GeoPoint,
+        radius_km: f64,
+        limit: i64,
+    ) -> MemoryResult<Vec<SpatialLocationHit>>;
+
+    async fn search_locations_in_bounding_box(
+        &self,
+        bbox: BoundingBox,
+        limit: i64,
+    ) -> MemoryResult<Vec<SpatialLocationHit>>;
+
+    async fn get_location_coordinates(&self, entity_id: Uuid) -> MemoryResult<Option<GeoPoint>>;
+
+    async fn get_locations(
+        &self,
+        session_id: Option<&str>,
+        limit: i64,
+    ) -> MemoryResult<Vec<SessionLocation>>;
+}
+
+/// Validate a Cypher label or property identifier (`[A-Za-z_][A-Za-z0-9_]*`).
+///
+/// Rejects any character that could break out of backtick interpolation or
+/// inject Cypher clauses before any query is built (`BOLT-08-06`, `SDD-3`).
+pub fn is_safe_cypher_identifier(ident: &str) -> bool {
+    let mut chars = ident.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Options for non-destructive existing graph adoption (`BOLT-08-06`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdoptGraphOptions {
+    /// Map from existing Neo4j node label -> Muninn entity type (e.g. `Person -> PERSON`).
+    pub label_to_type: std::collections::BTreeMap<String, String>,
+    /// Optional override for the source name property per label (defaults to `"name"`).
+    pub name_property_per_label: std::collections::BTreeMap<String, String>,
+    /// Defaults to `true` (plan-only, zero mutations).
+    pub dry_run: bool,
+}
+
+impl Default for AdoptGraphOptions {
+    fn default() -> Self {
+        Self {
+            label_to_type: std::collections::BTreeMap::new(),
+            name_property_per_label: std::collections::BTreeMap::new(),
+            dry_run: true,
+        }
+    }
+}
+
+impl AdoptGraphOptions {
+    /// Stage 1 (`Validate`): validate every label, property, and entity type upfront.
+    pub fn validate(&self) -> MemoryResult<()> {
+        for (label, entity_type) in &self.label_to_type {
+            if !is_safe_cypher_identifier(label) {
+                return Err(MemoryError::invalid(format!(
+                    "refusing to adopt label {label:?}: must match [A-Za-z_][A-Za-z0-9_]*"
+                )));
+            }
+            if entity_type.trim().is_empty() {
+                return Err(MemoryError::invalid(format!(
+                    "entity_type for label {label:?} must not be blank"
+                )));
+            }
+            let name_prop = self
+                .name_property_per_label
+                .get(label)
+                .map(String::as_str)
+                .unwrap_or("name");
+            if !is_safe_cypher_identifier(name_prop) {
+                return Err(MemoryError::invalid(format!(
+                    "refusing to use name property {name_prop:?} for label {label:?}: must match [A-Za-z_][A-Za-z0-9_]*"
+                )));
+            }
+        }
+        for (label, name_prop) in &self.name_property_per_label {
+            if !is_safe_cypher_identifier(label) || !is_safe_cypher_identifier(name_prop) {
+                return Err(MemoryError::invalid(
+                    "invalid identifier in name_property_per_label",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn name_property_for<'a>(&'a self, label: &str) -> &'a str {
+        self.name_property_per_label
+            .get(label)
+            .map(String::as_str)
+            .unwrap_or("name")
+    }
+}
+
+/// Per-label outcome reported by [`SchemaAdoptionPort::adopt_existing_graph`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdoptionLabelReport {
+    pub label: String,
+    pub entity_type: String,
+    pub name_property: String,
+    pub migrated_count: i64,
+    pub already_adopted_count: i64,
+    pub skipped_count: i64,
+    pub conflict_count: i64,
+}
+
+/// Structured report returned by [`SchemaAdoptionPort::adopt_existing_graph`].
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AdoptionReport {
+    pub by_label: Vec<AdoptionLabelReport>,
+    pub dry_run: bool,
+}
+
+impl AdoptionReport {
+    pub fn total_migrated(&self) -> i64 {
+        self.by_label.iter().map(|r| r.migrated_count).sum()
+    }
+
+    pub fn total_conflicts(&self) -> i64 {
+        self.by_label.iter().map(|r| r.conflict_count).sum()
+    }
+
+    pub fn has_conflicts(&self) -> bool {
+        self.total_conflicts() > 0
+    }
+}
+
+/// Port for non-destructive adoption of pre-existing Neo4j graphs (`BOLT-08-06`).
+#[async_trait]
+pub trait SchemaAdoptionPort: Send + Sync {
+    async fn adopt_existing_graph(
+        &self,
+        options: &AdoptGraphOptions,
+    ) -> MemoryResult<AdoptionReport>;
+}
+
+/// A write that failed in the background buffered drainer (`BOLT-08-04`).
+///
+/// Parameter values are intentionally omitted from the stored error record to
+/// avoid retaining sensitive payloads or credentials in memory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BufferedWriteError {
+    pub query: String,
+    pub parameter_keys: Vec<String>,
+    pub error: String,
+    pub when: DateTime<Utc>,
+}
+
+/// A queued buffered write operation (`BOLT-08-04`).
+#[derive(Debug, Clone)]
+pub struct BufferedWriteJob {
+    pub query: String,
+    pub params: serde_json::Map<String, serde_json::Value>,
+    /// Retries are permitted only when the caller explicitly marks the write idempotent.
+    pub idempotent: bool,
+}
+
+impl BufferedWriteJob {
+    pub fn new(
+        query: impl Into<String>,
+        params: serde_json::Map<String, serde_json::Value>,
+    ) -> Self {
+        Self {
+            query: query.into(),
+            params,
+            idempotent: false,
+        }
+    }
+
+    pub fn idempotent(
+        query: impl Into<String>,
+        params: serde_json::Map<String, serde_json::Value>,
+    ) -> Self {
+        Self {
+            query: query.into(),
+            params,
+            idempotent: true,
+        }
+    }
+}
+
+/// Low-level write execution port consumed by `BufferedWriter` (`BOLT-08-04`).
+#[async_trait]
+pub trait WriteExecutor: Send + Sync {
+    async fn execute_write(
+        &self,
+        query: &str,
+        params: &serde_json::Map<String, serde_json::Value>,
+    ) -> MemoryResult<()>;
+}
+
+/// Prepared extracted entity and mention provenance for single-transaction ingestion.
+#[derive(Debug, Clone)]
+pub struct AtomicExtractionEntity {
+    pub entity: Entity,
+    pub provenance: crate::extraction::MentionProvenance,
+}
+
+/// Prepared extracted relationship between two entities in the same ingestion batch.
+#[derive(Debug, Clone)]
+pub struct AtomicExtractionRelation {
+    pub source_name: String,
+    pub target_name: String,
+    pub relation_type: String,
+    pub confidence: f64,
+}
+
+/// Prepared extraction mutations committed atomically alongside a message (`SDD-1C`, `F-01`).
+#[derive(Debug, Clone, Default)]
+pub struct AtomicExtractionBatch {
+    pub existing_mentions: Vec<(Uuid, crate::extraction::MentionProvenance)>,
+    pub entities: Vec<AtomicExtractionEntity>,
+    pub relations: Vec<AtomicExtractionRelation>,
+}
+
+impl AtomicExtractionBatch {
+    pub fn is_empty(&self) -> bool {
+        self.existing_mentions.is_empty() && self.entities.is_empty() && self.relations.is_empty()
+    }
+}
+
 /// A message hit returned by vector search.
 #[derive(Debug, Clone)]
 pub struct ScoredMessage {
@@ -216,6 +693,23 @@ pub trait ShortTermStore: Send + Sync {
         scope: &OwnerScope,
         message: &MessageRecord,
     ) -> MemoryResult<Message>;
+
+    /// Atomically append a message and persist its prepared extraction batch in
+    /// a single storage transaction (`SDD-1C`, `F-01`).
+    ///
+    /// Production stores (e.g., Neo4j) return `Ok(Some(message))` after
+    /// committing both message and extraction writes together (or roll back all
+    /// writes on error). In-memory test doubles that do not span both stores
+    /// may return `Ok(None)` to use the test-only split path.
+    async fn append_message_atomic(
+        &self,
+        _conversation_id: Uuid,
+        _scope: &OwnerScope,
+        _message: &MessageRecord,
+        _extraction: &AtomicExtractionBatch,
+    ) -> MemoryResult<Option<Message>> {
+        Ok(None)
+    }
 
     /// Append messages in input order in one transaction. The scope must
     /// match the conversation's namespace.
@@ -891,6 +1385,39 @@ impl Default for ConsolidationReport {
     }
 }
 
+impl ConsolidationReport {
+    /// Enforce single transactional audit ownership invariants (`SDD-4`, `F-05`):
+    /// - Dry-run must have zero mutations and no `run_id`.
+    /// - Execute with zero mutations must have no `run_id`.
+    /// - Execute with mutations must have a persisted `run_id` written atomically by the store.
+    pub fn validate_invariants(&self) -> MemoryResult<()> {
+        if self.dry_run {
+            if self.mutations_applied != 0 {
+                return Err(MemoryError::storage(
+                    "consolidation dry-run reported non-zero mutations_applied",
+                ));
+            }
+            if self.run_id.is_some() {
+                return Err(MemoryError::storage(
+                    "consolidation dry-run must not persist a ConsolidationRun audit node",
+                ));
+            }
+            return Ok(());
+        }
+        if self.mutations_applied == 0 && self.run_id.is_some() {
+            return Err(MemoryError::storage(
+                "consolidation job with zero mutations_applied must not persist a run_id",
+            ));
+        }
+        if self.mutations_applied > 0 && self.run_id.is_none() {
+            return Err(MemoryError::storage(
+                "consolidation job applied mutations without an atomic ConsolidationRun run_id",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Request to record an explicit `:MemoryReadAudit` event (`BOLT-08-11`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReadAuditRecord {
@@ -951,6 +1478,26 @@ pub trait ConsolidationStore: Send + Sync {
         dry_run: bool,
     ) -> MemoryResult<ConsolidationReport>;
 
+    /// Owner-scoped variant of [`Self::detect_superseded_preferences`] (`SDD-4`, `F-09`).
+    async fn detect_superseded_preferences_for_owner(
+        &self,
+        user_identifier: Option<&str>,
+        threshold: f64,
+        limit: i64,
+        dry_run: bool,
+    ) -> MemoryResult<ConsolidationReport> {
+        if let Some(owner) = user_identifier {
+            if owner.trim().is_empty() {
+                return Err(MemoryError::invalid("user_identifier must not be blank"));
+            }
+            return Err(MemoryError::NotSupported(
+                "owner-filtered preference supersession".into(),
+            ));
+        }
+        self.detect_superseded_preferences(threshold, limit, dry_run)
+            .await
+    }
+
     /// Archive conversations older than the given TTL.
     async fn archive_expired_conversations(
         &self,
@@ -970,8 +1517,11 @@ pub trait ConsolidationStore: Send + Sync {
 #[cfg(test)]
 mod owner_scope_tests {
     use super::{
-        ConsolidationReport, EmbeddingIdentity, MessageRecord, OwnerScope, SessionOrder,
-        SessionQuery, TraceOrder, TraceQuery,
+        is_safe_cypher_identifier, AccessContext, AccessOperation, AdoptGraphOptions,
+        AdoptionLabelReport, AdoptionReport, AtomicExtractionBatch, BoundingBox,
+        ConsolidationReport, EmbeddingIdentity, GeoPoint, MemoryAccessPolicy, MemoryKind,
+        MemoryScopeClass, MessageRecord, OwnerScope, SessionOrder, SessionQuery, TargetResource,
+        TraceOrder, TraceQuery,
     };
     use crate::model::{MessageRole, Metadata, NewMessage};
     use chrono::{DateTime, Utc};
@@ -1106,5 +1656,178 @@ mod owner_scope_tests {
         assert_eq!(record.operation_key, None);
         assert_eq!(record.operation_payload, None);
         assert_eq!(record.embedding_identity, None);
+    }
+
+    #[test]
+    fn memory_access_policy_classifies_all_memory_kinds() {
+        for kind in [
+            MemoryKind::Conversation,
+            MemoryKind::Message,
+            MemoryKind::Preference,
+            MemoryKind::ReasoningTrace,
+            MemoryKind::ReasoningStep,
+            MemoryKind::ToolCall,
+        ] {
+            assert_eq!(
+                MemoryAccessPolicy::classify(kind),
+                MemoryScopeClass::Private
+            );
+        }
+        assert_eq!(
+            MemoryAccessPolicy::classify(MemoryKind::SharedKnowledge),
+            MemoryScopeClass::Workspace
+        );
+        assert_eq!(
+            MemoryAccessPolicy::classify(MemoryKind::ReferenceEntity),
+            MemoryScopeClass::Global
+        );
+        assert_eq!(
+            MemoryAccessPolicy::classify(MemoryKind::AuditRecord),
+            MemoryScopeClass::RestrictedAdmin
+        );
+    }
+
+    #[test]
+    fn memory_access_policy_enforces_private_workspace_global_and_admin_boundaries() {
+        let alice = OwnerScope::owned("alice").unwrap();
+        let bob = OwnerScope::owned("bob").unwrap();
+
+        let alice_ctx = AccessContext::user(alice.clone())
+            .with_workspace("ws-1")
+            .unwrap();
+        let bob_ctx = AccessContext::user(bob.clone())
+            .with_workspace("ws-2")
+            .unwrap();
+        let admin_ctx = AccessContext::admin(bob.clone())
+            .with_workspace("ws-1")
+            .unwrap();
+
+        // Private: only matching owner may read/write (even admin cannot cross-read private tenant data)
+        let alice_msg = TargetResource::private(MemoryKind::Message, alice.clone());
+        assert!(
+            MemoryAccessPolicy::authorize(AccessOperation::Read, &alice_ctx, &alice_msg).is_ok()
+        );
+        assert!(
+            MemoryAccessPolicy::authorize(AccessOperation::Write, &alice_ctx, &alice_msg).is_ok()
+        );
+        assert!(
+            MemoryAccessPolicy::authorize(AccessOperation::Read, &bob_ctx, &alice_msg).is_err()
+        );
+        assert!(
+            MemoryAccessPolicy::authorize(AccessOperation::Read, &admin_ctx, &alice_msg).is_err()
+        );
+
+        // Workspace: matching workspace allowed, cross-workspace denied, missing workspace denied
+        let ws1_knowledge = TargetResource::workspace(MemoryKind::SharedKnowledge, "ws-1").unwrap();
+        assert!(
+            MemoryAccessPolicy::authorize(AccessOperation::Read, &alice_ctx, &ws1_knowledge)
+                .is_ok()
+        );
+        assert!(
+            MemoryAccessPolicy::authorize(AccessOperation::Read, &bob_ctx, &ws1_knowledge).is_err()
+        );
+        let no_ws_ctx = AccessContext::user(alice.clone());
+        assert!(
+            MemoryAccessPolicy::authorize(AccessOperation::Read, &no_ws_ctx, &ws1_knowledge)
+                .is_err()
+        );
+
+        // Global: read-shared for any caller, write requires admin
+        let global_ref = TargetResource::global(MemoryKind::ReferenceEntity);
+        assert!(
+            MemoryAccessPolicy::authorize(AccessOperation::Read, &alice_ctx, &global_ref).is_ok()
+        );
+        assert!(
+            MemoryAccessPolicy::authorize(AccessOperation::Read, &bob_ctx, &global_ref).is_ok()
+        );
+        assert!(
+            MemoryAccessPolicy::authorize(AccessOperation::Write, &alice_ctx, &global_ref).is_err()
+        );
+        assert!(
+            MemoryAccessPolicy::authorize(AccessOperation::Write, &admin_ctx, &global_ref).is_ok()
+        );
+
+        // RestrictedAdmin: read & write require admin
+        let audit = TargetResource::restricted_admin(MemoryKind::AuditRecord);
+        assert!(MemoryAccessPolicy::authorize(AccessOperation::Read, &alice_ctx, &audit).is_err());
+        assert!(MemoryAccessPolicy::authorize(AccessOperation::Write, &alice_ctx, &audit).is_err());
+        assert!(MemoryAccessPolicy::authorize(AccessOperation::Read, &admin_ctx, &audit).is_ok());
+        assert!(MemoryAccessPolicy::authorize(AccessOperation::Write, &admin_ctx, &audit).is_ok());
+
+        // Blank workspace IDs fail closed
+        assert!(AccessContext::user(alice).with_workspace("   ").is_err());
+        assert!(TargetResource::workspace(MemoryKind::SharedKnowledge, " ").is_err());
+    }
+
+    #[test]
+    fn atomic_extraction_batch_reports_emptiness() {
+        let batch = AtomicExtractionBatch::default();
+        assert!(batch.is_empty());
+    }
+
+    #[test]
+    fn adopt_graph_options_validate_rejects_cypher_injection_and_defaults_dry_run() {
+        let defaults = AdoptGraphOptions::default();
+        assert!(defaults.dry_run);
+        assert!(defaults.validate().is_ok());
+
+        for bad in [
+            "",
+            "123Label",
+            "Label; MATCH (n) DETACH DELETE n",
+            "Bad`Label",
+            "With Space",
+            "foo-bar",
+        ] {
+            assert!(!is_safe_cypher_identifier(bad), "should reject {bad:?}");
+            let mut opts = AdoptGraphOptions::default();
+            opts.label_to_type
+                .insert(bad.to_owned(), "PERSON".to_owned());
+            assert!(opts.validate().is_err(), "label {bad:?} must be rejected");
+        }
+
+        for good in ["Person", "User_Account_2", "_Internal"] {
+            assert!(is_safe_cypher_identifier(good), "should accept {good:?}");
+        }
+
+        let mut bad_prop = AdoptGraphOptions::default();
+        bad_prop
+            .label_to_type
+            .insert("Person".into(), "PERSON".into());
+        bad_prop
+            .name_property_per_label
+            .insert("Person".into(), "name` RETURN 1 //".into());
+        assert!(bad_prop.validate().is_err());
+
+        let report = AdoptionReport {
+            by_label: vec![AdoptionLabelReport {
+                label: "Person".into(),
+                entity_type: "PERSON".into(),
+                name_property: "name".into(),
+                migrated_count: 3,
+                already_adopted_count: 1,
+                skipped_count: 2,
+                conflict_count: 1,
+            }],
+            dry_run: true,
+        };
+        assert_eq!(report.total_migrated(), 3);
+        assert_eq!(report.total_conflicts(), 1);
+        assert!(report.has_conflicts());
+    }
+
+    #[test]
+    fn geo_point_and_bounding_box_validate_bounds_fail_closed() {
+        assert!(GeoPoint::new(40.4168, -3.7038).is_ok());
+        assert!(GeoPoint::new(90.0, 180.0).is_ok());
+        assert!(GeoPoint::new(-90.0, -180.0).is_ok());
+        assert!(GeoPoint::new(90.1, 0.0).is_err());
+        assert!(GeoPoint::new(0.0, -180.1).is_err());
+        assert!(GeoPoint::new(f64::NAN, 0.0).is_err());
+        assert!(GeoPoint::new(0.0, f64::INFINITY).is_err());
+
+        assert!(BoundingBox::new(35.0, -10.0, 44.0, 5.0).is_ok());
+        assert!(BoundingBox::new(45.0, -10.0, 44.0, 5.0).is_err());
+        assert!(BoundingBox::new(35.0, 6.0, 44.0, 5.0).is_err());
     }
 }

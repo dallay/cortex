@@ -1,0 +1,8 @@
+change: muninn-integrity-ci-and-evidence-foundation
+current_phase: verify
+completed: [ propose, tasks, apply ]
+status: working
+next: verify
+updated: 2026-11-24
+# Units 1A (F-10, F-11), 1B (F-18, F-19, F-20), 1C (F-01), and 1D (F-04) implemented & unit-verified.
+# Remaining: 1A.3 (F-21 OSV-Scanner CI log triage) and live Neo4j Docker execution (`just muninn-bolt-parity`).

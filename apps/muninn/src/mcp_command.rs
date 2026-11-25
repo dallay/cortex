@@ -1,12 +1,25 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use axum::extract::{DefaultBodyLimit, State};
+use axum::http::{header, HeaderMap, HeaderName, StatusCode};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
+use axum::{Json, Router};
+use chrono::{DateTime, Utc};
 use muninn_application::{
-    LongTermMemory, SearchMessagesOptions, SearchPreferencesOptions, ShortTermMemory,
+    AddEntityOptions, AddFactOptions, AddMessageOptions, AddPreferenceOptions, LongTermMemory,
+    SearchEntitiesOptions, SearchMessagesOptions, SearchPreferencesOptions, ShortTermMemory,
 };
+use muninn_core::model::{MessageRole, Metadata};
 use muninn_core::ports::{Embedder, LongTermStore, OwnerScope, ShortTermStore};
-use muninn_mcp::{Catalog, Server, ToolHandler};
-use serde_json::Value;
+use muninn_mcp::{
+    authorize_bearer_header, Catalog, McpHttpConfig, Server, ToolHandler, MAX_RESULT_BYTES,
+    PROTOCOL_VERSION,
+};
+use serde_json::{json, Value};
+
+static MCP_PROTOCOL_VERSION_HEADER: HeaderName = HeaderName::from_static("mcp-protocol-version");
 
 #[derive(Clone)]
 pub struct HostOwnerScope(String);
@@ -192,6 +205,742 @@ fn register_tools(
     Ok(server)
 }
 
+#[derive(Debug, Clone, Default)]
+struct CoreSearchOptions {
+    limit: i64,
+    session_id: Option<String>,
+    memory_types: Option<Vec<String>>,
+    threshold: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+struct CoreGetContextOptions {
+    session_id: Option<String>,
+    query: Option<String>,
+    limit: i64,
+    include_short_term: bool,
+    include_long_term: bool,
+}
+
+impl Default for CoreGetContextOptions {
+    fn default() -> Self {
+        Self {
+            session_id: None,
+            query: None,
+            limit: 10,
+            include_short_term: true,
+            include_long_term: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct CoreAddEntityArgs {
+    subtype: Option<String>,
+    description: Option<String>,
+    aliases: Vec<String>,
+    metadata: Metadata,
+}
+
+#[derive(Debug, Clone)]
+struct CoreAddPreferenceArgs {
+    context: Option<String>,
+    confidence: f64,
+}
+
+impl Default for CoreAddPreferenceArgs {
+    fn default() -> Self {
+        Self {
+            context: None,
+            confidence: 1.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CoreAddFactArgs {
+    confidence: f64,
+    valid_from: Option<DateTime<Utc>>,
+    valid_until: Option<DateTime<Utc>>,
+    metadata: Metadata,
+}
+
+impl Default for CoreAddFactArgs {
+    fn default() -> Self {
+        Self {
+            confidence: 1.0,
+            valid_from: None,
+            valid_until: None,
+            metadata: Metadata::new(),
+        }
+    }
+}
+
+#[async_trait]
+trait CoreMemoryOps: Send + Sync {
+    async fn search(
+        &self,
+        owner: &str,
+        query: &str,
+        options: CoreSearchOptions,
+    ) -> Result<Value, String>;
+    async fn get_context(
+        &self,
+        owner: &str,
+        options: CoreGetContextOptions,
+    ) -> Result<Value, String>;
+    async fn store_message(
+        &self,
+        owner: &str,
+        session_id: &str,
+        role: MessageRole,
+        content: &str,
+        metadata: Option<Metadata>,
+    ) -> Result<Value, String>;
+    async fn add_entity(
+        &self,
+        name: &str,
+        entity_type: &str,
+        args: CoreAddEntityArgs,
+    ) -> Result<Value, String>;
+    async fn add_preference(
+        &self,
+        owner: &str,
+        category: &str,
+        preference: &str,
+        args: CoreAddPreferenceArgs,
+    ) -> Result<Value, String>;
+    async fn add_fact(
+        &self,
+        subject: &str,
+        predicate: &str,
+        object: &str,
+        args: CoreAddFactArgs,
+    ) -> Result<Value, String>;
+}
+
+struct ApplicationCoreOps {
+    short_term: ShortTermMemory,
+    long_term: LongTermMemory,
+}
+
+#[async_trait]
+impl CoreMemoryOps for ApplicationCoreOps {
+    async fn search(
+        &self,
+        owner: &str,
+        query: &str,
+        options: CoreSearchOptions,
+    ) -> Result<Value, String> {
+        let (search_messages, search_preferences, search_entities) = match &options.memory_types {
+            Some(types) => (
+                types.iter().any(|t| t == "messages"),
+                types.iter().any(|t| t == "preferences"),
+                types.iter().any(|t| t == "entities"),
+            ),
+            None => (true, true, true),
+        };
+
+        let messages = if search_messages {
+            let mut opts = SearchMessagesOptions {
+                user_identifier: Some(owner.to_owned()),
+                session_id: options.session_id.clone(),
+                limit: options.limit,
+                ..Default::default()
+            };
+            if let Some(th) = options.threshold {
+                opts.threshold = th;
+            }
+            self.short_term
+                .search_messages(query, &opts)
+                .await
+                .map_err(|_| "Message search failed".to_owned())?
+        } else {
+            Vec::new()
+        };
+
+        let preferences = if search_preferences {
+            let mut opts = SearchPreferencesOptions {
+                user_identifier: Some(owner.to_owned()),
+                limit: options.limit,
+                ..Default::default()
+            };
+            if let Some(th) = options.threshold {
+                opts.threshold = th;
+            }
+            self.long_term
+                .search_preferences(query, &opts)
+                .await
+                .map_err(|_| "Preference search failed".to_owned())?
+        } else {
+            Vec::new()
+        };
+
+        let entities = if search_entities {
+            let mut opts = SearchEntitiesOptions {
+                limit: options.limit,
+                ..Default::default()
+            };
+            if let Some(th) = options.threshold {
+                opts.threshold = th;
+            }
+            self.long_term
+                .search_entities(query, &opts)
+                .await
+                .map_err(|_| "Entity search failed".to_owned())?
+        } else {
+            Vec::new()
+        };
+
+        Ok(json!({
+            "messages": messages,
+            "preferences": preferences,
+            "entities": entities,
+        }))
+    }
+
+    async fn get_context(
+        &self,
+        owner: &str,
+        options: CoreGetContextOptions,
+    ) -> Result<Value, String> {
+        let sid = options
+            .session_id
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("default");
+
+        let conversation = if options.include_short_term {
+            Some(
+                self.short_term
+                    .get_conversation(sid, None, Some(owner), Some(options.limit))
+                    .await
+                    .map_err(|_| "Conversation lookup failed".to_owned())?,
+            )
+        } else {
+            None
+        };
+
+        let preferences = if options.include_long_term {
+            match &options.query {
+                Some(q) if !q.trim().is_empty() => self
+                    .long_term
+                    .search_preferences(
+                        q,
+                        &SearchPreferencesOptions {
+                            user_identifier: Some(owner.to_owned()),
+                            limit: options.limit,
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .map_err(|_| "Preference lookup failed".to_owned())?,
+                _ => {
+                    let mut prefs = self
+                        .long_term
+                        .get_preferences_for(owner, true)
+                        .await
+                        .map_err(|_| "Preference lookup failed".to_owned())?;
+                    prefs.truncate(options.limit.max(0) as usize);
+                    prefs
+                }
+            }
+        } else {
+            Vec::new()
+        };
+
+        Ok(json!({
+            "conversation": conversation,
+            "preferences": preferences,
+        }))
+    }
+
+    async fn store_message(
+        &self,
+        owner: &str,
+        session_id: &str,
+        role: MessageRole,
+        content: &str,
+        metadata: Option<Metadata>,
+    ) -> Result<Value, String> {
+        let stored = self
+            .short_term
+            .add_message(
+                session_id,
+                role,
+                content,
+                AddMessageOptions {
+                    user_identifier: Some(owner.to_owned()),
+                    metadata: metadata.unwrap_or_default(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|_| "Storing message failed".to_owned())?;
+        serde_json::to_value(stored).map_err(|_| "Message encoding failed".to_owned())
+    }
+
+    async fn add_entity(
+        &self,
+        name: &str,
+        entity_type: &str,
+        args: CoreAddEntityArgs,
+    ) -> Result<Value, String> {
+        let (entity, _) = self
+            .long_term
+            .add_entity(
+                name,
+                entity_type,
+                AddEntityOptions {
+                    subtype: args.subtype,
+                    description: args.description,
+                    aliases: args.aliases,
+                    metadata: args.metadata,
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|_| "Adding entity failed".to_owned())?;
+        serde_json::to_value(entity).map_err(|_| "Entity encoding failed".to_owned())
+    }
+
+    async fn add_preference(
+        &self,
+        owner: &str,
+        category: &str,
+        preference: &str,
+        args: CoreAddPreferenceArgs,
+    ) -> Result<Value, String> {
+        let pref = self
+            .long_term
+            .add_preference(
+                category,
+                preference,
+                AddPreferenceOptions {
+                    context: args.context,
+                    confidence: args.confidence,
+                    user_identifier: Some(owner.to_owned()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|_| "Adding preference failed".to_owned())?;
+        serde_json::to_value(pref).map_err(|_| "Preference encoding failed".to_owned())
+    }
+
+    async fn add_fact(
+        &self,
+        subject: &str,
+        predicate: &str,
+        object: &str,
+        args: CoreAddFactArgs,
+    ) -> Result<Value, String> {
+        let fact = self
+            .long_term
+            .add_fact(
+                subject,
+                predicate,
+                object,
+                AddFactOptions {
+                    confidence: args.confidence,
+                    valid_from: args.valid_from,
+                    valid_until: args.valid_until,
+                    metadata: args.metadata,
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|_| "Adding fact failed".to_owned())?;
+        serde_json::to_value(fact).map_err(|_| "Fact encoding failed".to_owned())
+    }
+}
+
+fn reject_scope_override(arguments: &Value) -> Result<&serde_json::Map<String, Value>, String> {
+    let obj = arguments
+        .as_object()
+        .ok_or_else(|| "Invalid arguments".to_owned())?;
+    if obj.contains_key("user_identifier") || obj.contains_key("owner_scope") {
+        return Err("Model-supplied owner scope override is forbidden".to_owned());
+    }
+    Ok(obj)
+}
+
+fn required_non_empty<'a>(
+    obj: &'a serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<&'a str, String> {
+    obj.get(key)
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| format!("Field '{key}' is required and must be non-empty"))
+}
+
+struct CoreTool {
+    kind: &'static str,
+    ops: Arc<dyn CoreMemoryOps>,
+    scope: HostOwnerScope,
+}
+
+#[async_trait]
+impl ToolHandler for CoreTool {
+    async fn call(&self, arguments: &Value) -> Result<Value, String> {
+        let obj = reject_scope_override(arguments)?;
+        let owner = self.scope.user_identifier();
+        match self.kind {
+            "memory_search" => {
+                let query = required_non_empty(obj, "query")?;
+                let limit = result_limit(arguments)?;
+                let session_id = obj
+                    .get("session_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let memory_types = obj
+                    .get("memory_types")
+                    .and_then(Value::as_array)
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_owned)
+                            .collect()
+                    });
+                let threshold = obj.get("threshold").and_then(Value::as_f64);
+                self.ops
+                    .search(
+                        owner,
+                        query,
+                        CoreSearchOptions {
+                            limit,
+                            session_id,
+                            memory_types,
+                            threshold,
+                        },
+                    )
+                    .await
+            }
+            "memory_get_context" => {
+                let session_id = obj
+                    .get("session_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let query = obj.get("query").and_then(Value::as_str).map(str::to_owned);
+                let limit = obj
+                    .get("max_items")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(10)
+                    .clamp(1, 20);
+                let include_short_term = obj
+                    .get("include_short_term")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                let include_long_term = obj
+                    .get("include_long_term")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                self.ops
+                    .get_context(
+                        owner,
+                        CoreGetContextOptions {
+                            session_id,
+                            query,
+                            limit,
+                            include_short_term,
+                            include_long_term,
+                        },
+                    )
+                    .await
+            }
+            "memory_store_message" => {
+                let session_id = obj
+                    .get("session_id")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or("default");
+                let content = required_non_empty(obj, "content")?;
+                let role: MessageRole = obj
+                    .get("role")
+                    .and_then(Value::as_str)
+                    .unwrap_or("user")
+                    .parse()
+                    .map_err(|_| "Invalid message role".to_owned())?;
+                let metadata = obj.get("metadata").and_then(Value::as_object).cloned();
+                self.ops
+                    .store_message(owner, session_id, role, content, metadata)
+                    .await
+            }
+            "memory_add_entity" => {
+                let name = required_non_empty(obj, "name")?;
+                let entity_type = obj
+                    .get("type")
+                    .or_else(|| obj.get("entity_type"))
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.trim().is_empty())
+                    .ok_or_else(|| "Field 'type' is required".to_owned())?;
+                let subtype = obj
+                    .get("subtype")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let description = obj
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let aliases = obj
+                    .get("aliases")
+                    .and_then(Value::as_array)
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_owned)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let metadata = obj
+                    .get("metadata")
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .unwrap_or_default();
+                self.ops
+                    .add_entity(
+                        name,
+                        entity_type,
+                        CoreAddEntityArgs {
+                            subtype,
+                            description,
+                            aliases,
+                            metadata,
+                        },
+                    )
+                    .await
+            }
+            "memory_add_preference" => {
+                let category = required_non_empty(obj, "category")?;
+                let preference = required_non_empty(obj, "preference")?;
+                let context = obj
+                    .get("context")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let confidence = obj
+                    .get("confidence")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(1.0)
+                    .clamp(0.0, 1.0);
+                self.ops
+                    .add_preference(
+                        owner,
+                        category,
+                        preference,
+                        CoreAddPreferenceArgs {
+                            context,
+                            confidence,
+                        },
+                    )
+                    .await
+            }
+            "memory_add_fact" => {
+                let subject = required_non_empty(obj, "subject")?;
+                let predicate = required_non_empty(obj, "predicate")?;
+                let object = obj
+                    .get("object_value")
+                    .or_else(|| obj.get("object"))
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.trim().is_empty())
+                    .ok_or_else(|| {
+                        "Field 'object_value' is required and must be non-empty".to_owned()
+                    })?;
+                let confidence = obj
+                    .get("confidence")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(1.0)
+                    .clamp(0.0, 1.0);
+                let valid_from = obj
+                    .get("valid_from")
+                    .and_then(Value::as_str)
+                    .map(|s| {
+                        s.parse::<DateTime<Utc>>().map_err(|_| {
+                            "Invalid 'valid_from' format: must be ISO-8601 string".to_owned()
+                        })
+                    })
+                    .transpose()?;
+                let valid_until = obj
+                    .get("valid_until")
+                    .and_then(Value::as_str)
+                    .map(|s| {
+                        s.parse::<DateTime<Utc>>().map_err(|_| {
+                            "Invalid 'valid_until' format: must be ISO-8601 string".to_owned()
+                        })
+                    })
+                    .transpose()?;
+                let metadata = obj
+                    .get("metadata")
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .unwrap_or_default();
+                self.ops
+                    .add_fact(
+                        subject,
+                        predicate,
+                        object,
+                        CoreAddFactArgs {
+                            confidence,
+                            valid_from,
+                            valid_until,
+                            metadata,
+                        },
+                    )
+                    .await
+            }
+            _ => Err("Unknown MCP core tool".to_owned()),
+        }
+    }
+}
+
+/// Build the opt-in MCP `core` profile server (6 tools) preserving host-bound immutable `OwnerScope`.
+pub fn core_server(
+    owner: HostOwnerScope,
+    short_term_store: Arc<dyn ShortTermStore>,
+    long_term_store: Arc<dyn LongTermStore>,
+    embedder: Option<Arc<dyn Embedder>>,
+) -> Result<Server, &'static str> {
+    let long_term = LongTermMemory::new(long_term_store, embedder.clone(), true)
+        .map_err(|_| "LongTermMemory requires atomic preference write support")?;
+    let ops: Arc<dyn CoreMemoryOps> = Arc::new(ApplicationCoreOps {
+        short_term: ShortTermMemory::new(short_term_store, embedder, true),
+        long_term,
+    });
+    register_core_tools(owner, ops)
+}
+
+#[derive(Clone)]
+struct McpHttpState {
+    server: Arc<tokio::sync::Mutex<Server>>,
+    config: McpHttpConfig,
+    owner: HostOwnerScope,
+}
+
+/// Build the Streamable HTTP MCP Axum router with fail-closed bearer authentication.
+///
+/// Validates `config.validate()` upfront so non-loopback static-token configs
+/// fail closed before any socket is bound.
+pub fn http_router(
+    server: Server,
+    config: McpHttpConfig,
+    owner: HostOwnerScope,
+) -> Result<Router, &'static str> {
+    config.validate().map_err(|err| err.public_message())?;
+    let state = McpHttpState {
+        server: Arc::new(tokio::sync::Mutex::new(server)),
+        config,
+        owner,
+    };
+    Ok(Router::new()
+        .route("/health", get(http_health))
+        .route("/mcp", post(http_mcp_dispatch))
+        .layer(DefaultBodyLimit::max(MAX_RESULT_BYTES))
+        .with_state(state))
+}
+
+async fn http_health() -> impl IntoResponse {
+    (StatusCode::OK, Json(json!({ "status": "ok" })))
+}
+
+fn validate_origin(
+    headers: &HeaderMap,
+    bind_addr: &std::net::SocketAddr,
+) -> Result<(), &'static str> {
+    if let Some(origin) = headers.get(header::ORIGIN) {
+        let origin_str = origin.to_str().map_err(|_| "Invalid Origin header")?;
+        // If bound to loopback, Origin must be a loopback origin (localhost or 127.0.0.1 or [::1]).
+        if bind_addr.ip().is_loopback() {
+            let is_loopback_origin = origin_str.starts_with("http://localhost")
+                || origin_str.starts_with("https://localhost")
+                || origin_str.starts_with("http://127.0.0.1")
+                || origin_str.starts_with("https://127.0.0.1")
+                || origin_str.starts_with("http://[::1]")
+                || origin_str.starts_with("https://[::1]");
+            if !is_loopback_origin {
+                return Err("Cross-origin request to loopback MCP server forbidden");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_mcp_protocol_version(headers: &HeaderMap) -> Result<(), &'static str> {
+    if let Some(version) = headers.get(&MCP_PROTOCOL_VERSION_HEADER) {
+        let version_str = version
+            .to_str()
+            .map_err(|_| "Invalid MCP-Protocol-Version header")?;
+        if version_str != PROTOCOL_VERSION {
+            return Err("Unsupported MCP-Protocol-Version");
+        }
+    }
+    Ok(())
+}
+
+async fn http_mcp_dispatch(
+    State(state): State<McpHttpState>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Response {
+    if let Err(msg) = validate_origin(&headers, &state.config.bind_addr) {
+        return (StatusCode::FORBIDDEN, Json(json!({ "error": msg }))).into_response();
+    }
+
+    if let Err(msg) = validate_mcp_protocol_version(&headers) {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response();
+    }
+
+    let auth_header = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+    if let Err(err) =
+        authorize_bearer_header(auth_header, &state.config, state.owner.user_identifier()).await
+    {
+        let status = StatusCode::from_u16(err.status_code()).unwrap_or(StatusCode::UNAUTHORIZED);
+        let body = Json(json!({ "error": err.public_message() }));
+        if status == StatusCode::UNAUTHORIZED {
+            return (
+                status,
+                [(header::WWW_AUTHENTICATE, "Bearer realm=\"muninn-mcp\"")],
+                body,
+            )
+                .into_response();
+        }
+        return (status, body).into_response();
+    }
+
+    let mut server = state.server.lock().await;
+    match server.handle(payload).await {
+        Some(response) => (StatusCode::OK, Json(response)).into_response(),
+        None => StatusCode::ACCEPTED.into_response(),
+    }
+}
+
+fn register_core_tools(
+    owner: HostOwnerScope,
+    ops: Arc<dyn CoreMemoryOps>,
+) -> Result<Server, &'static str> {
+    let mut server = Server::default();
+    for tool_name in [
+        "memory_search",
+        "memory_get_context",
+        "memory_store_message",
+        "memory_add_entity",
+        "memory_add_preference",
+        "memory_add_fact",
+    ] {
+        server.register(
+            Catalog::Core,
+            tool_name,
+            Box::new(CoreTool {
+                kind: tool_name,
+                ops: ops.clone(),
+                scope: owner.clone(),
+            }),
+        )?;
+    }
+    Ok(server)
+}
+
 #[cfg(test)]
 fn test_server(
     owner: HostOwnerScope,
@@ -329,6 +1078,243 @@ mod tests {
             names,
             ["muninn_search_messages", "muninn_search_preferences"]
         );
+    }
+
+    struct FakeCoreOps(Mutex<Vec<(String, String)>>);
+
+    #[async_trait]
+    impl super::CoreMemoryOps for FakeCoreOps {
+        async fn search(
+            &self,
+            owner: &str,
+            query: &str,
+            options: super::CoreSearchOptions,
+        ) -> Result<serde_json::Value, String> {
+            self.0.lock().unwrap().push(("search".into(), owner.into()));
+            Ok(json!({"owner": owner, "query": query, "limit": options.limit}))
+        }
+        async fn get_context(
+            &self,
+            owner: &str,
+            _: super::CoreGetContextOptions,
+        ) -> Result<serde_json::Value, String> {
+            self.0
+                .lock()
+                .unwrap()
+                .push(("context".into(), owner.into()));
+            Ok(json!({"owner": owner}))
+        }
+        async fn store_message(
+            &self,
+            owner: &str,
+            _: &str,
+            _: muninn_core::model::MessageRole,
+            _: &str,
+            _: Option<muninn_core::model::Metadata>,
+        ) -> Result<serde_json::Value, String> {
+            self.0.lock().unwrap().push(("store".into(), owner.into()));
+            Ok(json!({"owner": owner}))
+        }
+        async fn add_entity(
+            &self,
+            name: &str,
+            _: &str,
+            _: super::CoreAddEntityArgs,
+        ) -> Result<serde_json::Value, String> {
+            self.0.lock().unwrap().push(("entity".into(), name.into()));
+            Ok(json!({"name": name}))
+        }
+        async fn add_preference(
+            &self,
+            owner: &str,
+            _: &str,
+            _: &str,
+            _: super::CoreAddPreferenceArgs,
+        ) -> Result<serde_json::Value, String> {
+            self.0
+                .lock()
+                .unwrap()
+                .push(("preference".into(), owner.into()));
+            Ok(json!({"owner": owner}))
+        }
+        async fn add_fact(
+            &self,
+            subject: &str,
+            _: &str,
+            _: &str,
+            _: super::CoreAddFactArgs,
+        ) -> Result<serde_json::Value, String> {
+            self.0.lock().unwrap().push(("fact".into(), subject.into()));
+            Ok(json!({"subject": subject}))
+        }
+    }
+
+    #[tokio::test]
+    async fn core_profile_registers_six_tools_and_blocks_scope_override() {
+        let fake = Arc::new(FakeCoreOps(Mutex::new(Vec::new())));
+        let mut server = super::register_core_tools(
+            HostOwnerScope::parse(Some("owner-a")).unwrap(),
+            fake.clone(),
+        )
+        .unwrap();
+        let list = server
+            .handle(call("tools/list", "", json!({})))
+            .await
+            .unwrap();
+        let names: Vec<_> = list["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names.len(), 6);
+        for expected in [
+            "memory_search",
+            "memory_get_context",
+            "memory_store_message",
+            "memory_add_entity",
+            "memory_add_preference",
+            "memory_add_fact",
+        ] {
+            assert!(names.contains(&expected), "missing core tool {expected}");
+        }
+
+        // Cross-tenant override attempt is rejected fail-closed.
+        let rejected = server
+            .handle(call(
+                "tools/call",
+                "memory_store_message",
+                json!({"content": "hi", "user_identifier": "owner-b"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(rejected["result"]["isError"], true);
+
+        // Authorized call binds host owner.
+        let ok = server
+            .handle(call(
+                "tools/call",
+                "memory_store_message",
+                json!({"content": "hi"}),
+            ))
+            .await
+            .unwrap();
+        assert_ne!(ok["result"]["isError"], true);
+        assert_eq!(
+            *fake.0.lock().unwrap(),
+            vec![("store".into(), "owner-a".into())]
+        );
+    }
+
+    #[tokio::test]
+    async fn streamable_http_enforces_bearer_auth_and_rejects_non_loopback_static_token() {
+        use axum::http::{header, StatusCode};
+        use muninn_mcp::{McpHttpAuthMode, McpHttpConfig, RedactedToken};
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+        let owner = HostOwnerScope::parse(Some("owner-a")).unwrap();
+        let ephemeral = uuid::Uuid::new_v4().to_string();
+        let token = RedactedToken::new(ephemeral.clone()).unwrap();
+
+        // Non-loopback static token fails closed before creating router.
+        let fake = Arc::new(FakeCoreOps(Mutex::new(Vec::new())));
+        let server = super::register_core_tools(owner.clone(), fake.clone()).unwrap();
+        let non_loopback = McpHttpConfig {
+            bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8765),
+            auth: McpHttpAuthMode::LoopbackStaticToken {
+                token: token.clone(),
+            },
+        };
+        assert!(super::http_router(server, non_loopback, owner.clone()).is_err());
+
+        // Loopback static token router validates cleanly and handler enforces bearer auth.
+        let server = super::register_core_tools(owner.clone(), fake).unwrap();
+        let loopback = McpHttpConfig {
+            bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8765),
+            auth: McpHttpAuthMode::LoopbackStaticToken { token },
+        };
+        assert!(super::http_router(server, loopback.clone(), owner.clone()).is_ok());
+
+        let fake2 = Arc::new(FakeCoreOps(Mutex::new(Vec::new())));
+        let state = super::McpHttpState {
+            server: Arc::new(tokio::sync::Mutex::new(
+                super::register_core_tools(owner.clone(), fake2).unwrap(),
+            )),
+            config: loopback,
+            owner,
+        };
+
+        // Missing Authorization -> 401 with WWW-Authenticate: Bearer.
+        let unauth_resp = super::http_mcp_dispatch(
+            axum::extract::State(state.clone()),
+            axum::http::HeaderMap::new(),
+            axum::Json(call("tools/list", "", json!({}))),
+        )
+        .await;
+        assert_eq!(unauth_resp.status(), StatusCode::UNAUTHORIZED);
+        assert!(unauth_resp.headers().contains_key(header::WWW_AUTHENTICATE));
+
+        // Valid Authorization -> 200 OK.
+        let mut headers = axum::http::HeaderMap::new();
+        let auth_value = format!("Bearer {ephemeral}");
+        headers.insert(header::AUTHORIZATION, auth_value.parse().unwrap());
+        let auth_resp = super::http_mcp_dispatch(
+            axum::extract::State(state.clone()),
+            headers.clone(),
+            axum::Json(call("tools/list", "", json!({}))),
+        )
+        .await;
+        assert_eq!(auth_resp.status(), StatusCode::OK);
+
+        // Forbidden non-loopback Origin -> 403 Forbidden.
+        let mut cross_origin_headers = headers.clone();
+        cross_origin_headers.insert(header::ORIGIN, "https://evil.com".parse().unwrap());
+        let origin_resp = super::http_mcp_dispatch(
+            axum::extract::State(state.clone()),
+            cross_origin_headers,
+            axum::Json(call("tools/list", "", json!({}))),
+        )
+        .await;
+        assert_eq!(origin_resp.status(), StatusCode::FORBIDDEN);
+
+        // Allowed loopback Origin -> 200 OK.
+        let mut local_origin_headers = headers.clone();
+        local_origin_headers.insert(header::ORIGIN, "http://localhost:3000".parse().unwrap());
+        let local_origin_resp = super::http_mcp_dispatch(
+            axum::extract::State(state.clone()),
+            local_origin_headers,
+            axum::Json(call("tools/list", "", json!({}))),
+        )
+        .await;
+        assert_eq!(local_origin_resp.status(), StatusCode::OK);
+
+        // Invalid MCP-Protocol-Version -> 400 Bad Request.
+        let mut bad_version_headers = headers.clone();
+        bad_version_headers.insert(
+            super::MCP_PROTOCOL_VERSION_HEADER.clone(),
+            "1999-01-01".parse().unwrap(),
+        );
+        let bad_version_resp = super::http_mcp_dispatch(
+            axum::extract::State(state.clone()),
+            bad_version_headers,
+            axum::Json(call("tools/list", "", json!({}))),
+        )
+        .await;
+        assert_eq!(bad_version_resp.status(), StatusCode::BAD_REQUEST);
+
+        // Matching MCP-Protocol-Version -> 200 OK.
+        let mut good_version_headers = headers;
+        good_version_headers.insert(
+            super::MCP_PROTOCOL_VERSION_HEADER.clone(),
+            PROTOCOL_VERSION.parse().unwrap(),
+        );
+        let good_version_resp = super::http_mcp_dispatch(
+            axum::extract::State(state),
+            good_version_headers,
+            axum::Json(call("tools/list", "", json!({}))),
+        )
+        .await;
+        assert_eq!(good_version_resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]

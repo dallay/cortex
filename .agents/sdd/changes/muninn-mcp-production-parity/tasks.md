@@ -1,0 +1,6 @@
+# Tasks: Muninn MCP Production Parity (`SDD-5A`, `F-12`, `GM-12`)
+
+- [x] **5A.1:** Preserve `Catalog::ScopedRetrieval` (2 read-only tools) completely untouched for Huginn Milestone 5 (`muninn-memory-evaluation-benchmarking`).
+- [x] **5A.2:** Implement `core_server` (`Catalog::Core`, 6 tools: `memory_search`, `memory_get_context`, `memory_store_message`, `memory_add_entity`, `memory_add_preference`, `memory_add_fact`) in `apps/muninn/src/mcp_command.rs` enforcing immutable `HostOwnerScope` and rejecting model-supplied `user_identifier` / `owner_scope` overrides fail-closed.
+- [x] **5A.3:** Implement MCP Streamable HTTP auth policy (`OAuth 2.1` + `TokenVerifier` port + issuer/audience/scope/subject-to-owner checks; loopback-only `RedactedToken` constant-time bearer auth rejected fail-closed on non-loopback) in `crates/muninn/mcp/src/auth.rs`, Axum `http_router` (`POST /mcp`, `GET /health`) in `apps/muninn/src/mcp_command.rs`, and CLI `--profile`, `--transport`, `--host`, `--port`, `--http-bearer-token` flags in `apps/muninn/src/main.rs`.
+- [ ] **5A.4:** Wire extended 16-tool profile (`Catalog::Extended`) and concrete JWKS/introspection `TokenVerifier` adapter + live `GM-12` integration run.

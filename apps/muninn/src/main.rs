@@ -20,8 +20,8 @@ use muninn_core::enrichment::{
 use muninn_core::extraction::EntityExtractor;
 use muninn_core::ports::{Embedder, GraphMaintenance};
 use muninn_neo4j::{
-    Neo4jClient, Neo4jConfig, Neo4jCypherQuery, Neo4jLongTermStore, Neo4jMaintenance,
-    Neo4jReasoningStore, Neo4jShortTermStore, SchemaManager,
+    Neo4jClient, Neo4jConfig, Neo4jConsolidationStore, Neo4jCypherQuery, Neo4jLongTermStore,
+    Neo4jMaintenance, Neo4jReasoningStore, Neo4jShortTermStore, Neo4jSpatialStore, SchemaManager,
 };
 use muninn_providers::{
     DiffbotEnrichment, HashEmbedder, NominatimGeocoder, OpenAiEmbedder, SpacyEntityExtractor,
@@ -199,6 +199,12 @@ struct GeocodingArgs {
     geocoding_timeout_secs: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum McpProfileArg {
+    ScopedRetrieval,
+    Core,
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Create or verify constraints and indexes.
@@ -214,11 +220,26 @@ enum Command {
         #[arg(long, env = "MUNINN_BRIDGE_ALLOW_CLEAR", default_value_t = false)]
         allow_destructive_clear: bool,
     },
-    /// Serve fixed-owner, read-only retrieval over MCP stdio.
+    /// Serve fixed-owner MCP tools over stdio (default) or authenticated Streamable HTTP.
     Mcp {
         /// Required host-selected data scope. This is not authentication.
         #[arg(long, env = "MUNINN_MCP_OWNER_SCOPE", hide_env_values = true)]
         owner_scope: String,
+        /// MCP tool profile (`scoped-retrieval` default read-only, or `core` 6-tool surface).
+        #[arg(long, value_enum, default_value_t = McpProfileArg::ScopedRetrieval)]
+        profile: McpProfileArg,
+        /// Transport (`stdio`, `http`, `streamable-http`; `sse` normalizes to `http`).
+        #[arg(long, default_value = "stdio")]
+        transport: String,
+        /// Bind host for Streamable HTTP transport (loopback default).
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+        /// Bind port for Streamable HTTP transport.
+        #[arg(long, default_value_t = 8765)]
+        port: u16,
+        /// Loopback-only static bearer token for local HTTP development.
+        #[arg(long, env = "MUNINN_MCP_HTTP_BEARER_TOKEN", hide_env_values = true)]
+        http_bearer_token: Option<String>,
     },
     /// Show graph statistics and memory metrics.
     Stats {
@@ -508,7 +529,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     banner::print_banner();
     let mcp_scope = match &cli.command {
-        Command::Mcp { owner_scope } => Some(
+        Command::Mcp { owner_scope, .. } => Some(
             mcp_command::HostOwnerScope::parse(Some(owner_scope)).map_err(anyhow::Error::msg)?,
         ),
         _ => None,
@@ -546,7 +567,10 @@ async fn main() -> Result<()> {
                     cypher_query: Some(Arc::new(Neo4jCypherQuery::new(client.clone()))),
                 },
                 &MemoryOptions::default(),
-            )?;
+            )?
+            .with_consolidation(Arc::new(Neo4jConsolidationStore::new(client.clone())))
+            .with_schema_adoption(Arc::new(client.clone()))?
+            .with_spatial_store(Arc::new(Neo4jSpatialStore::new(client.clone())));
             if let Some(extraction) = extraction {
                 tracing::info!("entity extraction stage is configured");
                 memory = memory.with_extractor(extraction);
@@ -588,21 +612,68 @@ async fn main() -> Result<()> {
             axum::serve(listener, app).await?;
             Ok(())
         }
-        Command::Mcp { .. } => {
+        Command::Mcp {
+            profile,
+            transport,
+            host,
+            port,
+            http_bearer_token,
+            ..
+        } => {
             let scope = mcp_scope.expect("MCP command validates scope before composition");
-            let mut server = mcp_command::server(
-                scope,
-                Arc::new(Neo4jShortTermStore::new(client.clone())),
-                Arc::new(Neo4jLongTermStore::new(client.clone())),
-                embedder,
-            )
-            .map_err(anyhow::Error::msg)?;
-            muninn_mcp::serve(
-                tokio::io::BufReader::new(tokio::io::stdin()),
-                tokio::io::stdout(),
-                &mut server,
-            )
-            .await?;
+            let (normalized, deprecated_sse) =
+                muninn_mcp::normalize_transport(&transport).map_err(anyhow::Error::msg)?;
+            if deprecated_sse {
+                tracing::warn!(
+                    "MCP transport 'sse' is deprecated; serving Streamable HTTP instead"
+                );
+            }
+            let mut server = match profile {
+                McpProfileArg::ScopedRetrieval => mcp_command::server(
+                    scope.clone(),
+                    Arc::new(Neo4jShortTermStore::new(client.clone())),
+                    Arc::new(Neo4jLongTermStore::new(client.clone())),
+                    embedder,
+                )
+                .map_err(anyhow::Error::msg)?,
+                McpProfileArg::Core => mcp_command::core_server(
+                    scope.clone(),
+                    Arc::new(Neo4jShortTermStore::new(client.clone())),
+                    Arc::new(Neo4jLongTermStore::new(client.clone())),
+                    embedder,
+                )
+                .map_err(anyhow::Error::msg)?,
+            };
+            match normalized {
+                muninn_mcp::McpTransport::Stdio => {
+                    muninn_mcp::serve(
+                        tokio::io::BufReader::new(tokio::io::stdin()),
+                        tokio::io::stdout(),
+                        &mut server,
+                    )
+                    .await?;
+                }
+                muninn_mcp::McpTransport::Http => {
+                    let ip: IpAddr = host.parse().context("invalid MCP HTTP host")?;
+                    let bind_addr = SocketAddr::new(ip, port);
+                    let raw_token = http_bearer_token.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "MCP Streamable HTTP requires authentication: supply --http-bearer-token (loopback only) or configure OAuth 2.1"
+                        )
+                    })?;
+                    let token = muninn_mcp::RedactedToken::new(raw_token)
+                        .map_err(|err| anyhow::anyhow!(err.public_message()))?;
+                    let http_config = muninn_mcp::McpHttpConfig {
+                        bind_addr,
+                        auth: muninn_mcp::McpHttpAuthMode::LoopbackStaticToken { token },
+                    };
+                    let app = mcp_command::http_router(server, http_config, scope)
+                        .map_err(anyhow::Error::msg)?;
+                    let listener = tokio::net::TcpListener::bind(bind_addr).await?;
+                    tracing::info!(%bind_addr, "Muninn MCP Streamable HTTP listening");
+                    axum::serve(listener, app).await?;
+                }
+            }
             Ok(())
         }
         Command::Stats { json } => run_stats(json),

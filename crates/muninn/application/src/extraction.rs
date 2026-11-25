@@ -4,7 +4,8 @@ use muninn_core::extraction::{
     EntityExtractor, ExtractOptions, ExtractedEntity, ExtractedRelation, ExtractionMode,
     MentionProvenance,
 };
-use muninn_core::model::{parse_entity_type, EntityRef};
+use muninn_core::model::{parse_entity_type, Entity, EntityRef, Metadata};
+use muninn_core::ports::{AtomicExtractionBatch, AtomicExtractionEntity, AtomicExtractionRelation};
 use muninn_core::{MemoryError, MemoryResult};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -119,6 +120,67 @@ impl IngestionExtraction {
             plan.entities.push((entity, embedding));
         }
         Ok(plan)
+    }
+
+    pub fn to_atomic_batch(
+        &self,
+        message: Uuid,
+        text: &str,
+        plan: &ExtractionPlan,
+    ) -> AtomicExtractionBatch {
+        let base = MentionProvenance {
+            source_message_ids: vec![message],
+            evidence: Some(text.to_owned()),
+            derived: plan.derived,
+            ..Default::default()
+        };
+        let existing_mentions = plan.existing.iter().map(|id| (*id, base.clone())).collect();
+        let entities = plan
+            .entities
+            .iter()
+            .map(|(extracted, embedding)| {
+                let (entity_type, parsed_subtype) = parse_entity_type(&extracted.entity_type);
+                let subtype = extracted.subtype.clone().or(parsed_subtype);
+                let entity = Entity {
+                    id: Uuid::new_v4(),
+                    name: extracted.name.clone(),
+                    canonical_name: Some(extracted.name.clone()),
+                    entity_type,
+                    subtype,
+                    description: None,
+                    confidence: extracted.confidence,
+                    aliases: Vec::new(),
+                    embedding: embedding.clone(),
+                    created_at: chrono::Utc::now(),
+                    updated_at: None,
+                    metadata: Metadata::new(),
+                };
+                let provenance = MentionProvenance {
+                    confidence: extracted.confidence,
+                    start_pos: extracted.start_pos,
+                    end_pos: extracted.end_pos,
+                    extractor: extracted.extractor.clone(),
+                    ..base.clone()
+                };
+                AtomicExtractionEntity { entity, provenance }
+            })
+            .collect();
+        let relations = plan
+            .relations
+            .iter()
+            .filter(|r| r.confidence >= 0.85)
+            .map(|r| AtomicExtractionRelation {
+                source_name: r.source.clone(),
+                target_name: r.target.clone(),
+                relation_type: r.relation_type.clone(),
+                confidence: r.confidence,
+            })
+            .collect();
+        AtomicExtractionBatch {
+            existing_mentions,
+            entities,
+            relations,
+        }
     }
 
     pub async fn persist(

@@ -3,12 +3,16 @@
 //! Constraint, index and vector-index names match the pinned upstream so a
 //! graph written by either implementation is readable by the other.
 
+use async_trait::async_trait;
+use muninn_core::ports::{
+    AdoptGraphOptions, AdoptionLabelReport, AdoptionReport, SchemaAdoptionPort,
+};
 use muninn_core::{MemoryError, MemoryResult};
 use neo4rs::BoltType;
 use serde_json::Value;
 
 use crate::bolt::{column, to_json};
-use crate::client::Neo4jClient;
+use crate::client::{transaction_rows, Neo4jClient};
 
 /// Upstream `DEFAULT_VECTOR_DIMENSIONS`.
 pub const DEFAULT_VECTOR_DIMENSIONS: usize = 1536;
@@ -423,6 +427,179 @@ impl<'a> SchemaManager<'a> {
             .execute(cypher, Vec::<(&'static str, BoltType)>::new())
             .await
             .map(|_| ())
+    }
+
+    /// Four-stage non-destructive graph adoption (`Validate → Plan → Apply → Verify`, `BOLT-08-06`).
+    pub async fn adopt_existing_graph(
+        &self,
+        options: &AdoptGraphOptions,
+    ) -> MemoryResult<AdoptionReport> {
+        // Stage 1: Validate all identifiers upfront before issuing any query.
+        options.validate()?;
+
+        // Stage 2: Plan (counts + pre-flight ID conflict detection).
+        let mut planned = Vec::with_capacity(options.label_to_type.len());
+        let mut prior_labels: Vec<String> = Vec::new();
+        for (label, entity_type) in &options.label_to_type {
+            let name_prop = options.name_property_for(label);
+            let not_prior = if prior_labels.is_empty() {
+                String::new()
+            } else {
+                prior_labels
+                    .iter()
+                    .map(|l| format!("NOT n:`{l}`"))
+                    .collect::<Vec<_>>()
+                    .join(" AND ")
+                    + " AND "
+            };
+
+            let already_rows = self
+                .client
+                .execute(
+                    &format!("MATCH (n:`{label}`:Entity) RETURN count(n) AS count"),
+                    vec![],
+                )
+                .await?;
+            let already_adopted_count = count_from_rows(&already_rows);
+
+            let skipped_rows = self
+                .client
+                .execute(
+                    &format!(
+                        "MATCH (n:`{label}`) WHERE {not_prior}NOT n:Entity AND n.`{name_prop}` IS NULL RETURN count(n) AS count"
+                    ),
+                    vec![],
+                )
+                .await?;
+            let skipped_count = count_from_rows(&skipped_rows);
+
+            let conflict_rows = self
+                .client
+                .execute(
+                    &format!(
+                        "MATCH (n:`{label}`) \
+                         WHERE {not_prior}NOT n:Entity AND n.`{name_prop}` IS NOT NULL AND n.id IS NOT NULL \
+                           AND (NOT n.id IS :: STRING NOT NULL OR EXISTS {{ MATCH (e:Entity {{id: n.id}}) }}) \
+                         RETURN count(n) AS count"
+                    ),
+                    vec![],
+                )
+                .await?;
+            let conflict_count = count_from_rows(&conflict_rows);
+
+            let projected_rows = self
+                .client
+                .execute(
+                    &format!(
+                        "MATCH (n:`{label}`) WHERE {not_prior}NOT n:Entity AND n.`{name_prop}` IS NOT NULL RETURN count(n) AS count"
+                    ),
+                    vec![],
+                )
+                .await?;
+            let projected_count = count_from_rows(&projected_rows);
+
+            planned.push(AdoptionLabelReport {
+                label: label.clone(),
+                entity_type: entity_type.clone(),
+                name_property: name_prop.to_owned(),
+                migrated_count: projected_count,
+                already_adopted_count,
+                skipped_count,
+                conflict_count,
+            });
+            prior_labels.push(label.clone());
+        }
+
+        if options.dry_run {
+            return Ok(AdoptionReport {
+                by_label: planned,
+                dry_run: true,
+            });
+        }
+
+        // Fail closed before any mutation if pre-flight conflict detection found ID collisions
+        // or incompatible non-string domain IDs (never silently overwrite existing non-string IDs).
+        let total_conflicts: i64 = planned.iter().map(|r| r.conflict_count).sum();
+        if total_conflicts > 0 {
+            return Err(MemoryError::invalid(format!(
+                "refusing to adopt existing graph: {total_conflicts} candidate node(s) have incompatible non-string ids or collide with existing :Entity ids"
+            )));
+        }
+
+        // Stage 3: Transactional Apply (all labels in one Neo4j transaction; full rollback on error).
+        let mut txn = self.client.start_txn().await?;
+        let outcome = async {
+            let mut applied = Vec::with_capacity(planned.len());
+            for item in planned {
+                let cypher = format!(
+                    "MATCH (n:`{label}`) \
+                     WHERE NOT n:Entity AND n.`{name_prop}` IS NOT NULL \
+                       AND (n.id IS NULL OR n.id IS :: STRING NOT NULL) \
+                     SET n:Entity, \
+                         n.id = coalesce(n.id, randomUUID()), \
+                         n.name = coalesce(n.name, toString(n.`{name_prop}`)), \
+                         n.canonical_name = coalesce(n.canonical_name, toString(n.`{name_prop}`)), \
+                         n.type = coalesce(n.type, $type), \
+                         n.name_key = coalesce(n.name_key, toLower(trim(toString(n.`{name_prop}`)))), \
+                         n.surface_keys = coalesce(n.surface_keys, [toLower(trim(toString(n.`{name_prop}`))) ]), \
+                         n.adopted_at = coalesce(n.adopted_at, datetime()), \
+                         n.adopted_from_label = coalesce(n.adopted_from_label, $label_lc) \
+                     RETURN count(n) AS count",
+                    label = item.label,
+                    name_prop = item.name_property,
+                );
+                let rows = transaction_rows(
+                    &mut txn,
+                    &cypher,
+                    vec![
+                        ("label_lc", item.label.to_lowercase().into()),
+                        ("type", item.entity_type.as_str().into()),
+                    ],
+                )
+                .await?;
+                applied.push(AdoptionLabelReport {
+                    migrated_count: count_from_rows(&rows),
+                    ..item
+                });
+            }
+            Ok::<_, MemoryError>(applied)
+        }
+        .await;
+
+        // Stage 4: Commit & Verify report.
+        match outcome {
+            Ok(by_label) => {
+                txn.commit()
+                    .await
+                    .map_err(|err| MemoryError::storage(err.to_string()))?;
+                Ok(AdoptionReport {
+                    by_label,
+                    dry_run: false,
+                })
+            }
+            Err(error) => {
+                let _ = txn.rollback().await;
+                Err(error)
+            }
+        }
+    }
+}
+
+fn count_from_rows(rows: &[neo4rs::Row]) -> i64 {
+    rows.first()
+        .and_then(|row| row.get::<i64>("count").ok())
+        .unwrap_or(0)
+}
+
+#[async_trait]
+impl SchemaAdoptionPort for Neo4jClient {
+    async fn adopt_existing_graph(
+        &self,
+        options: &AdoptGraphOptions,
+    ) -> MemoryResult<AdoptionReport> {
+        SchemaManager::new(self, DEFAULT_VECTOR_DIMENSIONS)
+            .adopt_existing_graph(options)
+            .await
     }
 }
 

@@ -73,6 +73,9 @@ pub const FIND_SUPERSEDED_PREFERENCES: &str = "
 MATCH (old:Preference)
 WHERE old.embedding IS NOT NULL
   AND NOT (old)-[:SUPERSEDED_BY]->()
+  AND ($user_identifier IS NULL OR EXISTS {
+      MATCH (:User {identifier: $user_identifier})-[:HAS_PREFERENCE]->(old)
+  })
 CALL {
     WITH old
     CALL db.index.vector.queryNodes(
@@ -90,7 +93,8 @@ OPTIONAL MATCH (u_new:User)-[:HAS_PREFERENCE]->(new)
 WITH old, new, score,
      collect(DISTINCT u_old.identifier) AS old_owners,
      collect(DISTINCT u_new.identifier) AS new_owners
-WHERE old_owners = new_owners
+WHERE size(old_owners) = size(new_owners)
+  AND all(owner IN old_owners WHERE owner IN new_owners)
 RETURN old.id AS old_id, old.preference AS old_text,
        new.id AS new_id, new.preference AS new_text,
        score

@@ -31,6 +31,19 @@ pub struct DockerFixture {
     pub config: Neo4jConfig,
 }
 
+fn docker_supports_linux_containers(info_ok: bool, os_type: &str) -> Result<(), String> {
+    if !info_ok {
+        return Err("Docker daemon is unavailable".to_owned());
+    }
+    let normalized = os_type.trim().to_ascii_lowercase();
+    if normalized != "linux" {
+        return Err(format!(
+            "Docker daemon reports OSType='{normalized}', but neo4j:5.26-community requires Linux containers"
+        ));
+    }
+    Ok(())
+}
+
 impl DockerFixture {
     pub fn start(uri_variable: &str) -> Option<Self> {
         let (uri, password, container) = if let Ok(uri) =
@@ -48,22 +61,31 @@ impl DockerFixture {
             )
         } else {
             let require_neo4j = std::env::var("MUNINN_REQUIRE_NEO4J").as_deref() == Ok("1");
-            if !Command::new("docker")
-                .arg("info")
+            let docker_check = match Command::new("docker")
+                .args(["info", "--format", "{{.OSType}}"])
                 .output()
-                .is_ok_and(|out| out.status.success())
             {
+                Ok(out) => docker_supports_linux_containers(
+                    out.status.success(),
+                    &String::from_utf8_lossy(&out.stdout),
+                ),
+                Err(_) => docker_supports_linux_containers(false, ""),
+            };
+            if let Err(reason) = docker_check {
                 assert!(
                     !require_neo4j,
-                    "MUNINN_REQUIRE_NEO4J=1 is set, but Docker is unavailable and neither {uri_variable} nor MUNINN_FIXTURE_URI was provided"
+                    "MUNINN_REQUIRE_NEO4J=1 is set, but {reason} and neither {uri_variable} nor MUNINN_FIXTURE_URI was provided"
                 );
-                eprintln!("Skipping live test: start Docker or supply a disposable Neo4j fixture");
+                eprintln!(
+                    "Skipping live test ({reason}): start a Linux-capable Docker daemon or supply a disposable Neo4j fixture"
+                );
                 return None;
             }
             let password = format!("p_{}", Uuid::new_v4());
             let mut auth = tempfile::NamedTempFile::new().expect("create private Docker env file");
             let auth_variable = ["NEO4J_", "AUTH"].concat();
             writeln!(auth, "{auth_variable}=neo4j/{password}\nNEO4J_dbms_security_auth__minimum__password__length=4\nNEO4J_db_transaction_timeout=5s\nNEO4J_db_lock_acquisition_timeout=5s\nNEO4J_db_transaction_monitor_check_interval=500ms").unwrap();
+            auth.flush().expect("flush private Docker env file");
             let output = Command::new("docker")
                 .args([
                     "run",
@@ -77,7 +99,11 @@ impl DockerFixture {
                 .arg("neo4j:5.26-community")
                 .output()
                 .expect("launch docker");
-            assert!(output.status.success(), "docker run failed");
+            assert!(
+                output.status.success(),
+                "docker run failed with status {}",
+                output.status
+            );
             let id = String::from_utf8(output.stdout).unwrap().trim().to_owned();
             assert!((12..=64).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_hexdigit()));
             let container = Container(id);
@@ -138,5 +164,29 @@ impl DockerFixture {
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
         panic!("Neo4j did not become ready")
+    }
+}
+
+#[cfg(test)]
+mod fixture_tests {
+    use super::docker_supports_linux_containers;
+
+    #[test]
+    fn accepts_linux_docker_daemon() {
+        assert!(docker_supports_linux_containers(true, "linux\n").is_ok());
+        assert!(docker_supports_linux_containers(true, "  Linux  ").is_ok());
+    }
+
+    #[test]
+    fn rejects_unavailable_or_windows_container_daemon() {
+        let unavailable = docker_supports_linux_containers(false, "linux").unwrap_err();
+        assert!(unavailable.contains("unavailable"), "{unavailable}");
+
+        let windows = docker_supports_linux_containers(true, "windows\r\n").unwrap_err();
+        assert!(windows.contains("windows"), "{windows}");
+        assert!(windows.contains("Linux containers"), "{windows}");
+
+        let empty = docker_supports_linux_containers(true, "   ").unwrap_err();
+        assert!(empty.contains("Linux containers"), "{empty}");
     }
 }
