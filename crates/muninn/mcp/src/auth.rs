@@ -96,12 +96,13 @@ pub struct RedactedToken(Vec<u8>);
 impl RedactedToken {
     pub fn new(token: impl Into<String>) -> Result<Self, AuthError> {
         let token = token.into();
-        if token.trim().len() < 16 {
+        let trimmed = token.trim();
+        if trimmed.len() < 16 {
             return Err(AuthError::InvalidConfig(
                 "loopback static bearer token must be at least 16 non-whitespace characters",
             ));
         }
-        Ok(Self(token.into_bytes()))
+        Ok(Self(trimmed.as_bytes().to_vec()))
     }
 
     fn matches(&self, candidate: &str) -> bool {

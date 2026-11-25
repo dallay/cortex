@@ -2,20 +2,24 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use axum::extract::{DefaultBodyLimit, State};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{header, HeaderMap, HeaderName, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use chrono::{DateTime, Utc};
 use muninn_application::{
     AddEntityOptions, AddFactOptions, AddMessageOptions, AddPreferenceOptions, LongTermMemory,
     SearchEntitiesOptions, SearchMessagesOptions, SearchPreferencesOptions, ShortTermMemory,
 };
-use muninn_core::model::MessageRole;
+use muninn_core::model::{MessageRole, Metadata};
 use muninn_core::ports::{Embedder, LongTermStore, OwnerScope, ShortTermStore};
 use muninn_mcp::{
     authorize_bearer_header, Catalog, McpHttpConfig, Server, ToolHandler, MAX_RESULT_BYTES,
+    PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
+
+static MCP_PROTOCOL_VERSION_HEADER: HeaderName = HeaderName::from_static("mcp-protocol-version");
 
 #[derive(Clone)]
 pub struct HostOwnerScope(String);
@@ -201,15 +205,89 @@ fn register_tools(
     Ok(server)
 }
 
+#[derive(Debug, Clone, Default)]
+struct CoreSearchOptions {
+    limit: i64,
+    session_id: Option<String>,
+    memory_types: Option<Vec<String>>,
+    threshold: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+struct CoreGetContextOptions {
+    session_id: Option<String>,
+    query: Option<String>,
+    limit: i64,
+    include_short_term: bool,
+    include_long_term: bool,
+}
+
+impl Default for CoreGetContextOptions {
+    fn default() -> Self {
+        Self {
+            session_id: None,
+            query: None,
+            limit: 10,
+            include_short_term: true,
+            include_long_term: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct CoreAddEntityArgs {
+    subtype: Option<String>,
+    description: Option<String>,
+    aliases: Vec<String>,
+    metadata: Metadata,
+}
+
+#[derive(Debug, Clone)]
+struct CoreAddPreferenceArgs {
+    context: Option<String>,
+    confidence: f64,
+}
+
+impl Default for CoreAddPreferenceArgs {
+    fn default() -> Self {
+        Self {
+            context: None,
+            confidence: 1.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CoreAddFactArgs {
+    confidence: f64,
+    valid_from: Option<DateTime<Utc>>,
+    valid_until: Option<DateTime<Utc>>,
+    metadata: Metadata,
+}
+
+impl Default for CoreAddFactArgs {
+    fn default() -> Self {
+        Self {
+            confidence: 1.0,
+            valid_from: None,
+            valid_until: None,
+            metadata: Metadata::new(),
+        }
+    }
+}
+
 #[async_trait]
 trait CoreMemoryOps: Send + Sync {
-    async fn search(&self, owner: &str, query: &str, limit: i64) -> Result<Value, String>;
+    async fn search(
+        &self,
+        owner: &str,
+        query: &str,
+        options: CoreSearchOptions,
+    ) -> Result<Value, String>;
     async fn get_context(
         &self,
         owner: &str,
-        session_id: Option<&str>,
-        query: Option<&str>,
-        limit: i64,
+        options: CoreGetContextOptions,
     ) -> Result<Value, String>;
     async fn store_message(
         &self,
@@ -217,22 +295,28 @@ trait CoreMemoryOps: Send + Sync {
         session_id: &str,
         role: MessageRole,
         content: &str,
+        metadata: Option<Metadata>,
     ) -> Result<Value, String>;
     async fn add_entity(
         &self,
         name: &str,
         entity_type: &str,
-        description: Option<&str>,
+        args: CoreAddEntityArgs,
     ) -> Result<Value, String>;
     async fn add_preference(
         &self,
         owner: &str,
         category: &str,
         preference: &str,
-        context: Option<&str>,
+        args: CoreAddPreferenceArgs,
     ) -> Result<Value, String>;
-    async fn add_fact(&self, subject: &str, predicate: &str, object: &str)
-        -> Result<Value, String>;
+    async fn add_fact(
+        &self,
+        subject: &str,
+        predicate: &str,
+        object: &str,
+        args: CoreAddFactArgs,
+    ) -> Result<Value, String>;
 }
 
 struct ApplicationCoreOps {
@@ -242,42 +326,72 @@ struct ApplicationCoreOps {
 
 #[async_trait]
 impl CoreMemoryOps for ApplicationCoreOps {
-    async fn search(&self, owner: &str, query: &str, limit: i64) -> Result<Value, String> {
-        let messages = self
-            .short_term
-            .search_messages(
-                query,
-                &SearchMessagesOptions {
-                    user_identifier: Some(owner.to_owned()),
-                    limit,
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(|_| "Message search failed".to_owned())?;
-        let preferences = self
-            .long_term
-            .search_preferences(
-                query,
-                &SearchPreferencesOptions {
-                    user_identifier: Some(owner.to_owned()),
-                    limit,
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(|_| "Preference search failed".to_owned())?;
-        let entities = self
-            .long_term
-            .search_entities(
-                query,
-                &SearchEntitiesOptions {
-                    limit,
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(|_| "Entity search failed".to_owned())?;
+    async fn search(
+        &self,
+        owner: &str,
+        query: &str,
+        options: CoreSearchOptions,
+    ) -> Result<Value, String> {
+        let (search_messages, search_preferences, search_entities) = match &options.memory_types {
+            Some(types) => (
+                types.iter().any(|t| t == "messages"),
+                types.iter().any(|t| t == "preferences"),
+                types.iter().any(|t| t == "entities"),
+            ),
+            None => (true, true, true),
+        };
+
+        let messages = if search_messages {
+            let mut opts = SearchMessagesOptions {
+                user_identifier: Some(owner.to_owned()),
+                session_id: options.session_id.clone(),
+                limit: options.limit,
+                ..Default::default()
+            };
+            if let Some(th) = options.threshold {
+                opts.threshold = th;
+            }
+            self.short_term
+                .search_messages(query, &opts)
+                .await
+                .map_err(|_| "Message search failed".to_owned())?
+        } else {
+            Vec::new()
+        };
+
+        let preferences = if search_preferences {
+            let mut opts = SearchPreferencesOptions {
+                user_identifier: Some(owner.to_owned()),
+                limit: options.limit,
+                ..Default::default()
+            };
+            if let Some(th) = options.threshold {
+                opts.threshold = th;
+            }
+            self.long_term
+                .search_preferences(query, &opts)
+                .await
+                .map_err(|_| "Preference search failed".to_owned())?
+        } else {
+            Vec::new()
+        };
+
+        let entities = if search_entities {
+            let mut opts = SearchEntitiesOptions {
+                limit: options.limit,
+                ..Default::default()
+            };
+            if let Some(th) = options.threshold {
+                opts.threshold = th;
+            }
+            self.long_term
+                .search_entities(query, &opts)
+                .await
+                .map_err(|_| "Entity search failed".to_owned())?
+        } else {
+            Vec::new()
+        };
+
         Ok(json!({
             "messages": messages,
             "preferences": preferences,
@@ -288,42 +402,53 @@ impl CoreMemoryOps for ApplicationCoreOps {
     async fn get_context(
         &self,
         owner: &str,
-        session_id: Option<&str>,
-        query: Option<&str>,
-        limit: i64,
+        options: CoreGetContextOptions,
     ) -> Result<Value, String> {
-        let sid = session_id
+        let sid = options
+            .session_id
+            .as_deref()
             .filter(|s| !s.trim().is_empty())
             .unwrap_or("default");
-        let conversation = Some(
-            self.short_term
-                .get_conversation(sid, None, Some(owner), Some(limit))
-                .await
-                .map_err(|_| "Conversation lookup failed".to_owned())?,
-        );
-        let preferences = match query {
-            Some(q) if !q.trim().is_empty() => self
-                .long_term
-                .search_preferences(
-                    q,
-                    &SearchPreferencesOptions {
-                        user_identifier: Some(owner.to_owned()),
-                        limit,
-                        ..Default::default()
-                    },
-                )
-                .await
-                .map_err(|_| "Preference lookup failed".to_owned())?,
-            _ => {
-                let mut prefs = self
-                    .long_term
-                    .get_preferences_for(owner, true)
+
+        let conversation = if options.include_short_term {
+            Some(
+                self.short_term
+                    .get_conversation(sid, None, Some(owner), Some(options.limit))
                     .await
-                    .map_err(|_| "Preference lookup failed".to_owned())?;
-                prefs.truncate(limit.max(0) as usize);
-                prefs
-            }
+                    .map_err(|_| "Conversation lookup failed".to_owned())?,
+            )
+        } else {
+            None
         };
+
+        let preferences = if options.include_long_term {
+            match &options.query {
+                Some(q) if !q.trim().is_empty() => self
+                    .long_term
+                    .search_preferences(
+                        q,
+                        &SearchPreferencesOptions {
+                            user_identifier: Some(owner.to_owned()),
+                            limit: options.limit,
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .map_err(|_| "Preference lookup failed".to_owned())?,
+                _ => {
+                    let mut prefs = self
+                        .long_term
+                        .get_preferences_for(owner, true)
+                        .await
+                        .map_err(|_| "Preference lookup failed".to_owned())?;
+                    prefs.truncate(options.limit.max(0) as usize);
+                    prefs
+                }
+            }
+        } else {
+            Vec::new()
+        };
+
         Ok(json!({
             "conversation": conversation,
             "preferences": preferences,
@@ -336,6 +461,7 @@ impl CoreMemoryOps for ApplicationCoreOps {
         session_id: &str,
         role: MessageRole,
         content: &str,
+        metadata: Option<Metadata>,
     ) -> Result<Value, String> {
         let stored = self
             .short_term
@@ -345,6 +471,7 @@ impl CoreMemoryOps for ApplicationCoreOps {
                 content,
                 AddMessageOptions {
                     user_identifier: Some(owner.to_owned()),
+                    metadata: metadata.unwrap_or_default(),
                     ..Default::default()
                 },
             )
@@ -357,7 +484,7 @@ impl CoreMemoryOps for ApplicationCoreOps {
         &self,
         name: &str,
         entity_type: &str,
-        description: Option<&str>,
+        args: CoreAddEntityArgs,
     ) -> Result<Value, String> {
         let (entity, _) = self
             .long_term
@@ -365,7 +492,10 @@ impl CoreMemoryOps for ApplicationCoreOps {
                 name,
                 entity_type,
                 AddEntityOptions {
-                    description: description.map(str::to_owned),
+                    subtype: args.subtype,
+                    description: args.description,
+                    aliases: args.aliases,
+                    metadata: args.metadata,
                     ..Default::default()
                 },
             )
@@ -379,7 +509,7 @@ impl CoreMemoryOps for ApplicationCoreOps {
         owner: &str,
         category: &str,
         preference: &str,
-        context: Option<&str>,
+        args: CoreAddPreferenceArgs,
     ) -> Result<Value, String> {
         let pref = self
             .long_term
@@ -387,7 +517,8 @@ impl CoreMemoryOps for ApplicationCoreOps {
                 category,
                 preference,
                 AddPreferenceOptions {
-                    context: context.map(str::to_owned),
+                    context: args.context,
+                    confidence: args.confidence,
                     user_identifier: Some(owner.to_owned()),
                     ..Default::default()
                 },
@@ -402,10 +533,22 @@ impl CoreMemoryOps for ApplicationCoreOps {
         subject: &str,
         predicate: &str,
         object: &str,
+        args: CoreAddFactArgs,
     ) -> Result<Value, String> {
         let fact = self
             .long_term
-            .add_fact(subject, predicate, object, AddFactOptions::default())
+            .add_fact(
+                subject,
+                predicate,
+                object,
+                AddFactOptions {
+                    confidence: args.confidence,
+                    valid_from: args.valid_from,
+                    valid_until: args.valid_until,
+                    metadata: args.metadata,
+                    ..Default::default()
+                },
+            )
             .await
             .map_err(|_| "Adding fact failed".to_owned())?;
         serde_json::to_value(fact).map_err(|_| "Fact encoding failed".to_owned())
@@ -446,19 +589,65 @@ impl ToolHandler for CoreTool {
         match self.kind {
             "memory_search" => {
                 let query = required_non_empty(obj, "query")?;
+                let limit = result_limit(arguments)?;
+                let session_id = obj
+                    .get("session_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let memory_types = obj
+                    .get("memory_types")
+                    .and_then(Value::as_array)
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_owned)
+                            .collect()
+                    });
+                let threshold = obj.get("threshold").and_then(Value::as_f64);
                 self.ops
-                    .search(owner, query, result_limit(arguments)?)
+                    .search(
+                        owner,
+                        query,
+                        CoreSearchOptions {
+                            limit,
+                            session_id,
+                            memory_types,
+                            threshold,
+                        },
+                    )
                     .await
             }
             "memory_get_context" => {
-                let session_id = obj.get("session_id").and_then(Value::as_str);
-                let query = obj.get("query").and_then(Value::as_str);
+                let session_id = obj
+                    .get("session_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let query = obj.get("query").and_then(Value::as_str).map(str::to_owned);
                 let limit = obj
                     .get("max_items")
                     .and_then(Value::as_i64)
                     .unwrap_or(10)
                     .clamp(1, 20);
-                self.ops.get_context(owner, session_id, query, limit).await
+                let include_short_term = obj
+                    .get("include_short_term")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                let include_long_term = obj
+                    .get("include_long_term")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                self.ops
+                    .get_context(
+                        owner,
+                        CoreGetContextOptions {
+                            session_id,
+                            query,
+                            limit,
+                            include_short_term,
+                            include_long_term,
+                        },
+                    )
+                    .await
             }
             "memory_store_message" => {
                 let session_id = obj
@@ -473,8 +662,9 @@ impl ToolHandler for CoreTool {
                     .unwrap_or("user")
                     .parse()
                     .map_err(|_| "Invalid message role".to_owned())?;
+                let metadata = obj.get("metadata").and_then(Value::as_object).cloned();
                 self.ops
-                    .store_message(owner, session_id, role, content)
+                    .store_message(owner, session_id, role, content, metadata)
                     .await
             }
             "memory_add_entity" => {
@@ -485,15 +675,64 @@ impl ToolHandler for CoreTool {
                     .and_then(Value::as_str)
                     .filter(|s| !s.trim().is_empty())
                     .ok_or_else(|| "Field 'type' is required".to_owned())?;
-                let description = obj.get("description").and_then(Value::as_str);
-                self.ops.add_entity(name, entity_type, description).await
+                let subtype = obj
+                    .get("subtype")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let description = obj
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let aliases = obj
+                    .get("aliases")
+                    .and_then(Value::as_array)
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_owned)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let metadata = obj
+                    .get("metadata")
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .unwrap_or_default();
+                self.ops
+                    .add_entity(
+                        name,
+                        entity_type,
+                        CoreAddEntityArgs {
+                            subtype,
+                            description,
+                            aliases,
+                            metadata,
+                        },
+                    )
+                    .await
             }
             "memory_add_preference" => {
                 let category = required_non_empty(obj, "category")?;
                 let preference = required_non_empty(obj, "preference")?;
-                let context = obj.get("context").and_then(Value::as_str);
+                let context = obj
+                    .get("context")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let confidence = obj
+                    .get("confidence")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(1.0)
+                    .clamp(0.0, 1.0);
                 self.ops
-                    .add_preference(owner, category, preference, context)
+                    .add_preference(
+                        owner,
+                        category,
+                        preference,
+                        CoreAddPreferenceArgs {
+                            context,
+                            confidence,
+                        },
+                    )
                     .await
             }
             "memory_add_fact" => {
@@ -507,7 +746,47 @@ impl ToolHandler for CoreTool {
                     .ok_or_else(|| {
                         "Field 'object_value' is required and must be non-empty".to_owned()
                     })?;
-                self.ops.add_fact(subject, predicate, object).await
+                let confidence = obj
+                    .get("confidence")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(1.0)
+                    .clamp(0.0, 1.0);
+                let valid_from = obj
+                    .get("valid_from")
+                    .and_then(Value::as_str)
+                    .map(|s| {
+                        s.parse::<DateTime<Utc>>().map_err(|_| {
+                            "Invalid 'valid_from' format: must be ISO-8601 string".to_owned()
+                        })
+                    })
+                    .transpose()?;
+                let valid_until = obj
+                    .get("valid_until")
+                    .and_then(Value::as_str)
+                    .map(|s| {
+                        s.parse::<DateTime<Utc>>().map_err(|_| {
+                            "Invalid 'valid_until' format: must be ISO-8601 string".to_owned()
+                        })
+                    })
+                    .transpose()?;
+                let metadata = obj
+                    .get("metadata")
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .unwrap_or_default();
+                self.ops
+                    .add_fact(
+                        subject,
+                        predicate,
+                        object,
+                        CoreAddFactArgs {
+                            confidence,
+                            valid_from,
+                            valid_until,
+                            metadata,
+                        },
+                    )
+                    .await
             }
             _ => Err("Unknown MCP core tool".to_owned()),
         }
@@ -563,11 +842,53 @@ async fn http_health() -> impl IntoResponse {
     (StatusCode::OK, Json(json!({ "status": "ok" })))
 }
 
+fn validate_origin(
+    headers: &HeaderMap,
+    bind_addr: &std::net::SocketAddr,
+) -> Result<(), &'static str> {
+    if let Some(origin) = headers.get(header::ORIGIN) {
+        let origin_str = origin.to_str().map_err(|_| "Invalid Origin header")?;
+        // If bound to loopback, Origin must be a loopback origin (localhost or 127.0.0.1 or [::1]).
+        if bind_addr.ip().is_loopback() {
+            let is_loopback_origin = origin_str.starts_with("http://localhost")
+                || origin_str.starts_with("https://localhost")
+                || origin_str.starts_with("http://127.0.0.1")
+                || origin_str.starts_with("https://127.0.0.1")
+                || origin_str.starts_with("http://[::1]")
+                || origin_str.starts_with("https://[::1]");
+            if !is_loopback_origin {
+                return Err("Cross-origin request to loopback MCP server forbidden");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_mcp_protocol_version(headers: &HeaderMap) -> Result<(), &'static str> {
+    if let Some(version) = headers.get(&MCP_PROTOCOL_VERSION_HEADER) {
+        let version_str = version
+            .to_str()
+            .map_err(|_| "Invalid MCP-Protocol-Version header")?;
+        if version_str != PROTOCOL_VERSION {
+            return Err("Unsupported MCP-Protocol-Version");
+        }
+    }
+    Ok(())
+}
+
 async fn http_mcp_dispatch(
     State(state): State<McpHttpState>,
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Response {
+    if let Err(msg) = validate_origin(&headers, &state.config.bind_addr) {
+        return (StatusCode::FORBIDDEN, Json(json!({ "error": msg }))).into_response();
+    }
+
+    if let Err(msg) = validate_mcp_protocol_version(&headers) {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response();
+    }
+
     let auth_header = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok());
@@ -767,17 +1088,15 @@ mod tests {
             &self,
             owner: &str,
             query: &str,
-            _: i64,
+            options: super::CoreSearchOptions,
         ) -> Result<serde_json::Value, String> {
             self.0.lock().unwrap().push(("search".into(), owner.into()));
-            Ok(json!({"owner": owner, "query": query}))
+            Ok(json!({"owner": owner, "query": query, "limit": options.limit}))
         }
         async fn get_context(
             &self,
             owner: &str,
-            _: Option<&str>,
-            _: Option<&str>,
-            _: i64,
+            _: super::CoreGetContextOptions,
         ) -> Result<serde_json::Value, String> {
             self.0
                 .lock()
@@ -791,6 +1110,7 @@ mod tests {
             _: &str,
             _: muninn_core::model::MessageRole,
             _: &str,
+            _: Option<muninn_core::model::Metadata>,
         ) -> Result<serde_json::Value, String> {
             self.0.lock().unwrap().push(("store".into(), owner.into()));
             Ok(json!({"owner": owner}))
@@ -799,7 +1119,7 @@ mod tests {
             &self,
             name: &str,
             _: &str,
-            _: Option<&str>,
+            _: super::CoreAddEntityArgs,
         ) -> Result<serde_json::Value, String> {
             self.0.lock().unwrap().push(("entity".into(), name.into()));
             Ok(json!({"name": name}))
@@ -809,7 +1129,7 @@ mod tests {
             owner: &str,
             _: &str,
             _: &str,
-            _: Option<&str>,
+            _: super::CoreAddPreferenceArgs,
         ) -> Result<serde_json::Value, String> {
             self.0
                 .lock()
@@ -822,6 +1142,7 @@ mod tests {
             subject: &str,
             _: &str,
             _: &str,
+            _: super::CoreAddFactArgs,
         ) -> Result<serde_json::Value, String> {
             self.0.lock().unwrap().push(("fact".into(), subject.into()));
             Ok(json!({"subject": subject}))
@@ -938,12 +1259,62 @@ mod tests {
         let auth_value = format!("Bearer {ephemeral}");
         headers.insert(header::AUTHORIZATION, auth_value.parse().unwrap());
         let auth_resp = super::http_mcp_dispatch(
-            axum::extract::State(state),
-            headers,
+            axum::extract::State(state.clone()),
+            headers.clone(),
             axum::Json(call("tools/list", "", json!({}))),
         )
         .await;
         assert_eq!(auth_resp.status(), StatusCode::OK);
+
+        // Forbidden non-loopback Origin -> 403 Forbidden.
+        let mut cross_origin_headers = headers.clone();
+        cross_origin_headers.insert(header::ORIGIN, "https://evil.com".parse().unwrap());
+        let origin_resp = super::http_mcp_dispatch(
+            axum::extract::State(state.clone()),
+            cross_origin_headers,
+            axum::Json(call("tools/list", "", json!({}))),
+        )
+        .await;
+        assert_eq!(origin_resp.status(), StatusCode::FORBIDDEN);
+
+        // Allowed loopback Origin -> 200 OK.
+        let mut local_origin_headers = headers.clone();
+        local_origin_headers.insert(header::ORIGIN, "http://localhost:3000".parse().unwrap());
+        let local_origin_resp = super::http_mcp_dispatch(
+            axum::extract::State(state.clone()),
+            local_origin_headers,
+            axum::Json(call("tools/list", "", json!({}))),
+        )
+        .await;
+        assert_eq!(local_origin_resp.status(), StatusCode::OK);
+
+        // Invalid MCP-Protocol-Version -> 400 Bad Request.
+        let mut bad_version_headers = headers.clone();
+        bad_version_headers.insert(
+            super::MCP_PROTOCOL_VERSION_HEADER.clone(),
+            "1999-01-01".parse().unwrap(),
+        );
+        let bad_version_resp = super::http_mcp_dispatch(
+            axum::extract::State(state.clone()),
+            bad_version_headers,
+            axum::Json(call("tools/list", "", json!({}))),
+        )
+        .await;
+        assert_eq!(bad_version_resp.status(), StatusCode::BAD_REQUEST);
+
+        // Matching MCP-Protocol-Version -> 200 OK.
+        let mut good_version_headers = headers;
+        good_version_headers.insert(
+            super::MCP_PROTOCOL_VERSION_HEADER.clone(),
+            PROTOCOL_VERSION.parse().unwrap(),
+        );
+        let good_version_resp = super::http_mcp_dispatch(
+            axum::extract::State(state),
+            good_version_headers,
+            axum::Json(call("tools/list", "", json!({}))),
+        )
+        .await;
+        assert_eq!(good_version_resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]
