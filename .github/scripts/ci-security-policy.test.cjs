@@ -97,6 +97,24 @@ it('keeps cargo audit blocking without advisory exceptions', () => {
   assert.match(security, /Blocking/);
 });
 
+it('sources Secret Service session keys and AES IVs from the operating system RNG', () => {
+  const session = read('third_party/dbus-secret-service/src/session.rs');
+  const ivInitializers = [...session.matchAll(/let(?: mut)? aes_iv = ([^;]+);/g)]
+      .map(([, initializer]) => initializer.trim());
+
+  assert.deepEqual(ivInitializers, ['random_iv()?', 'random_iv()?']);
+  assert.match(session,
+      /fill_random\(private_key_bytes\.as_mut\(\)\)\?/);
+  const fillRandom = session.match(
+      /fn fill_random\(bytes: &mut \[u8\]\) -> Result<\(\), Error> \{[\s\S]*?\n    \}/);
+  assert.ok(fillRandom, 'DH private keys must share the OS RNG helper');
+  assert.match(fillRandom[0], /getrandom::fill\(bytes\)/);
+  const randomIv = session.match(
+      /fn random_iv\(\) -> Result<Vec<u8>, Error> \{[\s\S]*?\n    \}/);
+  assert.ok(randomIv, 'both crypto backends must share random IV generation');
+  assert.match(randomIv[0], /getrandom::fill_uninit\(&mut buffer\)/);
+});
+
 it('separates blocking controls from reporting-only controls', () => {
   const ci = read('.github/workflows/ci.yml');
   const row = (name) => {

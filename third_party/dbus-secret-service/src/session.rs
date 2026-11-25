@@ -210,8 +210,7 @@ mod crypto {
         type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
 
         // create the salt for the encryption
-        let mut aes_iv = [0; 16];
-        fill_random(&mut aes_iv)?;
+        let aes_iv = random_iv()?;
 
         // convert key and salt to input parameter form
         let key = GenericArray::from_slice(key);
@@ -220,7 +219,7 @@ mod crypto {
         // return encrypted data and salt
         Ok((
             Aes128CbcEnc::new(key, iv).encrypt_padded_vec_mut::<Pkcs7>(data),
-            aes_iv.to_vec(),
+            aes_iv,
         ))
     }
 
@@ -249,8 +248,7 @@ mod crypto {
         use openssl::cipher_ctx::CipherCtx;
 
         // create the salt for the encryption
-        let mut aes_iv = [0; 16];
-        fill_random(&mut aes_iv)?;
+        let aes_iv = random_iv()?;
 
         let mut ctx = CipherCtx::new().expect("cipher creation should not fail");
         ctx.encrypt_init(Some(Cipher::aes_128_cbc()), Some(key), Some(&aes_iv))
@@ -261,7 +259,7 @@ mod crypto {
             .expect("cipher update should not fail");
         ctx.cipher_final_vec(&mut output)
             .expect("cipher final should not fail");
-        Ok((output, aes_iv.to_vec()))
+        Ok((output, aes_iv))
     }
 
     #[cfg(all(feature = "crypto-openssl", not(feature = "crypto-rust")))]
@@ -285,6 +283,13 @@ mod crypto {
 
     fn fill_random(bytes: &mut [u8]) -> Result<(), Error> {
         getrandom::fill(bytes).map_err(|err| Error::Crypto(Box::new(err)))
+    }
+
+    fn random_iv() -> Result<Vec<u8>, Error> {
+        let mut buffer = [std::mem::MaybeUninit::<u8>::uninit(); 16];
+        let bytes =
+            getrandom::fill_uninit(&mut buffer).map_err(|err| Error::Crypto(Box::new(err)))?;
+        Ok(bytes.to_vec())
     }
 
     // for key exchange
