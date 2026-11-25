@@ -5,7 +5,7 @@
 // - Error mapping logic used in provider routes
 // - Health status enum migration verification
 //
-// End-to-end HTTP tests use axum-test (see below).
+// HTTP route behavior is covered in `provider_routes_test.rs`.
 
 use rook_core::{
     ConnectionConfig, Credentials, EncryptedBlob, ModelId, ProviderConnection,

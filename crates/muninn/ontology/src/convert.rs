@@ -785,11 +785,10 @@ pub fn load_ontology<P: AsRef<Path>>(path: P) -> Result<OntologyDocument, String
     } else if suffix == "yaml" || suffix == "yml" {
         let content = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
-        let yaml_value: serde_yaml::Value = serde_yaml::from_str(&content)
-            .map_err(|e| format!("Failed to parse YAML {}: {e}", path.display()))?;
-        // Convert YAML to JSON Value
-        serde_json::to_value(yaml_value)
-            .map_err(|e| format!("Failed to convert YAML {}: {e}", path.display()))?
+        let mut options = serde_saphyr::Options::default();
+        options.strict_booleans = true;
+        serde_saphyr::from_str_with_options::<serde_json::Value>(&content, options)
+            .map_err(|e| format!("Failed to parse YAML {}: {e}", path.display()))?
     } else {
         return Err(format!(
             "Unsupported ontology file format: {}. Use .json, .yaml or .yml",
@@ -1339,8 +1338,7 @@ mod tests {
     #[test]
     fn load_ontology_json_file() {
         use std::io::Write;
-        let temp_dir = std::env::temp_dir();
-        let file_path = temp_dir.join("test_ontology.json");
+        let mut file = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
 
         let content = r#"{
             "domain": {"id": "test", "name": "Test"},
@@ -1350,21 +1348,17 @@ mod tests {
             "relationships": []
         }"#;
 
-        let mut file = std::fs::File::create(&file_path).unwrap();
         file.write_all(content.as_bytes()).unwrap();
 
-        let doc = load_ontology(&file_path).unwrap();
+        let doc = load_ontology(file.path()).unwrap();
         assert_eq!(doc.domain.id, "test");
         assert_eq!(doc.entity_types.len(), 1);
-
-        std::fs::remove_file(&file_path).ok();
     }
 
     #[test]
     fn load_ontology_yaml_file() {
         use std::io::Write;
-        let temp_dir = std::env::temp_dir();
-        let file_path = temp_dir.join("test_ontology.yaml");
+        let mut file = tempfile::Builder::new().suffix(".yaml").tempfile().unwrap();
 
         let content = r#"
 domain:
@@ -1376,21 +1370,60 @@ entity_types:
 relationships: []
 "#;
 
-        let mut file = std::fs::File::create(&file_path).unwrap();
         file.write_all(content.as_bytes()).unwrap();
 
-        let doc = load_ontology(&file_path).unwrap();
+        let doc = load_ontology(file.path()).unwrap();
         assert_eq!(doc.domain.id, "test");
         assert_eq!(doc.entity_types.len(), 1);
+    }
 
-        std::fs::remove_file(&file_path).ok();
+    #[test]
+    fn load_ontology_legacy_schema_yaml_file() {
+        use std::io::Write;
+
+        let mut file = tempfile::Builder::new().suffix(".yml").tempfile().unwrap();
+
+        let content = r#"
+name: test
+description: Legacy schema
+entity_types:
+  - name: Person
+    description: A person
+    subtypes: []
+    attributes:
+      - age
+relation_types: []
+enable_subtypes: false
+"#;
+
+        file.write_all(content.as_bytes()).unwrap();
+
+        let doc = load_ontology(file.path()).unwrap();
+        assert_eq!(doc.domain.id, "test");
+        assert_eq!(doc.entity_types.len(), 1);
+        assert_eq!(doc.entity_types[0].label, "Person");
+        assert_eq!(doc.entity_types[0].properties[0].name, "age");
+    }
+
+    #[test]
+    fn load_ontology_legacy_yaml_preserves_unquoted_no() {
+        let file = tempfile::Builder::new().suffix(".yml").tempfile().unwrap();
+        std::fs::write(
+            file.path(),
+            "name: no\nentity_types:\n  - name: Person\n    subtypes: [Student]\nenable_subtypes: true\n",
+        )
+        .unwrap();
+
+        let doc = load_ontology(file.path()).unwrap();
+        assert_eq!(doc.domain.id, "no");
+        assert_eq!(doc.entity_types.len(), 2);
+        assert_eq!(doc.entity_types[1].subtype.as_deref(), Some("STUDENT"));
     }
 
     #[test]
     fn load_ontology_legacy_schema_file() {
         use std::io::Write;
-        let temp_dir = std::env::temp_dir();
-        let file_path = temp_dir.join("test_schema.json");
+        let mut file = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
 
         let content = r#"{
             "name": "test",
@@ -1400,14 +1433,11 @@ relationships: []
             "relation_types": []
         }"#;
 
-        let mut file = std::fs::File::create(&file_path).unwrap();
         file.write_all(content.as_bytes()).unwrap();
 
-        let doc = load_ontology(&file_path).unwrap();
+        let doc = load_ontology(file.path()).unwrap();
         assert_eq!(doc.domain.id, "test");
         assert_eq!(doc.entity_types.len(), 1);
-
-        std::fs::remove_file(&file_path).ok();
     }
 
     #[test]
@@ -1420,17 +1450,13 @@ relationships: []
     #[test]
     fn load_ontology_unsupported_format() {
         use std::io::Write;
-        let temp_dir = std::env::temp_dir();
-        let file_path = temp_dir.join("test_ontology.xml");
+        let mut file = tempfile::Builder::new().suffix(".xml").tempfile().unwrap();
 
-        let mut file = std::fs::File::create(&file_path).unwrap();
         file.write_all(b"<ontology/>").unwrap();
 
-        let result = load_ontology(&file_path);
+        let result = load_ontology(file.path());
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Unsupported"));
-
-        std::fs::remove_file(&file_path).ok();
     }
 
     #[test]
