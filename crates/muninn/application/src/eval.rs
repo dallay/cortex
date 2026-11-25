@@ -137,51 +137,42 @@ pub fn set_f1(predicted: &BTreeSet<String>, expected: &BTreeSet<String>) -> f64 
 }
 
 /// Compute B-cubed F1 between predicted and gold mention->cluster maps.
-/// All mentions present in either `predicted` or `gold` are evaluated.
-/// Mentions present in only one map are treated as isolated singleton clusters in the other.
+/// Mentions present in only one map are penalized: precision is computed over predicted
+/// mentions against gold, and recall is computed over gold mentions against predicted.
 pub fn bcubed_f1(predicted: &BTreeMap<String, String>, gold: &BTreeMap<String, String>) -> f64 {
-    let all_mentions: BTreeSet<&String> = gold.keys().chain(predicted.keys()).collect();
-    if all_mentions.is_empty() {
+    if predicted.is_empty() && gold.is_empty() {
         return 1.0;
     }
-    let mentions: Vec<&String> = all_mentions.into_iter().collect();
-    let mut precision_sum = 0.0;
-    let mut recall_sum = 0.0;
-    for (idx, m) in mentions.iter().enumerate() {
-        // Fallback to synthetic unique cluster if mention is missing in either map
-        let fallback = format!("__unmatched_{idx}");
-        let p_cluster = predicted.get(*m).unwrap_or(&fallback);
-        let g_cluster = gold.get(*m).unwrap_or(&fallback);
-        let same_pred: Vec<_> = mentions
-            .iter()
-            .enumerate()
-            .filter(|(i, o)| {
-                let fb = format!("__unmatched_{i}");
-                predicted.get(**o).unwrap_or(&fb) == p_cluster
-            })
-            .map(|(_, o)| o)
-            .collect();
-        let same_gold: Vec<_> = mentions
-            .iter()
-            .enumerate()
-            .filter(|(i, o)| {
-                let fb = format!("__unmatched_{i}");
-                gold.get(**o).unwrap_or(&fb) == g_cluster
-            })
-            .map(|(_, o)| o)
-            .collect();
-        let both = same_pred
-            .iter()
-            .filter(|o| {
-                let fb = format!("__unmatched_{idx}");
-                gold.get(***o).unwrap_or(&fb) == g_cluster
-            })
-            .count() as f64;
-        precision_sum += both / same_pred.len() as f64;
-        recall_sum += both / same_gold.len() as f64;
+    if predicted.is_empty() || gold.is_empty() {
+        return 0.0;
     }
-    let precision = precision_sum / mentions.len() as f64;
-    let recall = recall_sum / mentions.len() as f64;
+
+    let mut precision_sum = 0.0;
+    for (m, p_c) in predicted {
+        if let Some(g_c) = gold.get(m) {
+            let same_pred_count = predicted.values().filter(|c| *c == p_c).count();
+            let intersect_count = predicted
+                .iter()
+                .filter(|(other_m, c)| *c == p_c && gold.get(*other_m) == Some(g_c))
+                .count();
+            precision_sum += intersect_count as f64 / same_pred_count as f64;
+        }
+    }
+    let precision = precision_sum / predicted.len() as f64;
+
+    let mut recall_sum = 0.0;
+    for (m, g_c) in gold {
+        if let Some(p_c) = predicted.get(m) {
+            let same_gold_count = gold.values().filter(|c| *c == g_c).count();
+            let intersect_count = gold
+                .iter()
+                .filter(|(other_m, c)| *c == g_c && predicted.get(*other_m) == Some(p_c))
+                .count();
+            recall_sum += intersect_count as f64 / same_gold_count as f64;
+        }
+    }
+    let recall = recall_sum / gold.len() as f64;
+
     if precision + recall == 0.0 {
         0.0
     } else {
@@ -374,7 +365,17 @@ mod tests {
         // Unmatched mentions penalty: missing predicted mention must not return perfect 1.0
         let pred_incomplete = BTreeMap::from([("m1".into(), "c1".into())]);
         let gold_two = BTreeMap::from([("m1".into(), "g1".into()), ("m2".into(), "g1".into())]);
-        assert!(bcubed_f1(&pred_incomplete, &gold_two) < 0.99);
+        assert!((bcubed_f1(&pred_incomplete, &gold_two) - 0.4).abs() < 1e-9);
+
+        // CodeRabbit regression 1: gold={a:g1, b:g2}, predicted={a:p} must be penalized, not 1.0
+        let pred_single = BTreeMap::from([("a".into(), "p".into())]);
+        let gold_distinct = BTreeMap::from([("a".into(), "g1".into()), ("b".into(), "g2".into())]);
+        assert!((bcubed_f1(&pred_single, &gold_distinct) - (2.0 / 3.0)).abs() < 1e-9);
+
+        // CodeRabbit regression 2: predicted with empty gold map must score 0.0, never > 1.0
+        let pred_two = BTreeMap::from([("a".into(), "p".into()), ("b".into(), "p".into())]);
+        let gold_empty = BTreeMap::new();
+        assert_eq!(bcubed_f1(&pred_two, &gold_empty), 0.0);
     }
 
     #[test]

@@ -31,15 +31,34 @@ fn validate_spatial_limit(limit: i64) -> MemoryResult<()> {
 }
 
 fn point_from_row(row: &neo4rs::Row) -> MemoryResult<Option<GeoPoint>> {
-    let lat = match row.get::<f64>("lat") {
-        Ok(l) => l,
-        Err(_) => return Ok(None),
+    let lat_val = row
+        .get::<BoltType>("lat")
+        .map_err(|err| MemoryError::storage(format!("decode lat: {err}")))?;
+    let lon_val = row
+        .get::<BoltType>("lon")
+        .map_err(|err| MemoryError::storage(format!("decode lon: {err}")))?;
+
+    let extract_coord = |val: &BoltType, name: &str| -> MemoryResult<Option<f64>> {
+        match val {
+            BoltType::Null(_) => Ok(None),
+            BoltType::Float(f) => Ok(Some(f.value)),
+            BoltType::Integer(i) => Ok(Some(i.value as f64)),
+            _ => Err(MemoryError::storage(format!(
+                "malformed coordinate column '{name}': expected float or integer"
+            ))),
+        }
     };
-    let lon = match row.get::<f64>("lon") {
-        Ok(l) => l,
-        Err(_) => return Ok(None),
-    };
-    GeoPoint::new(lat, lon).map(Some)
+
+    match (
+        extract_coord(&lat_val, "lat")?,
+        extract_coord(&lon_val, "lon")?,
+    ) {
+        (None, None) => Ok(None),
+        (Some(lat), Some(lon)) => GeoPoint::new(lat, lon).map(Some),
+        _ => Err(MemoryError::storage(
+            "partially missing coordinate: both lat and lon must be present or absent together",
+        )),
+    }
 }
 
 #[async_trait]

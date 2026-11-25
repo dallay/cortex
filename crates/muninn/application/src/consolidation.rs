@@ -234,9 +234,17 @@ impl ConsolidationMemory {
         ])
     }
 
-    /// Convenience helper running all four consolidation jobs with explicit `ttl_days`.
-    pub async fn run_all(&self, dry_run: Option<bool>) -> MemoryResult<Vec<ConsolidationReport>> {
+    /// Convenience helper running all four consolidation jobs with explicit `conversation_ttl_days`.
+    ///
+    /// Callers that need fine-grained control over thresholds, limits, or user scoping
+    /// should use [`run_all_with_options`](Self::run_all_with_options).
+    pub async fn run_all(
+        &self,
+        conversation_ttl_days: i64,
+        dry_run: Option<bool>,
+    ) -> MemoryResult<Vec<ConsolidationReport>> {
         let options = ConsolidationOptions {
+            conversation_ttl_days: Some(conversation_ttl_days),
             dry_run: dry_run.unwrap_or(true),
             ..ConsolidationOptions::default()
         };
@@ -618,7 +626,11 @@ mod tests {
         let audits = store.recorded_read_audits.clone();
         let memory = ConsolidationMemory::from_store(Box::new(store));
 
-        let err = memory.run_all(Some(true)).await.unwrap_err();
+        let reports = memory.run_all(30, Some(true)).await.unwrap();
+        assert_eq!(reports.len(), 4);
+        assert!(reports.iter().all(|r| r.dry_run));
+
+        let err = memory.run_all(-1, Some(true)).await.unwrap_err();
         assert!(matches!(err, MemoryError::InvalidInput(_)));
 
         let mut exec_opts = ConsolidationOptions::execute();
