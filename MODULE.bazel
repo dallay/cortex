@@ -4,6 +4,12 @@ module(
 )
 
 bazel_dep(name = "rules_rust", version = "0.75.0")
+# Keep local Cargo patches relocatable across Bazel checkouts.
+single_version_override(
+    module_name = "rules_rust",
+    patches = ["//dev/bazel:rules_rust_relative_local_crates.patch"],
+    patch_strip = 1,
+)
 bazel_dep(name = "rules_shell", version = "0.10.0")
 
 # JavaScript/Node.js toolchain for the dashboard (hermetic Bazel build)

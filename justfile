@@ -267,6 +267,10 @@ run:
 # Run the rook backend in dev mode (explicit alias for run)
 rook-run: run
 
+# Iniciar el backend Rook con reinicio Rust y el dashboard con HMR de Vite
+rook:
+    python3 dev/rook-dev.py
+
 # Create the default Rook config at ~/.cortex/rook/config.toml (never overwrites)
 init-config:
     @mkdir -p ~/.cortex/rook

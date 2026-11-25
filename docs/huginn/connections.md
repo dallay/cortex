@@ -34,18 +34,19 @@ Native adapters remain trusted code, not a sandbox.
 ## Secure backend requirements
 
 - **macOS:** the native user Keychain, explicitly constructed through
-  `keyring::macos::MacCredential`, not a global/default backend.
+  `apple-native-keyring-store` and `keyring-core`, not a global/default backend.
 - **Linux:** Secret Service through session D-Bus, explicitly constructed through
-  `keyring::secret_service::SsCredential`. Enable a compatible service such as
-  GNOME Keyring or KWallet's Secret Service interface, and unlock its collection.
-  Building uses `pkg-config` and libdbus development headers/libraries.
+  `dbus-secret-service-keyring-store` and `keyring-core`. Enable a compatible
+  service such as GNOME Keyring or KWallet's Secret Service interface, and unlock
+  its collection. Building uses `pkg-config` and libdbus development headers/libraries.
 - Other platforms return `BackendUnavailable`; they never write plaintext.
 
-The pinned `keyring` 3.6.3 API supports the workspace's Rust baseline. Features
-are target-specific: `apple-native` on macOS and `sync-secret-service` plus
-`crypto-rust` on Linux. The kernel-keyutils and mock backends are not selected.
-OS calls run on blocking workers, serialized across instances before submission.
-A dropped async waiter cannot let cleanup overtake its credential write.
+The runtime uses `keyring-core` 1.0.1 with target-specific stores:
+`apple-native-keyring-store` on macOS and `dbus-secret-service-keyring-store`
+with `crypto-rust` on Linux. The Linux backend retains encrypted Secret Service
+sessions and the existing `service`/`username` credential attributes. OS calls
+run on blocking workers, serialized across instances before submission. A dropped
+async waiter cannot let cleanup overtake its credential write.
 
 Errors distinguish missing entries, inaccessible/locked storage and unavailable
 services. Unlock or enable the native service and retry; errors deliberately do

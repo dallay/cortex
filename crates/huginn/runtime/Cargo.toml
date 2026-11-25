@@ -49,7 +49,9 @@ apple-native-keyring-store = { version = "=1.0.2", features = ["keychain"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring-core = "=1.0.1"
-zbus-secret-service-keyring-store = { version = "=1.0.1", features = ["crypto-rust"] }
+# Keep the keyring store on the workspace-patched CSPRNG implementation.
+dbus-secret-service = "=4.1.0"
+dbus-secret-service-keyring-store = { version = "=1.0.1", default-features = false, features = ["crypto-rust"] }
 
 [[test]]
 name = "tls_transport"

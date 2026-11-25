@@ -51,6 +51,13 @@ make help
 
 The dashboard requires a running Rook backend for API-backed flows. The Rook and dashboard commands run as separate processes. The product runbooks describe local configuration, manual checks, and focused commands.
 
+## Desarrollo conjunto de Rook
+
+Ejecuta `just rook` desde la raíz para iniciar el backend y el dashboard juntos.
+Cargo Watch reinicia Rook al cambiar código Rust y Vite aplica HMR al dashboard.
+El comando usa los puertos `3773` y `4747`; deben estar libres. Pulsa Ctrl-C para
+detener ambos procesos.
+
 ## Choose the right test
 
 | Scope                        | Command                                                                                                         | Notes                                                                                                                      |
@@ -98,7 +105,7 @@ Consult `.github/workflows/ci.yml` and `justfile` for the source-of-truth sequen
 
 ## Dependency cooldown
 
-Cargo resolves crates with a publish-age cooldown. `.cargo/config.toml` sets `registry.global-min-publish-age = "3 days"`, so Cargo skips crate versions with a `pubtime` less than three days ago and reports the versions it held back. Versions without a `pubtime` in the registry index and versions already recorded in `Cargo.lock` are not held back by this cooldown.
+Cargo resolves crates with a publish-age cooldown. `.cargo/config.toml` sets `registry.global-min-publish-age = "14 days"`, so Cargo skips crate versions with a `pubtime` less than 14 days ago and reports the versions it held back. Versions without a `pubtime` in the registry index and versions already recorded in `Cargo.lock` are not held back by this cooldown.
 
 ```bash
 # Show the versions Cargo skipped and why
@@ -114,7 +121,7 @@ The cooldown requires Cargo 1.100 or newer, and `rust-toolchain.toml` pins that 
 
 `cargo install` ignores the cooldown, for the installed crate and for its dependencies. CI therefore pins the tool versions it installs (`cargo-audit`, `cargo-llvm-cov`) in `.github/workflows/ci.yml`. Update those pins deliberately.
 
-Renovate applies the same three-day window to the dependency pull requests it opens, so automation and Cargo agree on when a release becomes eligible.
+Renovate applies the same 14-day window to the dependency pull requests it opens, so automation and Cargo agree on when a release becomes eligible.
 
 ## Git hooks
 

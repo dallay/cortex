@@ -488,9 +488,8 @@ jobs:
         # Pinned because `cargo install` ignores registry.global-min-publish-age.
         run: cargo install cargo-audit --locked --version 0.23.0
       - name: Run cargo audit
-        # RUSTSEC-2026-0594 (cookie < 0.18.3) is ignored until the workspace's
-        # 3-day publish-age cooldown expires and Cargo.lock can be re-resolved.
-        run: cargo audit --ignore RUSTSEC-2026-0594
+        # Keep the blocking audit gate aligned with the full advisory database.
+        run: cargo audit
 
   trivy-fs:
     name: Security / Trivy (filesystem + deps)
@@ -895,7 +894,7 @@ jobs:
         uses: SonarSource/sonarqube-scan-action@e805d875275f728fac1885b413934be6d7c63f65 # v8.4.1
         # Note: sonar.qualitygate.wait removed because the SonarCloud project-level
         # quality gate (New Code Coverage >= 80%) fails for large PRs that add
-        # new crates (Muninn ontology, observability, MCP extensions) which are
+        # new crates (Muninn observability and MCP extensions) which remain
         # excluded from analysis but still counted as new code. The gate can be
         # reviewed manually at: https://sonarcloud.io/project/settings?id=dallay_cortex
         with:
