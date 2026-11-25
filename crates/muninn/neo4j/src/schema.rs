@@ -439,8 +439,20 @@ impl<'a> SchemaManager<'a> {
 
         // Stage 2: Plan (counts + pre-flight ID conflict detection).
         let mut planned = Vec::with_capacity(options.label_to_type.len());
+        let mut prior_labels: Vec<String> = Vec::new();
         for (label, entity_type) in &options.label_to_type {
             let name_prop = options.name_property_for(label);
+            let not_prior = if prior_labels.is_empty() {
+                String::new()
+            } else {
+                prior_labels
+                    .iter()
+                    .map(|l| format!("NOT n:`{l}`"))
+                    .collect::<Vec<_>>()
+                    .join(" AND ")
+                    + " AND "
+            };
+
             let already_rows = self
                 .client
                 .execute(
@@ -454,7 +466,7 @@ impl<'a> SchemaManager<'a> {
                 .client
                 .execute(
                     &format!(
-                        "MATCH (n:`{label}`) WHERE NOT n:Entity AND n.`{name_prop}` IS NULL RETURN count(n) AS count"
+                        "MATCH (n:`{label}`) WHERE {not_prior}NOT n:Entity AND n.`{name_prop}` IS NULL RETURN count(n) AS count"
                     ),
                     vec![],
                 )
@@ -466,7 +478,7 @@ impl<'a> SchemaManager<'a> {
                 .execute(
                     &format!(
                         "MATCH (n:`{label}`) \
-                         WHERE NOT n:Entity AND n.`{name_prop}` IS NOT NULL AND n.id IS NOT NULL \
+                         WHERE {not_prior}NOT n:Entity AND n.`{name_prop}` IS NOT NULL AND n.id IS NOT NULL \
                            AND (NOT n.id IS :: STRING NOT NULL OR EXISTS {{ MATCH (e:Entity {{id: n.id}}) }}) \
                          RETURN count(n) AS count"
                     ),
@@ -479,7 +491,7 @@ impl<'a> SchemaManager<'a> {
                 .client
                 .execute(
                     &format!(
-                        "MATCH (n:`{label}`) WHERE NOT n:Entity AND n.`{name_prop}` IS NOT NULL RETURN count(n) AS count"
+                        "MATCH (n:`{label}`) WHERE {not_prior}NOT n:Entity AND n.`{name_prop}` IS NOT NULL RETURN count(n) AS count"
                     ),
                     vec![],
                 )
@@ -495,6 +507,7 @@ impl<'a> SchemaManager<'a> {
                 skipped_count,
                 conflict_count,
             });
+            prior_labels.push(label.clone());
         }
 
         if options.dry_run {

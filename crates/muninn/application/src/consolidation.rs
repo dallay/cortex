@@ -236,13 +236,10 @@ impl ConsolidationMemory {
 
     /// Convenience helper running all four consolidation jobs with explicit `ttl_days`.
     pub async fn run_all(&self, dry_run: Option<bool>) -> MemoryResult<Vec<ConsolidationReport>> {
-        let mut options = ConsolidationOptions {
+        let options = ConsolidationOptions {
             dry_run: dry_run.unwrap_or(true),
             ..ConsolidationOptions::default()
         };
-        if options.conversation_ttl_days.is_none() {
-            options.conversation_ttl_days = Some(DEFAULT_CONVERSATION_TTL_DAYS);
-        }
         self.run_all_with_options(&options).await
     }
 
@@ -621,10 +618,8 @@ mod tests {
         let audits = store.recorded_read_audits.clone();
         let memory = ConsolidationMemory::from_store(Box::new(store));
 
-        let reports = memory.run_all(Some(true)).await.unwrap();
-        assert_eq!(reports.len(), 4);
-        assert!(reports.iter().all(|r| r.dry_run && r.run_id.is_none()));
-        assert!(runs.lock().unwrap().is_empty());
+        let err = memory.run_all(Some(true)).await.unwrap_err();
+        assert!(matches!(err, MemoryError::InvalidInput(_)));
 
         let mut exec_opts = ConsolidationOptions::execute();
         exec_opts.conversation_ttl_days = Some(30);
