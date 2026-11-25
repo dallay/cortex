@@ -39,6 +39,17 @@ If the active configuration uses another host or port, use that address instead.
 RUST_LOG=debug cargo run -p rook
 ```
 
+## Desarrollo conjunto con el dashboard
+
+Desde la raíz del repositorio, ejecuta `just rook` para iniciar Rook y el
+dashboard a la vez. Cargo Watch reinicia el backend cuando cambia código Rust;
+Vite aplica HMR al dashboard. El comando requiere `cargo-watch` y pnpm con las
+dependencias del dashboard instaladas. Los puertos `3773` y `4747` deben estar
+libres; pulsa Ctrl-C para detener ambos procesos.
+
+`cargo-watch` está marcado como obsoleto upstream. Este flujo lo reutiliza porque
+el repositorio ya lo usa en `just dev`; no instala herramientas adicionales.
+
 ## Manual smoke check
 
 The `/health` request above checks that the server starts and responds. It does not verify management authentication, provider credentials, or model availability. Configure a provider before testing provider-backed routes; see the [Rook provider guide](../rook/providers.md). For an isolated Docker smoke test, follow the [Docker smoke-test guide](../../dev/README.md#path-1--smoke-test-container).

@@ -51,6 +51,13 @@ make help
 
 The dashboard requires a running Rook backend for API-backed flows. The Rook and dashboard commands run as separate processes. The product runbooks describe local configuration, manual checks, and focused commands.
 
+## Desarrollo conjunto de Rook
+
+Ejecuta `just rook` desde la raíz para iniciar el backend y el dashboard juntos.
+Cargo Watch reinicia Rook al cambiar código Rust y Vite aplica HMR al dashboard.
+El comando usa los puertos `3773` y `4747`; deben estar libres. Pulsa Ctrl-C para
+detener ambos procesos.
+
 ## Choose the right test
 
 | Scope                        | Command                                                                                                         | Notes                                                                                                                      |
