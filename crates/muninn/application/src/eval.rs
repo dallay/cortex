@@ -137,31 +137,45 @@ pub fn set_f1(predicted: &BTreeSet<String>, expected: &BTreeSet<String>) -> f64 
 }
 
 /// Compute B-cubed F1 between predicted and gold mention->cluster maps.
+/// All mentions present in either `predicted` or `gold` are evaluated.
+/// Mentions present in only one map are treated as isolated singleton clusters in the other.
 pub fn bcubed_f1(predicted: &BTreeMap<String, String>, gold: &BTreeMap<String, String>) -> f64 {
-    let mentions: Vec<&String> = gold.keys().filter(|k| predicted.contains_key(*k)).collect();
-    if mentions.is_empty() {
-        return if gold.is_empty() && predicted.is_empty() {
-            1.0
-        } else {
-            0.0
-        };
+    let all_mentions: BTreeSet<&String> = gold.keys().chain(predicted.keys()).collect();
+    if all_mentions.is_empty() {
+        return 1.0;
     }
+    let mentions: Vec<&String> = all_mentions.into_iter().collect();
     let mut precision_sum = 0.0;
     let mut recall_sum = 0.0;
-    for m in &mentions {
-        let p_cluster = &predicted[*m];
-        let g_cluster = &gold[*m];
+    for (idx, m) in mentions.iter().enumerate() {
+        // Fallback to synthetic unique cluster if mention is missing in either map
+        let fallback = format!("__unmatched_{idx}");
+        let p_cluster = predicted.get(*m).unwrap_or(&fallback);
+        let g_cluster = gold.get(*m).unwrap_or(&fallback);
         let same_pred: Vec<_> = mentions
             .iter()
-            .filter(|o| &predicted[**o] == p_cluster)
+            .enumerate()
+            .filter(|(i, o)| {
+                let fb = format!("__unmatched_{i}");
+                predicted.get(**o).unwrap_or(&fb) == p_cluster
+            })
+            .map(|(_, o)| o)
             .collect();
         let same_gold: Vec<_> = mentions
             .iter()
-            .filter(|o| &gold[**o] == g_cluster)
+            .enumerate()
+            .filter(|(i, o)| {
+                let fb = format!("__unmatched_{i}");
+                gold.get(**o).unwrap_or(&fb) == g_cluster
+            })
+            .map(|(_, o)| o)
             .collect();
         let both = same_pred
             .iter()
-            .filter(|o| &gold[***o] == g_cluster)
+            .filter(|o| {
+                let fb = format!("__unmatched_{idx}");
+                gold.get(***o).unwrap_or(&fb) == g_cluster
+            })
             .count() as f64;
         precision_sum += both / same_pred.len() as f64;
         recall_sum += both / same_gold.len() as f64;
@@ -356,6 +370,11 @@ mod tests {
             ("m3".into(), "g2".into()),
         ]);
         assert!((bcubed_f1(&pred_c, &gold_c) - 1.0).abs() < 1e-9);
+
+        // Unmatched mentions penalty: missing predicted mention must not return perfect 1.0
+        let pred_incomplete = BTreeMap::from([("m1".into(), "c1".into())]);
+        let gold_two = BTreeMap::from([("m1".into(), "g1".into()), ("m2".into(), "g1".into())]);
+        assert!(bcubed_f1(&pred_incomplete, &gold_two) < 0.99);
     }
 
     #[test]

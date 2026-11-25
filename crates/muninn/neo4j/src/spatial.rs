@@ -30,10 +30,16 @@ fn validate_spatial_limit(limit: i64) -> MemoryResult<()> {
     Ok(())
 }
 
-fn point_from_row(row: &neo4rs::Row) -> Option<GeoPoint> {
-    let lat = row.get::<f64>("lat").ok()?;
-    let lon = row.get::<f64>("lon").ok()?;
-    GeoPoint::new(lat, lon).ok()
+fn point_from_row(row: &neo4rs::Row) -> MemoryResult<Option<GeoPoint>> {
+    let lat = match row.get::<f64>("lat") {
+        Ok(l) => l,
+        Err(_) => return Ok(None),
+    };
+    let lon = match row.get::<f64>("lon") {
+        Ok(l) => l,
+        Err(_) => return Ok(None),
+    };
+    GeoPoint::new(lat, lon).map(Some)
 }
 
 #[async_trait]
@@ -71,7 +77,7 @@ impl SpatialStore for Neo4jSpatialStore {
         let mut hits = Vec::with_capacity(rows.len());
         for row in &rows {
             let entity = entity_from_value(&column(row, "e")?)?;
-            let coordinates = point_from_row(row)
+            let coordinates = point_from_row(row)?
                 .ok_or_else(|| MemoryError::storage("spatial entity missing coordinates"))?;
             let distance_km = row.get::<f64>("distance_km").unwrap_or(0.0);
             hits.push(SpatialLocationHit {
@@ -116,7 +122,7 @@ impl SpatialStore for Neo4jSpatialStore {
         let mut hits = Vec::with_capacity(rows.len());
         for row in &rows {
             let entity = entity_from_value(&column(row, "e")?)?;
-            let coordinates = point_from_row(row)
+            let coordinates = point_from_row(row)?
                 .ok_or_else(|| MemoryError::storage("spatial entity missing coordinates"))?;
             hits.push(SpatialLocationHit {
                 entity,
@@ -138,7 +144,10 @@ impl SpatialStore for Neo4jSpatialStore {
                 vec![("id", entity_id.to_string().into())],
             )
             .await?;
-        Ok(rows.first().and_then(point_from_row))
+        match rows.first() {
+            Some(row) => point_from_row(row),
+            None => Ok(None),
+        }
     }
 
     async fn get_locations(
@@ -172,7 +181,7 @@ impl SpatialStore for Neo4jSpatialStore {
         let mut locations = Vec::with_capacity(rows.len());
         for row in &rows {
             let entity = entity_from_value(&column(row, "e")?)?;
-            let coordinates = point_from_row(row);
+            let coordinates = point_from_row(row)?;
             let conversation_ids = match column(row, "conv_ids")? {
                 BoltType::List(items) => items
                     .value
