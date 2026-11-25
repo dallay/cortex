@@ -71,6 +71,7 @@ async def stop_process_group(process: asyncio.subprocess.Process) -> None:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
+                # El grupo de procesos ya terminó antes de enviar SIGKILL.
                 pass
             await process.wait()
             return
@@ -85,6 +86,7 @@ async def stop_process_group(process: asyncio.subprocess.Process) -> None:
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
+            # El grupo de procesos terminó durante la espera activa.
             pass
         return
 
