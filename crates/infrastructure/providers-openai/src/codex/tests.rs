@@ -479,10 +479,13 @@ async fn callback_listener_is_single_use_loopback_and_exchanges_the_exact_redire
         .query_pairs_mut()
         .append_pair("state", &"x".repeat(43))
         .append_pair("code", "synthetic-code");
-    let invalid = tokio::time::timeout(Duration::from_millis(1500), http.get(invalid_url).send())
-        .await
-        .expect("a slow peer must not block other callback requests")
-        .unwrap();
+    let invalid = tokio::time::timeout(
+        Duration::from_millis(1500),
+        http.get(invalid_url.clone()).send(),
+    )
+    .await
+    .expect("a slow peer must not block other callback requests")
+    .unwrap();
     assert_eq!(invalid.status(), reqwest::StatusCode::BAD_REQUEST);
     assert_eq!(invalid.headers()["cache-control"], "no-store");
     let invalid_body = invalid.text().await.unwrap();
@@ -503,6 +506,15 @@ async fn callback_listener_is_single_use_loopback_and_exchanges_the_exact_redire
     assert!(!not_found_body.contains("synthetic-state"));
     assert!(!not_found_body.contains("synthetic-code"));
 
+    // One invalid callback was already counted. Leave exactly one request for
+    // the valid callback so the redirect is followed with no budget remaining.
+    for _ in 1..(listener::MAX_CALLBACK_REQUESTS - 1) {
+        assert_eq!(
+            http.get(invalid_url.clone()).send().await.unwrap().status(),
+            reqwest::StatusCode::BAD_REQUEST
+        );
+    }
+
     let mut callback_url = redirect.clone();
     callback_url
         .query_pairs_mut()
@@ -511,6 +523,9 @@ async fn callback_listener_is_single_use_loopback_and_exchanges_the_exact_redire
     let response = http.get(callback_url.clone()).send().await.unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::SEE_OTHER);
     assert_eq!(response.headers()["location"], "/auth/callback");
+    let result_url = callback_url
+        .join(response.headers()["location"].to_str().unwrap())
+        .unwrap();
     assert_eq!(response.headers()["cache-control"], "no-store");
     assert_eq!(response.headers()["referrer-policy"], "no-referrer");
     assert!(response.headers()["content-security-policy"]
@@ -518,9 +533,9 @@ async fn callback_listener_is_single_use_loopback_and_exchanges_the_exact_redire
         .unwrap()
         .contains("default-src 'none'"));
     assert!(!response.text().await.unwrap().contains("synthetic-code"));
-    let competing_result_request = http.get(redirect.clone()).send().await.unwrap();
+    let competing_result_request = http.get(result_url.clone()).send().await.unwrap();
     assert_eq!(competing_result_request.status(), reqwest::StatusCode::OK);
-    let browser_result_request = http.get(redirect).send().await.unwrap();
+    let browser_result_request = http.get(result_url).send().await.unwrap();
     assert_eq!(browser_result_request.status(), reqwest::StatusCode::OK);
     assert_eq!(
         browser_result_request.headers()["cache-control"],
