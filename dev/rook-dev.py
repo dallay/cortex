@@ -8,6 +8,7 @@ import os
 import shutil
 import signal
 import socket
+import subprocess
 import sys
 from pathlib import Path
 
@@ -58,36 +59,111 @@ def preflight() -> bool:
     return True
 
 
-async def stop_process_group(process: asyncio.subprocess.Process) -> None:
-    if os.name == "posix":
+def process_group_is_alive(process_group: int) -> bool:
+    try:
+        os.killpg(process_group, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+
+def process_groups_for_descendants(pid: int) -> set[int]:
+    output = subprocess.check_output(
+        ("ps", "-A", "-o", "pid=", "-o", "ppid=", "-o", "pgid="),
+        text=True,
+    )
+    children: dict[int, list[tuple[int, int]]] = {}
+    for line in output.splitlines():
         try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            await process.wait()
-            return
+            child_pid, parent_pid, process_group = map(int, line.split())
+        except ValueError:
+            continue
+        children.setdefault(parent_pid, []).append((child_pid, process_group))
+
+    process_groups: set[int] = set()
+    descendants = [pid]
+    seen = {pid}
+    while descendants:
+        parent_pid = descendants.pop()
+        for child_pid, process_group in children.get(parent_pid, []):
+            if child_pid in seen:
+                continue
+            seen.add(child_pid)
+            descendants.append(child_pid)
+            process_groups.add(process_group)
+    return process_groups
+
+
+async def stop_process_group(
+    process: asyncio.subprocess.Process, tracked_process_groups: set[int] | None = None
+) -> None:
+    if os.name == "posix":
+        process_groups = set(tracked_process_groups or set())
+        watcher_stopped = False
+
+        if process.returncode is None:
+            try:
+                os.killpg(process.pid, signal.SIGSTOP)
+            except ProcessLookupError:
+                pass
+            else:
+                watcher_stopped = True
+                process_groups.add(process.pid)
+
+        def discover_process_groups() -> set[int]:
+            try:
+                return process_groups_for_descendants(process.pid)
+            except (OSError, subprocess.SubprocessError) as error:
+                print(
+                    f"No se pudieron identificar los grupos de procesos descendientes: {error}",
+                    file=sys.stderr,
+                )
+                return set()
+
+        def signal_process_groups(groups: set[int], signum: int) -> None:
+            for process_group in groups:
+                try:
+                    os.killpg(process_group, signum)
+                except ProcessLookupError:
+                    pass
+
+        def active_process_groups(groups: set[int]) -> set[int]:
+            return {
+                process_group
+                for process_group in groups
+                if process_group_is_alive(process_group)
+            }
+
+        process_groups.update(discover_process_groups())
+        signal_process_groups(process_groups, signal.SIGTERM)
+        if watcher_stopped:
+            try:
+                os.killpg(process.pid, signal.SIGCONT)
+            except ProcessLookupError:
+                pass
         try:
             await asyncio.wait_for(process.wait(), timeout=SHUTDOWN_TIMEOUT)
         except asyncio.TimeoutError:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                # El grupo de procesos ya terminó antes de enviar SIGKILL.
-                pass
+            signal_process_groups(
+                active_process_groups(process_groups), signal.SIGKILL
+            )
             await process.wait()
+            signal_process_groups(
+                active_process_groups(discover_process_groups()), signal.SIGKILL
+            )
             return
+
+        late_groups = discover_process_groups() - process_groups
+        process_groups.update(late_groups)
+        signal_process_groups(late_groups, signal.SIGTERM)
 
         deadline = asyncio.get_running_loop().time() + SHUTDOWN_TIMEOUT
         while asyncio.get_running_loop().time() < deadline:
-            try:
-                os.killpg(process.pid, 0)
-            except ProcessLookupError:
+            process_groups = active_process_groups(process_groups)
+            if not process_groups:
                 return
             await asyncio.sleep(0.05)
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            # El grupo de procesos terminó durante la espera activa.
-            pass
+        signal_process_groups(process_groups, signal.SIGKILL)
         return
 
     if process.returncode is not None:
@@ -111,19 +187,20 @@ async def main() -> int:
             loop.add_signal_handler(signum, stop_event.set)
 
     children: list[tuple[str, asyncio.subprocess.Process]] = []
+    tracked_process_groups: dict[int, set[int]] = {}
     waiters: dict[asyncio.Task[int], str] = {}
     stop_waiter: asyncio.Task[bool] | None = None
     try:
         backend = await asyncio.create_subprocess_exec(
             "cargo",
             "watch",
-            "--no-process-group",
             "-x",
             "run",
             cwd=ROOK_DIR,
             start_new_session=os.name == "posix",
         )
         children.append(("Rook backend", backend))
+        tracked_process_groups[backend.pid] = set()
         dashboard = await asyncio.create_subprocess_exec(
             "pnpm",
             "exec",
@@ -133,6 +210,7 @@ async def main() -> int:
             start_new_session=os.name == "posix",
         )
         children.append(("Dashboard", dashboard))
+        tracked_process_groups[dashboard.pid] = set()
         print(
             "Rook: http://127.0.0.1:3773 | Dashboard: http://localhost:4747/dashboard/",
             flush=True,
@@ -143,9 +221,31 @@ async def main() -> int:
             for name, process in children
         }
         stop_waiter = asyncio.create_task(stop_event.wait())
-        done, _ = await asyncio.wait(
-            [*waiters, stop_waiter], return_when=asyncio.FIRST_COMPLETED
-        )
+        while True:
+            if os.name == "posix":
+                for _, process in children:
+                    try:
+                        tracked_groups = tracked_process_groups[process.pid]
+                        tracked_groups.intersection_update(
+                            process_group
+                            for process_group in tracked_groups.copy()
+                            if process_group_is_alive(process_group)
+                        )
+                        tracked_process_groups[process.pid].update(
+                            process_groups_for_descendants(process.pid)
+                        )
+                    except (OSError, subprocess.SubprocessError) as error:
+                        print(
+                            f"No se pudieron identificar los grupos de procesos descendientes: {error}",
+                            file=sys.stderr,
+                        )
+            done, _ = await asyncio.wait(
+                [*waiters, stop_waiter],
+                timeout=0.25,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if done:
+                break
         if stop_waiter in done:
             return 0
 
@@ -165,7 +265,12 @@ async def main() -> int:
             stop_waiter.cancel()
             await asyncio.gather(stop_waiter, return_exceptions=True)
         await asyncio.gather(
-            *(stop_process_group(process) for _, process in children),
+            *(
+                stop_process_group(
+                    process, tracked_process_groups.get(process.pid, set())
+                )
+                for _, process in children
+            ),
             return_exceptions=True,
         )
         await asyncio.gather(*waiters, return_exceptions=True)
