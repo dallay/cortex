@@ -9,9 +9,10 @@
  *     scoped to this kind. Click handler stops propagation so the card
  *     click does not also fire.
  *
- * Status badge reflects `hasActiveConnections` (live data from
- * `useProviderCatalog`). The card is purely presentational — all
- * state-changing actions live in the details view.
+ * Status badges reflect `hasActiveConnections` for model providers and the
+ * linked-account state for Codex. Codex accounts are not model connections.
+ * The card is purely presentational — all state-changing actions live in the
+ * details view.
  *
  * The provider icon is rendered by `ProviderIcon.vue` — a branded
  * `<img src="/providers/<iconFile>">` with a Lucide `Server` fallback.
@@ -26,8 +27,11 @@ import {Badge} from "@/components/ui/badge";
 import {Button} from "@/components/ui/button";
 import {Card, CardContent, CardHeader, CardTitle} from "@/components/ui/card";
 import type {ProviderCatalogItem} from "@/composables/useProviderCatalog";
+import type {CodexAccountsResponse} from "@/lib/api";
 
 const props = defineProps<{
+  codexAccounts?: CodexAccountsResponse | null;
+  codexAccountsLoading?: boolean;
   item: ProviderCatalogItem;
 }>();
 
@@ -39,16 +43,41 @@ const {t} = useI18n();
 
 const name = computed(() => props.item.displayNameKey ? t(props.item.displayNameKey) : props.item.label);
 const description = computed(() => props.item.descriptionKey ? t(props.item.descriptionKey) : props.item.label);
+const isCodex = computed(() => props.item.kind === "openai-codex");
+const codexAccountCount = computed(() =>
+  isCodex.value && props.codexAccounts?.enabled
+    ? props.codexAccounts.accounts.length
+    : null,
+);
 
-const statusLabel = computed(() =>
-  props.item.hasActiveConnections
+const statusLabel = computed(() => {
+  if (isCodex.value) {
+    if (props.codexAccountsLoading) {
+      return t("providers.catalog.codexChecking");
+    }
+    if (codexAccountCount.value === null) {
+      return t("providers.catalog.codexUnavailable");
+    }
+    return codexAccountCount.value > 0
+      ? t("providers.catalog.codexLinked")
+      : t("providers.catalog.codexNotLinked");
+  }
+  return props.item.hasActiveConnections
     ? t("providers.catalog.active")
-    : t("providers.catalog.notConfigured"),
-);
+    : t("providers.catalog.notConfigured");
+});
 
-const statusVariant = computed(() =>
-  props.item.hasActiveConnections ? "default" : "secondary",
-);
+const statusVariant = computed(() => {
+  if (isCodex.value) return "secondary";
+  return props.item.hasActiveConnections ? "default" : "secondary";
+});
+
+const actionLabel = computed(() => {
+  if (!isCodex.value) return t("providers.catalog.addProvider");
+  return codexAccountCount.value !== null && codexAccountCount.value > 0
+    ? t("providers.catalog.manageAccounts")
+    : t("providers.catalog.linkAccount");
+});
 
 const detailLink = computed(() => `/providers/${props.item.kind}`);
 </script>
@@ -86,7 +115,16 @@ const detailLink = computed(() => `/providers/${props.item.kind}`);
         <Badge :variant="statusVariant" class="shrink-0">{{ statusLabel }}</Badge>
       </CardHeader>
       <CardContent>
-        <span class="text-xs text-muted-foreground">
+        <span v-if="isCodex && !codexAccountsLoading && codexAccountCount === 0" class="block text-xs text-muted-foreground">
+          {{ t('providers.catalog.codexAccountsEmpty') }}
+        </span>
+        <span v-else-if="isCodex && !codexAccountsLoading && codexAccountCount !== null" class="block text-xs text-muted-foreground">
+          {{ t('providers.catalog.codexAccountsCount', codexAccountCount) }}
+        </span>
+        <span v-else-if="isCodex && !codexAccountsLoading" class="block text-xs text-muted-foreground">
+          {{ t('providers.catalog.codexAccountsUnavailable') }}
+        </span>
+        <span v-if="!isCodex" class="block text-xs text-muted-foreground">
           {{ t('providers.catalog.connectionsCount', item.connectionCount) }}
         </span>
       </CardContent>
@@ -100,7 +138,7 @@ const detailLink = computed(() => `/providers/${props.item.kind}`);
         @click.stop.prevent="emit('add', item.kind)"
       >
         <Plus class="h-4 w-4 mr-1"/>
-        {{ t('providers.catalog.addProvider') }}
+        {{ actionLabel }}
       </Button>
     </div>
   </Card>

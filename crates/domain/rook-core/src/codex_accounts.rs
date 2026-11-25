@@ -72,5 +72,6 @@ pub trait CodexAccountsPort: Send + Sync {
     async fn callback(&self, state: &str, response: CodexCallback)
         -> Result<(), CodexAccountError>;
     async fn cancel(&self, id: &str) -> Result<(), CodexAccountError>;
+    async fn disconnect(&self, id: &str) -> Result<(), CodexAccountError>;
     async fn shutdown(&self);
 }

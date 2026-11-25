@@ -48,6 +48,7 @@ struct State {
     pending: Option<oauth::Pending>,
     task: Option<tokio::task::JoinHandle<()>>,
     listener: Option<tokio::task::JoinHandle<()>>,
+    persisting: bool,
     closing: bool,
 }
 
@@ -110,6 +111,7 @@ impl CodexProfileStore {
                     pending: None,
                     task: None,
                     listener: None,
+                    persisting: false,
                     closing: false,
                 }),
                 login_timeout: LOGIN_TIMEOUT,
@@ -135,6 +137,9 @@ fn create_private_directory(path: &Path) -> std::io::Result<()> {
 
 fn load_profiles(root: &Path) -> anyhow::Result<Vec<CodexAccount>> {
     let mut accounts = vec![];
+    // Operator-configured state root is canonicalized and owner-private before enumeration.
+    // Evidence: docs/security/semgrep-path-exceptions.md#codex-profile-store
+    // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
     for file in fs::read_dir(root)? {
         let file = file?;
         let id = file.file_name();
@@ -190,7 +195,14 @@ fn save_account(root: &Path, id: &str, ciphertext: &str) -> anyhow::Result<()> {
         ciphertext.len() as u64 <= MAX_ENCRYPTED_BYTES,
         "Codex ciphertext exceeds limit"
     );
+    anyhow::ensure!(valid_id(id), "invalid Codex profile ID");
+    // The profile ID is validated as a UUID-shaped path component before joining the private root.
+    // Evidence: docs/security/semgrep-path-exceptions.md#codex-profile-store
+    // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
     let profile = root.join(id);
+    // The joined profile path is confined to the private root by the validated profile ID.
+    // Evidence: docs/security/semgrep-path-exceptions.md#codex-profile-store
+    // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
     fs::DirBuilder::new().mode(0o700).create(&profile)?;
     let write = || -> std::io::Result<()> {
         let mut file = fs::OpenOptions::new()
@@ -201,7 +213,13 @@ fn save_account(root: &Path, id: &str, ciphertext: &str) -> anyhow::Result<()> {
         file.write_all(ciphertext.as_bytes())?;
         file.sync_all()?;
         fs::rename(profile.join("tokens.tmp"), profile.join(CREDENTIALS))?;
+        // The profile ID is a generated UUID v4 and validated before any profile path is joined.
+        // Evidence: docs/security/semgrep-path-exceptions.md#codex-profile-store
+        // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
         fs::File::open(&profile)?.sync_all()?;
+        // Operator-configured state root is canonicalized and owner-private before directory sync.
+        // Evidence: docs/security/semgrep-path-exceptions.md#codex-profile-store
+        // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
         fs::File::open(root)?.sync_all()
     };
     if let Err(error) = write() {
@@ -211,6 +229,55 @@ fn save_account(root: &Path, id: &str, ciphertext: &str) -> anyhow::Result<()> {
         return Err(error.into());
     }
     Ok(())
+}
+
+fn remove_account(root: &Path, id: &str) -> std::io::Result<()> {
+    if !valid_id(id) {
+        return Err(std::io::Error::other("invalid Codex profile ID"));
+    }
+    // The account ID is validated and the root is private and canonicalized before joining.
+    // Evidence: docs/security/semgrep-path-exceptions.md#codex-profile-store
+    // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
+    let profile = root.join(id);
+    let info = profile.symlink_metadata()?;
+    if !info.is_dir() || info.permissions().mode() & 0o077 != 0 {
+        return Err(std::io::Error::other("invalid Codex profile directory"));
+    }
+    // The profile path is derived from a validated ID inside the owner-private root.
+    // Evidence: docs/security/semgrep-path-exceptions.md#codex-profile-store
+    // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
+    fs::remove_dir_all(&profile)?;
+    // The canonical owner-private root is opened only to sync its directory entry.
+    // Evidence: docs/security/semgrep-path-exceptions.md#codex-profile-store
+    // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
+    fs::File::open(root)?.sync_all()
+}
+
+#[derive(Clone, Copy)]
+enum FailureStage {
+    Exchange,
+    Encryption,
+    Persistence,
+}
+
+impl FailureStage {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Exchange => "exchange",
+            Self::Encryption => "encryption",
+            Self::Persistence => "persistence",
+        }
+    }
+}
+
+fn record_failure(state: &mut State, id: &str, stage: FailureStage) {
+    if state.active(id) {
+        tracing::warn!(
+            failure_stage = stage.as_str(),
+            "Codex account linking failed"
+        );
+        state.finish(Status::Failed);
+    }
 }
 
 impl State {
@@ -228,8 +295,10 @@ impl State {
     }
 
     fn stop_task(&mut self) {
-        if let Some(task) = self.task.take() {
-            task.abort();
+        if !self.persisting {
+            if let Some(task) = self.task.take() {
+                task.abort();
+            }
         }
     }
 
@@ -270,23 +339,69 @@ impl CodexProfileStore {
                 let id = state.attempt.as_ref().expect("active attempt").id.clone();
                 let inner = self.inner.clone();
                 state.task = Some(tokio::spawn(async move {
-                    let result = inner
+                    let tokens = match inner
                         .client
                         .exchange(&pending.redirect_uri, &pending.verifier, &code)
                         .await
-                        .and_then(|tokens| Ok(inner.key_manager.encrypt(&tokens)?));
+                    {
+                        Ok(tokens) => tokens,
+                        Err(_) => {
+                            let mut state = inner.state.lock().await;
+                            record_failure(&mut state, &id, FailureStage::Exchange);
+                            return;
+                        }
+                    };
+                    let ciphertext = match inner.key_manager.encrypt(&tokens) {
+                        Ok(ciphertext) => ciphertext,
+                        Err(_) => {
+                            let mut state = inner.state.lock().await;
+                            record_failure(&mut state, &id, FailureStage::Encryption);
+                            return;
+                        }
+                    };
+
                     let mut state = inner.state.lock().await;
-                    if !state.active(&id) {
+                    if !state.active(&id) || state.closing {
                         return;
                     }
-                    if result
-                        .and_then(|ciphertext| save_account(&inner.root, &id, &ciphertext))
-                        .is_ok()
-                    {
+                    state.persisting = true;
+                    drop(state);
+
+                    let root = inner.root.clone();
+                    let profile_id = id.clone();
+                    let persisted = tokio::task::spawn_blocking(move || {
+                        save_account(&root, &profile_id, &ciphertext)
+                    })
+                    .await
+                    .is_ok_and(|result| result.is_ok());
+
+                    let mut state = inner.state.lock().await;
+                    if !persisted {
+                        state.persisting = false;
+                        record_failure(&mut state, &id, FailureStage::Persistence);
+                        return;
+                    }
+
+                    if state.active(&id) && !state.closing {
                         state.accounts.push(CodexAccount { id });
+                        state.persisting = false;
                         state.finish(Status::Linked);
                     } else {
-                        state.finish(Status::Failed);
+                        drop(state);
+                        let root = inner.root.clone();
+                        let profile_id = id.clone();
+                        let removed =
+                            tokio::task::spawn_blocking(move || remove_account(&root, &profile_id))
+                                .await
+                                .is_ok_and(|result| result.is_ok());
+                        let mut state = inner.state.lock().await;
+                        state.persisting = false;
+                        if !removed {
+                            tracing::warn!(
+                                failure_stage = "cleanup",
+                                "Could not remove an uncommitted Codex profile"
+                            );
+                        }
                     }
                 }));
             }
@@ -310,6 +425,9 @@ impl CodexAccountsPort for CodexProfileStore {
         let mut state = self.inner.state.lock().await;
         if state.closing {
             return Err(Error::Unavailable);
+        }
+        if state.persisting {
+            return Err(Error::Busy);
         }
         if state
             .attempt
@@ -378,9 +496,46 @@ impl CodexAccountsPort for CodexProfileStore {
         Ok(())
     }
 
+    async fn disconnect(&self, id: &str) -> Result<(), Error> {
+        let state = self.inner.state.lock().await;
+        if state.closing {
+            return Err(Error::Unavailable);
+        }
+        if !valid_id(id) || !state.accounts.iter().any(|account| account.id == id) {
+            return Err(Error::NotFound);
+        }
+        drop(state);
+
+        let root = self.inner.root.clone();
+        let profile_id = id.to_owned();
+        let result = tokio::task::spawn_blocking(move || remove_account(&root, &profile_id)).await;
+        match result {
+            Ok(Ok(())) => {
+                self.inner
+                    .state
+                    .lock()
+                    .await
+                    .accounts
+                    .retain(|account| account.id != id);
+                Ok(())
+            }
+            Ok(Err(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+                self.inner
+                    .state
+                    .lock()
+                    .await
+                    .accounts
+                    .retain(|account| account.id != id);
+                Err(Error::NotFound)
+            }
+            _ => Err(Error::Unavailable),
+        }
+    }
+
     async fn shutdown(&self) {
         let mut state = self.inner.state.lock().await;
         state.closing = true;
+        let wait_for_persistence = state.persisting;
         let task = state.task.take();
         let listener = state.listener.take();
         if state
@@ -396,7 +551,9 @@ impl CodexAccountsPort for CodexProfileStore {
             let _ = listener.await;
         }
         if let Some(task) = task {
-            task.abort();
+            if !wait_for_persistence {
+                task.abort();
+            }
             let _ = task.await;
         }
     }

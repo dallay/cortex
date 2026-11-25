@@ -16,6 +16,7 @@ type PrivateJson<T> = ([(axum::http::HeaderName, &'static str); 1], Json<T>);
 pub fn router(accounts: Accounts) -> Router {
     Router::new()
         .route("/api/codex/accounts", get(list))
+        .route("/api/codex/accounts/{id}", delete(disconnect))
         .route("/api/codex/login", post(start))
         .route("/api/codex/login/{id}", delete(cancel))
         .with_state(accounts)
@@ -46,6 +47,17 @@ async fn cancel(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn disconnect(
+    State(accounts): State<Accounts>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, HttpError> {
+    enabled(accounts)?
+        .disconnect(&id)
+        .await
+        .map_err(http_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 fn enabled(accounts: Accounts) -> Result<Arc<dyn CodexAccountsPort>, HttpError> {
     accounts.ok_or(HttpError {
         status: StatusCode::SERVICE_UNAVAILABLE,
@@ -69,7 +81,7 @@ fn http_error(error: CodexAccountError) -> HttpError {
         CodexAccountError::NotFound => (
             StatusCode::NOT_FOUND,
             "CODEX_LOGIN_NOT_FOUND",
-            "No matching pending Codex login",
+            "No matching pending login or Codex account",
         ),
         CodexAccountError::Unavailable => (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -93,11 +105,70 @@ fn http_error(error: CodexAccountError) -> HttpError {
 mod tests {
     use super::*;
 
+    #[derive(Default)]
+    struct TestAccounts(std::sync::Mutex<Vec<String>>);
+
+    #[async_trait::async_trait]
+    impl CodexAccountsPort for TestAccounts {
+        async fn list(&self) -> Result<CodexAccounts, CodexAccountError> {
+            Ok(CodexAccounts {
+                enabled: true,
+                accounts: vec![],
+                attempt: None,
+            })
+        }
+
+        async fn start(&self) -> Result<CodexLogin, CodexAccountError> {
+            Err(CodexAccountError::Unavailable)
+        }
+
+        async fn callback(
+            &self,
+            _: &str,
+            _: rook_core::codex_accounts::CodexCallback,
+        ) -> Result<(), CodexAccountError> {
+            Err(CodexAccountError::Unavailable)
+        }
+
+        async fn cancel(&self, _: &str) -> Result<(), CodexAccountError> {
+            Err(CodexAccountError::Unavailable)
+        }
+
+        async fn disconnect(&self, id: &str) -> Result<(), CodexAccountError> {
+            self.0.lock().unwrap().push(id.to_owned());
+            Ok(())
+        }
+
+        async fn shutdown(&self) {}
+    }
+
     #[test]
     fn busy_callback_port_returns_an_actionable_conflict() {
         let error = http_error(CodexAccountError::CallbackBusy);
         assert_eq!(error.status, StatusCode::CONFLICT);
         assert_eq!(error.code, "CODEX_CALLBACK_BUSY");
         assert!(error.message.contains("127.0.0.1:1455"));
+    }
+
+    #[tokio::test]
+    async fn account_disconnect_routes_the_specific_id_to_the_port() {
+        use axum::{
+            body::Body,
+            http::{Request, StatusCode},
+        };
+        use tower::ServiceExt;
+
+        let accounts = Arc::new(TestAccounts::default());
+        let response = router(Some(accounts.clone()))
+            .oneshot(
+                Request::delete("/api/codex/accounts/profile-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(*accounts.0.lock().unwrap(), ["profile-1"]);
     }
 }

@@ -57,6 +57,15 @@ vi.mock("@/composables/useProviderCatalog", () => ({
 vi.mock("@/components/AddProviderDialog.vue", () => ({
 	default: defineComponent({ template: '<div data-testid="add-dialog" />' }),
 }));
+vi.mock("@/components/CodexAccountsDialog.vue", () => ({
+	default: defineComponent({
+		name: "CodexAccountsDialog",
+		props: ["open"],
+		emits: ["update:open", "linked"],
+		template:
+			'<div data-testid="codex-dialog"><button data-testid="close-codex" @click="$emit(\'update:open\', false)" /></div>',
+	}),
+}));
 vi.mock("@/components/ConnectionListItem.vue", () => ({
 	default: defineComponent({
 		props: ["connection", "models", "testing", "busy"],
@@ -180,6 +189,69 @@ describe("ProviderDetailsView", () => {
 	it("renders the provider display name in the header", async () => {
 		const { wrapper } = await mountView("/providers/openai");
 		expect(wrapper.text()).toContain("OpenAI");
+	});
+
+	it("returns to the named Providers route after a Codex account is linked", async () => {
+		const codexDescriptor: ProviderDescriptorResponse = {
+			id: "openai-codex" as ProviderDescriptorResponse["id"],
+			label: "OpenAI Codex",
+			category: "oauth",
+			protocol: "openAiChat",
+			authKinds: ["apiKey"],
+			supportsOAuth: false,
+			iconKey: "openai",
+			capabilityCeiling: {
+				tools: "unknown",
+				vision: "unknown",
+				reasoning: "unknown",
+				streaming: "unknown",
+				contextTokens: null,
+			},
+		};
+		const { wrapper, router } = await mountView("/providers/openai-codex", [
+			codexDescriptor,
+		]);
+
+		await wrapper.get('[data-testid="add-connection"]').trigger("click");
+		const dialog = wrapper.findComponent({ name: "CodexAccountsDialog" });
+		expect(dialog.props("open")).toBe(true);
+		dialog.vm.$emit("linked", {
+			enabled: true,
+			accounts: [{ id: "linked-account" }],
+			attempt: { id: "attempt-1", status: "linked" },
+		});
+		await flushPromises();
+
+		expect(router.currentRoute.value.name).toBe("Providers");
+	});
+
+	it("does not leave the Codex detail route when its dialog closes manually", async () => {
+		const codexDescriptor: ProviderDescriptorResponse = {
+			id: "openai-codex" as ProviderDescriptorResponse["id"],
+			label: "OpenAI Codex",
+			category: "oauth",
+			protocol: "openAiChat",
+			authKinds: ["apiKey"],
+			supportsOAuth: false,
+			iconKey: "openai",
+			capabilityCeiling: {
+				tools: "unknown",
+				vision: "unknown",
+				reasoning: "unknown",
+				streaming: "unknown",
+				contextTokens: null,
+			},
+		};
+		const { wrapper, router } = await mountView("/providers/openai-codex", [
+			codexDescriptor,
+		]);
+
+		await wrapper.get('[data-testid="add-connection"]').trigger("click");
+		const dialog = wrapper.findComponent({ name: "CodexAccountsDialog" });
+		await dialog.get('[data-testid="close-codex"]').trigger("click");
+		await flushPromises();
+
+		expect(router.currentRoute.value.name).toBe("Provider Details");
 	});
 
 	it("renders the title as an external link with correct href for openai", async () => {

@@ -5,14 +5,16 @@
 //! listener. This module serves that single path only while a login attempt is
 //! pending, redirects to a query-free result page, then closes the listener.
 
-use std::sync::Weak;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use rook_core::codex_accounts::{CodexCallback, CODEX_CALLBACK_PATH};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
+    sync::Mutex,
     task::JoinSet,
+    time::Instant,
 };
 
 use super::{CodexProfileStore, Inner};
@@ -23,21 +25,33 @@ const MAX_ACTIVE_CONNECTIONS: usize = 4;
 const RESULT_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_CODE_BYTES: usize = 4096;
 const STATE_LEN: usize = 43;
+pub(super) const MAX_CALLBACK_REQUESTS: u32 = 30;
+const CALLBACK_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
 
-const SUCCESS_PAGE: &str = "<!doctype html><html lang=en><title>Codex sign-in</title><p>Sign-in received. Return to the Rook dashboard to check the result. You can close this tab.</p></html>";
-const INVALID_PAGE: &str = "<!doctype html><html lang=en><title>Invalid Codex callback</title><p>This callback is invalid or expired. Return to the Rook dashboard.</p></html>";
-const NOT_FOUND_PAGE: &str =
-    "<!doctype html><html lang=en><title>Not found</title><p>Not found.</p></html>";
+const PAGE_STYLES: &str = r#"
+    :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { min-height: 100vh; margin: 0; padding: 24px; display: grid; place-items: center; background: #1A1A1A; color: #F7F5F2; }
+    main { width: min(100%, 480px); padding: clamp(24px, 6vw, 40px); border: 1px solid #393634; border-radius: 20px; background: #242220; box-shadow: 0 24px 72px #00000055; }
+    .brand { display: flex; align-items: center; gap: 10px; color: #F7F5F2; font-size: 14px; font-weight: 650; letter-spacing: .04em; }
+    .brand-mark { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 8px; background: #E84A3C; color: #1A1A1A; font-size: 16px; font-weight: 800; letter-spacing: 0; }
+    .status-icon { display: grid; width: 52px; height: 52px; margin: 36px 0 20px; place-items: center; border: 1px solid #E84A3C66; border-radius: 50%; color: #E84A3C; }
+    .status-icon svg { width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; }
+    h1 { margin: 0; font-size: clamp(24px, 5vw, 30px); line-height: 1.2; letter-spacing: -.025em; }
+    p { margin: 14px 0 0; color: #D1CBC6; font-size: 16px; line-height: 1.65; }
+    @media (max-width: 480px) { body { padding: 16px; } main { border-radius: 16px; } }
+"#;
 
 pub(super) fn spawn(inner: Weak<Inner>, listener: TcpListener) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut connections = JoinSet::new();
+        let callback_budget = CallbackBudget::default();
         loop {
             tokio::select! {
                 biased;
                 result = connections.join_next(), if !connections.is_empty() => {
-                    if matches!(result, Some(Ok(ServeOutcome::CallbackAccepted))) {
-                        let _ = tokio::time::timeout(RESULT_TIMEOUT, serve_result(&listener)).await;
+                    if let Some(Ok(ServeOutcome::CallbackAccepted(page))) = result {
+                        let _ = tokio::time::timeout(RESULT_TIMEOUT, serve_result(&listener, page)).await;
                         break;
                     }
                 }
@@ -46,12 +60,13 @@ pub(super) fn spawn(inner: Weak<Inner>, listener: TcpListener) -> tokio::task::J
                         break;
                     };
                     let inner = inner.clone();
+                    let callback_budget = callback_budget.clone();
                     connections.spawn(async move {
                         let Some(inner) = inner.upgrade() else {
                             return ServeOutcome::Continue;
                         };
                         let store = CodexProfileStore::from_inner(inner);
-                        tokio::time::timeout(READ_TIMEOUT, serve(stream, &store))
+                        tokio::time::timeout(READ_TIMEOUT, serve(stream, &store, callback_budget))
                             .await
                             .unwrap_or(ServeOutcome::Continue)
                     });
@@ -66,43 +81,141 @@ pub(super) fn spawn(inner: Weak<Inner>, listener: TcpListener) -> tokio::task::J
 #[derive(PartialEq, Eq)]
 enum ServeOutcome {
     Continue,
-    CallbackAccepted,
+    CallbackAccepted(CallbackPage),
 }
 
-async fn serve(mut stream: TcpStream, store: &CodexProfileStore) -> ServeOutcome {
+#[derive(Clone)]
+struct CallbackBudget(Arc<Mutex<RateWindow>>);
+
+struct RateWindow {
+    started_at: Instant,
+    requests: u32,
+}
+
+impl Default for CallbackBudget {
+    fn default() -> Self {
+        Self(Arc::new(Mutex::new(RateWindow {
+            started_at: Instant::now(),
+            requests: 0,
+        })))
+    }
+}
+
+impl CallbackBudget {
+    async fn allow(&self) -> bool {
+        self.allow_at(Instant::now()).await
+    }
+
+    async fn allow_at(&self, now: Instant) -> bool {
+        let mut window = self.0.lock().await;
+        if now.duration_since(window.started_at) >= CALLBACK_RATE_LIMIT_WINDOW {
+            window.started_at = now;
+            window.requests = 0;
+        }
+        if window.requests >= MAX_CALLBACK_REQUESTS {
+            return false;
+        }
+        window.requests += 1;
+        true
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CallbackPage {
+    AuthorizationReceived,
+    Cancelled,
+    Failed,
+    Invalid,
+    NotFound,
+}
+
+impl CallbackPage {
+    fn for_callback(callback: &CodexCallback) -> Self {
+        match callback {
+            CodexCallback::Code(_) => Self::AuthorizationReceived,
+            CodexCallback::Denied => Self::Cancelled,
+            CodexCallback::Failed => Self::Failed,
+        }
+    }
+
+    fn html(self) -> String {
+        let (title, message, icon) = match self {
+            Self::AuthorizationReceived => (
+                "Autorización recibida",
+                "Rook recibió la autorización y está completando el vínculo de la cuenta. Vuelve a la otra pestaña de Rook para confirmar el resultado.",
+                "<circle cx=\"24\" cy=\"24\" r=\"20\"></circle><path d=\"m15 24 6 6 12-13\"></path>",
+            ),
+            Self::Cancelled => (
+                "Inicio de sesión cancelado",
+                "El inicio de sesión se canceló. Puedes volver a Rook para intentarlo de nuevo.",
+                "<circle cx=\"24\" cy=\"24\" r=\"20\"></circle><path d=\"m17 17 14 14m0-14L17 31\"></path>",
+            ),
+            Self::Failed => (
+                "No se pudo completar el inicio de sesión",
+                "El proveedor no pudo completar la autorización. Puedes volver a Rook e intentarlo de nuevo.",
+                "<circle cx=\"24\" cy=\"24\" r=\"20\"></circle><path d=\"M24 14v12m0 7h.01\"></path>",
+            ),
+            Self::Invalid => (
+                "Callback no válido",
+                "Este callback no es válido o ha caducado. Vuelve a Rook para iniciar otro intento.",
+                "<circle cx=\"24\" cy=\"24\" r=\"20\"></circle><path d=\"M24 14v12m0 7h.01\"></path>",
+            ),
+            Self::NotFound => (
+                "Página no encontrada",
+                "No se encontró esta página. Vuelve a Rook para continuar.",
+                "<circle cx=\"24\" cy=\"24\" r=\"20\"></circle><path d=\"M24 14v12m0 7h.01\"></path>",
+            ),
+        };
+
+        format!(
+            "<!doctype html><html lang=\"es\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{title} · Rook</title><style>{PAGE_STYLES}</style></head><body><main aria-labelledby=\"page-title\"><div class=\"brand\"><span class=\"brand-mark\" aria-hidden=\"true\">R</span><span>Rook</span></div><div class=\"status-icon\"><svg aria-hidden=\"true\" focusable=\"false\" viewBox=\"0 0 48 48\">{icon}</svg></div><h1 id=\"page-title\">{title}</h1><p>{message}</p></main></body></html>"
+        )
+    }
+}
+
+async fn serve(
+    mut stream: TcpStream,
+    store: &CodexProfileStore,
+    callback_budget: CallbackBudget,
+) -> ServeOutcome {
     let Some(target) = read_target(&mut stream).await else {
-        respond(&mut stream, 400, INVALID_PAGE).await;
+        respond(&mut stream, 400, &CallbackPage::Invalid.html()).await;
         return ServeOutcome::Continue;
     };
     // `target` starts with '/', so the synthetic base only supplies an origin.
     let Ok(url) = reqwest::Url::parse(&format!("http://127.0.0.1{target}")) else {
-        respond(&mut stream, 400, INVALID_PAGE).await;
+        respond(&mut stream, 400, &CallbackPage::Invalid.html()).await;
         return ServeOutcome::Continue;
     };
     if url.path() != CODEX_CALLBACK_PATH {
-        respond(&mut stream, 404, NOT_FOUND_PAGE).await;
+        respond(&mut stream, 404, &CallbackPage::NotFound.html()).await;
+        return ServeOutcome::Continue;
+    }
+    if !callback_budget.allow().await {
+        respond(&mut stream, 429, &CallbackPage::Invalid.html()).await;
         return ServeOutcome::Continue;
     }
     let Some(callback) = parse_callback(&url) else {
-        respond(&mut stream, 400, INVALID_PAGE).await;
+        respond(&mut stream, 400, &CallbackPage::Invalid.html()).await;
         return ServeOutcome::Continue;
     };
+    let page = CallbackPage::for_callback(&callback.response);
     match store
         .handle_callback(&callback.state, callback.response, false)
         .await
     {
         Ok(()) => {
             redirect_to_result(&mut stream).await;
-            ServeOutcome::CallbackAccepted
+            ServeOutcome::CallbackAccepted(page)
         }
         Err(_) => {
-            respond(&mut stream, 400, INVALID_PAGE).await;
+            respond(&mut stream, 400, &CallbackPage::Invalid.html()).await;
             ServeOutcome::Continue
         }
     }
 }
 
-async fn serve_result(listener: &TcpListener) {
+async fn serve_result(listener: &TcpListener, page: CallbackPage) {
     let mut connections = JoinSet::new();
     loop {
         tokio::select! {
@@ -113,27 +226,27 @@ async fn serve_result(listener: &TcpListener) {
                     return;
                 };
                 connections.spawn(async move {
-                    let _ = tokio::time::timeout(READ_TIMEOUT, serve_result_request(stream)).await;
+                    let _ = tokio::time::timeout(READ_TIMEOUT, serve_result_request(stream, page)).await;
                 });
             }
         }
     }
 }
 
-async fn serve_result_request(mut stream: TcpStream) {
+async fn serve_result_request(mut stream: TcpStream, page: CallbackPage) {
     let Some(target) = read_target(&mut stream).await else {
-        respond(&mut stream, 400, INVALID_PAGE).await;
+        respond(&mut stream, 400, &CallbackPage::Invalid.html()).await;
         return;
     };
     let Ok(url) = reqwest::Url::parse(&format!("http://127.0.0.1{target}")) else {
-        respond(&mut stream, 400, INVALID_PAGE).await;
+        respond(&mut stream, 400, &CallbackPage::Invalid.html()).await;
         return;
     };
     if url.path() != CODEX_CALLBACK_PATH || url.query().is_some() {
-        respond(&mut stream, 404, NOT_FOUND_PAGE).await;
+        respond(&mut stream, 404, &CallbackPage::NotFound.html()).await;
         return;
     }
-    respond(&mut stream, 200, SUCCESS_PAGE).await;
+    respond(&mut stream, 200, &page.html()).await;
 }
 
 struct Callback {
@@ -217,6 +330,7 @@ async fn respond(stream: &mut TcpStream, status: u16, body: &str) {
         400 => "Bad Request",
         404 => "Not Found",
         303 => "See Other",
+        429 => "Too Many Requests",
         _ => "Error",
     };
     write_response(stream, status, reason, None, body).await;
@@ -242,7 +356,7 @@ async fn write_response(
          Content-Type: text/html; charset=utf-8\r\n\
          Cache-Control: no-store\r\n\
          Referrer-Policy: no-referrer\r\n\
-         Content-Security-Policy: default-src 'none'; frame-ancestors 'none'; base-uri 'none'\r\n\
+         Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'\r\n\
          Connection: close\r\n\
          Content-Length: {}\r\n\r\n",
         body.len()
@@ -256,6 +370,22 @@ async fn write_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn callback_budget_limits_requests_per_minute_and_resets() {
+        let budget = CallbackBudget::default();
+        let started_at = Instant::now();
+
+        for _ in 0..MAX_CALLBACK_REQUESTS {
+            assert!(budget.allow_at(started_at).await);
+        }
+        assert!(!budget.allow_at(started_at).await);
+        assert!(
+            budget
+                .allow_at(started_at + CALLBACK_RATE_LIMIT_WINDOW)
+                .await
+        );
+    }
 
     fn callback_url(query: &str) -> reqwest::Url {
         reqwest::Url::parse(&format!("http://127.0.0.1{CODEX_CALLBACK_PATH}?{query}")).unwrap()

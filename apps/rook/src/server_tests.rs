@@ -77,12 +77,12 @@ db_path = {:?}
         .execute()
         .await
         .unwrap();
-    let password = "Fake-Test-Pass-123!";
+    let password = format!("Fake-Test-Pass-{}!", shared_kernel::RequestId::new());
     container
         .usecases
         .set_admin_password
         .execute(SetAdminPasswordInput {
-            new_password: password.into(),
+            new_password: password.clone(),
         })
         .await
         .unwrap();
@@ -91,7 +91,7 @@ db_path = {:?}
         .login
         .execute(LoginInput {
             username: "admin".into(),
-            password: password.into(),
+            password,
         })
         .await
         .unwrap();
@@ -170,6 +170,7 @@ db_path = {:?}
         .unwrap();
     assert_eq!(csrf_denied.status(), StatusCode::FORBIDDEN);
     let cancel_csrf_denied = app
+        .clone()
         .oneshot(
             Request::delete("/api/codex/login/synthetic")
                 .header("cookie", &cookie)
@@ -179,6 +180,39 @@ db_path = {:?}
         .await
         .unwrap();
     assert_eq!(cancel_csrf_denied.status(), StatusCode::FORBIDDEN);
+
+    let invalid_session = shared_kernel::RequestId::new().to_string();
+    let csrf_token = container
+        .csrf_guard
+        .generate_token_for(Some(&invalid_session))
+        .unwrap();
+    let invalid_session_cookie = format!("auth_token={invalid_session}; csrf_token={csrf_token}");
+    let disconnect_unauthenticated = app
+        .clone()
+        .oneshot(
+            Request::delete("/api/codex/accounts/synthetic-id")
+                .header("cookie", &invalid_session_cookie)
+                .header("x-csrf-token", &csrf_token)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        disconnect_unauthenticated.status(),
+        StatusCode::UNAUTHORIZED
+    );
+
+    let disconnect_csrf_denied = app
+        .oneshot(
+            Request::delete("/api/codex/accounts/synthetic-id")
+                .header("cookie", &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(disconnect_csrf_denied.status(), StatusCode::FORBIDDEN);
     container.shutdown().await.unwrap();
 }
 

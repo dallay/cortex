@@ -3,7 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ref } from "vue";
 import { createI18n } from "vue-i18n";
 import { Button } from "@/components/ui/button";
-import type { ProviderConnectionResponse } from "@/lib/api";
+import type {
+	CodexAccountsResponse,
+	ProviderConnectionResponse,
+} from "@/lib/api";
 import en from "@/locales/en.json";
 import ProvidersView from "./ProvidersView.vue";
 
@@ -12,6 +15,8 @@ const state = vi.hoisted(() => ({
 	providersFetch: vi.fn(),
 	modelsFetch: vi.fn(),
 }));
+
+const api = vi.hoisted(() => ({ getCodexAccounts: vi.fn() }));
 
 const mockProviders = ref<ProviderConnectionResponse[]>([]);
 
@@ -45,7 +50,17 @@ const mockItems = ref([
 		descriptionKey: "providers.kinds.ollamaDesc",
 		capabilities: ["chat"],
 	},
+	{
+		kind: "openai-codex",
+		category: "oauth",
+		displayNameKey: "providers.kind.openaiCodex.name",
+		label: "OpenAI Codex",
+		descriptionKey: "providers.kind.openaiCodex.description",
+		capabilities: ["chat"],
+	},
 ]);
+
+vi.mock("@/lib/api", () => ({ useApi: () => api }));
 
 vi.mock("@/composables/useProviders", () => ({
 	useProviders: () => ({
@@ -121,10 +136,23 @@ describe("ProvidersView descriptor requests", () => {
 				descriptionKey: "providers.kinds.ollamaDesc",
 				capabilities: ["chat"],
 			},
+			{
+				kind: "openai-codex",
+				category: "oauth",
+				displayNameKey: "providers.kind.openaiCodex.name",
+				label: "OpenAI Codex",
+				descriptionKey: "providers.kind.openaiCodex.description",
+				capabilities: ["chat"],
+			},
 		];
 		state.fetch.mockReset();
 		state.providersFetch.mockReset();
 		state.modelsFetch.mockReset();
+		api.getCodexAccounts.mockReset().mockResolvedValue({
+			enabled: true,
+			accounts: [],
+			attempt: null,
+		});
 	});
 
 	it("fetches providers, models, and descriptors on mount", () => {
@@ -132,6 +160,124 @@ describe("ProvidersView descriptor requests", () => {
 		expect(state.providersFetch).toHaveBeenCalledOnce();
 		expect(state.modelsFetch).toHaveBeenCalledOnce();
 		expect(state.fetch).toHaveBeenCalledOnce();
+	});
+
+	it("loads Codex accounts with an abort signal and passes the snapshot to its catalog section", async () => {
+		const snapshot: CodexAccountsResponse = {
+			enabled: true,
+			accounts: [{ id: "linked-one" }],
+			attempt: null,
+		};
+		api.getCodexAccounts.mockResolvedValueOnce(snapshot);
+		const wrapper = mountView();
+		await flushPromises();
+
+		expect(api.getCodexAccounts).toHaveBeenCalledWith(expect.any(AbortSignal));
+		const codexSection = wrapper
+			.findAllComponents({ name: "ProviderCategorySection" })
+			.find((section) =>
+				(section.props("items") as Array<{ kind: string }>).some(
+					(item) => item.kind === "openai-codex",
+				),
+			);
+		expect(codexSection?.props("codexAccounts")).toEqual(snapshot);
+	});
+
+	it("keeps Codex account loading distinct until the initial request settles", async () => {
+		let resolveInitial!: (snapshot: CodexAccountsResponse) => void;
+		api.getCodexAccounts.mockReturnValueOnce(
+			new Promise((resolve) => {
+				resolveInitial = resolve;
+			}),
+		);
+		const wrapper = mountView();
+		const codexSection = wrapper
+			.findAllComponents({ name: "ProviderCategorySection" })
+			.find((section) =>
+				(section.props("items") as Array<{ kind: string }>).some(
+					(item) => item.kind === "openai-codex",
+				),
+			);
+
+		expect(codexSection?.props("codexAccountsLoading")).toBe(true);
+
+		resolveInitial({ enabled: true, accounts: [], attempt: null });
+		await flushPromises();
+
+		expect(codexSection?.props("codexAccountsLoading")).toBe(false);
+	});
+
+	it("keeps disabled and failed account states from becoming a zero count", async () => {
+		api.getCodexAccounts.mockResolvedValueOnce({
+			enabled: false,
+			accounts: [],
+			attempt: null,
+		});
+		const disabled = mountView();
+		await flushPromises();
+		const disabledSection = disabled
+			.findAllComponents({ name: "ProviderCategorySection" })
+			.find((section) =>
+				(section.props("items") as Array<{ kind: string }>).some(
+					(item) => item.kind === "openai-codex",
+				),
+			);
+		expect(disabledSection?.props("codexAccounts")).toMatchObject({
+			enabled: false,
+			accounts: [],
+		});
+		expect(disabledSection?.props("codexAccountsLoading")).toBe(false);
+
+		api.getCodexAccounts.mockRejectedValueOnce(new Error("request failed"));
+		const failed = mountView();
+		await flushPromises();
+		const failedSection = failed
+			.findAllComponents({ name: "ProviderCategorySection" })
+			.find((section) =>
+				(section.props("items") as Array<{ kind: string }>).some(
+					(item) => item.kind === "openai-codex",
+				),
+			);
+		expect(failedSection?.props("codexAccounts")).toBeNull();
+		expect(failedSection?.props("codexAccountsLoading")).toBe(false);
+		expect(
+			failed
+				.findAllComponents({ name: "ErrorBanner" })
+				.some((banner) =>
+					String(banner.props("message")).includes("Codex accounts"),
+				),
+		).toBe(true);
+	});
+
+	it("applies the linked snapshot and ignores a late initial response", async () => {
+		let resolveInitial!: (snapshot: CodexAccountsResponse) => void;
+		api.getCodexAccounts.mockReturnValueOnce(
+			new Promise((resolve) => {
+				resolveInitial = resolve;
+			}),
+		);
+		const wrapper = mountView();
+		const linkedSnapshot: CodexAccountsResponse = {
+			enabled: true,
+			accounts: [{ id: "new-account" }, { id: "second-account" }],
+			attempt: { id: "attempt-1", status: "linked" },
+		};
+		wrapper
+			.findComponent({ name: "CodexAccountsDialog" })
+			.vm.$emit("linked", linkedSnapshot);
+		await flushPromises();
+
+		resolveInitial({ enabled: true, accounts: [], attempt: null });
+		await flushPromises();
+
+		const codexSection = wrapper
+			.findAllComponents({ name: "ProviderCategorySection" })
+			.find((section) =>
+				(section.props("items") as Array<{ kind: string }>).some(
+					(item) => item.kind === "openai-codex",
+				),
+			);
+		expect(codexSection?.props("codexAccounts")).toEqual(linkedSnapshot);
 	});
 
 	it("shows loading while the descriptor request is pending and items are empty", () => {

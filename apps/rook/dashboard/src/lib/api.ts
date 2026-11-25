@@ -1093,6 +1093,12 @@ function createApiClient() {
 			});
 		},
 
+		disconnectCodexAccount(id: string): Promise<void> {
+			return request(`/api/codex/accounts/${encodeURIComponent(id)}`, {
+				method: "DELETE",
+			});
+		},
+
 		async startOAuthFlow(
 			provider: ProviderKind,
 			data: OAuthFlowStartRequest,

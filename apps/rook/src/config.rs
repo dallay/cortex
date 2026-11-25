@@ -238,8 +238,13 @@ pub struct ServerConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CodexAccountsConfig {
+    #[serde(default = "default_codex_client_id")]
     pub client_id: String,
     pub state_dir: std::path::PathBuf,
+}
+
+fn default_codex_client_id() -> String {
+    "app_EMoamEEZ73f0CkXaXp7hrann".into()
 }
 
 const fn default_health_check_interval_secs() -> u64 {
@@ -705,6 +710,15 @@ mod tests {
         let path = dir.path().join("config.toml");
         std::fs::write(&path, toml).expect("write config");
         RookConfig::load(&path)
+    }
+
+    #[test]
+    fn codex_accounts_default_to_the_public_codex_client_id() {
+        let config: CodexAccountsConfig =
+            toml::from_str(r#"state_dir = "/absolute/path/to/codex-state""#)
+                .expect("state directory alone should configure Codex linking");
+
+        assert_eq!(config.client_id, "app_EMoamEEZ73f0CkXaXp7hrann");
     }
 
     const ROUTING_WEIGHT_CONFIG: &str = r#"

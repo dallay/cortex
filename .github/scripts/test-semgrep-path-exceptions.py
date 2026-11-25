@@ -97,6 +97,20 @@ class InventoryTests(unittest.TestCase):
             "load_imatrix", "load",
         ])
 
+    def test_codex_profile_store_inventory_is_exactly_eight_sinks(self):
+        entries = [row for row in gate.NEW if row[0] ==
+                   "crates/infrastructure/providers-openai/src/codex/mod.rs"]
+        self.assertEqual([(row[1], row[2], row[3]) for row in entries], [
+            ("load_profiles", "for file in fs::read_dir(root)? {", "codex-profile-store"),
+            ("save_account", "fs::File::open(&profile)?.sync_all()?;", "codex-profile-store"),
+            ("save_account", "fs::File::open(root)?.sync_all()", "codex-profile-store"),
+            ("save_account", "let profile = root.join(id);", "codex-profile-store"),
+            ("save_account", "fs::DirBuilder::new().mode(0o700).create(&profile)?;", "codex-profile-store"),
+            ("remove_account", "let profile = root.join(id);", "codex-profile-store"),
+            ("remove_account", "fs::remove_dir_all(&profile)?;", "codex-profile-store"),
+            ("remove_account", "fs::File::open(root)?.sync_all()", "codex-profile-store"),
+        ])
+
     def test_each_candle_contract_rejects_mutations(self):
         for filename, function, sink, reasons in gate.CANDLE:
             target = self.root / filename

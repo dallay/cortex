@@ -668,7 +668,8 @@ Rook uses an OpenAI OAuth client ID whose registered loopback callback is
 uses this callback. OpenAI rejects other ports or paths for that client. The
 callback listener is separate from Rook's main listener and runs only while one
 login attempt is pending. A custom client ID must have this exact redirect URI
-registered.
+registered. Rook uses the public Codex CLI client ID by default, so no separate
+OAuth app registration is required for the default.
 
 Run Rook as an unprivileged Unix user. Create a dedicated state directory owned
 by that user with permissions `0700`. Supply a dedicated random passphrase in
@@ -682,9 +683,11 @@ host = "127.0.0.1"
 port = 8080
 
 [server.codex_accounts]
-client_id = "<operator-registered-client-id>"
 state_dir = "/absolute/path/to/rook-codex-state"
 ```
+
+Set `client_id` only to override the default with an OAuth client that has the
+exact loopback redirect URI above registered.
 
 Omit `[server.codex_accounts]` to disable linking. Rook requires a Unix host and
 `server.host = "127.0.0.1"`. During `POST /api/codex/login`, Rook binds

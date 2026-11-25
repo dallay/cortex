@@ -18,10 +18,10 @@ import { createI18n } from "vue-i18n";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { Badge } from "@/components/ui/badge";
 import type { ProviderCatalogItem } from "@/composables/useProviderCatalog";
+import type { CodexAccountsResponse } from "@/lib/api";
 import en from "@/locales/en.json";
+import es from "@/locales/es.json";
 import ProviderCatalogCard from "./ProviderCatalogCard.vue";
-
-const i18n = createI18n({ legacy: false, locale: "en", messages: { en } });
 
 function makeItem(
 	overrides: Partial<ProviderCatalogItem> = {},
@@ -43,7 +43,12 @@ function makeItem(
 	};
 }
 
-async function mountCard(item: ProviderCatalogItem) {
+async function mountCard(
+	item: ProviderCatalogItem,
+	codexAccounts?: CodexAccountsResponse | null,
+	locale: "en" | "es" = "en",
+	codexAccountsLoading = false,
+) {
 	const router = createRouter({
 		history: createMemoryHistory(),
 		routes: [
@@ -59,8 +64,13 @@ async function mountCard(item: ProviderCatalogItem) {
 	await router.isReady();
 
 	const wrapper = mount(ProviderCatalogCard, {
-		props: { item },
-		global: { plugins: [i18n, router] },
+		props: { item, codexAccounts, codexAccountsLoading },
+		global: {
+			plugins: [
+				createI18n({ legacy: false, locale, messages: { en, es } }),
+				router,
+			],
+		},
 	});
 
 	return { wrapper, router };
@@ -128,6 +138,125 @@ describe("ProviderCatalogCard", () => {
 
 		const plural = await mountCard(makeItem({ connectionCount: 3 }));
 		expect(plural.wrapper.text()).toContain("3 connections");
+	});
+
+	it("shows Codex account totals separately and selects the localized account action", async () => {
+		const zero = await mountCard(
+			makeItem({
+				kind: "openai-codex",
+				connectionCount: 0,
+				hasActiveConnections: false,
+			}),
+			{ enabled: true, accounts: [], attempt: null },
+		);
+		expect(zero.wrapper.getComponent(Badge).text()).toBe("Not linked");
+		expect(zero.wrapper.text()).toContain("No linked accounts");
+		expect(zero.wrapper.text()).not.toContain("0 connections");
+		expect(
+			zero.wrapper.get('[data-testid="provider-card-add-openai-codex"]').text(),
+		).toContain("Link account");
+
+		const one = await mountCard(
+			makeItem({
+				kind: "openai-codex",
+				connectionCount: 0,
+				hasActiveConnections: false,
+			}),
+			{ enabled: true, accounts: [{ id: "one" }], attempt: null },
+		);
+		expect(one.wrapper.getComponent(Badge).text()).toBe("Linked");
+		expect(one.wrapper.text()).toContain("1 linked account");
+		expect(one.wrapper.text()).not.toContain("1 account");
+		expect(one.wrapper.text()).not.toContain("Not configured");
+		expect(
+			one.wrapper.get('[data-testid="provider-card-add-openai-codex"]').text(),
+		).toContain("Manage accounts");
+
+		const several = await mountCard(makeItem({ kind: "openai-codex" }), {
+			enabled: true,
+			accounts: [{ id: "one" }, { id: "two" }, { id: "three" }],
+			attempt: null,
+		});
+		expect(several.wrapper.getComponent(Badge).text()).toBe("Linked");
+		expect(several.wrapper.text()).toContain("3 linked accounts");
+		expect(
+			several.wrapper
+				.get('[data-testid="provider-card-add-openai-codex"]')
+				.text(),
+		).toContain("Manage accounts");
+	});
+
+	it("shows a checking state instead of unavailable while Codex accounts are loading", async () => {
+		const { wrapper } = await mountCard(
+			makeItem({ kind: "openai-codex", connectionCount: 7 }),
+			null,
+			"en",
+			true,
+		);
+
+		expect(wrapper.getComponent(Badge).text()).toBe("Checking linked accounts");
+		expect(wrapper.text()).toContain("Checking linked accounts");
+		expect(wrapper.text()).not.toContain("Unavailable");
+		expect(wrapper.text()).not.toContain("7 connections");
+
+		const checkingSpanish = await mountCard(
+			makeItem({ kind: "openai-codex" }),
+			null,
+			"es",
+			true,
+		);
+		expect(checkingSpanish.wrapper.getComponent(Badge).text()).toBe(
+			"Comprobando cuentas vinculadas",
+		);
+	});
+
+	it("does not present disabled or unavailable Codex accounts as zero", async () => {
+		const disabled = await mountCard(makeItem({ kind: "openai-codex" }), {
+			enabled: false,
+			accounts: [],
+			attempt: null,
+		});
+		expect(disabled.wrapper.getComponent(Badge).text()).toBe("Unavailable");
+		expect(disabled.wrapper.text()).toContain(
+			"Codex account linking is unavailable",
+		);
+		expect(disabled.wrapper.text()).not.toContain("0 accounts");
+		expect(disabled.wrapper.text()).not.toContain("2 connections");
+		expect(
+			disabled.wrapper
+				.get('[data-testid="provider-card-add-openai-codex"]')
+				.text(),
+		).toContain("Link account");
+
+		const unavailable = await mountCard(
+			makeItem({ kind: "openai-codex" }),
+			null,
+		);
+		expect(unavailable.wrapper.getComponent(Badge).text()).toBe("Unavailable");
+		expect(unavailable.wrapper.text()).not.toContain("0 linked accounts");
+	});
+
+	it("localizes Codex account badges and actions in Spanish", async () => {
+		const zero = await mountCard(
+			makeItem({ kind: "openai-codex" }),
+			{ enabled: true, accounts: [], attempt: null },
+			"es",
+		);
+		expect(zero.wrapper.getComponent(Badge).text()).toBe("Sin vincular");
+		expect(zero.wrapper.text()).toContain("Sin cuentas vinculadas");
+		expect(
+			zero.wrapper.get('[data-testid="provider-card-add-openai-codex"]').text(),
+		).toContain("Vincular cuenta");
+
+		const one = await mountCard(
+			makeItem({ kind: "openai-codex" }),
+			{ enabled: true, accounts: [{ id: "one" }], attempt: null },
+			"es",
+		);
+		expect(one.wrapper.getComponent(Badge).text()).toBe("Vinculada");
+		expect(
+			one.wrapper.get('[data-testid="provider-card-add-openai-codex"]').text(),
+		).toContain("Administrar cuentas");
 	});
 
 	it("emits the provider kind when the add button is clicked", async () => {

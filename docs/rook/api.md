@@ -296,12 +296,17 @@ CSRF double-submit validation. They do not expose provider credentials.
   returns `503` when linking is disabled or unavailable.
 - `DELETE /api/codex/login/{id}` returns `204` if it cancels the pending attempt,
   or `404` if the ID does not match a pending attempt.
+- `DELETE /api/codex/accounts/{id}` removes only that locally stored account and
+  returns `204`, or `404` if it is not linked. It does not revoke the OAuth
+  session at OpenAI.
 
 The OpenAI browser redirect uses a separate loopback listener at
 `http://127.0.0.1:1455/auth/callback`, without a Rook session cookie. The
 listener exists only while a login attempt is pending and requires that
 attempt's single-use OAuth `state`. Invalid, expired, or replayed callbacks
-return `400`. A valid callback returns `303` to the same callback path without
+return `400`. Callback requests are limited to 30 per minute; this budget applies
+only to the OAuth callback, not the static result page. A valid callback returns
+`303` to the same callback path without
 query data, then serves a static result page. This removes the authorization
 code and state from the browser address bar. The listener serves the result page
 for up to five seconds, then closes. Cancellation, expiration, and Rook shutdown

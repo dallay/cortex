@@ -36,6 +36,23 @@ description = "Generic Secret"
 regex = '''(?i)(secret|password|passwd|pwd|token)['"]?\s*[=:]\s*['"]?[a-zA-Z0-9_-]{20,}'''
 
 [[rules.allowlists]]
+description = "Synthetic Codex OAuth token fixtures in listener tests"
+condition = "AND"
+regexTarget = "match"
+paths = ['''^crates/infrastructure/providers-openai/src/codex/tests\.rs$''']
+regexes = [
+  '''(?i)^token["']?\s*:\s*"synthetic-refresh-[a-z0-9_-]+$''',
+  '''(?i)^token["']?\s*:\s*"not-stored-unverified-id-[a-z0-9_-]+$''',
+]
+
+[[rules.allowlists]]
+description = "Fake Codex token fixture in Rook server tests"
+condition = "AND"
+regexTarget = "match"
+paths = ['''^apps/rook/src/server_tests\.rs$''']
+regexes = ['''(?i)=\s*"fake-codex-server-test-123$''']
+
+[[rules.allowlists]]
 description = "Generated password fixture in bootstrap status tests"
 condition = "AND"
 regexTarget = "match"

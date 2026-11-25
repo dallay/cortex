@@ -15,7 +15,7 @@
  */
 
 import {SearchX} from "@lucide/vue";
-import {computed, onMounted, ref} from "vue";
+import {computed, onMounted, onScopeDispose, ref} from "vue";
 import {useI18n} from "vue-i18n";
 import AddProviderDialog from "@/components/AddProviderDialog.vue";
 import CodexAccountsDialog from "@/components/CodexAccountsDialog.vue";
@@ -31,8 +31,10 @@ import {useAvailableModels} from "@/composables/useAvailableModels";
 import {useProviderCatalog} from "@/composables/useProviderCatalog";
 import {useProviders} from "@/composables/useProviders";
 import {CATEGORIES, type ProviderKind} from "@/config/providerCatalog";
+import {type CodexAccountsResponse, useApi} from "@/lib/api";
 
 const {t} = useI18n();
+const api = useApi();
 
 const {providers, update, test, fetch, loading, error} = useProviders();
 const {fetch: fetchModels} = useAvailableModels();
@@ -46,11 +48,50 @@ const {
 
 const searchQuery = ref("");
 const activeCategory = ref<CategoryFilter>("all");
+const codexAccounts = ref<CodexAccountsResponse | null>(null);
+const codexAccountsLoading = ref(true);
+const codexAccountsError = ref(false);
+let codexAccountsRequestId = 0;
+let codexAccountsController: AbortController | undefined;
+
+async function fetchCodexAccounts() {
+  codexAccountsController?.abort();
+  const controller = new AbortController();
+  codexAccountsController = controller;
+  const requestId = ++codexAccountsRequestId;
+  codexAccountsLoading.value = true;
+  codexAccountsError.value = false;
+
+  try {
+    const result = await api.getCodexAccounts(controller.signal);
+    if (controller.signal.aborted || requestId !== codexAccountsRequestId) return;
+    codexAccounts.value = result;
+    codexAccountsLoading.value = false;
+  } catch {
+    if (!controller.signal.aborted && requestId === codexAccountsRequestId) {
+      codexAccounts.value = null;
+      codexAccountsLoading.value = false;
+      codexAccountsError.value = true;
+    }
+  }
+}
+
+function onCodexLinked(result: CodexAccountsResponse) {
+  codexAccountsRequestId++;
+  codexAccountsController?.abort();
+  codexAccountsController = undefined;
+  codexAccounts.value = result;
+  codexAccountsLoading.value = false;
+  codexAccountsError.value = false;
+}
+
+onScopeDispose(() => codexAccountsController?.abort());
 
 onMounted(() => {
   void fetch();
   void fetchModels();
   void fetchDescriptors();
+  void fetchCodexAccounts();
 });
 
 const filteredByCategory = computed(() => {
@@ -132,6 +173,11 @@ function onDeleted() {
     />
 
     <ErrorBanner v-if="error" :message="error" @retry="fetch"/>
+    <ErrorBanner
+      v-if="codexAccountsError"
+      :message="t('providers.codex.error')"
+      @retry="fetchCodexAccounts"
+    />
 
     <ProviderCatalogFilter
       v-model:active-category="activeCategory"
@@ -155,6 +201,8 @@ function onDeleted() {
         v-for="entry in visibleSections"
         :key="entry.category.kind"
         :category="entry.category"
+        :codex-accounts="codexAccounts"
+        :codex-accounts-loading="codexAccountsLoading"
         :items="entry.items"
         @add="openAddDialog"
       />
@@ -178,7 +226,7 @@ function onDeleted() {
       </EmptyState>
     </template>
 
-    <CodexAccountsDialog v-model:open="codexDialogOpen" />
+    <CodexAccountsDialog v-model:open="codexDialogOpen" @linked="onCodexLinked" />
 
     <AddProviderDialog
       v-model:open="addDialogOpen"

@@ -196,6 +196,9 @@ function closeProviderDialog() {
   fetch();
 }
 
+function onCodexLinked() {
+  void router.push({name: "Providers"});
+}
 
 </script>
 
@@ -290,7 +293,11 @@ function closeProviderDialog() {
       </template>
     </EmptyState>
 
-    <CodexAccountsDialog v-if="providerKindParam === 'openai-codex'" v-model:open="addDialogOpen" />
+    <CodexAccountsDialog
+      v-if="providerKindParam === 'openai-codex'"
+      v-model:open="addDialogOpen"
+      @linked="onCodexLinked"
+    />
     <AddProviderDialog
       v-else
       v-model:open="addDialogOpen"
