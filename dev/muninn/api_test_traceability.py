@@ -436,10 +436,16 @@ def summarize_report(report):
         "planned_test": 0,
         "rejected_association": 0,
     }
+    allowed_kinds = {
+        "mapped_reference_test",
+        "failed_reference_test",
+        "planned_test",
+        "rejected_association",
+    }
     mapped_operations = set()
     for entry in entries:
         kind = entry.get("kind")
-        if kind not in counts:
+        if kind not in allowed_kinds:
             fail(f"Tipo de enlace desconocido: {kind}")
         counts[kind] += 1
         if kind == "mapped_reference_test":

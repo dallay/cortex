@@ -23,7 +23,7 @@ use muninn_core::config::WriteMode;
 use muninn_core::ports::{BufferedWriteError, BufferedWriteJob, WriteExecutor};
 use muninn_core::{MemoryError, MemoryResult};
 use serde_json::{Map, Value};
-use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
+use tokio::sync::{mpsc, oneshot, watch, Mutex as AsyncMutex};
 use tokio::task::JoinHandle;
 
 /// Default bounded channel capacity (matches upstream `max_pending = 200`).
@@ -101,6 +101,8 @@ struct WriterLifecycle {
     stopped: bool,
     sender: Option<mpsc::Sender<WriterCommand>>,
     drainer: Option<JoinHandle<()>>,
+    shutdown_done_tx: watch::Sender<bool>,
+    shutdown_done_rx: watch::Receiver<bool>,
 }
 
 /// Bounded, barrier-coordinated buffered writer (`client.buffered`).
@@ -125,6 +127,7 @@ impl BufferedWriter {
                 "max_retained_errors must be at least 1",
             ));
         }
+        let (shutdown_done_tx, shutdown_done_rx) = watch::channel(false);
         Ok(Self {
             executor,
             errors: Arc::new(Mutex::new(ErrorLog::new(config.max_retained_errors))),
@@ -133,6 +136,8 @@ impl BufferedWriter {
                 stopped: false,
                 sender: None,
                 drainer: None,
+                shutdown_done_tx,
+                shutdown_done_rx,
             }),
             pending: Arc::new(AtomicUsize::new(0)),
         })
@@ -193,7 +198,7 @@ impl BufferedWriter {
             ));
         }
 
-        let sender = {
+        let permit = {
             let mut state = self.lifecycle.lock().await;
             if state.stopped {
                 return Err(MemoryError::invalid(
@@ -203,20 +208,20 @@ impl BufferedWriter {
             if !self.is_buffered() {
                 None
             } else {
-                Some(self.ensure_drainer_locked(&mut state))
+                let sender = self.ensure_drainer_locked(&mut state);
+                // Serialize acceptance with `stop()`: reserve while holding the
+                // lifecycle lock so no write can be accepted after `stop()` begins.
+                let permit = sender.reserve_owned().await.map_err(|_| {
+                    MemoryError::invalid("BufferedWriter has been stopped (client closed)")
+                })?;
+                self.pending.fetch_add(1, Ordering::SeqCst);
+                Some(permit)
             }
         };
 
-        let Some(sender) = sender else {
+        let Some(permit) = permit else {
             return self.executor.execute_write(&job.query, &job.params).await;
         };
-
-        // Acquire bounded channel permit (backpressure when full), then record acceptance.
-        let permit = sender
-            .reserve()
-            .await
-            .map_err(|_| MemoryError::invalid("BufferedWriter has been stopped (client closed)"))?;
-        self.pending.fetch_add(1, Ordering::SeqCst);
         permit.send(WriterCommand::Write(job));
         Ok(())
     }
@@ -247,14 +252,24 @@ impl BufferedWriter {
     }
 
     /// Reject further submissions, drain all accepted writes, and stop the background drainer (`client.buffered.stop`).
+    ///
+    /// Concurrent `stop()` callers wait until the single in-progress drain completes.
     pub async fn stop(&self) -> MemoryResult<()> {
-        let (sender, drainer) = {
+        let (sender, drainer, done_tx, mut done_rx) = {
             let mut state = self.lifecycle.lock().await;
             if state.stopped {
+                let mut rx = state.shutdown_done_rx.clone();
+                drop(state);
+                let _ = rx.wait_for(|done| *done).await;
                 return Ok(());
             }
             state.stopped = true;
-            (state.sender.take(), state.drainer.take())
+            (
+                state.sender.take(),
+                state.drainer.take(),
+                state.shutdown_done_tx.clone(),
+                state.shutdown_done_rx.clone(),
+            )
         };
         if let Some(sender) = sender {
             let _ = sender.send(WriterCommand::Shutdown).await;
@@ -262,6 +277,8 @@ impl BufferedWriter {
         if let Some(handle) = drainer {
             let _ = handle.await;
         }
+        let _ = done_tx.send(true);
+        let _ = done_rx.wait_for(|done| *done).await;
         Ok(())
     }
 
@@ -327,8 +344,13 @@ async fn drain_loop(
                         .expect("buffered error log lock")
                         .push(record.clone());
                     if let Some(callback) = &on_error {
-                        // Isolate and bound callback execution so a slow hook never stalls draining.
-                        let _ = tokio::time::timeout(callback_timeout, callback(record)).await;
+                        // Isolate panics and bound callback execution inside a child task
+                        // so a panicking or stalling hook can never terminate or block the drainer.
+                        let cb = Arc::clone(callback);
+                        let handle = tokio::spawn(async move {
+                            cb(record).await;
+                        });
+                        let _ = tokio::time::timeout(callback_timeout, handle).await;
                     }
                 }
             }

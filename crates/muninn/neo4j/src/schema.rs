@@ -518,11 +518,12 @@ impl<'a> SchemaManager<'a> {
                     "MATCH (n:`{label}`) \
                      WHERE NOT n:Entity AND n.`{name_prop}` IS NOT NULL \
                      SET n:Entity, \
-                         n.id = coalesce(n.id, randomUUID()), \
+                         n.id = CASE WHEN n.id IS :: STRING THEN n.id ELSE randomUUID() END, \
                          n.name = coalesce(n.name, toString(n.`{name_prop}`)), \
                          n.canonical_name = coalesce(n.canonical_name, toString(n.`{name_prop}`)), \
                          n.type = coalesce(n.type, $type), \
                          n.name_key = coalesce(n.name_key, toLower(trim(toString(n.`{name_prop}`)))), \
+                         n.surface_keys = coalesce(n.surface_keys, [toLower(trim(toString(n.`{name_prop}`))) ]), \
                          n.adopted_at = coalesce(n.adopted_at, datetime()), \
                          n.adopted_from_label = coalesce(n.adopted_from_label, $label_lc) \
                      RETURN count(n) AS count",

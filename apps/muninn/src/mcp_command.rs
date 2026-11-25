@@ -292,15 +292,15 @@ impl CoreMemoryOps for ApplicationCoreOps {
         query: Option<&str>,
         limit: i64,
     ) -> Result<Value, String> {
-        let conversation = match session_id {
-            Some(sid) => Some(
-                self.short_term
-                    .get_conversation(sid, None, Some(owner), Some(limit))
-                    .await
-                    .map_err(|_| "Conversation lookup failed".to_owned())?,
-            ),
-            None => None,
-        };
+        let sid = session_id
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("default");
+        let conversation = Some(
+            self.short_term
+                .get_conversation(sid, None, Some(owner), Some(limit))
+                .await
+                .map_err(|_| "Conversation lookup failed".to_owned())?,
+        );
         let preferences = match query {
             Some(q) if !q.trim().is_empty() => self
                 .long_term
@@ -314,11 +314,15 @@ impl CoreMemoryOps for ApplicationCoreOps {
                 )
                 .await
                 .map_err(|_| "Preference lookup failed".to_owned())?,
-            _ => self
-                .long_term
-                .get_preferences_for(owner, true)
-                .await
-                .map_err(|_| "Preference lookup failed".to_owned())?,
+            _ => {
+                let mut prefs = self
+                    .long_term
+                    .get_preferences_for(owner, true)
+                    .await
+                    .map_err(|_| "Preference lookup failed".to_owned())?;
+                prefs.truncate(limit.max(0) as usize);
+                prefs
+            }
         };
         Ok(json!({
             "conversation": conversation,
@@ -495,7 +499,14 @@ impl ToolHandler for CoreTool {
             "memory_add_fact" => {
                 let subject = required_non_empty(obj, "subject")?;
                 let predicate = required_non_empty(obj, "predicate")?;
-                let object = required_non_empty(obj, "object")?;
+                let object = obj
+                    .get("object_value")
+                    .or_else(|| obj.get("object"))
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.trim().is_empty())
+                    .ok_or_else(|| {
+                        "Field 'object_value' is required and must be non-empty".to_owned()
+                    })?;
                 self.ops.add_fact(subject, predicate, object).await
             }
             _ => Err("Unknown MCP core tool".to_owned()),

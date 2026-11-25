@@ -99,8 +99,18 @@ def validate_receipt(receipt, valid_capability_ids, expected_candidate_commit, r
     for item in evidence:
         if not isinstance(item, str) or not item.strip():
             raise EvidenceError("evidence entries must be non-empty strings")
-        if item.startswith(("crates/", "apps/", "dev/", "docs/", "tests/")):
-            if not (root / item).exists():
+        normalized = Path(item).as_posix()
+        while normalized.startswith("./"):
+            normalized = normalized[2:]
+        if ".." in Path(normalized).parts or Path(item).is_absolute():
+            raise EvidenceError(f"invalid evidence path: {item}")
+        if normalized.startswith(("crates/", "apps/", "dev/", "docs/", "tests/")):
+            candidate = (root / normalized).resolve()
+            try:
+                candidate.relative_to(root.resolve())
+            except ValueError as error:
+                raise EvidenceError(f"evidence path escapes repository: {item}") from error
+            if not candidate.exists():
                 raise EvidenceError(f"missing evidence path: {item}")
 
 

@@ -91,6 +91,13 @@ class ParityEvidenceValidatorTests(unittest.TestCase):
                 commit,
                 ROOT,
             )
+        with self.assertRaisesRegex(validator.EvidenceError, "evidence"):
+            validator.validate_receipt(
+                sample_receipt(evidence=["./crates/muninn/bridge/tests/buffered.rs"]),
+                cap_ids,
+                commit,
+                ROOT,
+            )
 
     def test_rejects_duplicate_capability_receipts(self):
         cap_ids = validator.load_capability_ids(ROOT)

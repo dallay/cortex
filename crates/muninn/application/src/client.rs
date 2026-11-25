@@ -301,6 +301,14 @@ impl MemoryClient {
             .unwrap_or_default()
     }
 
+    /// Gracefully drain and stop the buffered writer (`client.close`).
+    pub async fn close(&self) -> MemoryResult<()> {
+        match &self.buffered {
+            Some(writer) => writer.stop().await,
+            None => Ok(()),
+        }
+    }
+
     pub async fn cypher(
         &self,
         query: &str,

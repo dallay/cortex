@@ -615,7 +615,7 @@ impl BufferedWriteJob {
     }
 }
 
-/// Low-level write execution port consumed by [`BufferedWriter`] (`BOLT-08-04`).
+/// Low-level write execution port consumed by `BufferedWriter` (`BOLT-08-04`).
 #[async_trait]
 pub trait WriteExecutor: Send + Sync {
     async fn execute_write(

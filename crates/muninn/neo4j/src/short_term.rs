@@ -413,7 +413,7 @@ impl ShortTermStore for Neo4jShortTermStore {
 
             let null = BoltType::Null(BoltNull);
             for (entity_id, provenance) in &extraction.existing_mentions {
-                transaction_rows(
+                let linked = transaction_rows(
                     &mut txn,
                     lq::LINK_MESSAGE_TO_ENTITY,
                     vec![
@@ -438,6 +438,11 @@ impl ShortTermStore for Neo4jShortTermStore {
                     ],
                 )
                 .await?;
+                if linked.is_empty() {
+                    return Err(MemoryError::not_found(format!(
+                        "mentioned entity {entity_id} not found during atomic ingestion"
+                    )));
+                }
             }
 
             let mut names = std::collections::HashMap::new();
