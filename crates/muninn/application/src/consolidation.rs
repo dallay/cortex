@@ -205,24 +205,19 @@ impl ConsolidationMemory {
                 "run_all_with_options requires an explicit conversation_ttl_days value",
             )
         })?;
-        let mut reports = Vec::with_capacity(4);
-        reports.push(
+        Ok(vec![
             self.dedupe_entities(
                 Some(options.dedupe_threshold),
                 Some(options.dedupe_limit),
                 Some(options.dry_run),
             )
             .await?,
-        );
-        reports.push(
             self.summarize_long_traces(
                 Some(options.min_trace_steps),
                 Some(options.trace_limit),
                 Some(options.dry_run),
             )
             .await?,
-        );
-        reports.push(
             self.detect_superseded_preferences_for_owner(
                 options.user_identifier.as_deref(),
                 Some(options.supersede_threshold),
@@ -230,16 +225,13 @@ impl ConsolidationMemory {
                 Some(options.dry_run),
             )
             .await?,
-        );
-        reports.push(
             self.archive_expired_conversations(
                 Some(ttl_days),
                 Some(options.limit),
                 Some(options.dry_run),
             )
             .await?,
-        );
-        Ok(reports)
+        ])
     }
 
     /// Convenience helper running all four consolidation jobs with explicit `ttl_days`.

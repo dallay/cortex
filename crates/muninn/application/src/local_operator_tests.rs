@@ -919,3 +919,243 @@ async fn atomic_ingestion_commits_single_txn_and_rolls_back_without_orphans() {
         "{conflict:?}"
     );
 }
+
+#[tokio::test]
+async fn memory_client_wires_buffered_adoption_spatial_and_eval_facades() {
+    use crate::buffered::{BufferedWriter, BufferedWriterConfig};
+    use muninn_core::config::WriteMode;
+    use muninn_core::ports::{
+        AdoptGraphOptions, AdoptionLabelReport, AdoptionReport, BoundingBox, GeoPoint,
+        SchemaAdoptionPort, SessionLocation, SpatialLocationHit, SpatialStore, WriteExecutor,
+    };
+
+    struct NoopExec;
+    #[async_trait]
+    impl WriteExecutor for NoopExec {
+        async fn execute_write(
+            &self,
+            _: &str,
+            _: &serde_json::Map<String, serde_json::Value>,
+        ) -> MemoryResult<()> {
+            Ok(())
+        }
+    }
+
+    struct StubAdoption;
+    #[async_trait]
+    impl SchemaAdoptionPort for StubAdoption {
+        async fn adopt_existing_graph(
+            &self,
+            options: &AdoptGraphOptions,
+        ) -> MemoryResult<AdoptionReport> {
+            Ok(AdoptionReport {
+                by_label: vec![AdoptionLabelReport {
+                    label: "Person".into(),
+                    entity_type: "PERSON".into(),
+                    name_property: "name".into(),
+                    migrated_count: 1,
+                    already_adopted_count: 0,
+                    skipped_count: 0,
+                    conflict_count: 0,
+                }],
+                dry_run: options.dry_run,
+            })
+        }
+    }
+
+    struct StubSpatial;
+    #[async_trait]
+    impl SpatialStore for StubSpatial {
+        async fn search_locations_near(
+            &self,
+            _: GeoPoint,
+            _: f64,
+            _: i64,
+        ) -> MemoryResult<Vec<SpatialLocationHit>> {
+            Ok(vec![])
+        }
+        async fn search_locations_in_bounding_box(
+            &self,
+            _: BoundingBox,
+            _: i64,
+        ) -> MemoryResult<Vec<SpatialLocationHit>> {
+            Ok(vec![])
+        }
+        async fn get_location_coordinates(&self, _: Uuid) -> MemoryResult<Option<GeoPoint>> {
+            Ok(Some(GeoPoint::new(40.4, -3.7).unwrap()))
+        }
+        async fn get_locations(
+            &self,
+            _: Option<&str>,
+            _: i64,
+        ) -> MemoryResult<Vec<SessionLocation>> {
+            Ok(vec![])
+        }
+    }
+
+    let shared = Arc::new(Store::default());
+    let writer = Arc::new(
+        BufferedWriter::new(
+            Arc::new(NoopExec),
+            BufferedWriterConfig {
+                write_mode: WriteMode::Buffered,
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+
+    // Read-only client rejects buffered writes and schema adoption fail-closed.
+    let ro = MemoryClient::read_only(
+        MemoryPorts {
+            short_term: shared.clone(),
+            long_term: shared.clone(),
+            reasoning: shared.clone(),
+            embedder: None,
+            cypher_query: None,
+        },
+        &MemoryOptions::default(),
+    );
+    assert!(ro.buffered().is_none());
+    assert!(ro.write_errors().is_empty());
+    ro.flush().await.unwrap();
+    ro.wait_for_pending().await.unwrap();
+    ro.close().await.unwrap();
+    assert!(ro
+        .adopt_existing_graph(&AdoptGraphOptions::default())
+        .await
+        .is_err());
+    assert!(ro
+        .search_locations_near(GeoPoint::new(0.0, 0.0).unwrap(), 1.0, 5)
+        .await
+        .is_err());
+    assert!(ro
+        .search_locations_in_bounding_box(BoundingBox::new(0.0, 0.0, 1.0, 1.0).unwrap(), 5)
+        .await
+        .is_err());
+    assert!(ro.get_location_coordinates(Uuid::new_v4()).await.is_err());
+    assert!(ro.get_locations(None, 5).await.is_err());
+    assert!(ro.with_buffered_writer(writer.clone()).is_err());
+
+    let ro2 = MemoryClient::read_only(
+        MemoryPorts {
+            short_term: shared.clone(),
+            long_term: shared.clone(),
+            reasoning: shared.clone(),
+            embedder: None,
+            cypher_query: None,
+        },
+        &MemoryOptions::default(),
+    );
+    assert!(ro2.with_schema_adoption(Arc::new(StubAdoption)).is_err());
+
+    // Write-enabled client wires buffered writer, schema adoption, spatial, and eval.
+    let client = MemoryClient::new(
+        MemoryPorts {
+            short_term: shared.clone(),
+            long_term: shared.clone(),
+            reasoning: shared,
+            embedder: None,
+            cypher_query: None,
+        },
+        &MemoryOptions::default(),
+    )
+    .unwrap()
+    .with_buffered_writer(writer)
+    .unwrap()
+    .with_schema_adoption(Arc::new(StubAdoption))
+    .unwrap()
+    .with_spatial_store(Arc::new(StubSpatial))
+    .with_extractor(Arc::new(CountingExtractor {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+    }));
+
+    assert!(client.buffered().is_some());
+    client
+        .buffered()
+        .unwrap()
+        .submit("CREATE (:Ping)", serde_json::Map::new())
+        .await
+        .unwrap();
+    client.flush().await.unwrap();
+    client.wait_for_pending().await.unwrap();
+    assert!(client.write_errors().is_empty());
+
+    let adopt = client
+        .adopt_existing_graph(&AdoptGraphOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(adopt.total_migrated(), 1);
+
+    assert!(client
+        .search_locations_near(GeoPoint::new(40.4, -3.7).unwrap(), 5.0, 10)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(client
+        .search_locations_in_bounding_box(BoundingBox::new(35.0, -10.0, 44.0, 5.0).unwrap(), 10)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(client
+        .get_location_coordinates(Uuid::new_v4())
+        .await
+        .unwrap()
+        .is_some());
+    assert!(client
+        .get_locations(Some("s1"), 10)
+        .await
+        .unwrap()
+        .is_empty());
+
+    // Exercise EvalMemory extraction (entities + relations) and resolution dimensions.
+    let eval_report = client
+        .eval()
+        .run(&crate::EvalRequest {
+            retrieval: vec![],
+            preferences: vec![],
+            extraction: vec![
+                crate::ExtractionCase {
+                    text: "Alice works at Neo4j".into(),
+                    expected_entities: vec![
+                        crate::ExpectedEntity {
+                            name: "Alice".into(),
+                            entity_type: "PERSON".into(),
+                        },
+                        crate::ExpectedEntity {
+                            name: "Neo4j".into(),
+                            entity_type: "ORGANIZATION".into(),
+                        },
+                    ],
+                    expected_relations: vec![],
+                },
+                crate::ExtractionCase {
+                    text: "Alice works at Neo4j".into(),
+                    expected_entities: vec![],
+                    expected_relations: vec![crate::ExpectedRelation {
+                        source: "Alice".into(),
+                        relation_type: "WORKS_AT".into(),
+                        target: "Neo4j".into(),
+                    }],
+                },
+            ],
+            resolution: vec![crate::ResolutionCase {
+                predicted_clusters: std::collections::BTreeMap::from([
+                    ("a".into(), "c1".into()),
+                    ("b".into(), "c1".into()),
+                ]),
+                gold_clusters: std::collections::BTreeMap::from([
+                    ("a".into(), "g1".into()),
+                    ("b".into(), "g1".into()),
+                ]),
+            }],
+        })
+        .await
+        .unwrap();
+    assert_eq!(eval_report.extraction.as_ref().unwrap().cases, 2);
+    assert!((eval_report.extraction.as_ref().unwrap().score - 1.0).abs() < 1e-9);
+    assert!((eval_report.resolution.as_ref().unwrap().score - 1.0).abs() < 1e-9);
+    assert!(eval_report.skipped.is_empty());
+
+    client.close().await.unwrap();
+}

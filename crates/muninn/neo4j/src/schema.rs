@@ -465,7 +465,10 @@ impl<'a> SchemaManager<'a> {
                 .client
                 .execute(
                     &format!(
-                        "MATCH (n:`{label}`) WHERE NOT n:Entity AND n.`{name_prop}` IS NOT NULL AND n.id IS NOT NULL AND EXISTS {{ MATCH (e:Entity {{id: n.id}}) }} RETURN count(n) AS count"
+                        "MATCH (n:`{label}`) \
+                         WHERE NOT n:Entity AND n.`{name_prop}` IS NOT NULL AND n.id IS NOT NULL \
+                           AND (NOT n.id IS :: STRING NOT NULL OR EXISTS {{ MATCH (e:Entity {{id: n.id}}) }}) \
+                         RETURN count(n) AS count"
                     ),
                     vec![],
                 )
@@ -501,11 +504,12 @@ impl<'a> SchemaManager<'a> {
             });
         }
 
-        // Fail closed before any mutation if pre-flight conflict detection found ID collisions.
+        // Fail closed before any mutation if pre-flight conflict detection found ID collisions
+        // or incompatible non-string domain IDs (never silently overwrite existing non-string IDs).
         let total_conflicts: i64 = planned.iter().map(|r| r.conflict_count).sum();
         if total_conflicts > 0 {
             return Err(MemoryError::invalid(format!(
-                "refusing to adopt existing graph: {total_conflicts} candidate node(s) collide with existing :Entity ids"
+                "refusing to adopt existing graph: {total_conflicts} candidate node(s) have incompatible non-string ids or collide with existing :Entity ids"
             )));
         }
 
@@ -517,8 +521,9 @@ impl<'a> SchemaManager<'a> {
                 let cypher = format!(
                     "MATCH (n:`{label}`) \
                      WHERE NOT n:Entity AND n.`{name_prop}` IS NOT NULL \
+                       AND (n.id IS NULL OR n.id IS :: STRING NOT NULL) \
                      SET n:Entity, \
-                         n.id = CASE WHEN n.id IS :: STRING THEN n.id ELSE randomUUID() END, \
+                         n.id = coalesce(n.id, randomUUID()), \
                          n.name = coalesce(n.name, toString(n.`{name_prop}`)), \
                          n.canonical_name = coalesce(n.canonical_name, toString(n.`{name_prop}`)), \
                          n.type = coalesce(n.type, $type), \

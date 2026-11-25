@@ -892,7 +892,8 @@ mod tests {
         use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
         let owner = HostOwnerScope::parse(Some("owner-a")).unwrap();
-        let token = RedactedToken::new("local-dev-bearer-token-1234").unwrap();
+        let ephemeral = uuid::Uuid::new_v4().to_string();
+        let token = RedactedToken::new(ephemeral.clone()).unwrap();
 
         // Non-loopback static token fails closed before creating router.
         let fake = Arc::new(FakeCoreOps(Mutex::new(Vec::new())));
@@ -934,10 +935,8 @@ mod tests {
 
         // Valid Authorization -> 200 OK.
         let mut headers = axum::http::HeaderMap::new();
-        headers.insert(
-            header::AUTHORIZATION,
-            "Bearer local-dev-bearer-token-1234".parse().unwrap(),
-        );
+        let auth_value = format!("Bearer {ephemeral}");
+        headers.insert(header::AUTHORIZATION, auth_value.parse().unwrap());
         let auth_resp = super::http_mcp_dispatch(
             axum::extract::State(state),
             headers,

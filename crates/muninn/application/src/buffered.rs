@@ -253,31 +253,28 @@ impl BufferedWriter {
 
     /// Reject further submissions, drain all accepted writes, and stop the background drainer (`client.buffered.stop`).
     ///
-    /// Concurrent `stop()` callers wait until the single in-progress drain completes.
+    /// Draining and completion signaling run in an independently owned task so
+    /// cancelling the first `stop()` caller cannot stall concurrent or future callers.
     pub async fn stop(&self) -> MemoryResult<()> {
-        let (sender, drainer, done_tx, mut done_rx) = {
+        let mut done_rx = {
             let mut state = self.lifecycle.lock().await;
-            if state.stopped {
-                let mut rx = state.shutdown_done_rx.clone();
-                drop(state);
-                let _ = rx.wait_for(|done| *done).await;
-                return Ok(());
+            if !state.stopped {
+                state.stopped = true;
+                let sender = state.sender.take();
+                let drainer = state.drainer.take();
+                let done_tx = state.shutdown_done_tx.clone();
+                tokio::spawn(async move {
+                    if let Some(sender) = sender {
+                        let _ = sender.send(WriterCommand::Shutdown).await;
+                    }
+                    if let Some(handle) = drainer {
+                        let _ = handle.await;
+                    }
+                    let _ = done_tx.send(true);
+                });
             }
-            state.stopped = true;
-            (
-                state.sender.take(),
-                state.drainer.take(),
-                state.shutdown_done_tx.clone(),
-                state.shutdown_done_rx.clone(),
-            )
+            state.shutdown_done_rx.clone()
         };
-        if let Some(sender) = sender {
-            let _ = sender.send(WriterCommand::Shutdown).await;
-        }
-        if let Some(handle) = drainer {
-            let _ = handle.await;
-        }
-        let _ = done_tx.send(true);
         let _ = done_rx.wait_for(|done| *done).await;
         Ok(())
     }
@@ -344,13 +341,19 @@ async fn drain_loop(
                         .expect("buffered error log lock")
                         .push(record.clone());
                     if let Some(callback) = &on_error {
-                        // Isolate panics and bound callback execution inside a child task
-                        // so a panicking or stalling hook can never terminate or block the drainer.
+                        // Isolate panics and actively abort timed-out callbacks so a
+                        // panicking or stalling hook never leaks tasks or kills the drainer.
                         let cb = Arc::clone(callback);
-                        let handle = tokio::spawn(async move {
+                        let mut handle = tokio::spawn(async move {
                             cb(record).await;
                         });
-                        let _ = tokio::time::timeout(callback_timeout, handle).await;
+                        if tokio::time::timeout(callback_timeout, &mut handle)
+                            .await
+                            .is_err()
+                        {
+                            handle.abort();
+                            let _ = handle.await;
+                        }
                     }
                 }
             }
@@ -651,5 +654,39 @@ mod tests {
         assert_eq!(exec_idem.recorded(), vec!["MERGE (:Idem {id: 1})"]);
         assert!(writer_idem.errors().is_empty());
         writer_idem.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancelling_first_stop_caller_does_not_hang_subsequent_stop_callers() {
+        let gate = Arc::new(Notify::new());
+        let exec = FakeExecutor::gated(gate.clone());
+        let writer = Arc::new(
+            BufferedWriter::new(
+                exec.clone(),
+                BufferedWriterConfig {
+                    write_mode: WriteMode::Buffered,
+                    ..Default::default()
+                },
+            )
+            .unwrap(),
+        );
+
+        writer.submit("BLOCKED-WRITE", Map::new()).await.unwrap();
+        tokio::task::yield_now().await;
+
+        // First stop() caller is cancelled while the write is blocked.
+        let w1 = Arc::clone(&writer);
+        let first_stop = tokio::spawn(async move { w1.stop().await });
+        tokio::time::sleep(Duration::from_millis(15)).await;
+        first_stop.abort();
+        let _ = first_stop.await;
+
+        // Release blocked write; second stop() caller must still observe completion.
+        gate.notify_one();
+        tokio::time::timeout(Duration::from_secs(2), writer.stop())
+            .await
+            .expect("second stop() must not hang after first caller cancellation")
+            .unwrap();
+        assert_eq!(exec.recorded(), vec!["BLOCKED-WRITE"]);
     }
 }
