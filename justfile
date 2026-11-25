@@ -180,6 +180,19 @@ muninn-bolt-parity:
     @docker info > /dev/null
     env -u MUNINN_FIXTURE_URI -u MUNINN_ISOLATION_URI -u MUNINN_PREFERENCES_URI -u MUNINN_SUMMARY_URI -u MUNINN_CONSOLIDATION_URI MUNINN_REQUIRE_NEO4J=1 cargo test -p muninn-neo4j --test consolidation --test durability_reconnect --test multi_tenant_isolation --test preference_relationships --test summary_isolation
 
+# Run one isolated live Neo4j integration target from the extended (ignored) suite.
+# Each ignored target requires its own fresh disposable Neo4j container; pass the
+# target name (e.g. `just muninn-bolt-parity-target owner_namespace`).
+muninn-bolt-parity-target target:
+    @docker info > /dev/null
+    env -u MUNINN_FIXTURE_URI MUNINN_REQUIRE_NEO4J=1 cargo test -p muninn-neo4j --test {{ quote(target) }} -- --ignored --test-threads=1
+
+# Validate Muninn traceability sync and parity closure evidence offline.
+ci-muninn-evidence:
+    PYTHONPATH=dev/muninn python3 dev/muninn/api_test_traceability.py --check-md
+    PYTHONPATH=dev/muninn python3 dev/muninn/parity_evidence_validator.py --check
+    PYTHONPATH=dev/muninn python3 -m unittest dev/muninn/tests/test_parity_evidence_validator.py
+
 # Run the isolated GM-01 Compose capture (requires Docker + Linux arm64)
 # Usage: just run-gm01 /path/to/agent-memory-checkout /path/to/evidence-dir
 run-gm01 reference evidence:
@@ -253,6 +266,10 @@ run:
 
 # Run the rook backend in dev mode (explicit alias for run)
 rook-run: run
+
+# Iniciar el backend Rook con reinicio Rust y el dashboard con HMR de Vite
+rook:
+    python3 dev/rook-dev.py
 
 # Create the default Rook config at ~/.cortex/rook/config.toml (never overwrites)
 init-config:

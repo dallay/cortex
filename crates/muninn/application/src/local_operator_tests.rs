@@ -591,3 +591,571 @@ impl ReasoningStore for Store {
         unreachable!("unexpected entity_provenance")
     }
 }
+
+struct AtomicShortTermStore {
+    fail_next_atomic: std::sync::atomic::AtomicBool,
+    atomic_calls: std::sync::atomic::AtomicUsize,
+    append_calls: std::sync::atomic::AtomicUsize,
+    committed_messages: Mutex<Vec<MessageRecord>>,
+    committed_batches: Mutex<Vec<muninn_core::ports::AtomicExtractionBatch>>,
+}
+
+impl Default for AtomicShortTermStore {
+    fn default() -> Self {
+        Self {
+            fail_next_atomic: std::sync::atomic::AtomicBool::new(false),
+            atomic_calls: std::sync::atomic::AtomicUsize::new(0),
+            append_calls: std::sync::atomic::AtomicUsize::new(0),
+            committed_messages: Mutex::new(Vec::new()),
+            committed_batches: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+fn atomic_record_to_message(
+    record: &MessageRecord,
+    conversation_id: Uuid,
+) -> MemoryResult<Message> {
+    Ok(Message {
+        id: record.id,
+        role: record.role.parse()?,
+        content: record.content.clone(),
+        conversation_id: Some(conversation_id),
+        created_at: record.timestamp.unwrap_or_else(chrono::Utc::now),
+        embedding: record.embedding.clone(),
+        metadata: record.metadata.clone(),
+    })
+}
+
+#[async_trait]
+impl ShortTermStore for AtomicShortTermStore {
+    async fn ensure_conversation(
+        &self,
+        _: &str,
+        _: Option<Uuid>,
+        _: &OwnerScope,
+    ) -> MemoryResult<Uuid> {
+        Ok(CONVERSATION)
+    }
+    async fn find_by_operation_key(
+        &self,
+        conversation_id: Uuid,
+        _: &OwnerScope,
+        operation_key: &str,
+    ) -> MemoryResult<Option<KeyedMessage>> {
+        let committed = self.committed_messages.lock().unwrap();
+        let found = committed
+            .iter()
+            .find(|r| r.operation_key.as_deref() == Some(operation_key));
+        match found {
+            Some(record) => Ok(Some(KeyedMessage {
+                message: atomic_record_to_message(record, conversation_id)?,
+                operation_payload: record.operation_payload.clone(),
+            })),
+            None => Ok(None),
+        }
+    }
+    async fn append_message(
+        &self,
+        conversation_id: Uuid,
+        _: &OwnerScope,
+        record: &MessageRecord,
+    ) -> MemoryResult<Message> {
+        self.append_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.committed_messages.lock().unwrap().push(record.clone());
+        atomic_record_to_message(record, conversation_id)
+    }
+    async fn append_message_atomic(
+        &self,
+        conversation_id: Uuid,
+        _: &OwnerScope,
+        record: &MessageRecord,
+        extraction: &muninn_core::ports::AtomicExtractionBatch,
+    ) -> MemoryResult<Option<Message>> {
+        self.atomic_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if self
+            .fail_next_atomic
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(MemoryError::storage("simulated extraction write failure"));
+        }
+        let mut committed = self.committed_messages.lock().unwrap();
+        if let Some(key) = record.operation_key.as_deref() {
+            if let Some(existing) = committed
+                .iter()
+                .find(|r| r.operation_key.as_deref() == Some(key))
+            {
+                if existing.operation_payload != record.operation_payload {
+                    return Err(MemoryError::invalid(
+                        "operation_key conflicts with an existing payload or conversation scope",
+                    ));
+                }
+                return Ok(Some(atomic_record_to_message(existing, conversation_id)?));
+            }
+        }
+        committed.push(record.clone());
+        self.committed_batches
+            .lock()
+            .unwrap()
+            .push(extraction.clone());
+        Ok(Some(atomic_record_to_message(record, conversation_id)?))
+    }
+    async fn append_messages(
+        &self,
+        _: Uuid,
+        _: &OwnerScope,
+        _: &[MessageRecord],
+    ) -> MemoryResult<Vec<Message>> {
+        unreachable!()
+    }
+    async fn get_conversation(
+        &self,
+        session: &str,
+        _: Option<Uuid>,
+        _: &OwnerScope,
+        _: Option<i64>,
+    ) -> MemoryResult<Option<Conversation>> {
+        Ok(Some(Conversation {
+            id: CONVERSATION,
+            ..Conversation::empty(session)
+        }))
+    }
+    async fn get_conversation_by_id(
+        &self,
+        _: Uuid,
+        _: &OwnerScope,
+    ) -> MemoryResult<Option<Conversation>> {
+        Ok(None)
+    }
+    async fn append_observation(&self, _: &Observation, _: &OwnerScope) -> MemoryResult<()> {
+        unreachable!()
+    }
+    async fn list_observations(
+        &self,
+        _: Uuid,
+        _: &OwnerScope,
+        _: i64,
+        _: i64,
+    ) -> MemoryResult<Vec<Observation>> {
+        unreachable!()
+    }
+    async fn list_conversations(&self, _: &OwnerScope, _: i64) -> MemoryResult<Vec<Conversation>> {
+        unreachable!()
+    }
+    async fn search_messages(
+        &self,
+        _: &[f64],
+        _: Option<&str>,
+        _: &OwnerScope,
+        _: i64,
+        _: f64,
+        _: &Metadata,
+    ) -> MemoryResult<Vec<ScoredMessage>> {
+        unreachable!()
+    }
+    async fn list_sessions(
+        &self,
+        _: &SessionQuery,
+        _: &OwnerScope,
+    ) -> MemoryResult<Vec<SessionInfo>> {
+        unreachable!()
+    }
+    async fn delete_message(&self, _: Uuid, _: &OwnerScope, _: bool) -> MemoryResult<bool> {
+        unreachable!()
+    }
+    async fn clear_session(&self, _: &str, _: &OwnerScope) -> MemoryResult<()> {
+        unreachable!()
+    }
+    async fn delete_conversation(&self, _: Uuid, _: &OwnerScope) -> MemoryResult<()> {
+        unreachable!()
+    }
+    async fn summary_entities(&self, _: &str, _: &OwnerScope) -> MemoryResult<Vec<String>> {
+        unreachable!()
+    }
+}
+
+struct CountingExtractor {
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait]
+impl muninn_core::extraction::EntityExtractor for CountingExtractor {
+    async fn extract(
+        &self,
+        text: &str,
+        _: &muninn_core::extraction::ExtractOptions,
+    ) -> MemoryResult<muninn_core::extraction::ExtractionResult> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(muninn_core::extraction::ExtractionResult {
+            source_text: Some(text.to_owned()),
+            entities: vec![
+                muninn_core::extraction::ExtractedEntity {
+                    name: "Alice".into(),
+                    entity_type: "PERSON".into(),
+                    subtype: None,
+                    start_pos: Some(0),
+                    end_pos: Some(5),
+                    confidence: 0.95,
+                    extractor: Some("test".into()),
+                },
+                muninn_core::extraction::ExtractedEntity {
+                    name: "Neo4j".into(),
+                    entity_type: "ORGANIZATION".into(),
+                    subtype: None,
+                    start_pos: Some(15),
+                    end_pos: Some(20),
+                    confidence: 0.95,
+                    extractor: Some("test".into()),
+                },
+            ],
+            relations: vec![muninn_core::extraction::ExtractedRelation {
+                source: "Alice".into(),
+                target: "Neo4j".into(),
+                relation_type: "WORKS_AT".into(),
+                confidence: 0.95,
+            }],
+            preferences: vec![],
+        })
+    }
+}
+
+#[tokio::test]
+async fn atomic_ingestion_commits_single_txn_and_rolls_back_without_orphans() {
+    use std::sync::atomic::Ordering;
+
+    let short_term = Arc::new(AtomicShortTermStore::default());
+    let shared = Arc::new(Store::default());
+    let extractor = Arc::new(CountingExtractor {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let client = MemoryClient::read_only(
+        MemoryPorts {
+            short_term: short_term.clone(),
+            long_term: shared.clone(),
+            reasoning: shared,
+            embedder: None,
+            cypher_query: None,
+        },
+        &MemoryOptions { multi_tenant: true },
+    )
+    .with_extractor(extractor.clone());
+
+    let opts = crate::AddMessageOptions {
+        operation_key: Some("op-atomic-1".into()),
+        user_identifier: Some("owner-a".into()),
+        extraction_mode: Some(muninn_core::extraction::ExtractionMode::Auto),
+        generate_embedding: false,
+        ..Default::default()
+    };
+
+    // 1. Mid-transaction extraction failure rolls back completely (zero orphan messages).
+    short_term.fail_next_atomic.store(true, Ordering::SeqCst);
+    let err = client
+        .short_term()
+        .add_message(
+            "s-1",
+            MessageRole::User,
+            "Alice works at Neo4j",
+            opts.clone(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, MemoryError::Storage(_)), "{err:?}");
+    assert!(short_term.committed_messages.lock().unwrap().is_empty());
+    assert_eq!(short_term.append_calls.load(Ordering::SeqCst), 0);
+
+    // 2. Retry with same operation_key succeeds atomically in one call.
+    let first = client
+        .short_term()
+        .add_message(
+            "s-1",
+            MessageRole::User,
+            "Alice works at Neo4j",
+            opts.clone(),
+        )
+        .await
+        .expect("retry commits atomically");
+    assert_eq!(short_term.atomic_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(short_term.append_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(short_term.committed_messages.lock().unwrap().len(), 1);
+    {
+        let batches = short_term.committed_batches.lock().unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].entities.len(), 2);
+        assert_eq!(batches[0].relations.len(), 1);
+    }
+
+    // 3. Post-commit replay with identical operation_key returns existing message without re-extracting.
+    let calls_before_replay = extractor.calls.load(Ordering::SeqCst);
+    let replayed = client
+        .short_term()
+        .add_message("s-1", MessageRole::User, "Alice works at Neo4j", opts)
+        .await
+        .expect("idempotent replay succeeds");
+    assert_eq!(replayed.id, first.id);
+    assert_eq!(extractor.calls.load(Ordering::SeqCst), calls_before_replay);
+
+    // 4. Reusing operation_key with different content fails closed.
+    let conflict = client
+        .short_term()
+        .add_message(
+            "s-1",
+            MessageRole::User,
+            "Different content",
+            crate::AddMessageOptions {
+                operation_key: Some("op-atomic-1".into()),
+                user_identifier: Some("owner-a".into()),
+                extraction_mode: Some(muninn_core::extraction::ExtractionMode::Auto),
+                generate_embedding: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(conflict, MemoryError::InvalidInput(_)),
+        "{conflict:?}"
+    );
+}
+
+#[tokio::test]
+async fn memory_client_wires_buffered_adoption_spatial_and_eval_facades() {
+    use crate::buffered::{BufferedWriter, BufferedWriterConfig};
+    use muninn_core::config::WriteMode;
+    use muninn_core::ports::{
+        AdoptGraphOptions, AdoptionLabelReport, AdoptionReport, BoundingBox, GeoPoint,
+        SchemaAdoptionPort, SessionLocation, SpatialLocationHit, SpatialStore, WriteExecutor,
+    };
+
+    struct NoopExec;
+    #[async_trait]
+    impl WriteExecutor for NoopExec {
+        async fn execute_write(
+            &self,
+            _: &str,
+            _: &serde_json::Map<String, serde_json::Value>,
+        ) -> MemoryResult<()> {
+            Ok(())
+        }
+    }
+
+    struct StubAdoption;
+    #[async_trait]
+    impl SchemaAdoptionPort for StubAdoption {
+        async fn adopt_existing_graph(
+            &self,
+            options: &AdoptGraphOptions,
+        ) -> MemoryResult<AdoptionReport> {
+            Ok(AdoptionReport {
+                by_label: vec![AdoptionLabelReport {
+                    label: "Person".into(),
+                    entity_type: "PERSON".into(),
+                    name_property: "name".into(),
+                    migrated_count: 1,
+                    already_adopted_count: 0,
+                    skipped_count: 0,
+                    conflict_count: 0,
+                }],
+                dry_run: options.dry_run,
+            })
+        }
+    }
+
+    struct StubSpatial;
+    #[async_trait]
+    impl SpatialStore for StubSpatial {
+        async fn search_locations_near(
+            &self,
+            _: GeoPoint,
+            _: f64,
+            _: i64,
+        ) -> MemoryResult<Vec<SpatialLocationHit>> {
+            Ok(vec![])
+        }
+        async fn search_locations_in_bounding_box(
+            &self,
+            _: BoundingBox,
+            _: i64,
+        ) -> MemoryResult<Vec<SpatialLocationHit>> {
+            Ok(vec![])
+        }
+        async fn get_location_coordinates(&self, _: Uuid) -> MemoryResult<Option<GeoPoint>> {
+            Ok(Some(GeoPoint::new(40.4, -3.7).unwrap()))
+        }
+        async fn get_locations(
+            &self,
+            _: Option<&str>,
+            _: i64,
+        ) -> MemoryResult<Vec<SessionLocation>> {
+            Ok(vec![])
+        }
+    }
+
+    let shared = Arc::new(Store::default());
+    let writer = Arc::new(
+        BufferedWriter::new(
+            Arc::new(NoopExec),
+            BufferedWriterConfig {
+                write_mode: WriteMode::Buffered,
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+
+    // Read-only client rejects buffered writes and schema adoption fail-closed.
+    let ro = MemoryClient::read_only(
+        MemoryPorts {
+            short_term: shared.clone(),
+            long_term: shared.clone(),
+            reasoning: shared.clone(),
+            embedder: None,
+            cypher_query: None,
+        },
+        &MemoryOptions::default(),
+    );
+    assert!(ro.buffered().is_none());
+    assert!(ro.write_errors().is_empty());
+    ro.flush().await.unwrap();
+    ro.wait_for_pending().await.unwrap();
+    ro.close().await.unwrap();
+    assert!(ro
+        .adopt_existing_graph(&AdoptGraphOptions::default())
+        .await
+        .is_err());
+    assert!(ro
+        .search_locations_near(GeoPoint::new(0.0, 0.0).unwrap(), 1.0, 5)
+        .await
+        .is_err());
+    assert!(ro
+        .search_locations_in_bounding_box(BoundingBox::new(0.0, 0.0, 1.0, 1.0).unwrap(), 5)
+        .await
+        .is_err());
+    assert!(ro.get_location_coordinates(Uuid::new_v4()).await.is_err());
+    assert!(ro.get_locations(None, 5).await.is_err());
+    assert!(ro.with_buffered_writer(writer.clone()).is_err());
+
+    let ro2 = MemoryClient::read_only(
+        MemoryPorts {
+            short_term: shared.clone(),
+            long_term: shared.clone(),
+            reasoning: shared.clone(),
+            embedder: None,
+            cypher_query: None,
+        },
+        &MemoryOptions::default(),
+    );
+    assert!(ro2.with_schema_adoption(Arc::new(StubAdoption)).is_err());
+
+    // Write-enabled client wires buffered writer, schema adoption, spatial, and eval.
+    let client = MemoryClient::new(
+        MemoryPorts {
+            short_term: shared.clone(),
+            long_term: shared.clone(),
+            reasoning: shared,
+            embedder: None,
+            cypher_query: None,
+        },
+        &MemoryOptions::default(),
+    )
+    .unwrap()
+    .with_buffered_writer(writer)
+    .unwrap()
+    .with_schema_adoption(Arc::new(StubAdoption))
+    .unwrap()
+    .with_spatial_store(Arc::new(StubSpatial))
+    .with_extractor(Arc::new(CountingExtractor {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+    }));
+
+    assert!(client.buffered().is_some());
+    client
+        .buffered()
+        .unwrap()
+        .submit("CREATE (:Ping)", serde_json::Map::new())
+        .await
+        .unwrap();
+    client.flush().await.unwrap();
+    client.wait_for_pending().await.unwrap();
+    assert!(client.write_errors().is_empty());
+
+    let adopt = client
+        .adopt_existing_graph(&AdoptGraphOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(adopt.total_migrated(), 1);
+
+    assert!(client
+        .search_locations_near(GeoPoint::new(40.4, -3.7).unwrap(), 5.0, 10)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(client
+        .search_locations_in_bounding_box(BoundingBox::new(35.0, -10.0, 44.0, 5.0).unwrap(), 10)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(client
+        .get_location_coordinates(Uuid::new_v4())
+        .await
+        .unwrap()
+        .is_some());
+    assert!(client
+        .get_locations(Some("s1"), 10)
+        .await
+        .unwrap()
+        .is_empty());
+
+    // Exercise EvalMemory extraction (entities + relations) and resolution dimensions.
+    let eval_report = client
+        .eval()
+        .run(&crate::EvalRequest {
+            retrieval: vec![],
+            preferences: vec![],
+            extraction: vec![
+                crate::ExtractionCase {
+                    text: "Alice works at Neo4j".into(),
+                    expected_entities: vec![
+                        crate::ExpectedEntity {
+                            name: "Alice".into(),
+                            entity_type: "PERSON".into(),
+                        },
+                        crate::ExpectedEntity {
+                            name: "Neo4j".into(),
+                            entity_type: "ORGANIZATION".into(),
+                        },
+                    ],
+                    expected_relations: vec![],
+                },
+                crate::ExtractionCase {
+                    text: "Alice works at Neo4j".into(),
+                    expected_entities: vec![],
+                    expected_relations: vec![crate::ExpectedRelation {
+                        source: "Alice".into(),
+                        relation_type: "WORKS_AT".into(),
+                        target: "Neo4j".into(),
+                    }],
+                },
+            ],
+            resolution: vec![crate::ResolutionCase {
+                predicted_clusters: std::collections::BTreeMap::from([
+                    ("a".into(), "c1".into()),
+                    ("b".into(), "c1".into()),
+                ]),
+                gold_clusters: std::collections::BTreeMap::from([
+                    ("a".into(), "g1".into()),
+                    ("b".into(), "g1".into()),
+                ]),
+            }],
+        })
+        .await
+        .unwrap();
+    assert_eq!(eval_report.extraction.as_ref().unwrap().cases, 2);
+    assert!((eval_report.extraction.as_ref().unwrap().score - 1.0).abs() < 1e-9);
+    assert!((eval_report.resolution.as_ref().unwrap().score - 1.0).abs() < 1e-9);
+    assert!(eval_report.skipped.is_empty());
+
+    client.close().await.unwrap();
+}

@@ -190,6 +190,22 @@ impl ConsolidationStore for Neo4jConsolidationStore {
         limit: i64,
         dry_run: bool,
     ) -> MemoryResult<ConsolidationReport> {
+        self.detect_superseded_preferences_for_owner(None, threshold, limit, dry_run)
+            .await
+    }
+
+    async fn detect_superseded_preferences_for_owner(
+        &self,
+        user_identifier: Option<&str>,
+        threshold: f64,
+        limit: i64,
+        dry_run: bool,
+    ) -> MemoryResult<ConsolidationReport> {
+        if let Some(owner) = user_identifier {
+            if owner.trim().is_empty() {
+                return Err(MemoryError::invalid("user_identifier must not be blank"));
+            }
+        }
         validate_threshold(threshold)?;
         validate_limit(limit)?;
 
@@ -197,7 +213,11 @@ impl ConsolidationStore for Neo4jConsolidationStore {
             .client
             .execute(
                 q::FIND_SUPERSEDED_PREFERENCES,
-                vec![("threshold", threshold.into()), ("limit", limit.into())],
+                vec![
+                    ("user_identifier", opt_string(user_identifier)),
+                    ("threshold", threshold.into()),
+                    ("limit", limit.into()),
+                ],
             )
             .await?;
 

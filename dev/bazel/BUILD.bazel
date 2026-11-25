@@ -2,6 +2,8 @@ load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 package(default_visibility = ["//visibility:public"])
 
+exports_files(["rules_rust_relative_local_crates.patch"])
+
 # The BUILD file generator and the inventory checker are the source of truth for
 # the Bazel build graph. These targets delegate execution to the Python standard
 # library test runner, so the tooling that maintains the graph is covered by the

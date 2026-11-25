@@ -48,6 +48,7 @@ members = [
 
 [patch.crates-io]
 candle-core = { path = "third_party/candle-core" }
+dbus-secret-service = { path = "third_party/dbus-secret-service" }
 
 [workspace.package]
 version = "0.0.1"

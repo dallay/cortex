@@ -200,14 +200,27 @@ impl ShortTermMemory {
             metadata: options.metadata,
             timestamp: None,
         };
-        let message = self
-            .store
-            .append_message(conversation_id, &scope, &record)
-            .await?;
         if let (Some(ingestion), Some(plan)) = (&self.ingestion, plan) {
+            let batch = ingestion.to_atomic_batch(record.id, content, &plan);
+            if !batch.is_empty() {
+                if let Some(message) = self
+                    .store
+                    .append_message_atomic(conversation_id, &scope, &record, &batch)
+                    .await?
+                {
+                    return Ok(message);
+                }
+            }
+            let message = self
+                .store
+                .append_message(conversation_id, &scope, &record)
+                .await?;
             ingestion.persist(message.id, content, plan).await?;
+            return Ok(message);
         }
-        Ok(message)
+        self.store
+            .append_message(conversation_id, &scope, &record)
+            .await
     }
 
     /// `add_messages_batch`: one transaction per `batch_size` messages.

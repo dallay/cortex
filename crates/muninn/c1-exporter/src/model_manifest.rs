@@ -59,7 +59,7 @@ struct RawArtifact {
 }
 
 impl PinnedMiniLmManifest {
-    #[cfg(test)]
+    #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
     pub(crate) fn synthetic_oversized_for_tests() -> Self {
         let mut manifest = Self::synthetic_for_tests();
         for file in &mut manifest.files {
@@ -68,7 +68,7 @@ impl PinnedMiniLmManifest {
         manifest
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
     pub(crate) fn synthetic_for_tests() -> Self {
         let mut root: serde_json::Value = serde_json::from_slice(PINNED_LOCK).expect("fixture");
         let model = root["models"]

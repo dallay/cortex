@@ -34,6 +34,7 @@
     "scripts/setup-codegraph.sh",
     "apps/muninn/**",
     "third_party/candle-core/**",
+    "third_party/dbus-secret-service/**",
     "dev/muninn/**",
     "dev/muninn/c1_*.py",
     "dev/muninn/tests/test_c1*.py"

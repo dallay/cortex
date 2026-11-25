@@ -14,12 +14,13 @@ chrono.workspace = true
 neo4rs = "=0.8.0"
 serde.workspace = true
 serde_json.workspace = true
-serde_yaml = "0.9"
+serde-saphyr = { version = "2", default-features = false, features = ["deserialize"] }
 sha2 = "0.10"
 tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 tokio = { workspace = true, features = ["rt", "macros"] }
 
 [lints]

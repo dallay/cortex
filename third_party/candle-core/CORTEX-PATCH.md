@@ -14,7 +14,7 @@ Archive SHA-256:
   ZIP 9.0.5 fixes CVE-2026-115905 (GHSA-m665-v7pm-7grj), which affects
   versions through 9.0.4. This patch-level update retains the ZIP 9 API and
   requires Rust 1.88, below Cortex's pinned toolchain. It was published on
-  2026-10-17, outside the repository's three-day dependency cooldown.
+  2026-10-17, outside the repository's 14-day dependency cooldown.
 - Normalized `Cargo.toml`: disable GEMM default features, retaining `std`,
   `rayon` and `wasm-simd128-enable` for this CPU/F32-only prototype. This excludes
   the optional F16 backend that failed the default Linux ARM64 build.

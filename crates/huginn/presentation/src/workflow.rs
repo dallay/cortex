@@ -24,6 +24,7 @@ pub struct HostWorkflow {
     history: Vec<Stage>,
     forward: Vec<Draft>,
     query: String,
+    normalized_query: String,
     search_index: Vec<String>,
     filtered: Vec<usize>,
 }
@@ -125,6 +126,7 @@ impl HostWorkflow {
             history: Vec::new(),
             forward: Vec::new(),
             query: String::new(),
+            normalized_query: String::new(),
             search_index,
             filtered,
         }
@@ -165,6 +167,9 @@ impl HostWorkflow {
         self.query = stage.query;
         self.forward = stage.forward;
         self.rebuild_filter(false);
+        if !self.query.is_empty() {
+            self.ensure_filtered_selection();
+        }
     }
     pub(crate) fn inherit_history(&mut self, mut history: Vec<Stage>) {
         if !self.workflow.retains_history() {
@@ -190,6 +195,9 @@ impl HostWorkflow {
                 self.query = draft.query;
                 self.forward = draft.forward;
                 self.rebuild_filter(false);
+                if !self.query.is_empty() {
+                    self.ensure_filtered_selection();
+                }
             }
         }
         self.history = history;
@@ -223,27 +231,40 @@ impl HostWorkflow {
     pub fn search_query(&self) -> &str {
         &self.query
     }
+    fn ensure_filtered_selection(&mut self) {
+        if let Some(field) = self.search_field() {
+            if let Value::Choice(selected) = self.values[field] {
+                if self.filtered.binary_search(&selected).is_err() {
+                    self.filter_selection();
+                }
+            }
+        }
+    }
     fn rebuild_filter(&mut self, narrowed: bool) {
         if self.search_field().is_none() {
+            self.normalized_query.clear();
             self.filtered.clear();
             return;
         }
         if self.query.is_empty() {
+            self.normalized_query.clear();
             self.filtered.clear();
             self.filtered.extend(0..self.search_index.len());
             return;
         }
-        let query = self.query.to_lowercase();
-        if narrowed {
+        let normalized = self.query.to_lowercase();
+        let can_narrow = narrowed && normalized.starts_with(&self.normalized_query);
+        self.normalized_query = normalized;
+        if can_narrow {
             self.filtered
-                .retain(|&index| self.search_index[index].contains(&query));
+                .retain(|&index| self.search_index[index].contains(&self.normalized_query));
         } else {
             self.filtered.clear();
             self.filtered.extend(
                 self.search_index
                     .iter()
                     .enumerate()
-                    .filter(|(_, option)| option.contains(&query))
+                    .filter(|(_, option)| option.contains(&self.normalized_query))
                     .map(|(index, _)| index),
             );
         }
@@ -793,5 +814,30 @@ mod tests {
         let host = HostWorkflow::new(text_only);
         assert_eq!(host.search_window(8).total_options, 0);
         assert!(host.search_rows().is_empty());
+    }
+
+    #[test]
+    fn incremental_search_handles_context_sensitive_unicode_lowercase() {
+        let workflow = Workflow::new_searchable(
+            "Greek",
+            "",
+            vec![Field {
+                id: "model".into(),
+                label: "Model".into(),
+                kind: FieldKind::Choice(vec!["αβσα-model".into(), "other".into()]),
+                initial: String::new(),
+            }],
+            Arc::new(|_, _| Box::pin(async { Ok(CommandResult::Dismiss) })),
+        )
+        .unwrap();
+        let mut typed = HostWorkflow::new(workflow.clone());
+        typed.insert("ΑΒΣ"); // lowercases to "αβς" (final sigma) -> 0 matches
+        assert!(typed.search_rows().is_empty());
+        typed.insert("Α"); // lowercases to "αβσα" (medial sigma) -> must rebuild and match!
+        assert_eq!(typed.search_rows(), vec![("αβσα-model".into(), true)]);
+
+        let mut pasted = HostWorkflow::new(workflow);
+        pasted.insert("ΑΒΣΑ");
+        assert_eq!(typed.search_rows(), pasted.search_rows());
     }
 }

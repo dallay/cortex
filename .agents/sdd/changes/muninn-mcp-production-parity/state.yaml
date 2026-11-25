@@ -1,0 +1,8 @@
+change: muninn-mcp-production-parity
+current_phase: verify
+completed: [ propose, tasks, apply ]
+status: working
+next: verify
+updated: 2026-11-24
+# Core 6-tool profile, OAuth 2.1 + loopback bearer auth policy, Streamable HTTP router, and CLI flags implemented.
+# ScopedRetrieval preserved untouched for Huginn Milestone 5.
