@@ -121,9 +121,12 @@ that race. The exceptions do not claim otherwise.
 - `remove_account` independently validates the ID, uses `symlink_metadata` to
   reject symlinks and non-directories, and rejects profile directories with
   group/other permissions before removing only the matching profile. It syncs the
-  canonical private root after the directory entry is removed. If a login is
-  cancelled after persistence begins, the task completes the write, rechecks the
-  active attempt under the state mutex, then removes the uncommitted profile.
+  canonical private root after the directory entry is removed. Before profile
+  I/O, the login task rechecks the active attempt under the state mutex and enters
+  a non-cancellable commit transition; cancellation returns `Busy` during this
+  transition, and shutdown waits for it to finish. A directory-sync error after
+  the credentials rename is logged as `persistence_sync` but the account remains
+  committed; this avoids reporting failure when restart could reload the file.
 - The directory sync calls open only the derived profile directory and private
   root. The exception is limited to these eight expressions; it does not exempt
   the file or grant access to request/model-supplied paths. A process running as

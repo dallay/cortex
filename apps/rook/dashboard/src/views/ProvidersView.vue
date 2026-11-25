@@ -226,7 +226,11 @@ function onDeleted() {
       </EmptyState>
     </template>
 
-    <CodexAccountsDialog v-model:open="codexDialogOpen" @linked="onCodexLinked" />
+    <CodexAccountsDialog
+      v-model:open="codexDialogOpen"
+      @accounts-updated="onCodexLinked"
+      @linked="onCodexLinked"
+    />
 
     <AddProviderDialog
       v-model:open="addDialogOpen"

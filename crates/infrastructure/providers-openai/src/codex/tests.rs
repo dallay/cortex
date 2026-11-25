@@ -73,6 +73,56 @@ fn profile_store_rejects_symlink_and_non_private_profile_directories() {
 }
 
 #[tokio::test]
+async fn incomplete_profile_left_before_credentials_rename_is_removed_on_reopen() {
+    const ACCOUNT_ID: &str = "11111111-1111-4111-8111-111111111111";
+
+    let root = root();
+    let profiles = root.path().join("rook-codex-oauth-v1");
+    create_private_directory(&profiles).unwrap();
+    let profile = profiles.join(ACCOUNT_ID);
+    create_private_directory(&profile).unwrap();
+    let temporary_tokens = profile.join("tokens.tmp");
+    fs::write(&temporary_tokens, "partial ciphertext").unwrap();
+    fs::set_permissions(&temporary_tokens, fs::Permissions::from_mode(0o600)).unwrap();
+
+    let store = CodexProfileStore::open_with_client(
+        oauth::Client::new(CLIENT).unwrap(),
+        ephemeral(),
+        root.path(),
+        Arc::new(TestKey),
+    )
+    .unwrap();
+
+    assert!(store.list().await.unwrap().accounts.is_empty());
+    assert!(!profile.exists());
+    store.shutdown().await;
+}
+
+#[tokio::test]
+async fn committed_profile_remains_linked_after_directory_sync_failure() {
+    const ACCOUNT_ID: &str = "11111111-1111-4111-8111-111111111111";
+
+    let root = root();
+    let profiles = root.path().join("rook-codex-oauth-v1");
+    create_private_directory(&profiles).unwrap();
+    save_account(&profiles, ACCOUNT_ID, "test-ciphertext").unwrap();
+    assert!(matches!(
+        finish_save_commit(Err(std::io::Error::other("synthetic sync failure"))),
+        SaveCommit::CommittedWithSyncWarning
+    ));
+
+    let store = CodexProfileStore::open_with_client(
+        oauth::Client::new(CLIENT).unwrap(),
+        ephemeral(),
+        root.path(),
+        Arc::new(TestKey),
+    )
+    .unwrap();
+    assert_eq!(store.list().await.unwrap().accounts[0].id, ACCOUNT_ID);
+    store.shutdown().await;
+}
+
+#[tokio::test]
 async fn disconnect_removes_only_the_selected_profile_and_persists_after_restart() {
     const FIRST_ID: &str = "11111111-1111-4111-8111-111111111111";
     const SECOND_ID: &str = "22222222-2222-4222-8222-222222222222";
@@ -133,7 +183,73 @@ async fn disconnect_removes_only_the_selected_profile_and_persists_after_restart
 }
 
 #[tokio::test]
-async fn cancellation_during_persistence_keeps_the_commit_task_for_cleanup() {
+async fn cancelled_disconnect_request_still_updates_memory_after_removal() {
+    const ACCOUNT_ID: &str = "11111111-1111-4111-8111-111111111111";
+
+    let root = root();
+    let profiles = root.path().join("rook-codex-oauth-v1");
+    create_private_directory(&profiles).unwrap();
+    save_account(&profiles, ACCOUNT_ID, "test-ciphertext").unwrap();
+    let store = Arc::new(
+        CodexProfileStore::open_with_client(
+            oauth::Client::new(CLIENT).unwrap(),
+            ephemeral(),
+            root.path(),
+            Arc::new(TestKey),
+        )
+        .unwrap(),
+    );
+
+    let operation_store = Arc::clone(&store);
+    let operation = tokio::spawn(async move { operation_store.disconnect(ACCOUNT_ID).await });
+    tokio::task::yield_now().await;
+    operation.abort();
+    let _ = operation.await;
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if store.list().await.unwrap().accounts.is_empty() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!profiles.join(ACCOUNT_ID).exists());
+    store.shutdown().await;
+}
+
+#[tokio::test]
+async fn disconnect_sync_failure_removes_deleted_account_from_memory() {
+    const ACCOUNT_ID: &str = "11111111-1111-4111-8111-111111111111";
+
+    let root = root();
+    let profiles = root.path().join("rook-codex-oauth-v1");
+    create_private_directory(&profiles).unwrap();
+    save_account(&profiles, ACCOUNT_ID, "test-ciphertext").unwrap();
+    let store = CodexProfileStore::open_with_client(
+        oauth::Client::new(CLIENT).unwrap(),
+        ephemeral(),
+        root.path(),
+        Arc::new(TestKey),
+    )
+    .unwrap();
+    let mut state = store.inner.state.lock().await;
+    state.disconnecting.insert(ACCOUNT_ID.to_owned());
+
+    assert!(matches!(
+        finish_disconnect(&mut state, ACCOUNT_ID, Err(RemoveError::RemovedButUnsynced)),
+        Err(Error::Unavailable)
+    ));
+    assert!(state.accounts.is_empty());
+    assert!(!state.disconnecting.contains(ACCOUNT_ID));
+    drop(state);
+    store.shutdown().await;
+}
+
+#[tokio::test]
+async fn cancellation_is_rejected_after_the_commit_transition_starts() {
     let root = root();
     let store = CodexProfileStore::open_with_client(
         oauth::Client::new(CLIENT).unwrap(),
@@ -148,20 +264,20 @@ async fn cancellation_during_persistence_keeps_the_commit_task_for_cleanup() {
         let mut state = store.inner.state.lock().await;
         state.stop_task();
         state.task = Some(persistence);
-        state.persisting = true;
+        state.committing = true;
     }
 
-    store.cancel(&login.id).await.unwrap();
+    assert!(matches!(store.cancel(&login.id).await, Err(Error::Busy)));
     assert!(matches!(
         store.list().await.unwrap().attempt.unwrap().status,
-        Status::Cancelled
+        Status::Pending
     ));
     assert!(matches!(store.start().await, Err(Error::Busy)));
     let persistence = store.inner.state.lock().await.task.take().unwrap();
     assert!(!persistence.is_finished());
     persistence.abort();
     let _ = persistence.await;
-    store.inner.state.lock().await.persisting = false;
+    store.inner.state.lock().await.committing = false;
     store.shutdown().await;
 }
 
@@ -173,6 +289,83 @@ fn start_params(login: &CodexLogin) -> std::collections::HashMap<String, String>
     );
     assert_eq!(url.path(), "/oauth/authorize");
     url.query_pairs().into_owned().collect()
+}
+
+fn callback_url(query: &str) -> reqwest::Url {
+    reqwest::Url::parse(&format!(
+        "http://127.0.0.1{}?{query}",
+        rook_core::codex_accounts::CODEX_CALLBACK_PATH
+    ))
+    .unwrap()
+}
+
+#[tokio::test]
+async fn callback_budget_limits_requests_per_minute_and_resets() {
+    let budget = listener::CallbackBudget::default();
+    let started_at = tokio::time::Instant::now();
+
+    for _ in 0..listener::MAX_CALLBACK_REQUESTS {
+        assert!(budget.allow_at(started_at).await);
+    }
+    assert!(!budget.allow_at(started_at).await);
+    assert!(
+        budget
+            .allow_at(started_at + listener::CALLBACK_RATE_LIMIT_WINDOW)
+            .await
+    );
+}
+
+#[test]
+fn parses_only_one_valid_state_and_one_callback_result() {
+    let state = "s".repeat(listener::STATE_LEN);
+    let valid = callback_url(&format!("state={state}&code=abc"));
+    assert!(matches!(
+        listener::parse_callback(&valid).map(|callback| callback.response),
+        Some(CodexCallback::Code(code)) if code == "abc"
+    ));
+
+    let denied = callback_url(&format!("state={state}&error=access_denied"));
+    assert!(matches!(
+        listener::parse_callback(&denied).map(|callback| callback.response),
+        Some(CodexCallback::Denied)
+    ));
+}
+
+#[test]
+fn rejects_missing_duplicate_ambiguous_or_oversized_callback_fields() {
+    let state = "s".repeat(listener::STATE_LEN);
+    for query in [
+        "code=abc",
+        &format!("state={state}&code=abc&state={state}"),
+        &format!("state={state}&code=abc&code=def"),
+        &format!("state={state}&code=abc&error=access_denied"),
+        &format!(
+            "state={state}&code={}",
+            "c".repeat(listener::MAX_CODE_BYTES + 1)
+        ),
+        &format!("state={state}&error="),
+    ] {
+        assert!(
+            listener::parse_callback(&callback_url(query)).is_none(),
+            "query accepted: {query}"
+        );
+    }
+}
+
+#[test]
+fn rejects_non_get_and_non_http_request_lines() {
+    assert!(listener::parse_request_target(
+        b"POST /auth/callback?state=abc HTTP/1.1\r\nHost: localhost\r\n\r\n"
+    )
+    .is_none());
+    assert!(listener::parse_request_target(
+        b"GET /auth/callback?state=abc HTTP/2\r\nHost: localhost\r\n\r\n"
+    )
+    .is_none());
+    assert!(listener::parse_request_target(
+        b"GET /auth/callback HTTP/1.1 EXTRA\r\nHost: localhost\r\n\r\n"
+    )
+    .is_none());
 }
 
 #[test]

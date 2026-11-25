@@ -6,6 +6,7 @@ mod oauth;
 mod tests;
 
 use std::{
+    collections::HashSet,
     fs,
     net::SocketAddr,
     os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
@@ -21,9 +22,10 @@ use rook_core::codex_accounts::{
 use rook_core::KeyManager;
 use shared_kernel::RequestId;
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
+use tokio::sync::{oneshot, Mutex};
 
 const MAX_ACCOUNTS: usize = 32;
+const MAX_CONCURRENT_DISCONNECTS: usize = 4;
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
 const CREDENTIALS: &str = "tokens.encrypted";
 const MAX_ENCRYPTED_BYTES: u64 = 128 * 1024;
@@ -48,7 +50,8 @@ struct State {
     pending: Option<oauth::Pending>,
     task: Option<tokio::task::JoinHandle<()>>,
     listener: Option<tokio::task::JoinHandle<()>>,
-    persisting: bool,
+    committing: bool,
+    disconnecting: HashSet<String>,
     closing: bool,
 }
 
@@ -111,7 +114,8 @@ impl CodexProfileStore {
                     pending: None,
                     task: None,
                     listener: None,
-                    persisting: false,
+                    committing: false,
+                    disconnecting: HashSet::new(),
                     closing: false,
                 }),
                 login_timeout: LOGIN_TIMEOUT,
@@ -213,6 +217,16 @@ fn save_account(root: &Path, id: &str, ciphertext: &str) -> anyhow::Result<()> {
         file.write_all(ciphertext.as_bytes())?;
         file.sync_all()?;
         fs::rename(profile.join("tokens.tmp"), profile.join(CREDENTIALS))?;
+        Ok(())
+    };
+    if let Err(error) = write() {
+        if fs::remove_dir_all(profile).is_err() {
+            tracing::warn!("could not remove incomplete Codex account directory");
+        }
+        return Err(error.into());
+    }
+
+    let sync_directories = || -> std::io::Result<()> {
         // The profile ID is a generated UUID v4 and validated before any profile path is joined.
         // Evidence: docs/security/semgrep-path-exceptions.md#codex-profile-store
         // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
@@ -222,35 +236,101 @@ fn save_account(root: &Path, id: &str, ciphertext: &str) -> anyhow::Result<()> {
         // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
         fs::File::open(root)?.sync_all()
     };
-    if let Err(error) = write() {
-        if fs::remove_dir_all(profile).is_err() {
-            tracing::warn!("could not remove incomplete Codex account directory");
-        }
-        return Err(error.into());
-    }
+    let _commit = finish_save_commit(sync_directories());
     Ok(())
 }
 
-fn remove_account(root: &Path, id: &str) -> std::io::Result<()> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SaveCommit {
+    Durable,
+    CommittedWithSyncWarning,
+}
+
+fn finish_save_commit(sync: std::io::Result<()>) -> SaveCommit {
+    match sync {
+        Ok(()) => SaveCommit::Durable,
+        Err(_) => {
+            tracing::warn!(
+                failure_stage = "persistence_sync",
+                "Codex account was committed but its directory sync failed"
+            );
+            SaveCommit::CommittedWithSyncWarning
+        }
+    }
+}
+
+fn remove_account(root: &Path, id: &str) -> Result<(), RemoveError> {
     if !valid_id(id) {
-        return Err(std::io::Error::other("invalid Codex profile ID"));
+        return Err(RemoveError::Failed);
     }
     // The account ID is validated and the root is private and canonicalized before joining.
     // Evidence: docs/security/semgrep-path-exceptions.md#codex-profile-store
     // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
     let profile = root.join(id);
-    let info = profile.symlink_metadata()?;
+    let info = profile.symlink_metadata().map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            RemoveError::NotFound
+        } else {
+            RemoveError::Failed
+        }
+    })?;
     if !info.is_dir() || info.permissions().mode() & 0o077 != 0 {
-        return Err(std::io::Error::other("invalid Codex profile directory"));
+        return Err(RemoveError::Failed);
     }
     // The profile path is derived from a validated ID inside the owner-private root.
     // Evidence: docs/security/semgrep-path-exceptions.md#codex-profile-store
     // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
-    fs::remove_dir_all(&profile)?;
+    fs::remove_dir_all(&profile).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            RemoveError::NotFound
+        } else {
+            RemoveError::Failed
+        }
+    })?;
     // The canonical owner-private root is opened only to sync its directory entry.
     // Evidence: docs/security/semgrep-path-exceptions.md#codex-profile-store
     // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
-    fs::File::open(root)?.sync_all()
+    fs::File::open(root)
+        .and_then(|root| root.sync_all())
+        .map_err(|_| RemoveError::RemovedButUnsynced)
+}
+
+#[derive(Debug)]
+enum RemoveError {
+    NotFound,
+    Failed,
+    RemovedButUnsynced,
+}
+
+fn finish_disconnect(
+    state: &mut State,
+    id: &str,
+    removal: Result<(), RemoveError>,
+) -> Result<(), Error> {
+    state.disconnecting.remove(id);
+    tracing::debug!(
+        active_disconnects = state.disconnecting.len(),
+        "Codex account disconnect completed"
+    );
+    match removal {
+        Ok(()) => {
+            state.accounts.retain(|account| account.id != id);
+            Ok(())
+        }
+        Err(RemoveError::NotFound) => {
+            state.accounts.retain(|account| account.id != id);
+            Err(Error::NotFound)
+        }
+        Err(RemoveError::RemovedButUnsynced) => {
+            state.accounts.retain(|account| account.id != id);
+            tracing::warn!(
+                failure_stage = "disconnect_sync",
+                "Codex account was removed but the profile root could not be synced"
+            );
+            Err(Error::Unavailable)
+        }
+        Err(RemoveError::Failed) => Err(Error::Unavailable),
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -295,7 +375,7 @@ impl State {
     }
 
     fn stop_task(&mut self) {
-        if !self.persisting {
+        if !self.committing {
             if let Some(task) = self.task.take() {
                 task.abort();
             }
@@ -364,7 +444,7 @@ impl CodexProfileStore {
                     if !state.active(&id) || state.closing {
                         return;
                     }
-                    state.persisting = true;
+                    state.committing = true;
                     drop(state);
 
                     let root = inner.root.clone();
@@ -376,32 +456,12 @@ impl CodexProfileStore {
                     .is_ok_and(|result| result.is_ok());
 
                     let mut state = inner.state.lock().await;
-                    if !persisted {
-                        state.persisting = false;
-                        record_failure(&mut state, &id, FailureStage::Persistence);
-                        return;
-                    }
-
-                    if state.active(&id) && !state.closing {
+                    state.committing = false;
+                    if persisted && state.active(&id) {
                         state.accounts.push(CodexAccount { id });
-                        state.persisting = false;
                         state.finish(Status::Linked);
                     } else {
-                        drop(state);
-                        let root = inner.root.clone();
-                        let profile_id = id.clone();
-                        let removed =
-                            tokio::task::spawn_blocking(move || remove_account(&root, &profile_id))
-                                .await
-                                .is_ok_and(|result| result.is_ok());
-                        let mut state = inner.state.lock().await;
-                        state.persisting = false;
-                        if !removed {
-                            tracing::warn!(
-                                failure_stage = "cleanup",
-                                "Could not remove an uncommitted Codex profile"
-                            );
-                        }
+                        record_failure(&mut state, &id, FailureStage::Persistence);
                     }
                 }));
             }
@@ -426,7 +486,7 @@ impl CodexAccountsPort for CodexProfileStore {
         if state.closing {
             return Err(Error::Unavailable);
         }
-        if state.persisting {
+        if state.committing {
             return Err(Error::Busy);
         }
         if state
@@ -487,6 +547,9 @@ impl CodexAccountsPort for CodexProfileStore {
 
     async fn cancel(&self, id: &str) -> Result<(), Error> {
         let mut state = self.inner.state.lock().await;
+        if state.committing {
+            return Err(Error::Busy);
+        }
         if !state.active(id) {
             return Err(Error::NotFound);
         }
@@ -497,51 +560,52 @@ impl CodexAccountsPort for CodexProfileStore {
     }
 
     async fn disconnect(&self, id: &str) -> Result<(), Error> {
-        let state = self.inner.state.lock().await;
+        let mut state = self.inner.state.lock().await;
         if state.closing {
             return Err(Error::Unavailable);
         }
         if !valid_id(id) || !state.accounts.iter().any(|account| account.id == id) {
             return Err(Error::NotFound);
         }
+        if state.disconnecting.contains(id)
+            || state.disconnecting.len() >= MAX_CONCURRENT_DISCONNECTS
+        {
+            return Err(Error::Busy);
+        }
+        state.disconnecting.insert(id.to_owned());
+        tracing::debug!(
+            active_disconnects = state.disconnecting.len(),
+            "Starting Codex account disconnect"
+        );
         drop(state);
 
         let root = self.inner.root.clone();
         let profile_id = id.to_owned();
-        let result = tokio::task::spawn_blocking(move || remove_account(&root, &profile_id)).await;
-        match result {
-            Ok(Ok(())) => {
-                self.inner
-                    .state
-                    .lock()
-                    .await
-                    .accounts
-                    .retain(|account| account.id != id);
-                Ok(())
-            }
-            Ok(Err(error)) if error.kind() == std::io::ErrorKind::NotFound => {
-                self.inner
-                    .state
-                    .lock()
-                    .await
-                    .accounts
-                    .retain(|account| account.id != id);
-                Err(Error::NotFound)
-            }
-            _ => Err(Error::Unavailable),
-        }
+        let inner = self.inner.clone();
+        let (response, result) = oneshot::channel();
+        tokio::spawn(async move {
+            let removal_id = profile_id.clone();
+            let removal = tokio::task::spawn_blocking(move || remove_account(&root, &removal_id))
+                .await
+                .unwrap_or(Err(RemoveError::Failed));
+            let mut state = inner.state.lock().await;
+            let result = finish_disconnect(&mut state, &profile_id, removal);
+            let _ = response.send(result);
+        });
+        result.await.unwrap_or(Err(Error::Unavailable))
     }
 
     async fn shutdown(&self) {
         let mut state = self.inner.state.lock().await;
         state.closing = true;
-        let wait_for_persistence = state.persisting;
+        let wait_for_commit = state.committing;
         let task = state.task.take();
         let listener = state.listener.take();
-        if state
-            .attempt
-            .as_ref()
-            .is_some_and(|attempt| attempt.status == Status::Pending)
+        if !wait_for_commit
+            && state
+                .attempt
+                .as_ref()
+                .is_some_and(|attempt| attempt.status == Status::Pending)
         {
             state.finish(Status::Cancelled);
         }
@@ -551,7 +615,7 @@ impl CodexAccountsPort for CodexProfileStore {
             let _ = listener.await;
         }
         if let Some(task) = task {
-            if !wait_for_persistence {
+            if !wait_for_commit {
                 task.abort();
             }
             let _ = task.await;

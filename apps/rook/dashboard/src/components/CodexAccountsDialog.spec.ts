@@ -124,6 +124,38 @@ describe("Codex accounts dialog", () => {
 			expect(api.disconnectCodexAccount).toHaveBeenCalledOnce();
 			expect(api.disconnectCodexAccount).toHaveBeenCalledWith("one");
 			expect(wrapper.text()).not.toContain("Account one");
+			expect(wrapper.emitted("accountsUpdated")?.[0]?.[0]).toMatchObject({
+				accounts: [],
+			});
+		} finally {
+			wrapper.unmount();
+		}
+	});
+
+	it.each([
+		"https://evil.example/oauth/authorize",
+		"https://user:pass@auth.openai.com/oauth/authorize",
+		"https://auth.openai.com/not-authorize",
+		"not a URL",
+	])("cancels an unsafe authorization URL: %s", async (authUrl) => {
+		api.getCodexAccounts.mockResolvedValue({
+			enabled: true,
+			accounts: [],
+			attempt: null,
+		});
+		api.startCodexLogin.mockResolvedValueOnce({ id: "unsafe", authUrl });
+		api.cancelCodexLogin.mockResolvedValueOnce(undefined);
+		const wrapper = mountDialog();
+		try {
+			await flushPromises();
+			await wrapper.get('[data-testid="codex-start"]').trigger("click");
+			await flushPromises();
+
+			expect(api.cancelCodexLogin).toHaveBeenCalledWith("unsafe");
+			expect(wrapper.find("a").exists()).toBe(false);
+			expect(wrapper.text()).toContain(
+				"could not load or change the Codex accounts",
+			);
 		} finally {
 			wrapper.unmount();
 		}

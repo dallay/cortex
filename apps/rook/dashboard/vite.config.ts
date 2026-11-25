@@ -4,7 +4,7 @@ import { fileURLToPath, URL } from "node:url";
 import { codecovVitePlugin } from "@codecov/vite-plugin";
 import tailwindcss from "@tailwindcss/vite";
 import vue from "@vitejs/plugin-vue";
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, normalizePath, type Plugin } from "vite";
 
 // Backend target for the Vite dev server proxy. Override via the API_TARGET
 // env var (e.g. set it in dev/e2e/run-api-keys-e2e.sh when the backend is on
@@ -21,8 +21,8 @@ const dashboardRequire = createRequire(
 	fileURLToPath(new URL("./package.json", import.meta.url)),
 );
 const SIMPLE_ICONS_PATH = dashboardRequire.resolve(SIMPLE_ICONS_IMPORT);
-const PROVIDER_ICON_PATH = fileURLToPath(
-	new URL("./src/components/ProviderIcon.vue", import.meta.url),
+const PROVIDER_ICON_PATH = normalizePath(
+	fileURLToPath(new URL("./src/components/ProviderIcon.vue", import.meta.url)),
 );
 const PROVIDER_ICON_NAMES = ["openai", "anthropic", "ollama", "googlegemini"];
 

@@ -23,10 +23,10 @@ const MAX_REQUEST_BYTES: usize = 8 * 1024;
 const READ_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_ACTIVE_CONNECTIONS: usize = 4;
 const RESULT_TIMEOUT: Duration = Duration::from_secs(5);
-const MAX_CODE_BYTES: usize = 4096;
-const STATE_LEN: usize = 43;
+pub(super) const MAX_CODE_BYTES: usize = 4096;
+pub(super) const STATE_LEN: usize = 43;
 pub(super) const MAX_CALLBACK_REQUESTS: u32 = 30;
-const CALLBACK_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
+pub(super) const CALLBACK_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
 
 const PAGE_STYLES: &str = r#"
     :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
@@ -85,7 +85,7 @@ enum ServeOutcome {
 }
 
 #[derive(Clone)]
-struct CallbackBudget(Arc<Mutex<RateWindow>>);
+pub(super) struct CallbackBudget(Arc<Mutex<RateWindow>>);
 
 struct RateWindow {
     started_at: Instant,
@@ -103,10 +103,15 @@ impl Default for CallbackBudget {
 
 impl CallbackBudget {
     async fn allow(&self) -> bool {
-        self.allow_at(Instant::now()).await
+        self.check_at(Instant::now()).await
     }
 
-    async fn allow_at(&self, now: Instant) -> bool {
+    #[cfg(test)]
+    pub(super) async fn allow_at(&self, now: Instant) -> bool {
+        self.check_at(now).await
+    }
+
+    async fn check_at(&self, now: Instant) -> bool {
         let mut window = self.0.lock().await;
         if now.duration_since(window.started_at) >= CALLBACK_RATE_LIMIT_WINDOW {
             window.started_at = now;
@@ -249,12 +254,12 @@ async fn serve_result_request(mut stream: TcpStream, page: CallbackPage) {
     respond(&mut stream, 200, &page.html()).await;
 }
 
-struct Callback {
-    state: String,
-    response: CodexCallback,
+pub(super) struct Callback {
+    pub(super) state: String,
+    pub(super) response: CodexCallback,
 }
 
-fn parse_callback(url: &reqwest::Url) -> Option<Callback> {
+pub(super) fn parse_callback(url: &reqwest::Url) -> Option<Callback> {
     let mut state = None;
     let mut code = None;
     let mut error = None;
@@ -307,7 +312,7 @@ async fn read_target(stream: &mut TcpStream) -> Option<String> {
     parse_request_target(&buf)
 }
 
-fn parse_request_target(bytes: &[u8]) -> Option<String> {
+pub(super) fn parse_request_target(bytes: &[u8]) -> Option<String> {
     let text = std::str::from_utf8(bytes).ok()?;
     let mut parts = text.split("\r\n").next()?.split(' ');
     let method = parts.next()?;
@@ -365,81 +370,4 @@ async fn write_response(
     let _ = stream.write_all(body.as_bytes()).await;
     let _ = stream.flush().await;
     let _ = stream.shutdown().await;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn callback_budget_limits_requests_per_minute_and_resets() {
-        let budget = CallbackBudget::default();
-        let started_at = Instant::now();
-
-        for _ in 0..MAX_CALLBACK_REQUESTS {
-            assert!(budget.allow_at(started_at).await);
-        }
-        assert!(!budget.allow_at(started_at).await);
-        assert!(
-            budget
-                .allow_at(started_at + CALLBACK_RATE_LIMIT_WINDOW)
-                .await
-        );
-    }
-
-    fn callback_url(query: &str) -> reqwest::Url {
-        reqwest::Url::parse(&format!("http://127.0.0.1{CODEX_CALLBACK_PATH}?{query}")).unwrap()
-    }
-
-    #[test]
-    fn parses_only_one_valid_state_and_one_callback_result() {
-        let valid = callback_url(&format!("state={}&code=abc", "s".repeat(STATE_LEN)));
-        assert!(matches!(
-            parse_callback(&valid).map(|callback| callback.response),
-            Some(CodexCallback::Code(code)) if code == "abc"
-        ));
-
-        let denied = callback_url(&format!(
-            "state={}&error=access_denied",
-            "s".repeat(STATE_LEN)
-        ));
-        assert!(matches!(
-            parse_callback(&denied).map(|callback| callback.response),
-            Some(CodexCallback::Denied)
-        ));
-    }
-
-    #[test]
-    fn rejects_missing_duplicate_ambiguous_or_oversized_callback_fields() {
-        let state = "s".repeat(STATE_LEN);
-        for query in [
-            "code=abc",
-            &format!("state={state}&code=abc&state={state}"),
-            &format!("state={state}&code=abc&code=def"),
-            &format!("state={state}&code=abc&error=access_denied"),
-            &format!("state={state}&code={}", "c".repeat(MAX_CODE_BYTES + 1)),
-            &format!("state={state}&error="),
-        ] {
-            assert!(
-                parse_callback(&callback_url(query)).is_none(),
-                "query accepted: {query}"
-            );
-        }
-    }
-
-    #[test]
-    fn rejects_non_get_and_non_http_request_lines() {
-        assert!(parse_request_target(
-            b"POST /auth/callback?state=abc HTTP/1.1\r\nHost: localhost\r\n\r\n"
-        )
-        .is_none());
-        assert!(parse_request_target(
-            b"GET /auth/callback?state=abc HTTP/2\r\nHost: localhost\r\n\r\n"
-        )
-        .is_none());
-        assert!(parse_request_target(
-            b"GET /auth/callback HTTP/1.1 EXTRA\r\nHost: localhost\r\n\r\n"
-        )
-        .is_none());
-    }
 }

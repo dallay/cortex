@@ -29,6 +29,7 @@ let disposed = false;
 
 const emit = defineEmits<{
   linked: [snapshot: CodexAccountsResponse];
+  accountsUpdated: [snapshot: CodexAccountsResponse];
 }>();
 
 function stopRefresh() {
@@ -87,7 +88,13 @@ function start() {
   const generation = dialogGeneration;
   void mutate(async () => {
     const result = await api.startCodexLogin();
-    const url = new URL(result.authUrl);
+    let url: URL;
+    try {
+      url = new URL(result.authUrl);
+    } catch {
+      await api.cancelCodexLogin(result.id);
+      throw new Error("Invalid Codex authorization URL");
+    }
     if (url.origin !== "https://auth.openai.com" || url.pathname !== "/oauth/authorize" || url.username || url.password) {
       await api.cancelCodexLogin(result.id);
       throw new Error("Invalid Codex authorization URL");
@@ -123,6 +130,13 @@ function setDisconnectDialogOpen(value: boolean) {
 async function confirmDisconnect() {
   const id = disconnectingAccount.value;
   if (id && await mutate(() => api.disconnectCodexAccount(id))) {
+    if (snapshot.value) {
+      snapshot.value = {
+        ...snapshot.value,
+        accounts: snapshot.value.accounts.filter((account) => account.id !== id),
+      };
+      emit("accountsUpdated", snapshot.value);
+    }
     setDisconnectDialogOpen(false);
   }
 }
