@@ -44,6 +44,7 @@ impl SpatialStore for Neo4jSpatialStore {
         radius_km: f64,
         limit: i64,
     ) -> MemoryResult<Vec<SpatialLocationHit>> {
+        let center = GeoPoint::new(center.latitude, center.longitude)?;
         if !radius_km.is_finite() || radius_km < 0.0 {
             return Err(MemoryError::invalid("radius_km must be finite and >= 0.0"));
         }
@@ -87,6 +88,7 @@ impl SpatialStore for Neo4jSpatialStore {
         bbox: BoundingBox,
         limit: i64,
     ) -> MemoryResult<Vec<SpatialLocationHit>> {
+        let bbox = BoundingBox::new(bbox.min_lat, bbox.min_lon, bbox.max_lat, bbox.max_lon)?;
         validate_spatial_limit(limit)?;
         let rows = self
             .client
@@ -175,12 +177,20 @@ impl SpatialStore for Neo4jSpatialStore {
                 BoltType::List(items) => items
                     .value
                     .into_iter()
-                    .filter_map(|v| match v {
-                        BoltType::String(s) => Uuid::parse_str(&s.value).ok(),
-                        _ => None,
+                    .map(|v| match v {
+                        BoltType::String(s) => Uuid::parse_str(&s.value).map_err(|e| {
+                            MemoryError::storage(format!("invalid conversation id: {e}"))
+                        }),
+                        other => Err(MemoryError::storage(format!(
+                            "unexpected conversation id type in list: {other:?}"
+                        ))),
                     })
-                    .collect(),
-                _ => Vec::new(),
+                    .collect::<MemoryResult<Vec<Uuid>>>()?,
+                other => {
+                    return Err(MemoryError::storage(format!(
+                        "unexpected conv_ids column type: {other:?}"
+                    )))
+                }
             };
             locations.push(SessionLocation {
                 entity,

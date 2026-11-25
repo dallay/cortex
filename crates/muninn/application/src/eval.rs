@@ -196,19 +196,23 @@ impl<'a> EvalMemory<'a> {
         if !request.retrieval.is_empty() {
             let mut total = 0.0;
             for case in &request.retrieval {
+                if case.k == 0 {
+                    total += recall_at_k(&[], &case.expected_entity_ids, 0);
+                    continue;
+                }
                 let hits = self
                     .long_term
                     .search_entities(
                         &case.query,
                         &SearchEntitiesOptions {
-                            limit: case.k.max(1),
+                            limit: case.k,
                             threshold: 0.0,
                             ..Default::default()
                         },
                     )
                     .await?;
                 let ids: Vec<Uuid> = hits.into_iter().map(|e| e.id).collect();
-                total += recall_at_k(&ids, &case.expected_entity_ids, case.k.max(1) as usize);
+                total += recall_at_k(&ids, &case.expected_entity_ids, case.k as usize);
             }
             report.retrieval = Some(DimensionScore {
                 cases: request.retrieval.len(),

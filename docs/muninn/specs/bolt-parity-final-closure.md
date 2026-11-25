@@ -14,7 +14,7 @@
 |-------------------------|---------|---------------|-----------------------|
 | **Suite TCK Normativo (`b6c72c36`)** | 189 recogidos; 178 seleccionados; 11 Platinum fuera de selección | **Histórico:** 178 PASS (`6be52cb0cf4c`, proveedor `hash`); **pendiente** en HEAD candidato | `docs/muninn/specs/evidence/bolt-tck-2026-11-22.json` |
 | **Escenarios Live Neo4j obligatorios (`MUNINN_REQUIRE_NEO4J=1`)** | 5 targets ejecutados en CI (`consolidation`, `durability_reconnect`, `multi_tenant_isolation`, `preference_relationships`, `summary_isolation`) | **5 / 5 PASS** en Linux CI | `just muninn-bolt-parity` |
-| **Escenarios Live Neo4j extendidos** | 19 targets en `crates/muninn/neo4j/tests/` marcados `#[ignore]` en CI estándar | **Pendiente** de ejecución automatizada por fixture aislado | `just muninn-bolt-parity-extended` |
+| **Escenarios Live Neo4j extendidos** | 19 targets en `crates/muninn/neo4j/tests/` marcados `#[ignore]` en CI estándar | **Pendiente** de ejecución automatizada por fixture aislado | `just muninn-bolt-parity-target <target>` por cada target |
 | **Superficie de Operaciones Bolt** | 161 mapeadas (138 elegibles, 23 excluidas: 4 driver/proxy, 13 NAMS, 6 embedders/extractors) | **Techo hipotético actual:** 122/138 (88.41%) por brechas conocidas (no paridad medida) | `docs/muninn/specs/bolt-parity-operation-map.csv` |
 | **Trazabilidad API curada** | 49 entradas curadas (`execution_this_run: not_run`, `parity_claim: false`) | **Sincronizada** vía validador automático | `docs/muninn/specs/api-test-traceability.json`, `docs/muninn/specs/api-test-traceability.md` |
 
@@ -22,10 +22,10 @@
 
 ## 2. Brechas Abiertas que Bloquean el Cierre ≥95%
 
-1. **`BOLT-08-04` (Escritura Diferida / Buffered Writer — 11 filas API, Crítico):** Solo existe `WriteMode::Buffered` en `crates/muninn/core/src/config.rs`; falta implementación de `BufferedWriter`, `flush`, `wait_for_pending`, `write_errors` y pruebas `GM09-B01..B08` (SDD: `.agents/sdd/changes/muninn-buffered-memory-writer/proposal.md`).
-2. **`BOLT-08-06` (Adopción de Grafo Existente `adopt_existing_graph` — 1 fila API, Crítico):** Ausente en `crates/muninn/neo4j/src/schema.rs` (SDD: `.agents/sdd/changes/muninn-existing-graph-adoption/proposal.md`).
-3. **`BOLT-08-07` (`EvalMemory` / `client.eval.run` — 2 filas API):** Ausente en `crates/muninn/` (SDD: `.agents/sdd/changes/muninn-eval-memory-api/proposal.md`).
-4. **`BOLT-08-03` / `BOLT-08-13` / `BOLT-08-14` (Recuperación Espacial — 2+ filas API):** Faltan `search_locations_near`, `search_locations_in_bounding_box`, `get_location_coordinates`, `get_locations` (SDD: `.agents/sdd/changes/muninn-spatial-retrieval/proposal.md`).
+1. **`BOLT-08-04` (Escritura Diferida / Buffered Writer — 11 filas API):** `BufferedWriter`, `flush`, `wait_for_pending`, `write_errors` implementados en `crates/muninn/application/src/buffered.rs` y `crates/muninn/application/src/client.rs`. Restan escenarios extendidos y validación bajo carga de suite GM09 (SDD: `.agents/sdd/changes/muninn-buffered-memory-writer/proposal.md`).
+2. **`BOLT-08-06` (Adopción de Grafo Existente `adopt_existing_graph` — 1 fila API):** Implementado en `crates/muninn/neo4j/src/schema.rs` vía `SchemaAdoptionPort` y expuesto en `crates/muninn/application/src/client.rs`. Pendiente validación de compatibilidad con esquemas heterogéneos en suite extendida (SDD: `.agents/sdd/changes/muninn-existing-graph-adoption/proposal.md`).
+3. **`BOLT-08-07` (`EvalMemory` / `client.eval.run` — 2 filas API):** Implementado en `crates/muninn/application/src/eval.rs` y `crates/muninn/application/src/client.rs`. Pendiente integración con resolver configurable y métricas de auditoría completas (SDD: `.agents/sdd/changes/muninn-eval-memory-api/proposal.md`).
+4. **`BOLT-08-03` / `BOLT-08-13` / `BOLT-08-14` (Recuperación Espacial — 2+ filas API):** Implementados `search_locations_near`, `search_locations_in_bounding_box`, `get_location_coordinates`, `get_locations` en `crates/muninn/neo4j/src/spatial.rs` y `crates/muninn/application/src/client.rs`. Pendiente scoping por owner y validación de tipos geográficos (SDD: `.agents/sdd/changes/muninn-spatial-retrieval/proposal.md`).
 5. **Integridad, Consolidación y MCP Productivo:** Atomicidad de ingestión (`F-01`), política formal de aislamiento (`F-04`), endurecimiento de consolidación (`F-05..F-09`), MCP core/extended/HTTP (`F-12`) y pipelines de extracción/enriquecimiento (`F-14`, `F-17`). Ver roadmap completo en `.agents/rpi/plan/tasks/muninn-parity-95-roadmap.md`.
 
 ---
