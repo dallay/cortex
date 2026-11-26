@@ -355,6 +355,9 @@ struct CapabilityModel {
 }
 #[async_trait]
 impl ModelProvider for CapabilityModel {
+    fn attribution(&self) -> Option<huginn_core::UsageAttribution> {
+        self.inner.attribution()
+    }
     async fn stream(
         &self,
         request: ModelRequest,

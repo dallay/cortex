@@ -204,7 +204,8 @@ impl Modal {
 
 #[derive(Default)]
 pub struct UiState {
-    pub usage: Option<(u64, u64)>,
+    pub usage: Option<huginn_core::TurnUsage>,
+    active_turn: Option<huginn_core::TurnId>,
     pub connection: Option<huginn_core::providers::ConnectionSnapshot>,
     connection_attachment: Option<uuid::Uuid>,
     pub editor: Editor,
@@ -671,14 +672,18 @@ impl UiState {
             Event::ApprovalResolved { approved, .. } => self
                 .status
                 .set_notice(if *approved { "Approved" } else { "Denied" }.into()),
-            Event::TurnStarted { .. } => {
+            Event::TurnStarted { turn, .. } => {
+                self.active_turn = Some(*turn);
+                self.usage = None;
                 self.tail_after_tool = 0;
                 self.status.set_notice("Thinking…".into());
             }
             Event::TurnFinished { .. } => {
+                self.active_turn = None;
                 self.status.set_notice("Ready".into());
             }
             Event::Error { message, .. } => {
+                self.active_turn = None;
                 self.status.set_diagnostic(safe(message));
             }
             Event::Compacted { .. } => self
@@ -701,13 +706,31 @@ impl UiState {
                     .set_notice(format!("Delivered {count} steering {noun}"));
             }
             Event::Usage {
+                turn,
                 input_tokens,
                 output_tokens,
+                attribution,
                 ..
             } => {
-                self.usage = Some((*input_tokens, *output_tokens));
-                self.status
-                    .set_notice(format!("Tokens: {input_tokens} in / {output_tokens} out"));
+                let effective_turn = if *turn != huginn_core::TurnId::UNKNOWN {
+                    *turn
+                } else {
+                    self.active_turn.unwrap_or(huginn_core::TurnId::UNKNOWN)
+                };
+                let reuse = self.usage.as_ref().is_some_and(|existing| {
+                    existing.turn == effective_turn
+                        && (effective_turn != huginn_core::TurnId::UNKNOWN
+                            || self.active_turn.is_some())
+                });
+                let aggregate = if reuse {
+                    self.usage.as_mut().expect("checked above")
+                } else {
+                    self.usage
+                        .insert(huginn_core::TurnUsage::new(effective_turn))
+                };
+                aggregate.record(*input_tokens, *output_tokens, attribution.clone());
+                let summary = crate::status_bar::format_usage(aggregate);
+                self.status.set_notice(format!("Tokens: {summary}"));
             }
         }
         // Retain authoritative (non-token) transitions even if the display task
@@ -722,6 +745,7 @@ impl UiState {
         self.synchronize_views(session, &BTreeMap::new());
     }
     fn synchronize_views(&mut self, session: &Session, views: &BTreeMap<usize, View>) {
+        let session_changed = self.session_id != session.id;
         self.session_id.clone_from(&session.id);
         for (index, message) in session.messages.iter().enumerate().skip(self.message_count) {
             let content = views
@@ -748,6 +772,11 @@ impl UiState {
         self.tail_after_tool = 0;
         self.busy = false;
         self.turn_cancel = None;
+        self.active_turn = None;
+        let recovered = huginn_core::TurnUsage::from_session_events(&session.events);
+        if session_changed || recovered.is_some() {
+            self.usage = recovered;
+        }
         if session.interrupted {
             self.status.set_diagnostic(
                 "Interrupted: effect completion may be unknown; nothing replayed".into(),

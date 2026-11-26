@@ -57,10 +57,42 @@ impl StatusSnapshot {
 pub struct StatusBar {
     pub connection: Option<ConnectionSnapshot>,
     pub activity: Activity,
-    pub usage: Option<(u64, u64)>,
+    pub usage: Option<huginn_core::TurnUsage>,
     pub notification: String,
     pub diagnostic: bool,
     pub widgets: String,
+}
+
+/// Formats turn usage with explicit completeness and model attribution.
+///
+/// Missing fields remain distinguishable from an explicitly reported zero, and
+/// partial subtotals are never presented as complete totals.
+pub fn format_usage(usage: &huginn_core::TurnUsage) -> String {
+    let counts = match usage.completeness() {
+        huginn_core::UsageCompleteness::Unknown => "usage unknown".to_string(),
+        huginn_core::UsageCompleteness::Complete => format!(
+            "{}in/{}out",
+            usage.input_tokens.unwrap_or(0),
+            usage.output_tokens.unwrap_or(0)
+        ),
+        huginn_core::UsageCompleteness::Partial => {
+            let input = match (usage.input_tokens, usage.missing_input_requests > 0) {
+                (Some(value), false) => format!("{value}in"),
+                (Some(value), true) => format!("{value}+in"),
+                (None, _) => "?in".into(),
+            };
+            let output = match (usage.output_tokens, usage.missing_output_requests > 0) {
+                (Some(value), false) => format!("{value}out"),
+                (Some(value), true) => format!("{value}+out"),
+                (None, _) => "?out".into(),
+            };
+            format!("partial {input}/{output}")
+        }
+    };
+    match &usage.attribution {
+        Some(attribution) => format!("{counts} ({})", crate::state::safe(&attribution.label())),
+        None => counts,
+    }
 }
 
 /// Clip by terminal cells, never by bytes or scalar count.
@@ -99,7 +131,7 @@ impl StatusBar {
             } else {
                 Activity::Idle
             },
-            usage: state.usage,
+            usage: state.usage.clone(),
             notification: crate::event::bounded_ui_summary(
                 state
                     .status
@@ -163,8 +195,8 @@ impl StatusBar {
             ""
         };
         let mut text = format!("{activity}|{connection}|{error}{}", self.notification);
-        if let Some((input, output)) = self.usage {
-            text.push_str(&format!(" | {input}in/{output}out"));
+        if let Some(usage) = &self.usage {
+            text.push_str(&format!(" | {}", format_usage(usage)));
         }
         if !self.widgets.is_empty() {
             text.push_str(&format!(" | {}", self.widgets));

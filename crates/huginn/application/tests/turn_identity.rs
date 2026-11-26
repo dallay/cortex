@@ -36,8 +36,9 @@ impl ModelProvider for Scripted {
         let deltas = if call.is_multiple_of(2) {
             vec![
                 ModelDelta::Usage {
-                    input_tokens: 7,
-                    output_tokens: 3,
+                    input_tokens: Some(7),
+                    output_tokens: Some(3),
+                    semantics: huginn_core::UsageSemantics::Cumulative,
                 },
                 ModelDelta::ToolCall(ToolCall {
                     id: format!("call-{call}"),
@@ -245,8 +246,15 @@ async fn every_step_event_carries_the_step_identity_of_its_model_call() {
         .collect();
     assert_eq!(
         tool_cycle,
-        vec![StepId(1), StepId(1), StepId(1), StepId(1), StepId(1)],
-        "the usage, tool and approval events of one model call share one step"
+        vec![
+            StepId(1),
+            StepId(1),
+            StepId(1),
+            StepId(1),
+            StepId(1),
+            StepId(2),
+        ],
+        "the usage, tool and approval events of the first model call share StepId(1), and the second model call records its usage event on StepId(2)"
     );
 
     let text_steps: Vec<StepId> = events

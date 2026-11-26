@@ -12,9 +12,10 @@ use huginn_plugin_api::{
         agent_loop_id, complete_turn_ends, inference_hooks_id, model_id, sessions_id,
         tool_hooks_id, AgentLoop, ApprovalDecision, ApprovalPolicy, ApprovalRequest,
         CancellationToken, Event, EventSink, InferenceHooksService, InstructionSource, LoopService,
-        Message, ModelDelta, ModelProvider, ModelRequest, ModelService, PreparedAction, Role,
-        ServiceSlotHandle, Session, SessionOperation, SessionStore, SessionsService, SteeringQueue,
-        StepId, Tool, ToolCall, ToolContext, ToolDefinition, ToolHooksService, ToolRegistry,
+        Message, ModelDelta, ModelProvider, ModelRequest, ModelService, PreparedAction,
+        RequestUsageAccumulator, Role, ServiceSlotHandle, Session, SessionOperation, SessionStore,
+        SessionsService, SteeringQueue, StepId, Tool, ToolCall, ToolContext, ToolDefinition,
+        ToolHooksService, ToolRegistry, TurnId,
     },
     v1::hooks::{InferenceHooks, ToolHooks},
     AgentError, Result,
@@ -221,45 +222,67 @@ impl StepLoop {
         };
         let mut response = Message::text(Role::Assistant, "");
         let mut finished = false;
-        loop {
+        let mut usage = RequestUsageAccumulator::default();
+        let mut produced_output = false;
+        let outcome: Result<()> = loop {
             let item = tokio::select! {
                 biased;
-                _ = call.cancel.cancelled() => return Err(AgentError::Cancelled),
+                _ = call.cancel.cancelled() => break Err(AgentError::Cancelled),
                 item = stream.next() => item,
             };
-            let Some(delta) = item else { break };
-            match delta? {
+            let Some(delta) = item else { break Ok(()) };
+            let delta = match delta {
+                Ok(delta) => delta,
+                Err(error) => break Err(error),
+            };
+            match delta {
                 ModelDelta::Text(text) => {
+                    produced_output = true;
                     response.content.push_str(&text);
                     call.sink.emit(Event::Text {
                         step: call.step,
                         text,
                     });
                 }
-                ModelDelta::ToolCall(call) => response.tool_calls.push(call),
+                ModelDelta::ToolCall(call) => {
+                    produced_output = true;
+                    response.tool_calls.push(call);
+                }
                 ModelDelta::Usage {
                     input_tokens,
                     output_tokens,
+                    semantics,
                 } => {
-                    // Counted even if the attempt ends incomplete: the provider spent them.
-                    *spent = spent.saturating_add(input_tokens.saturating_add(output_tokens));
-                    call.sink.emit(Event::Usage {
-                        step: call.step,
-                        input_tokens,
-                        output_tokens,
-                    });
+                    usage.observe(input_tokens, output_tokens, semantics);
                 }
                 ModelDelta::Finished => finished = true,
             }
             if response.content.len() > 1_048_576 || response.tool_calls.len() > 64 {
-                return Err(AgentError::Model("response exceeds limits".into()));
+                break Err(AgentError::Model("response exceeds limits".into()));
             }
+        };
+        let outcome = outcome.and_then(|()| {
+            if !finished {
+                Err(AgentError::Inference(
+                    "model returned an incomplete turn".into(),
+                ))
+            } else {
+                Ok(())
+            }
+        });
+        if usage.observed() || outcome.is_ok() || produced_output {
+            let reported = usage.reported();
+            // Counted even if the attempt ends incomplete: the provider spent them.
+            *spent = spent.saturating_add(reported.known_total());
+            call.sink.emit(Event::Usage {
+                turn: call.turn,
+                step: call.step,
+                input_tokens: reported.input_tokens,
+                output_tokens: reported.output_tokens,
+                attribution: model.attribution(),
+            });
         }
-        if !finished {
-            return Err(AgentError::Inference(
-                "model returned an incomplete turn".into(),
-            ));
-        }
+        outcome?;
         Ok(response)
     }
 
@@ -544,6 +567,7 @@ impl StepLoop {
             let tools = self.tools.definitions();
             let call = Call {
                 sink,
+                turn: at.turn,
                 step: at.step,
                 max_tokens: self.config.max_output_tokens,
                 cancel: cancel.clone(),
@@ -629,6 +653,7 @@ struct TurnStep {
 /// Host-facing I/O for one model call inside a turn.
 struct Call<'a> {
     sink: &'a dyn EventSink,
+    turn: TurnId,
     step: StepId,
     max_tokens: u32,
     cancel: CancellationToken,
@@ -748,6 +773,7 @@ impl AgentLoop for StepLoop {
                 request.tools,
                 &Call {
                     sink: events,
+                    turn: TurnId::UNKNOWN,
                     step: StepId(1),
                     max_tokens: request.max_tokens,
                     cancel: cancellation,
