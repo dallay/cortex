@@ -127,3 +127,43 @@ test.describe("Provider Detail Polish", () => {
 		await expect(page).toHaveURL(/\/providers$/);
 	});
 });
+
+test("Codex opens the official browser login without a provider or API key form", async ({
+	page,
+	context,
+}) => {
+	await loginIfNeeded(page);
+	const authUrl =
+		"https://auth.openai.com/oauth/authorize?state=synthetic-test";
+	let pending = false;
+	await page.route("**/api/codex/accounts", (route) =>
+		route.fulfill({
+			json: {
+				enabled: true,
+				accounts: [{ id: "linked-account" }],
+				attempt: pending ? { id: "test-attempt", status: "pending" } : null,
+			},
+		}),
+	);
+	await page.route("**/api/codex/login", async (route) => {
+		pending = true;
+		await route.fulfill({ json: { id: "test-attempt", authUrl } });
+	});
+	// Intercept at context scope: the new tab must never contact the IdP.
+	await context.route(authUrl, (route) =>
+		route.fulfill({ body: "Synthetic Codex sign-in" }),
+	);
+	await page.goto("providers");
+	await page.getByTestId("provider-card-add-openai-codex").click();
+	const dialog = page.getByRole("dialog", { name: "Codex accounts" });
+	await expect(dialog.getByText("Account linked-account")).toBeVisible();
+	await expect(dialog.getByRole("textbox")).toHaveCount(0);
+	await expect(dialog.getByRole("combobox")).toHaveCount(0);
+	await dialog.getByRole("button", { name: "Link a ChatGPT account" }).click();
+	const newTab = context.waitForEvent("page");
+	await dialog
+		.getByRole("link", { name: "Continue with ChatGPT (new tab)" })
+		.click();
+	const signIn = await newTab;
+	await expect(signIn.getByText("Synthetic Codex sign-in")).toBeVisible();
+});

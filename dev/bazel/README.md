@@ -5,7 +5,7 @@ compares the declared Cargo workspace inventory with explicit Bazel target mappi
 exclusions. A matching package/target count is not evidence of coverage.
 
 Cargo metadata is the source of truth for package and declared-target inventory. The current
-workspace has 43 packages and 265 declared targets.
+workspace has 43 packages and 294 declared targets.
 
 ```sh
 cargo metadata --locked --no-deps --format-version 1
@@ -132,10 +132,10 @@ older than the version the tooling supports.
 `python3 dev/bazel/check_inventory.py` reports the current state:
 
 ```text
-Inventory coverage: 264/265 mapped; 1 reviewed exclusions.
+Inventory coverage: 291/294 mapped; 3 reviewed exclusions.
 ```
 
-- 157 non-Huginn Cargo targets: 156 map to verified Bazel labels and 1 carries a reviewed exclusion.
+- 187 non-Huginn Cargo targets: 184 map to verified Bazel labels and 3 carry reviewed exclusions.
 - 107 Huginn Cargo targets, including `apps/huginn`: 107 map to Bazel labels and none carry reviewed
   exclusions.
 
@@ -143,6 +143,8 @@ The excluded targets are:
 
 | Cargo target                                   | Reason                                                                                                                                                               |
 |------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `crates/domain/rook-core` `probes`             | The hand-tuned `rook-core` `BUILD.bazel` does not define this Cargo test target.                                                                                    |
+| `crates/domain/rook-core` `provider_descriptor` | The hand-tuned `rook-core` `BUILD.bazel` does not define this Cargo test target.                                                                                    |
 | `crates/muninn/c1-exporter` `export_minilm_c1` | The binary requires the non-default `cpu-f32` feature, whose optional `candle-*`, `safetensors`, and `tokenizers` dependencies are not vendored by `crate_universe`. |
 
 The root `BUILD.bazel` now exports `dev/muninn/fixtures/**`. The generator detects those exported
@@ -161,10 +163,10 @@ Parity was measured by running both build systems over the non-Huginn packages:
 - Cargo: `cargo test --workspace` with the 11 Huginn packages excluded reports 2886 passing library
   and integration test cases, 0 failures, and 28 ignored tests, plus 6 passing doc-test cases.
 
-The case totals are the recorded baseline plus the 7 cases of the `transport-axum`
-`csrf_session_binding` target added by the security remediation, and both build systems were run
-again on that target. The target count is confirmed by the current full run: `just bazel-test`
-reports 249 test targets, 0 failures, including the two `//dev/bazel` tooling targets.
+The recorded case totals predate this PR's `transport-axum` `codex_routes` target, which adds two
+tests; the target is included in the current full run. The current inventory has 294 Cargo targets,
+and `just bazel-test` reports 286 test targets with 0 failures, including the two `//dev/bazel`
+tooling targets. The earlier `csrf_session_binding` target added 7 cases to its recorded baseline.
 
 The case comparison above still covers only the non-Huginn packages. Huginn is now modeled and
 green under Bazel (`bazel test //crates/huginn/... //apps/huginn/...`), but it is not part of the

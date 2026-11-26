@@ -62,6 +62,7 @@ mod provider_concurrency;
 
 /// All use cases assembled into one struct for easy passing to transports.
 pub struct RookUsecases {
+    pub codex_accounts: Option<Arc<dyn rook_core::codex_accounts::CodexAccountsPort>>,
     pub route_request: RouteRequest,
     pub manage_providers: ManageProviders,
     pub health_check: Arc<HealthCheck>,
@@ -86,6 +87,14 @@ pub struct RookUsecases {
 }
 
 impl RookUsecases {
+    pub fn with_codex_accounts(
+        mut self,
+        accounts: Option<Arc<dyn rook_core::codex_accounts::CodexAccountsPort>>,
+    ) -> Self {
+        self.codex_accounts = accounts;
+        self
+    }
+
     /// Builder-style constructor that accepts all required fields.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -107,6 +116,7 @@ impl RookUsecases {
         fallback_router: Arc<FallbackRouter>,
     ) -> Self {
         Self {
+            codex_accounts: None,
             route_request,
             manage_providers,
             health_check,

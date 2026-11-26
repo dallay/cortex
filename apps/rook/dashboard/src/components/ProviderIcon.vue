@@ -5,14 +5,13 @@
  * Icon resolution strategy (in priority order):
  *
  *   1. **Iconify bundle** — for the 4 kinds that have an official mark
- *      in Simple Icons (`simple-icons` set from @iconify-json/simple-icons).
- *      Icons are bundled at build time via Vite tree-shaking — zero
- *      runtime CDN requests, fully offline-safe.
+ *      in Simple Icons. Only those entries are registered for the app.
+ *      Icons are bundled at build time — zero runtime CDN requests.
  *
  *      Coverage: openai, anthropic, ollama, gemini (as googlegemini).
  *
- *   2. **Local SVG/PNG** — for kinds not yet in Simple Icons (groq,
- *      ollama-cloud). Static files in `public/providers/<iconFile>`,
+ *   2. **Local SVG/PNG** — for kinds not yet in Simple Icons (groq).
+ *      Static files in `public/providers/<iconFile>`,
  *      served as `<img>` with lazy/eager loading and CLS-safe dimensions.
  *
  *   3. **Fallback** — Lucide `Server` icon + dev console.warn when a
@@ -38,11 +37,18 @@ import Server from "@lucide/vue/dist/esm/icons/server.mjs";
 import {computed, ref} from "vue";
 import {findCatalogEntry, type ProviderKind} from "@/config/providerCatalog";
 
-// Register the full Simple Icons set once at module load time.
-// Vite tree-shakes unused icons in production — only referenced icons
-// end up in the bundle (via the rollup-plugin-purge-iconify or by
-// default Vite static analysis of the `icon` prop string literals).
-addCollection(simpleIcons as Parameters<typeof addCollection>[0]);
+// Vite resolves this import to a virtual collection containing only these icons.
+addCollection({
+  prefix: simpleIcons.prefix,
+  width: simpleIcons.width,
+  height: simpleIcons.height,
+  icons: {
+    openai: simpleIcons.icons.openai,
+    anthropic: simpleIcons.icons.anthropic,
+    ollama: simpleIcons.icons.ollama,
+    googlegemini: simpleIcons.icons.googlegemini,
+  },
+});
 
 /**
  * Maps a ProviderKind to its Simple Icons identifier, or null if
@@ -157,7 +163,7 @@ function onLocalError() {
     v-bind="ariaAttrs"
   />
 
-  <!-- Strategy 2: local SVG/PNG (groq, ollama-cloud) — and fallback sentinel -->
+  <!-- Strategy 2: local SVG/PNG (groq) — and fallback sentinel -->
   <template v-else-if="localSrc && !localFailed">
     <img
       :alt="decorative ? '' : displayName"

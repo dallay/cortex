@@ -282,3 +282,36 @@ A client adopts the CSRF replacement pair returned by a state-changing response 
 handlers issue tokens for the resulting session context. In particular, a successful logout can return no replacement pair if the server cannot generate the anonymous token, even when the request carried a valid pair. After such a logout, the client must call public `GET /login` to obtain a fresh anonymous CSRF pair before its next state-changing request.
 
 For first-run installation, use the bootstrap API above. For pre-seeding an admin password in a controlled environment, use `rook seed-admin` with the `$ROOK_SEED_PASSWORD` environment variable set.
+
+### Codex account management
+
+These endpoints require a Management session. `POST` and `DELETE` also require
+CSRF double-submit validation. They do not expose provider credentials.
+
+- `GET /api/codex/accounts` returns `enabled`, `accounts` (each with a local
+  `id`), and `attempt` (`null`, or `id` and `status`). Attempt statuses are
+  `pending`, `linked`, `cancelled`, `expired`, and `failed`.
+- `POST /api/codex/login` returns `id` and the OpenAI `authUrl`. It returns
+  `409` when an attempt is pending or the account limit has been reached. It
+  returns `503` when linking is disabled or unavailable.
+- `DELETE /api/codex/login/{id}` returns `204` if it cancels the pending attempt,
+  or `404` if the ID does not match a pending attempt.
+- `DELETE /api/codex/accounts/{id}` removes only that locally stored account and
+  returns `204`, or `404` if it is not linked. It does not revoke the OAuth
+  session at OpenAI.
+
+The OpenAI browser redirect uses a separate loopback listener at
+`http://127.0.0.1:1455/auth/callback`, without a Rook session cookie. The
+listener exists only while a login attempt is pending and requires that
+attempt's single-use OAuth `state`. Malformed callbacks or callbacks with a
+missing or mismatched state return `400` while the listener is active. Callback
+requests are limited to 30 per minute; this budget applies only to the OAuth
+callback, not the static result page. A valid callback returns `303` to the same
+callback path without query data, then serves a static result page for a short
+window. During that window, replaying the query-bearing callback URL returns
+`404`; after the listener closes, the callback endpoint is unavailable. This removes the authorization
+code and state from the browser address bar. The listener serves the result page
+for up to five seconds, then closes. Cancellation, expiration, and Rook shutdown
+also close the listener. The dashboard reads the outcome from
+`GET /api/codex/accounts`; the callback page does not expose tokens. If port 1455
+is busy, `POST /api/codex/login` returns `409 CODEX_CALLBACK_BUSY`.

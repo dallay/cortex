@@ -660,3 +660,53 @@ There is no minimum provider requirement at startup — the registry starts empt
 ```
 
 See `dev/e2e/run-api-keys-e2e.sh` for the full script.
+
+### Codex account linking (local only)
+
+Rook uses an OpenAI OAuth client ID whose registered loopback callback is
+`http://127.0.0.1:1455/auth/callback`. The public Codex CLI client ID currently
+uses this callback. OpenAI rejects other ports or paths for that client. The
+callback listener is separate from Rook's main listener and runs only while one
+login attempt is pending. A custom client ID must have this exact redirect URI
+registered. Rook uses the public Codex CLI client ID by default, so no separate
+OAuth app registration is required for the default.
+
+Run Rook as an unprivileged Unix user. Create a dedicated state directory owned
+by that user with permissions `0700`. Supply a dedicated random passphrase in
+`ROOK_CODEX_ENCRYPTION_PASSPHRASE` and a random 16-byte salt, encoded as
+unpadded base64url, in `ROOK_CODEX_ENCRYPTION_SALT`. Preserve both securely across
+restarts. Do not set either value in the dashboard.
+
+```toml
+[server]
+host = "127.0.0.1"
+port = 8080
+
+[server.codex_accounts]
+state_dir = "/absolute/path/to/rook-codex-state"
+```
+
+Set `client_id` only to override the default with an OAuth client that has the
+exact loopback redirect URI above registered.
+
+Omit `[server.codex_accounts]` to disable linking. Rook requires a Unix host and
+`server.host = "127.0.0.1"`. During `POST /api/codex/login`, Rook binds
+`127.0.0.1:1455`; if another process uses the port (for example, `codex login`),
+Rook returns `CODEX_CALLBACK_BUSY` and does not start the attempt. The listener
+accepts only `GET /auth/callback`. After a valid callback, it serves the
+query-free result page for up to five seconds, then closes. Cancellation,
+expiration, and shutdown also close the listener. Do not publish or reverse-proxy
+either listener. Open the dashboard in a browser that shares Rook's loopback
+network. Remote browsers and ordinary container port mappings are not supported.
+The dashboard provider catalog also requires `[provider_crud] enabled = true`.
+If you configure `[rate_limiting.ip_limits]`, use a positive
+`requests_per_minute` so that the browser can reach the Rook dashboard API.
+
+Rook allows one pending attempt per instance. An unused authorization expires
+after five minutes. Rook stores up to 32 links, each with a generated local ID
+and separate encrypted credentials. A record confirms a successful code exchange;
+it does not assert a verified email, plan, or distinct identity at OpenAI. Rook
+does not refresh tokens or check their current validity. Linked records survive
+restarts. Pending attempts do not. Disabling linking does not delete or revoke
+any account. The OAuth store does not read or migrate existing Codex CLI profiles
+or Rook provider connections. Protect the state directory and its backups.

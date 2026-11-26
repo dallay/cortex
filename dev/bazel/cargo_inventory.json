@@ -1479,6 +1479,13 @@
     },
     {
       "kinds": "test",
+      "label": "//crates/infrastructure/transport-axum:codex_routes",
+      "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",
+      "target": "codex_routes"
+    },
+    {
+      "kinds": "test",
       "label": "//crates/infrastructure/transport-axum:csrf_session_binding",
       "manifest": "crates/infrastructure/transport-axum/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/infrastructure/transport-axum#0.0.1",

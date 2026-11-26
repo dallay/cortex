@@ -12,10 +12,13 @@
 import {useI18n} from "vue-i18n";
 import type {ProviderCatalogItem} from "@/composables/useProviderCatalog";
 import type {CategoryDescriptor} from "@/config/providerCatalog";
+import type {CodexAccountsResponse} from "@/lib/api";
 import ProviderCatalogCard from "./ProviderCatalogCard.vue";
 
 defineProps<{
   category: CategoryDescriptor;
+  codexAccounts?: CodexAccountsResponse | null;
+  codexAccountsLoading?: boolean;
   items: readonly ProviderCatalogItem[];
 }>();
 
@@ -41,6 +44,8 @@ const {t} = useI18n();
       <ProviderCatalogCard
         v-for="item in items"
         :key="item.kind"
+        :codex-accounts="codexAccounts"
+        :codex-accounts-loading="codexAccountsLoading"
         :item="item"
         @add="kind => emit('add', kind)"
       />

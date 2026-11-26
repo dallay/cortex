@@ -5,3 +5,6 @@ pub mod provider;
 
 // Re-exports
 pub use provider::{parse_groq_rate_limit_headers, OpenAIProvider, OpenAIProviderConfig};
+
+#[cfg(unix)]
+pub mod codex;

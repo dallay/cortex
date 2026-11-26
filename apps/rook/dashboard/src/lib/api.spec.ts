@@ -1312,6 +1312,25 @@ describe("Rook OAuth API client", () => {
 			expect.objectContaining({ method: "DELETE" }),
 		);
 	});
+
+	it("disconnects a Codex account with DELETE and CSRF", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(okJson({ csrf_token: "csrf-codex" }))
+			.mockResolvedValueOnce(new Response(null, { status: 204 }));
+		const api = await apiWithFetch(fetchMock);
+
+		await api.disconnectCodexAccount("profile/1");
+
+		expect(fetchMock).toHaveBeenNthCalledWith(
+			2,
+			"/api/codex/accounts/profile%2F1",
+			expect.objectContaining({
+				method: "DELETE",
+				headers: expect.objectContaining({ "X-CSRF-Token": "csrf-codex" }),
+			}),
+		);
+	});
 });
 
 describe("CSRF response rotation", () => {

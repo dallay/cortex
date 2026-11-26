@@ -89,6 +89,8 @@ pub fn router(
         )
         .with_state(usecases.clone());
 
+    router = router.merge(crate::codex_routes::router(usecases.codex_accounts.clone()));
+
     if usecases.manage_connections.is_some() {
         router = router
             .merge(provider_routes::router(usecases.clone()))

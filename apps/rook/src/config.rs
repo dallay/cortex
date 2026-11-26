@@ -228,9 +228,23 @@ const fn default_usage_sweep_interval_hours() -> u32 {
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
+    /// Optional local-only Codex browser login configuration.
+    pub codex_accounts: Option<CodexAccountsConfig>,
     /// Background health check interval in seconds (default: 30)
     #[serde(default = "default_health_check_interval_secs")]
     pub health_check_interval_secs: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CodexAccountsConfig {
+    #[serde(default = "default_codex_client_id")]
+    pub client_id: String,
+    pub state_dir: std::path::PathBuf,
+}
+
+fn default_codex_client_id() -> String {
+    "app_EMoamEEZ73f0CkXaXp7hrann".into()
 }
 
 const fn default_health_check_interval_secs() -> u64 {
@@ -502,10 +516,18 @@ pub struct TierConfig {
     pub requests_per_day: Option<u32>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct IpRateLimitConfig {
     #[serde(default = "default_ip_requests_per_minute")]
     pub requests_per_minute: u32,
+}
+
+impl Default for IpRateLimitConfig {
+    fn default() -> Self {
+        Self {
+            requests_per_minute: default_ip_requests_per_minute(),
+        }
+    }
 }
 
 const fn default_ip_requests_per_minute() -> u32 {
@@ -688,6 +710,15 @@ mod tests {
         let path = dir.path().join("config.toml");
         std::fs::write(&path, toml).expect("write config");
         RookConfig::load(&path)
+    }
+
+    #[test]
+    fn codex_accounts_default_to_the_public_codex_client_id() {
+        let config: CodexAccountsConfig =
+            toml::from_str(r#"state_dir = "/absolute/path/to/codex-state""#)
+                .expect("state directory alone should configure Codex linking");
+
+        assert_eq!(config.client_id, "app_EMoamEEZ73f0CkXaXp7hrann");
     }
 
     const ROUTING_WEIGHT_CONFIG: &str = r#"

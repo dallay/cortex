@@ -19,6 +19,7 @@ import {computed, onMounted, ref, watch} from "vue";
 import {useI18n} from "vue-i18n";
 import {useRoute, useRouter} from "vue-router";
 import AddProviderDialog from "@/components/AddProviderDialog.vue";
+import CodexAccountsDialog from "@/components/CodexAccountsDialog.vue";
 import ConnectionListItem from "@/components/ConnectionListItem.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import ErrorBanner from "@/components/ErrorBanner.vue";
@@ -195,6 +196,9 @@ function closeProviderDialog() {
   fetch();
 }
 
+function onCodexLinked() {
+  void router.push({name: "Providers"});
+}
 
 </script>
 
@@ -289,7 +293,13 @@ function closeProviderDialog() {
       </template>
     </EmptyState>
 
+    <CodexAccountsDialog
+      v-if="providerKindParam === 'openai-codex'"
+      v-model:open="addDialogOpen"
+      @linked="onCodexLinked"
+    />
     <AddProviderDialog
+      v-else
       v-model:open="addDialogOpen"
       :provider-kind="providerKindParam ?? undefined"
       mode="create"

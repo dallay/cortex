@@ -184,13 +184,56 @@ fn resolve_setup_token_value(is_initialized: bool) -> Option<String> {
     Some(token)
 }
 
+fn build_codex_accounts(
+    config: &crate::config::ServerConfig,
+) -> anyhow::Result<Option<Arc<dyn rook_core::codex_accounts::CodexAccountsPort>>> {
+    let Some(accounts) = &config.codex_accounts else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        config.host == "127.0.0.1",
+        "Codex account linking requires server.host = 127.0.0.1"
+    );
+    #[cfg(unix)]
+    {
+        let passphrase = required_env(
+            "ROOK_CODEX_ENCRYPTION_PASSPHRASE",
+            "server.codex_accounts is configured",
+        )?;
+        let salt = required_env(
+            "ROOK_CODEX_ENCRYPTION_SALT",
+            "server.codex_accounts is configured",
+        )?;
+        let key_manager = Arc::new(
+            AesGcmKeyManager::from_passphrase_and_salt(&passphrase, &salt)
+                .map_err(|_| anyhow::anyhow!("invalid Codex encryption configuration"))?,
+        );
+        Ok(Some(Arc::new(
+            providers_openai::codex::CodexProfileStore::open(
+                &accounts.client_id,
+                &accounts.state_dir,
+                key_manager,
+            )?,
+        )))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = accounts;
+        anyhow::bail!("Codex account linking requires a Unix host");
+    }
+}
+
 impl RookContainer {
     pub async fn shutdown(&self) -> anyhow::Result<()> {
+        if let Some(accounts) = &self.usecases.codex_accounts {
+            accounts.shutdown().await;
+        }
         self.usage_repository.shutdown().await?;
         Ok(())
     }
 
     pub async fn build(config: &RookConfig) -> anyhow::Result<Self> {
+        let codex_accounts = build_codex_accounts(&config.server)?;
         let model_catalog: Arc<dyn ModelCatalogPort> = Arc::new(
             StaticModelCatalog::with_declarations(config.model_catalog.clone())
                 .map_err(anyhow::Error::msg)?,
@@ -416,7 +459,8 @@ impl RookContainer {
                 model_catalog.clone(),
                 fallback_router.clone(),
             )
-            .with_quota_observation_reader(quota_observation_recorder.clone()),
+            .with_quota_observation_reader(quota_observation_recorder.clone())
+            .with_codex_accounts(codex_accounts),
         );
 
         // Check initialization state to decide on setup token.

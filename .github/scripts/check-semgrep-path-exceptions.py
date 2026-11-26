@@ -34,6 +34,30 @@ NEW = (
     ("crates/huginn/runtime/src/tools.rs", "execute_search",
      "let Ok(text) = tokio::fs::read_to_string(&file).await else {",
      "runtime-search", "Validated workspace root and regular non-link entries; stable-tree only."),
+    ("crates/infrastructure/providers-openai/src/codex/mod.rs", "load_profiles",
+     "for file in fs::read_dir(root)? {", "codex-profile-store",
+     "Operator-configured state root is canonicalized and owner-private before enumeration."),
+    ("crates/infrastructure/providers-openai/src/codex/mod.rs", "save_account",
+     "fs::File::open(&profile)?.sync_all()?;", "codex-profile-store",
+     "The profile ID is a generated UUID v4 and validated before any profile path is joined."),
+    ("crates/infrastructure/providers-openai/src/codex/mod.rs", "save_account",
+     "fs::File::open(root)?.sync_all()", "codex-profile-store",
+     "Operator-configured state root is canonicalized and owner-private before directory sync."),
+    ("crates/infrastructure/providers-openai/src/codex/mod.rs", "save_account",
+     "let profile = root.join(id);", "codex-profile-store",
+     "The profile ID is validated as a UUID-shaped path component before joining the private root."),
+    ("crates/infrastructure/providers-openai/src/codex/mod.rs", "save_account",
+     "fs::DirBuilder::new().mode(0o700).create(&profile)?;", "codex-profile-store",
+     "The joined profile path is confined to the private root by the validated profile ID."),
+    ("crates/infrastructure/providers-openai/src/codex/mod.rs", "remove_account",
+     "let profile = root.join(id);", "codex-profile-store",
+     "The account ID is validated and the root is private and canonicalized before joining."),
+    ("crates/infrastructure/providers-openai/src/codex/mod.rs", "remove_account",
+     "fs::remove_dir_all(&profile)?;", "codex-profile-store",
+     "The profile path is derived from a validated ID inside the owner-private root."),
+    ("crates/infrastructure/providers-openai/src/codex/mod.rs", "remove_account",
+     "fs::File::open(root)?.sync_all()", "codex-profile-store",
+     "The canonical owner-private root is opened only to sync its directory entry."),
 )
 # Seven separately approved explicit-path library APIs. Reasons must remain sink-local.
 # File, enclosing function, exact sink line, exact consecutive reason comments.
@@ -142,11 +166,11 @@ def check_inventory(root=ROOT):
             ("Candle inventory mismatch: expected exactly seven exceptions", actual_candle))
     require(sorted(actual_old) == sorted(OLD), ("historical inventory changed", actual_old))
     require(sorted(actual_new) == sorted(NEW),
-            ("authorized inventory mismatch: expected seven NEW exceptions", actual_new))
+            ("authorized inventory mismatch: expected fifteen NEW exceptions", actual_new))
     evidence = (root / DOC).read_text()
     for _, _, _, anchor, _ in NEW:
         require(f"## {anchor}\n" in evidence, ("missing evidence anchor", anchor))
-    print("Inventory: 7 new exact exceptions; 7 Candle exact exceptions; "
+    print("Inventory: 15 new exact exceptions; 7 Candle exact exceptions; "
           "7 historical annotations unchanged", flush=True)
 
 
@@ -207,16 +231,16 @@ def scanner_controls(output):
             require(result.stdout.strip(), (name, "semgrep produced no output", result.stderr))
             data = json.loads(result.stdout)
             scanned = {(fixtures / p).resolve() for p in data["paths"]["scanned"]}
-            # 1.126 re-emits the result with --disable-nosem, but retains
-            # is_ignored=true and exits 0 even with --error. Inspect JSON.
+            # Inspect JSON because Semgrep versions differ on whether disabling
+            # suppressions changes the finding's ignored flag and exit status.
             active = [r for r in data["results"]
                       if disabled or not r["extra"].get("is_ignored", False)]
             require(scanned == {target}, (name, "file not scanned", scanned))
             require(not data["errors"], (name, data["errors"]))
             require(len(active) == expected, (name, "unexpected active findings", active))
             require(all(r["check_id"] == RULE for r in active), (name, active))
-            expected_exit = 1 if expected and not disabled else 0
-            require(result.returncode == expected_exit, (name, result.returncode))
+            expected_exits = (0, 1) if disabled else ((1,) if expected else (0,))
+            require(result.returncode in expected_exits, (name, result.returncode))
             print(f"{name}: active={len(active)}, scanned={len(scanned)}, "
                   f"exit={result.returncode}, engine={data['version']}", flush=True)
 

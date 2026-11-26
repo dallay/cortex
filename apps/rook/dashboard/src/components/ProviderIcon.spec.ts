@@ -33,7 +33,7 @@ describe("ProviderIcon", () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Strategy 2: local <img> (groq, ollama-cloud — not in simple-icons yet)
+	// Strategy 2: local <img> (groq — not in simple-icons yet)
 	// -------------------------------------------------------------------------
 
 	it("renders a local <img> for groq (local asset path)", () => {
