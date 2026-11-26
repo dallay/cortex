@@ -102,8 +102,9 @@ impl ModelProvider for ScriptModel {
             .pop_front()
             .unwrap_or(Reply::Text("done"));
         let usage = ModelDelta::Usage {
-            input_tokens: self.usage.0,
-            output_tokens: self.usage.1,
+            input_tokens: Some(self.usage.0),
+            output_tokens: Some(self.usage.1),
+            semantics: huginn_core::UsageSemantics::Cumulative,
         };
         let deltas: BoxStream<'static, Result<ModelDelta>> = match reply {
             Reply::Hang => futures::stream::pending().boxed(),

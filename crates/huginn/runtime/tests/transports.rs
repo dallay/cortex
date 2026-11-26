@@ -371,3 +371,106 @@ async fn mcp_crash_and_timeout_are_reported_and_shutdown_is_bounded() {
             .unwrap();
     }
 }
+
+#[test]
+fn sse_parser_distinguishes_missing_partial_zero_and_cumulative_usage() {
+    use huginn_core::{RequestUsageAccumulator, UsageCompleteness, UsageSemantics};
+    use huginn_runtime::model::SseParser;
+
+    // 1. Missing completion_tokens must remain None, never become 0.
+    let mut parser = SseParser::default();
+    let deltas = parser
+        .push(
+            b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10}}\n\ndata: [DONE]\n\n",
+        )
+        .unwrap();
+    let usage = deltas
+        .iter()
+        .find_map(|d| match d {
+            ModelDelta::Usage {
+                input_tokens,
+                output_tokens,
+                semantics,
+            } => Some((*input_tokens, *output_tokens, *semantics)),
+            _ => None,
+        })
+        .expect("usage delta");
+    assert_eq!(usage, (Some(10), None, UsageSemantics::Cumulative));
+
+    // 2. Explicit null or empty usage object must not fabricate zeros.
+    let mut parser = SseParser::default();
+    let deltas = parser
+        .push(
+            b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":null,\"completion_tokens\":null}}\n\ndata: [DONE]\n\n",
+        )
+        .unwrap();
+    let usage = deltas
+        .iter()
+        .find_map(|d| match d {
+            ModelDelta::Usage {
+                input_tokens,
+                output_tokens,
+                semantics,
+            } => Some((*input_tokens, *output_tokens, *semantics)),
+            _ => None,
+        })
+        .expect("usage delta");
+    assert_eq!(usage, (None, None, UsageSemantics::Cumulative));
+
+    // 3. Explicit zero remains Some(0), distinguishable from None.
+    let mut parser = SseParser::default();
+    let deltas = parser
+        .push(
+            b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":0,\"completion_tokens\":0}}\n\ndata: [DONE]\n\n",
+        )
+        .unwrap();
+    let usage = deltas
+        .iter()
+        .find_map(|d| match d {
+            ModelDelta::Usage {
+                input_tokens,
+                output_tokens,
+                semantics,
+            } => Some((*input_tokens, *output_tokens, *semantics)),
+            _ => None,
+        })
+        .expect("usage delta");
+    assert_eq!(usage, (Some(0), Some(0), UsageSemantics::Cumulative));
+
+    // 4. Total absence emits no usage delta.
+    let mut parser = SseParser::default();
+    let deltas = parser
+        .push(
+            b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}],\"usage\":null}\n\ndata: [DONE]\n\n",
+        )
+        .unwrap();
+    assert!(!deltas.iter().any(|d| matches!(d, ModelDelta::Usage { .. })));
+
+    // 5. Multiple cumulative snapshots in one SSE response do not double-count.
+    let mut parser = SseParser::default();
+    let deltas = parser
+        .push(
+            concat!(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":5}}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"content\":\"b\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":12}}\n\n",
+                "data: [DONE]\n\n"
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+    let mut acc = RequestUsageAccumulator::default();
+    for delta in deltas {
+        if let ModelDelta::Usage {
+            input_tokens,
+            output_tokens,
+            semantics,
+        } = delta
+        {
+            acc.observe(input_tokens, output_tokens, semantics);
+        }
+    }
+    let reported = acc.reported();
+    assert_eq!(reported.input_tokens, Some(100));
+    assert_eq!(reported.output_tokens, Some(12));
+    assert_eq!(reported.completeness(), UsageCompleteness::Complete);
+}

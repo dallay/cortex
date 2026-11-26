@@ -610,6 +610,7 @@ pub struct ModelRouter(pub Arc<Providers>);
 struct PinnedModel {
     providers: Arc<Providers>,
     connection: Arc<Connection>,
+    selection: ModelSelection,
     inner: Arc<dyn ModelProvider>,
 }
 struct RequestLifetime {
@@ -669,6 +670,7 @@ impl ModelProvider for ModelRouter {
         let pinned = PinnedModel {
             providers: self.0.clone(),
             connection,
+            selection,
             inner,
         };
         pinned.check()?;
@@ -688,6 +690,13 @@ impl ModelProvider for ModelRouter {
 }
 #[async_trait]
 impl ModelProvider for PinnedModel {
+    fn attribution(&self) -> Option<huginn_core::UsageAttribution> {
+        Some(huginn_core::UsageAttribution {
+            provider: Some(self.selection.connection.adapter.provider.clone()),
+            connection: Some(self.selection.connection.id.clone()),
+            model: self.selection.model.clone(),
+        })
+    }
     async fn pin_turn(&self, _: CancellationToken) -> Result<Option<Arc<dyn ModelProvider>>> {
         self.check()?;
         Ok(Some(Arc::new(self.clone())))

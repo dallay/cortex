@@ -589,6 +589,13 @@
       "target": "turn_identity"
     },
     {
+      "kinds": "test",
+      "label": "//crates/huginn/application:usage_accounting",
+      "manifest": "crates/huginn/application/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/application#huginn-application@0.0.1",
+      "target": "usage_accounting"
+    },
+    {
       "kinds": "lib",
       "label": "//crates/huginn/conformance:huginn_conformance",
       "manifest": "crates/huginn/conformance/Cargo.toml",

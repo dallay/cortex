@@ -61,6 +61,31 @@ invalidates later inference within an already pinned turn. Dropping/cancelling
 an in-flight stream is best effort and local only: it does **not** confirm remote
 cancellation, credential revocation, or that billing stopped.
 
+## Reported turn usage accounting
+
+Huginn aggregates reported token usage across all inference requests belonging to
+a turn, including tool continuations, in-turn context compaction, and retries.
+
+- **Cumulative vs. incremental semantics**: OpenAI-compatible `/v1/chat/completions`
+  SSE `usage` objects are treated as request-cumulative snapshots
+  (`UsageSemantics::Cumulative`), so multiple usage chunks within one response
+  stream supersede earlier snapshots for that request rather than double-counting.
+  Incremental deltas (`UsageSemantics::Incremental`) are summed within a request.
+- **Failed and interrupted attempts**: If an inference attempt reports usage before
+  failing, being interrupted, or being cancelled, that reported consumption is
+  retained and persisted.
+- **Completeness and explicit zero**: Missing or unparseable fields remain `None`
+  rather than becoming `0`. An explicitly reported `0` (`Some(0)`) stays
+  distinguishable from missing data (`UsageCompleteness::Unknown` or
+  `UsageCompleteness::Partial`). Partial subtotals are never presented as complete
+  totals.
+- **Attribution**: Each usage event records the pinned inference identity
+  (`provider`, `connection`, `model`, excluding secrets and endpoints). Changing
+  the model selection mid-turn applies to the next turn and never reattributes
+  consumption already produced by the active turn.
+- **Scope**: Reported usage reflects transport-reported token counts only; it is
+  not a provider invoice or billing reconciliation.
+
 ## Reproducible real Ollama checks
 
 Verified locally on October 14, 2026, using Ollama client/server **0.40.3**, macOS,

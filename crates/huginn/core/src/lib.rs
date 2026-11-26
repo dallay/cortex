@@ -7,6 +7,11 @@ pub mod providers;
 pub use kernel::{ServiceHandle, ServiceLease, ServiceSlotHandle};
 mod turn;
 pub use turn::complete_turn_ends;
+pub mod usage;
+pub use usage::{
+    ReportedUsage, RequestUsageAccumulator, TurnUsage, UsageAttribution, UsageCompleteness,
+    UsageSemantics,
+};
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -119,8 +124,9 @@ pub enum ModelDelta {
     Text(String),
     ToolCall(ToolCall),
     Usage {
-        input_tokens: u64,
-        output_tokens: u64,
+        input_tokens: Option<u64>,
+        output_tokens: Option<u64>,
+        semantics: UsageSemantics,
     },
     Finished,
 }
@@ -129,6 +135,10 @@ pub trait ModelProvider: Send + Sync {
     /// Static adapters are configured by default; sentinels and routers report readiness.
     fn is_configured(&self) -> bool {
         true
+    }
+    /// Inference identity used by this provider instance, when known.
+    fn attribution(&self) -> Option<UsageAttribution> {
+        None
     }
     /// Fix the inference identity for one entire turn, including compaction.
     /// Static providers keep their existing implementation. Routers return a
@@ -290,9 +300,15 @@ pub enum Event {
     },
     Usage {
         #[serde(default)]
+        turn: TurnId,
+        #[serde(default)]
         step: StepId,
-        input_tokens: u64,
-        output_tokens: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        input_tokens: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output_tokens: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attribution: Option<UsageAttribution>,
     },
     Compacted {
         through: usize,

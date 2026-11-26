@@ -79,9 +79,10 @@ pub mod agent {
         agent_loop_id, complete_turn_ends, model_id, sessions_id, AgentLoop, AgentLoopCapabilities,
         ApprovalDecision, ApprovalPolicy, ApprovalRequest, CancellationToken, Event, EventSink,
         InstructionSource, LoopService, Message, ModelDelta, ModelProvider, ModelRequest,
-        ModelService, PreparedAction, Result, Role, Session, SessionOperation, SessionStore,
-        SessionsService, SteeringQueue, StepId, Tool, ToolCall, ToolContext, ToolDefinition,
-        ToolRegistry, TurnId,
+        ModelService, PreparedAction, ReportedUsage, RequestUsageAccumulator, Result, Role,
+        Session, SessionOperation, SessionStore, SessionsService, SteeringQueue, StepId, Tool,
+        ToolCall, ToolContext, ToolDefinition, ToolRegistry, TurnId, TurnUsage, UsageAttribution,
+        UsageCompleteness, UsageSemantics,
     };
     pub use huginn_core::{
         hooks::{inference_hooks_id, tool_hooks_id, InferenceHooksService, ToolHooksService},

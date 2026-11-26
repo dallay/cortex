@@ -192,6 +192,13 @@ fn wire_message(message: &Message) -> Value {
 }
 #[async_trait]
 impl ModelProvider for OpenAiProvider {
+    fn attribution(&self) -> Option<huginn_core::UsageAttribution> {
+        Some(huginn_core::UsageAttribution {
+            provider: None,
+            connection: None,
+            model: self.model.clone(),
+        })
+    }
     async fn stream(
         &self,
         request: ModelRequest,
@@ -343,8 +350,9 @@ impl SseParser {
         }
         if let Some(usage) = value.get("usage").filter(|value| value.is_object()) {
             result.push(ModelDelta::Usage {
-                input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0),
-                output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0),
+                input_tokens: usage.get("prompt_tokens").and_then(Value::as_u64),
+                output_tokens: usage.get("completion_tokens").and_then(Value::as_u64),
+                semantics: huginn_core::UsageSemantics::Cumulative,
             });
         }
         if let Some(choice) = value["choices"]

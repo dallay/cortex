@@ -144,3 +144,12 @@ rust_test(
     deps = [":huginn_application", "//crates/huginn/core:huginn_core"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
+
+rust_test(
+    name = "usage_accounting",
+    crate_name = "usage_accounting",
+    srcs = ["tests/usage_accounting.rs", "tests/support/providers.rs"],
+    edition = crate_edition(),
+    deps = [":huginn_application", "//crates/huginn/core:huginn_core"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)

@@ -57,8 +57,9 @@ impl ModelProvider for Model {
         match self.ending {
             Ending::Finished => {
                 deltas.push(Ok(ModelDelta::Usage {
-                    input_tokens: 10,
-                    output_tokens: 20,
+                    input_tokens: Some(10),
+                    output_tokens: Some(20),
+                    semantics: huginn_core::UsageSemantics::Cumulative,
                 }));
                 deltas.push(Ok(ModelDelta::Finished));
             }
@@ -439,4 +440,87 @@ async fn partial_text_is_not_persisted_on_incomplete_error_or_cancellation() {
             turn: huginn_core::TurnId(1), message,
         }) if message == &error.to_string()));
     }
+}
+
+#[tokio::test]
+async fn persisted_usage_preserves_partial_completeness_attribution_and_interrupted_usage() {
+    use huginn_core::{TurnUsage, UsageAttribution, UsageCompleteness, UsageSemantics};
+
+    struct UsageBeforeInterruptModel {
+        attribution: UsageAttribution,
+    }
+    #[async_trait]
+    impl ModelProvider for UsageBeforeInterruptModel {
+        fn attribution(&self) -> Option<UsageAttribution> {
+            Some(self.attribution.clone())
+        }
+        async fn stream(
+            &self,
+            _: ModelRequest,
+            _: CancellationToken,
+        ) -> Result<BoxStream<'static, Result<ModelDelta>>> {
+            Ok(futures::stream::iter(vec![
+                Ok(ModelDelta::Text("partial".into())),
+                Ok(ModelDelta::Usage {
+                    input_tokens: Some(45),
+                    output_tokens: None,
+                    semantics: UsageSemantics::Cumulative,
+                }),
+                Err(AgentError::Inference("stream interrupted".into())),
+            ])
+            .boxed())
+        }
+    }
+
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let db = data.path().join("sessions.db");
+    let store = Arc::new(SqliteSessions::open(&db).unwrap());
+    let attribution = UsageAttribution {
+        provider: Some("openai".into()),
+        connection: Some("conn-persisted".into()),
+        model: "model-persisted".into(),
+    };
+    let engine = StandardLoop {
+        model: Arc::new(UsageBeforeInterruptModel {
+            attribution: attribution.clone(),
+        }),
+        tools: Arc::new(Registry::native(10).unwrap()),
+        sessions: store,
+        instructions: Arc::new(huginn_runtime::instructions::FilesystemInstructions),
+        config: LoopConfig::default(),
+        lifecycle: CancellationToken::new(),
+    };
+    let mut session = Session::new(workspace.path().canonicalize().unwrap());
+    let sink = {
+        struct NoopSink;
+        impl EventSink for NoopSink {
+            fn emit(&self, _: Event) {}
+        }
+        NoopSink
+    };
+    let err = engine
+        .run(
+            &mut session,
+            "hello".into(),
+            &NoApproval,
+            &sink,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AgentError::Inference(_)));
+
+    let reopened = SqliteSessions::open(&db)
+        .unwrap()
+        .load(&session.id)
+        .await
+        .unwrap();
+    assert!(reopened.interrupted);
+    let recovered = TurnUsage::from_session_events(&reopened.events)
+        .expect("usage reported before interruption must survive persistence");
+    assert_eq!(recovered.input_tokens, Some(45));
+    assert_eq!(recovered.output_tokens, None);
+    assert_eq!(recovered.completeness(), UsageCompleteness::Partial);
+    assert_eq!(recovered.attribution, Some(attribution));
 }
