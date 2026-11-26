@@ -181,6 +181,10 @@ pnpm exec playwright test --headed
 pnpm exec playwright test --debug
 ```
 
+The E2E runner asks Docker to assign an available host port by default,
+so it can run alongside a local Rook server. Set `API_PORT` to request a fixed
+host port.
+
 ### Manual Run
 
 ```bash

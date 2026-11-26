@@ -23,17 +23,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
 CONTAINER_NAME="rook-e2e-api-keys"
-export API_PORT=3773
+API_PORT="${API_PORT:-}"
 # Expose the host-side port to the dashboard (Vite proxy) and Playwright
 # (global-setup). The rook container listens on 3773 internally and we map
-# it to API_PORT on the host, so everything running OUTSIDE the container
-# must use API_PORT, not 3773.
+# it to an available host port by default, so everything running OUTSIDE the
+# container must use API_PORT, not 3773. Set API_PORT to request a fixed port.
 #
 # Use 127.0.0.1 (not localhost) on purpose: on macOS, Docker's userland proxy
 # only forwards IPv4, but `localhost` resolves to ::1 first, which causes
 # ECONNRESET for every request. Forcing IPv4 via 127.0.0.1 sidesteps that.
-export API_TARGET="http://127.0.0.1:${API_PORT}"
-export API_BASE_URL="${API_TARGET}"
+if [ -n "$API_PORT" ]; then
+    PORT_PUBLISH="127.0.0.1:${API_PORT}:3773"
+else
+    PORT_PUBLISH="127.0.0.1::3773"
+fi
 TEST_CONFIG="${REPO_ROOT}/dev/test-configs/rook-api-keys-test.toml"
 ADMIN_PASSWORD="Admin123456-"
 DASHBOARD_DIR="${REPO_ROOT}/apps/rook/dashboard"
@@ -83,7 +86,7 @@ log_info "Starting rook container..."
 docker run -d \
     --name "$CONTAINER_NAME" \
     --tmpfs /tmp \
-    -p ${API_PORT}:3773 \
+    -p "$PORT_PUBLISH" \
     -v "$TEST_CONFIG:/app/rook.toml:ro" \
     -e ROOK_CONFIG=/app/rook.toml \
     -e RUST_LOG=info \
@@ -91,7 +94,20 @@ docker run -d \
     -e RUST_BACKTRACE=1 \
     -e ENCRYPTION_PASSPHRASE="test-encryption-passphrase-for-e2e-tests-only" \
     -e ENCRYPTION_SALT="St7xmpfwUTbsXGBHIlYjvg" \
-    rook:e2e-api-keys > /dev/null 2>&1
+    rook:e2e-api-keys > /dev/null
+
+if [ -z "$API_PORT" ]; then
+    API_PORT="$(docker port "$CONTAINER_NAME" 3773/tcp | sed -n '1s/.*://p')"
+fi
+if [ -z "$API_PORT" ]; then
+    log_error "Failed to determine the published host port"
+    docker logs "$CONTAINER_NAME" | tail -20
+    cleanup
+    exit 1
+fi
+export API_PORT
+export API_TARGET="http://127.0.0.1:${API_PORT}"
+export API_BASE_URL="$API_TARGET"
 
 log_info "Waiting for server to be ready..."
 for i in {1..30}; do
@@ -191,7 +207,7 @@ log_info "Provider creation response: $PROVIDER_RESPONSE"
 rm -f /tmp/rook-e2e-cookies.txt
 
 log_info "Container ready!"
-log_info "  API: http://localhost:$API_PORT"
+log_info "  API: $API_TARGET"
 log_info "  Admin: admin / $ADMIN_PASSWORD"
 log_info ""
 
