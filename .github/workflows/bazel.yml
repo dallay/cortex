@@ -53,9 +53,13 @@ jobs:
       - name: Check Bazel inventory
         if: steps.affected.outputs.mode != 'docs-only'
         run: python3 dev/bazel/check_inventory.py
-      - name: Validate Bazel module lockfile
+      - name: Update and verify Bazel module lockfile
         if: steps.affected.outputs.mode != 'docs-only'
-        run: bazel mod deps --lockfile_mode=error
+        run: |
+          git ls-files --error-unmatch -- MODULE.bazel.lock
+          test -f MODULE.bazel.lock || { echo "MODULE.bazel.lock is missing" >&2; exit 1; }
+          bazel mod deps
+          git diff --exit-code -- MODULE.bazel.lock
       - name: Run Bazel test suite
         if: steps.affected.outputs.mode != 'docs-only'
         run: bazel test //... --lockfile_mode=error --test_output=summary

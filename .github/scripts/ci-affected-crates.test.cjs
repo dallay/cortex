@@ -180,7 +180,8 @@ describe('Bazel advisory workflow contract', () => {
         assert.doesNotMatch(workflow, /continue-on-error:\s*true/);
         assert.match(workflow, /name: Bazel \(non-blocking\)/);
         assert.match(workflow, /name: Bazel test \(Linux, advisory\)/);
-        assert.match(workflow, /bazel mod deps --lockfile_mode=error/);
+        assert.match(workflow,
+            /git ls-files --error-unmatch -- MODULE\.bazel\.lock\s+test -f MODULE\.bazel\.lock[^\n]*\s+bazel mod deps\s+git diff --exit-code -- MODULE\.bazel\.lock/);
         assert.match(workflow,
             /python3 dev\/bazel\/generate_build_files\.py --check/);
         assert.match(workflow, /python3 dev\/bazel\/check_inventory\.py/);
