@@ -5,3 +5,4 @@
 node_modules
 apps/rook/dashboard/node_modules
 apps/rook/dashboard/coverage
+tmp
