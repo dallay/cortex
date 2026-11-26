@@ -259,8 +259,8 @@ else
     echo "Press Ctrl+C to stop the container, or run with --test to run tests automatically"
     echo "To run tests manually:"
     echo "  1. cd $DASHBOARD_DIR"
-    echo "  2. pnpm run dev"
-    echo "  3. pnpm playwright test e2e/api-keys.spec.ts"
+    echo "  2. API_TARGET=\"$API_TARGET\" pnpm run dev"
+    echo "  3. API_BASE_URL=\"$API_BASE_URL\" pnpm playwright test e2e/api-keys.spec.ts"
     echo ""
 
     # Wait for user interrupt - use docker logs to block
