@@ -200,11 +200,24 @@ async fn cancelled_disconnect_request_still_updates_memory_after_removal() {
         .unwrap(),
     );
 
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
     let operation_store = Arc::clone(&store);
-    let operation = tokio::spawn(async move { operation_store.disconnect(ACCOUNT_ID).await });
-    tokio::task::yield_now().await;
+    let operation = tokio::spawn(async move {
+        operation_store
+            .disconnect_with(ACCOUNT_ID, move |root, id| {
+                started_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                remove_account(&root, &id)
+            })
+            .await
+    });
+    tokio::task::spawn_blocking(move || started_rx.recv().unwrap())
+        .await
+        .unwrap();
     operation.abort();
     let _ = operation.await;
+    release_tx.send(()).unwrap();
 
     tokio::time::timeout(Duration::from_secs(2), async {
         loop {

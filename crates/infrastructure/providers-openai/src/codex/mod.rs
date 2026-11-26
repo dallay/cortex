@@ -280,19 +280,14 @@ fn remove_account(root: &Path, id: &str) -> Result<(), RemoveError> {
     // The profile path is derived from a validated ID inside the owner-private root.
     // Evidence: docs/security/semgrep-path-exceptions.md#codex-profile-store
     // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
-    fs::remove_dir_all(&profile).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            RemoveError::NotFound
-        } else {
-            RemoveError::Failed
-        }
-    })?;
-    // The canonical owner-private root is opened only to sync its directory entry.
-    // Evidence: docs/security/semgrep-path-exceptions.md#codex-profile-store
-    // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
-    fs::File::open(root)
-        .and_then(|root| root.sync_all())
-        .map_err(|_| RemoveError::RemovedButUnsynced)
+    fs::remove_dir_all(&profile)?;
+    let sync_root = || -> std::io::Result<()> {
+        // The canonical owner-private root is opened only to sync its directory entry.
+        // Evidence: docs/security/semgrep-path-exceptions.md#codex-profile-store
+        // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
+        fs::File::open(root)?.sync_all()
+    };
+    sync_root().map_err(|_| RemoveError::RemovedButUnsynced)
 }
 
 #[derive(Debug)]
@@ -300,6 +295,16 @@ enum RemoveError {
     NotFound,
     Failed,
     RemovedButUnsynced,
+}
+
+impl From<std::io::Error> for RemoveError {
+    fn from(error: std::io::Error) -> Self {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            Self::NotFound
+        } else {
+            Self::Failed
+        }
+    }
 }
 
 fn finish_disconnect(
@@ -470,6 +475,48 @@ impl CodexProfileStore {
     }
 }
 
+impl CodexProfileStore {
+    async fn disconnect_with<F>(&self, id: &str, remove: F) -> Result<(), Error>
+    where
+        F: FnOnce(PathBuf, String) -> Result<(), RemoveError> + Send + 'static,
+    {
+        let mut state = self.inner.state.lock().await;
+        if state.closing {
+            return Err(Error::Unavailable);
+        }
+        if !valid_id(id) || !state.accounts.iter().any(|account| account.id == id) {
+            return Err(Error::NotFound);
+        }
+        if state.disconnecting.contains(id)
+            || state.disconnecting.len() >= MAX_CONCURRENT_DISCONNECTS
+        {
+            return Err(Error::Busy);
+        }
+        state.disconnecting.insert(id.to_owned());
+        tracing::debug!(
+            active_disconnects = state.disconnecting.len(),
+            "Starting Codex account disconnect"
+        );
+        drop(state);
+
+        let root = self.inner.root.clone();
+        let profile_id = id.to_owned();
+        let inner = self.inner.clone();
+        let (response, result) = oneshot::channel();
+        tokio::spawn(async move {
+            let removal_root = root.clone();
+            let removal_id = profile_id.clone();
+            let removal = tokio::task::spawn_blocking(move || remove(removal_root, removal_id))
+                .await
+                .unwrap_or(Err(RemoveError::Failed));
+            let mut state = inner.state.lock().await;
+            let result = finish_disconnect(&mut state, &profile_id, removal);
+            let _ = response.send(result);
+        });
+        result.await.unwrap_or(Err(Error::Unavailable))
+    }
+}
+
 #[async_trait::async_trait]
 impl CodexAccountsPort for CodexProfileStore {
     async fn list(&self) -> Result<CodexAccounts, Error> {
@@ -560,39 +607,8 @@ impl CodexAccountsPort for CodexProfileStore {
     }
 
     async fn disconnect(&self, id: &str) -> Result<(), Error> {
-        let mut state = self.inner.state.lock().await;
-        if state.closing {
-            return Err(Error::Unavailable);
-        }
-        if !valid_id(id) || !state.accounts.iter().any(|account| account.id == id) {
-            return Err(Error::NotFound);
-        }
-        if state.disconnecting.contains(id)
-            || state.disconnecting.len() >= MAX_CONCURRENT_DISCONNECTS
-        {
-            return Err(Error::Busy);
-        }
-        state.disconnecting.insert(id.to_owned());
-        tracing::debug!(
-            active_disconnects = state.disconnecting.len(),
-            "Starting Codex account disconnect"
-        );
-        drop(state);
-
-        let root = self.inner.root.clone();
-        let profile_id = id.to_owned();
-        let inner = self.inner.clone();
-        let (response, result) = oneshot::channel();
-        tokio::spawn(async move {
-            let removal_id = profile_id.clone();
-            let removal = tokio::task::spawn_blocking(move || remove_account(&root, &removal_id))
-                .await
-                .unwrap_or(Err(RemoveError::Failed));
-            let mut state = inner.state.lock().await;
-            let result = finish_disconnect(&mut state, &profile_id, removal);
-            let _ = response.send(result);
-        });
-        result.await.unwrap_or(Err(Error::Unavailable))
+        self.disconnect_with(id, |root, profile_id| remove_account(&root, &profile_id))
+            .await
     }
 
     async fn shutdown(&self) {

@@ -231,16 +231,16 @@ def scanner_controls(output):
             require(result.stdout.strip(), (name, "semgrep produced no output", result.stderr))
             data = json.loads(result.stdout)
             scanned = {(fixtures / p).resolve() for p in data["paths"]["scanned"]}
-            # 1.126 re-emits the result with --disable-nosem, but retains
-            # is_ignored=true and exits 0 even with --error. Inspect JSON.
+            # Inspect JSON because Semgrep versions differ on whether disabling
+            # suppressions changes the finding's ignored flag and exit status.
             active = [r for r in data["results"]
                       if disabled or not r["extra"].get("is_ignored", False)]
             require(scanned == {target}, (name, "file not scanned", scanned))
             require(not data["errors"], (name, data["errors"]))
             require(len(active) == expected, (name, "unexpected active findings", active))
             require(all(r["check_id"] == RULE for r in active), (name, active))
-            expected_exit = 1 if expected and not disabled else 0
-            require(result.returncode == expected_exit, (name, result.returncode))
+            expected_exits = (0, 1) if disabled else ((1,) if expected else (0,))
+            require(result.returncode in expected_exits, (name, result.returncode))
             print(f"{name}: active={len(active)}, scanned={len(scanned)}, "
                   f"exit={result.returncode}, engine={data['version']}", flush=True)
 
