@@ -56,6 +56,8 @@ jobs:
       - name: Update and verify Bazel module lockfile
         if: steps.affected.outputs.mode != 'docs-only'
         run: |
+          git ls-files --error-unmatch -- MODULE.bazel.lock
+          test -f MODULE.bazel.lock || { echo "MODULE.bazel.lock is missing" >&2; exit 1; }
           bazel mod deps
           git diff --exit-code -- MODULE.bazel.lock
       - name: Run Bazel test suite
