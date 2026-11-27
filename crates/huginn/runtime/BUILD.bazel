@@ -143,6 +143,16 @@ rust_test(
 )
 
 rust_test(
+    name = "model_requests",
+    crate_name = "model_requests",
+    crate_features = ["test-hooks"],
+    srcs = ["tests/model_requests.rs"],
+    edition = crate_edition(),
+    deps = [":huginn_runtime_test_hooks", "//crates/huginn/application:huginn_application_test_hooks", "//crates/huginn/core:huginn_core", "//crates/huginn/guards:huginn_guards", "//crates/huginn/plugin-api:huginn_plugin_api"] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
     name = "providers_integration",
     crate_name = "providers_integration",
     srcs = ['tests/providers_integration.rs'],

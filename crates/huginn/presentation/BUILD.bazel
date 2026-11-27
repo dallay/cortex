@@ -30,6 +30,17 @@ rust_binary(
 )
 
 rust_library(
+    name = "huginn_presentation_test_hooks",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "huginn_presentation",
+    crate_root = "src/lib.rs",
+    crate_features = ["test-hooks"],
+    edition = crate_edition(),
+    deps = ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/plugin-api:huginn_plugin_api', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+)
+
+rust_library(
     name = "huginn_presentation",
     srcs = glob(["src/**/*.rs"]),
     crate_name = "huginn_presentation",
@@ -54,6 +65,16 @@ rust_test(
     srcs = ['tests/clipboard.rs'],
     edition = crate_edition(),
     deps = [":huginn_presentation"] + ['//crates/huginn/application:huginn_application', '//crates/huginn/core:huginn_core', '//crates/huginn/plugin-api:huginn_plugin_api', '//crates/huginn/reference-extension:huginn_reference_extension'] + all_crate_deps(normal = True, normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
+)
+
+rust_test(
+    name = "clipboard_lifecycle",
+    crate_name = "clipboard_lifecycle",
+    srcs = ["tests/clipboard_lifecycle.rs"],
+    crate_features = ["test-hooks"],
+    edition = crate_edition(),
+    deps = [":huginn_presentation_test_hooks", "//crates/huginn/core:huginn_core"] + all_crate_deps(normal = True, normal_dev = True),
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
 )
 

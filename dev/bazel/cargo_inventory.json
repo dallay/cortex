@@ -793,6 +793,13 @@
     },
     {
       "kinds": "test",
+      "label": "//crates/huginn/presentation:clipboard_lifecycle",
+      "manifest": "crates/huginn/presentation/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
+      "target": "clipboard_lifecycle"
+    },
+    {
+      "kinds": "test",
       "label": "//crates/huginn/presentation:completion",
       "manifest": "crates/huginn/presentation/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
@@ -1014,6 +1021,13 @@
       "manifest": "crates/huginn/runtime/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
       "target": "mcp_lifecycle"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/huginn/runtime:model_requests",
+      "manifest": "crates/huginn/runtime/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/runtime#huginn-runtime@0.0.1",
+      "target": "model_requests"
     },
     {
       "kinds": "test",

@@ -1,3 +1,5 @@
+#![cfg(debug_assertions)]
+
 use futures::StreamExt;
 use huginn_core::{CancellationToken, ModelProvider, ModelRequest};
 use huginn_runtime::model::OpenAiProvider;
