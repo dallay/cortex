@@ -408,9 +408,14 @@ mod tests {
             Some("https://api.openai.com/v1/"),
             "gpt-5"
         ));
-        assert!(supports_openai_reasoning_effort(
+        assert!(!supports_openai_reasoning_effort(
             "openai",
             Some("https://api.openai.com"),
+            "o4-mini-2025-04-16"
+        ));
+        assert!(supports_openai_reasoning_effort(
+            "openai",
+            Some("https://api.openai.com/v1"),
             "o4-mini-2025-04-16"
         ));
         assert!(supports_openai_reasoning_effort(
@@ -429,6 +434,7 @@ mod tests {
             "gpt-5-pro",
             "gpt-5-codex",
             "gpt-5-chat-latest",
+            "o3-2025-99-99",
         ] {
             assert!(
                 !supports_openai_reasoning_effort(

@@ -2489,6 +2489,7 @@ dependencies = [
  "process-wrap",
  "rcgen",
  "reqwest",
+ "ring",
  "rmcp",
  "rusqlite",
  "serde",

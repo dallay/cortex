@@ -510,28 +510,49 @@ impl Session {
             .sum()
     }
 
-    /// Returns a persistence-safe clone with raw image bytes stripped and replaced by
-    /// lightweight non-sensitive textual markers so `sessions.db` never stores image blobs.
+    /// Returns a persistence-safe copy with raw image bytes omitted and replaced by
+    /// lightweight non-sensitive textual markers so `sessions.db` never stores image blobs
+    /// and saving never clones in-memory image payloads.
     pub fn for_persistence(&self) -> Self {
-        let mut copy = self.clone();
-        for msg in &mut copy.messages {
-            let count = msg.images.len();
-            if count > 0 {
-                msg.images.clear();
-                let marker = if count == 1 {
-                    "[Image attachment omitted from persisted history]".to_string()
-                } else {
-                    format!("[{count} image attachments omitted from persisted history]")
-                };
-                if msg.content.trim().is_empty() {
-                    msg.content = marker;
-                } else {
-                    msg.content.push('\n');
-                    msg.content.push_str(&marker);
+        let messages = self
+            .messages
+            .iter()
+            .map(|msg| {
+                let count = msg.images.len();
+                let mut content = msg.content.clone();
+                if count > 0 {
+                    let marker = if count == 1 {
+                        "[Image attachment omitted from persisted history]".to_string()
+                    } else {
+                        format!("[{count} image attachments omitted from persisted history]")
+                    };
+                    if content.trim().is_empty() {
+                        content = marker;
+                    } else {
+                        content.push('\n');
+                        content.push_str(&marker);
+                    }
                 }
-            }
+                Message {
+                    role: msg.role.clone(),
+                    content,
+                    images: Vec::new(),
+                    tool_calls: msg.tool_calls.clone(),
+                    tool_call_id: msg.tool_call_id.clone(),
+                }
+            })
+            .collect();
+        Self {
+            skill_catalog_fingerprint: self.skill_catalog_fingerprint.clone(),
+            id: self.id.clone(),
+            workspace: self.workspace.clone(),
+            messages,
+            events: self.events.clone(),
+            summary: self.summary.clone(),
+            summary_through: self.summary_through,
+            interrupted: self.interrupted,
+            turn_seq: self.turn_seq,
         }
-        copy
     }
 
     pub fn new(workspace: PathBuf) -> Self {

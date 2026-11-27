@@ -316,8 +316,10 @@ async fn enable_connection_management(
     let siwc_auth = Arc::new(huginn_runtime::siwc::SiwcOAuthClient::new(
         config.timeout_secs,
     ));
+    let siwc_persistence = Arc::new(std::sync::OnceLock::new());
     supervisor.register(Box::new(huginn_runtime::siwc::SiwcProviderPlugin {
         auth: siwc_auth.clone(),
+        persistence: Some(siwc_persistence.clone()),
         timeout_secs: config.timeout_secs,
     }))?;
     supervisor.start().await?;
@@ -344,6 +346,7 @@ async fn enable_connection_management(
             .await?
             .with_siwc_auth(siwc_auth),
     );
+    let _ = siwc_persistence.set(manager.clone());
     // Explicit configuration still wins at startup; UI choices are deliberate
     // runtime changes. Never combine stored credentials with legacy settings.
     if let Some(selection) = explicit_selection {

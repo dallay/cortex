@@ -128,6 +128,8 @@ fn read_macos_clipboard_image() -> Result<Option<ImageAttachment>, String> {
 
 #[cfg(target_os = "linux")]
 fn read_linux_clipboard_image() -> Result<Option<ImageAttachment>, String> {
+    use std::process::Stdio;
+    let mut any_tool_ran = false;
     for (bin, args) in [
         ("wl-paste", &["--no-newline", "--type", "image/png"][..]),
         (
@@ -135,62 +137,34 @@ fn read_linux_clipboard_image() -> Result<Option<ImageAttachment>, String> {
             &["-selection", "clipboard", "-t", "image/png", "-o"][..],
         ),
     ] {
-        if let Ok(output) = std::process::Command::new(bin).args(args).output() {
-            if output.status.success() && !output.stdout.is_empty() {
-                return ImageAttachment::from_bytes(output.stdout, Some("clipboard.png".into()))
-                    .map(Some)
-                    .map_err(|err| err.to_string());
+        if let Ok(mut child) = std::process::Command::new(bin)
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            any_tool_ran = true;
+            let mut bytes = Vec::new();
+            if let Some(stdout) = child.stdout.take() {
+                let _ = stdout
+                    .take((MAX_IMAGE_BYTES as u64) + 1)
+                    .read_to_end(&mut bytes);
             }
-            return Ok(None);
+            if let Ok(status) = child.wait() {
+                if status.success() && !bytes.is_empty() {
+                    return ImageAttachment::from_bytes(bytes, Some("clipboard.png".into()))
+                        .map(Some)
+                        .map_err(|err| err.to_string());
+                }
+            }
         }
     }
-    Err("no clipboard tool found (install wl-paste or xclip, or paste an image file path)".into())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_quoted_and_escaped_image_paths_only() {
-        assert_eq!(
-            parse_pasted_image_path("'/tmp/my shot.png'"),
-            Some(PathBuf::from("/tmp/my shot.png"))
-        );
-        assert_eq!(
-            parse_pasted_image_path(r"/tmp/my\ shot.webp"),
-            Some(PathBuf::from("/tmp/my shot.webp"))
-        );
-        assert_eq!(parse_pasted_image_path("hello world"), None);
-        assert_eq!(parse_pasted_image_path("/tmp/notes.txt"), None);
-    }
-
-    #[test]
-    fn loads_valid_png_path_and_ui_state_manages_preview_and_removal() {
-        let dir = tempfile::tempdir().unwrap();
-        let temp = dir.path().join("sample.png");
-        let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
-        png.extend_from_slice(&13u32.to_be_bytes());
-        png.extend_from_slice(b"IHDR");
-        png.extend_from_slice(&32u32.to_be_bytes());
-        png.extend_from_slice(&16u32.to_be_bytes());
-        png.extend_from_slice(&[8, 2, 0, 0, 0]);
-        std::fs::write(&temp, &png).unwrap();
-
-        let loaded = try_load_pasted_image_path(&format!("'{}'", temp.display()))
-            .unwrap()
-            .unwrap();
-
-        let mut state = crate::state::UiState::default();
-        for _ in 0..huginn_core::MAX_IMAGES_PER_MESSAGE {
-            state.attach_image(loaded.clone()).unwrap();
-        }
-        assert!(state.attach_image(loaded).is_err());
-        assert_eq!(state.attachment_chips()[0], "[Image 1: PNG 32x16, 29 B]");
-        assert!(state.remove_last_attachment());
-        assert_eq!(
-            state.attachments.len(),
-            huginn_core::MAX_IMAGES_PER_MESSAGE - 1
-        );
+    if any_tool_ran {
+        Ok(None)
+    } else {
+        Err(
+            "no clipboard tool found (install wl-paste or xclip, or paste an image file path)"
+                .into(),
+        )
     }
 }

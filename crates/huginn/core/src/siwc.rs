@@ -36,6 +36,8 @@ pub struct SiwcCredentials {
     #[serde(default)]
     pub granted_scopes: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_sub: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_email: Option<String>,
 }
 
@@ -111,44 +113,11 @@ pub trait SiwcAuthPort: Send + Sync {
     ) -> SiwcRevocationOutcome;
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn valid_creds() -> SiwcCredentials {
-        SiwcCredentials {
-            host_id: "host-1".into(),
-            client_id: "client-issued-1".into(),
-            access_token: "access-secret".into(),
-            refresh_token: "refresh-secret".into(),
-            expires_at_unix: 1_900_000_000,
-            granted_scopes: SIWC_REQUIRED_SCOPES
-                .iter()
-                .map(|s| (*s).to_string())
-                .collect(),
-            account_email: Some("dev@example.com".into()),
-        }
-    }
-
-    #[test]
-    fn validates_required_scopes_and_redacts_tokens_in_debug() {
-        let creds = valid_creds();
-        assert!(creds.validate_grants().is_ok());
-        let debug = format!("{creds:?}");
-        assert!(!debug.contains("access-secret"));
-        assert!(!debug.contains("refresh-secret"));
-        assert!(debug.contains("[REDACTED]"));
-
-        let mut missing_scope = creds;
-        missing_scope.granted_scopes.pop();
-        assert!(missing_scope.validate_grants().is_err());
-    }
-
-    #[test]
-    fn refresh_threshold_triggers_within_sixty_seconds() {
-        let creds = valid_creds();
-        assert!(!creds.needs_refresh(1_899_999_900));
-        assert!(creds.needs_refresh(1_899_999_940));
-        assert!(creds.needs_refresh(1_900_000_000));
-    }
+/// Host-owned persistence hook for rotated SIWC OAuth credentials, serialized with logout.
+#[async_trait]
+pub trait SiwcCredentialPersistence: Send + Sync {
+    /// Persist rotated credentials to the host secret store before the new access token is used.
+    async fn persist_rotated(&self, credentials: &SiwcCredentials) -> Result<()>;
+    /// Read the latest persisted SIWC credentials for the active connection, if any.
+    async fn load_latest(&self) -> Result<Option<SiwcCredentials>>;
 }

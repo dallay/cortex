@@ -174,6 +174,12 @@ async fn openai_provider_serializes_reasoning_effort_only_when_configured() {
     assert_eq!(bodies.len(), 2);
     assert_eq!(bodies[0]["reasoning_effort"], "high");
     assert!(bodies[1].get("reasoning_effort").is_none());
+    // Compatible (non-official) endpoints preserve `max_tokens` instead of switching to
+    // OpenAI's `max_completion_tokens`.
+    assert_eq!(bodies[0]["max_tokens"], request().max_tokens);
+    assert!(bodies[0].get("max_completion_tokens").is_none());
+    assert_eq!(bodies[1]["max_tokens"], request().max_tokens);
+    assert!(bodies[1].get("max_completion_tokens").is_none());
     task.abort();
 }
 

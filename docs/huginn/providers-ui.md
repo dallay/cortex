@@ -18,18 +18,27 @@ keyboard, or rendering capabilities to adapters.
   credentials, or disconnect.
 - `/model`: choose the connection and model for the **next turn**.
 - `/reasoning`: configure `reasoning_effort` (`off`, `low`, `medium`, `high`) for
-  verified OpenAI API reasoning models (`o1`, `o3*`, `o4-mini*`, `gpt-5*` on
-  `https://api.openai.com/v1`) for the **next turn**; unsupported or unverified
-  models are rejected explicitly without advertising unavailable options.
+  verified OpenAI Chat Completions reasoning models (`o1`, `o1-2024-12-17`,
+  `o3`, `o3-2025-04-16`, `o3-mini`, `o3-mini-2025-01-31`, `o4-mini`,
+  `o4-mini-2025-04-16`, `gpt-5`, `gpt-5-2025-08-07`, `gpt-5-mini`,
+  `gpt-5-mini-2025-08-07`, `gpt-5-nano`, `gpt-5-nano-2025-08-07` on
+  `https://api.openai.com/v1`) for the **next turn**; Responses-only models
+  (`o3-pro`, `o3-deep-research`, `o4-mini-deep-research`, `gpt-5-pro`,
+  `gpt-5-codex`, `o1-pro`) and non-reasoning aliases (`o1-mini`, `o1-preview`,
+  `gpt-5-chat-latest`) are rejected explicitly without advertising unavailable
+  options.
 - Image paste in the composer: press `Ctrl+V` to attach an image from the OS
   clipboard (macOS/Linux) or paste/drag a local PNG, JPEG, or WebP file path.
   Attached images appear as preview chips above the composer (`Alt+Backspace` or
   `Backspace` on an empty draft removes the last attachment). Limits: 5 MiB per
   image, 4 images per message, and 16 MiB total in-memory per active session.
-  Images are supported on verified OpenAI API vision models (`gpt-4o*`,
-  `gpt-4.1*`, `gpt-5*`, `o3*` excluding `o3-mini`, `o4-mini*`), are kept in
-  memory for follow-up turns in the active session only, and are never persisted
-  as binary blobs in `sessions.db`.
+  Images are supported on verified OpenAI Chat Completions vision models
+  (`gpt-4o`, `gpt-4o-mini`, `chatgpt-4o-latest`, `gpt-4.1`, `gpt-4.1-mini`,
+  `gpt-4.1-nano`, `o1`, `o3`, `o4-mini`, `gpt-5`, `gpt-5-mini`, `gpt-5-nano`,
+  and their verified dated snapshots on `https://api.openai.com/v1`; excluding
+  `o3-mini`, Responses-only models such as `o3-pro` and `gpt-5-pro`, and
+  audio/realtime/TTS variants), are kept in memory for follow-up turns in the
+  active session only, and are never persisted as binary blobs in `sessions.db`.
 - `/logout`: confirm local revocation and credential cleanup.
 
 In settings forms, Tab or the vertical arrows move between fields; the horizontal

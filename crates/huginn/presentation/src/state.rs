@@ -832,6 +832,7 @@ impl UiState {
             self.conversation(text);
         }
         self.message_count = session.messages.len();
+        self.session_image_bytes = session.in_memory_image_bytes();
         self.tail.clear();
         self.tail_after_tool = 0;
         self.busy = false;

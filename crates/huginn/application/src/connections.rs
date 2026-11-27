@@ -561,8 +561,14 @@ impl ConnectionManager {
         };
         self.run_operation(async {
             let _operation = self.operation().await?;
-            self.write_connection(None, settings, Some(secret), SecretMode::Secure)
-                .await
+            self.write_connection(
+                None,
+                settings,
+                Some(secret),
+                SecretMode::Secure,
+                AuthenticationMethod::OAuth,
+            )
+            .await
         })
         .await
     }
@@ -572,42 +578,79 @@ impl ConnectionManager {
         id: Uuid,
         cancel: CancellationToken,
     ) -> ConnectionResult<String> {
-        let record = {
-            let state = self.state.lock().await;
-            Self::check_state(&state)?;
-            state.metadata.connections.get(&id).cloned()
-        };
-        let mut remote_report = None;
-        if let Some(record) =
-            record.filter(|r| r.settings.provider == huginn_core::siwc::SIWC_PROVIDER_ID)
-        {
-            if let (Some(auth), Some(reference)) = (self.siwc_auth.as_ref(), record.secret.as_ref())
-            {
+        enum RemoteCandidate {
+            None,
+            Ready {
+                auth: Arc<dyn huginn_core::siwc::SiwcAuthPort>,
+                creds: huginn_core::siwc::SiwcCredentials,
+            },
+            LocalOnly(String),
+        }
+
+        // Capture what remote logout needs under the operation guard and state lock so
+        // concurrent refresh persistence cannot race with reading the latest refresh token.
+        let candidate = self
+            .run_operation(async {
+                let _operation = self.operation().await?;
+                let state = self.state.lock().await;
+                Self::check_state(&state)?;
+                let record = state.metadata.connections.get(&id).cloned();
+                let Some(record) =
+                    record.filter(|r| r.settings.provider == huginn_core::siwc::SIWC_PROVIDER_ID)
+                else {
+                    return Ok(RemoteCandidate::None);
+                };
+                let (Some(auth), Some(reference)) =
+                    (self.siwc_auth.clone(), record.secret.as_ref())
+                else {
+                    return Ok(RemoteCandidate::None);
+                };
                 match self.access.secrets.read_mode(record.mode, reference).await {
                     Ok(secret) => {
+                        if self.access.epoch.load(Ordering::SeqCst) != self.owner
+                            || self.retired.is_cancelled()
+                        {
+                            return Ok(RemoteCandidate::LocalOnly(
+                                "connection ownership changed before remote revocation".into(),
+                            ));
+                        }
                         match huginn_core::siwc::SiwcCredentials::from_secret_json(secret.expose())
                         {
-                            Ok(creds) => {
-                                remote_report = Some(auth.revoke_remote(&creds, cancel).await);
-                            }
-                            Err(_) => {
-                                remote_report =
-                                    Some(huginn_core::siwc::SiwcRevocationOutcome::LocalOnly {
-                                        reason: "stored OAuth credentials could not be parsed"
-                                            .into(),
-                                    });
-                            }
+                            Ok(creds) => Ok(RemoteCandidate::Ready { auth, creds }),
+                            Err(_) => Ok(RemoteCandidate::LocalOnly(
+                                "stored OAuth credentials could not be parsed".into(),
+                            )),
                         }
                     }
-                    Err(_) => {
-                        remote_report = Some(huginn_core::siwc::SiwcRevocationOutcome::LocalOnly {
-                            reason: "stored OAuth credentials were unavailable".into(),
-                        });
-                    }
+                    Err(_) => Ok(RemoteCandidate::LocalOnly(
+                        "stored OAuth credentials were unavailable".into(),
+                    )),
+                }
+            })
+            .await?;
+
+        // Revoke local authorization and complete durable cleanup BEFORE waiting on remote I/O,
+        // so pinned turns are blocked immediately and cancellation cannot skip local revocation.
+        self.revoke(id).await?;
+
+        let remote_report = match candidate {
+            RemoteCandidate::None => None,
+            RemoteCandidate::LocalOnly(reason) => {
+                Some(huginn_core::siwc::SiwcRevocationOutcome::LocalOnly { reason })
+            }
+            RemoteCandidate::Ready { auth, creds } => {
+                if self.access.epoch.load(Ordering::SeqCst) != self.owner
+                    || self.retired.is_cancelled()
+                {
+                    Some(huginn_core::siwc::SiwcRevocationOutcome::LocalOnly {
+                        reason: "connection ownership changed before remote revocation".into(),
+                    })
+                } else {
+                    Some(auth.revoke_remote(&creds, cancel).await)
                 }
             }
-        }
-        self.revoke(id).await?;
+        };
+
         Ok(match remote_report {
             Some(huginn_core::siwc::SiwcRevocationOutcome::RemoteConfirmed) => {
                 "Sign in with ChatGPT session revoked remotely and deleted locally.".into()
@@ -846,10 +889,21 @@ impl ConnectionManager {
         settings: ConnectionSettings,
         secret: Option<Secret>,
     ) -> ConnectionResult<ConnectionRecord> {
+        let authentication = if settings.requires_secret {
+            AuthenticationMethod::ApiKey
+        } else {
+            AuthenticationMethod::None
+        };
         self.run_operation(async {
             let _operation = self.operation().await?;
-            self.write_connection(None, settings, secret, self.access.secrets.mode())
-                .await
+            self.write_connection(
+                None,
+                settings,
+                secret,
+                self.access.secrets.mode(),
+                authentication,
+            )
+            .await
         })
         .await
     }
@@ -859,10 +913,21 @@ impl ConnectionManager {
         settings: ConnectionSettings,
         secret: Option<Secret>,
     ) -> ConnectionResult<ConnectionRecord> {
+        let authentication = if settings.requires_secret {
+            AuthenticationMethod::ApiKey
+        } else {
+            AuthenticationMethod::None
+        };
         self.run_operation(async {
             let _operation = self.operation().await?;
-            self.write_connection(Some(id), settings, secret, self.access.secrets.mode())
-                .await
+            self.write_connection(
+                Some(id),
+                settings,
+                secret,
+                self.access.secrets.mode(),
+                authentication,
+            )
+            .await
         })
         .await
     }
@@ -874,6 +939,7 @@ impl ConnectionManager {
         settings: ConnectionSettings,
         secret: Option<Secret>,
         mode: SecretMode,
+        authentication: AuthenticationMethod,
     ) -> ConnectionResult<ConnectionRecord> {
         settings.validate()?;
         if settings.requires_secret != secret.is_some() {
@@ -894,15 +960,6 @@ impl ConnectionManager {
         {
             return Err(ConnectionError::InvalidConfiguration);
         }
-        let authentication = if settings.provider == huginn_core::siwc::SIWC_PROVIDER_ID
-            && settings.requires_secret
-        {
-            AuthenticationMethod::OAuth
-        } else if settings.requires_secret {
-            AuthenticationMethod::ApiKey
-        } else {
-            AuthenticationMethod::None
-        };
         if !descriptor.authentication.contains(&authentication) {
             return Err(ConnectionError::InvalidConfiguration);
         }
@@ -1319,9 +1376,15 @@ impl ConnectionManagement for ConnectionManager {
         secret: Option<Secret>,
         mode: SecretMode,
     ) -> ConnectionResult<ConnectionRecord> {
+        let authentication = if settings.requires_secret {
+            AuthenticationMethod::ApiKey
+        } else {
+            AuthenticationMethod::None
+        };
         self.run_operation(async {
             let _operation = self.operation().await?;
-            self.write_connection(id, settings, secret, mode).await
+            self.write_connection(id, settings, secret, mode, authentication)
+                .await
         })
         .await
     }
@@ -1354,6 +1417,67 @@ impl ConnectionManagement for ConnectionManager {
         cancel: CancellationToken,
     ) -> ConnectionResult<String> {
         self.revoke_with_report(id, cancel).await
+    }
+}
+
+#[async_trait]
+impl huginn_core::siwc::SiwcCredentialPersistence for ConnectionManager {
+    async fn persist_rotated(
+        &self,
+        credentials: &huginn_core::siwc::SiwcCredentials,
+    ) -> huginn_core::Result<()> {
+        let json = credentials.to_secret_json()?;
+        let secret = Secret::new(json)
+            .map_err(|_| huginn_core::AgentError::Configuration("invalid SIWC secret".into()))?;
+        let state = self.state.lock().await;
+        Self::check_state(&state).map_err(|_| huginn_core::providers::ProviderError::Revoked)?;
+        if self.access.epoch.load(Ordering::SeqCst) != self.owner || self.retired.is_cancelled() {
+            return Err(huginn_core::providers::ProviderError::Revoked.into());
+        }
+        let record = state
+            .metadata
+            .connections
+            .values()
+            .find(|r| r.settings.provider == huginn_core::siwc::SIWC_PROVIDER_ID)
+            .ok_or(huginn_core::providers::ProviderError::Revoked)?;
+        let reference = record
+            .secret
+            .as_ref()
+            .ok_or(huginn_core::providers::ProviderError::Revoked)?;
+        self.access
+            .secrets
+            .write_mode(record.mode, reference, &secret)
+            .await
+            .map_err(|_| {
+                huginn_core::AgentError::Model(
+                    "failed to persist rotated Sign in with ChatGPT credentials".into(),
+                )
+            })
+    }
+
+    async fn load_latest(&self) -> huginn_core::Result<Option<huginn_core::siwc::SiwcCredentials>> {
+        let state = self.state.lock().await;
+        if Self::check_state(&state).is_err()
+            || self.access.epoch.load(Ordering::SeqCst) != self.owner
+            || self.retired.is_cancelled()
+        {
+            return Ok(None);
+        }
+        let Some(record) = state
+            .metadata
+            .connections
+            .values()
+            .find(|r| r.settings.provider == huginn_core::siwc::SIWC_PROVIDER_ID)
+        else {
+            return Ok(None);
+        };
+        let Some(reference) = record.secret.as_ref() else {
+            return Ok(None);
+        };
+        let Ok(secret) = self.access.secrets.read_mode(record.mode, reference).await else {
+            return Ok(None);
+        };
+        huginn_core::siwc::SiwcCredentials::from_secret_json(secret.expose()).map(Some)
     }
 }
 

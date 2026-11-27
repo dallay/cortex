@@ -613,12 +613,21 @@ impl<'a> LoopExecution<'a> {
         let TurnHost { approvals, sink } = scope;
         let mut spent = 0_u64;
         recover(session);
+        let user_index = session.messages.len();
         session
             .messages
             .push(Message::user_with_images(prompt, images));
         self.sessions.save(session).await?;
-        // Preserve the attempted prompt and normal error events even if pinning failed.
-        let model = model?;
+        // Preserve the attempted prompt and normal error events even if pinning failed,
+        // but drop unaccepted image payloads so a rejected attachment cannot poison later
+        // text-only turns or occupy the per-session image memory budget.
+        let model = match model {
+            Ok(model) => model,
+            Err(err) => {
+                session.messages[user_index].images.clear();
+                return Err(err);
+            }
+        };
         let model = model.as_deref().unwrap_or(self.model);
         let metadata = self
             .pin_skills(session, selected, catalog_snapshot, &cancel, sink, turn)
@@ -676,9 +685,18 @@ impl<'a> LoopExecution<'a> {
                     )));
                 }
             }
-            let response = self
+            let response = match self
                 .collect_with_retries(model, &context, &tools, session, &scope, &mut spent, turn)
-                .await?;
+                .await
+            {
+                Ok(response) => response,
+                Err(err) => {
+                    if iteration == 1 && !session.messages[user_index].images.is_empty() {
+                        session.messages[user_index].images.clear();
+                    }
+                    return Err(err);
+                }
+            };
             let response = self
                 .apply_after_hooks(response, turn, &scope, &hook_context)
                 .await?;

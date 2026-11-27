@@ -2532,6 +2532,7 @@ async fn siwc_sign_in_enforces_secure_store_single_account_and_revocation_report
                     .iter()
                     .map(|s| (*s).to_string())
                     .collect(),
+                account_sub: Some("sub-1".into()),
                 account_email: None,
             })
         }

@@ -16,17 +16,21 @@ use huginn_core::{
         MAX_DISCOVERED_MODELS,
     },
     siwc::{
-        SiwcAuthPort, SiwcCredentials, SiwcRevocationOutcome, SIWC_API_BASE_URL,
-        SIWC_AUTHORIZE_URL, SIWC_INITIAL_CLIENT_ID, SIWC_OIDC_DISCOVERY_URL, SIWC_PROVIDER_ID,
-        SIWC_REQUESTED_SCOPES, SIWC_TOKEN_URL,
+        SiwcAuthPort, SiwcCredentialPersistence, SiwcCredentials, SiwcRevocationOutcome,
+        SIWC_API_BASE_URL, SIWC_AUTHORIZE_URL, SIWC_INITIAL_CLIENT_ID, SIWC_OIDC_DISCOVERY_URL,
+        SIWC_PROVIDER_ID, SIWC_REQUESTED_SCOPES, SIWC_TOKEN_URL,
     },
     AgentError, CancellationToken, ModelDelta, ModelProvider, ModelRequest, Result, UsageSemantics,
+};
+use ring::signature::{
+    RsaPublicKeyComponents, UnparsedPublicKey, ECDSA_P256_SHA256_FIXED, ED25519,
+    RSA_PKCS1_2048_8192_SHA256,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashSet, VecDeque},
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
@@ -36,7 +40,11 @@ use tokio::{
 };
 
 const MAX_CATALOG_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+const MAX_OAUTH_RESPONSE_BYTES: usize = 512 * 1024;
+const MAX_CALLBACK_REQUEST_BYTES: usize = 8192;
+const MAX_SSE_FRAME_BYTES: usize = 1024 * 1024;
 const OAUTH_CALLBACK_TIMEOUT_SECS: u64 = 180;
+const REVOKE_MAX_ATTEMPTS: usize = 3;
 
 #[derive(Clone, Debug)]
 pub struct SiwcEndpoints {
@@ -125,6 +133,7 @@ impl SiwcOAuthClient {
         &self,
         redirect_uri: &str,
         state: &str,
+        nonce: &str,
         code_challenge: &str,
         host_id: &str,
         client_id: &str,
@@ -136,53 +145,207 @@ impl SiwcOAuthClient {
             .append_pair("response_type", "code")
             .append_pair("redirect_uri", redirect_uri)
             .append_pair("scope", SIWC_REQUESTED_SCOPES)
+            .append_pair("resource", self.endpoints.api_base_url.as_str())
             .append_pair("state", state)
+            .append_pair("nonce", nonce)
             .append_pair("code_challenge", code_challenge)
             .append_pair("code_challenge_method", "S256")
-            .append_pair("app_name", "Huginn")
-            .append_pair("host_id", host_id);
+            .append_pair("agent_name_hint", "Huginn")
+            .append_pair("ext_agent_host_id", host_id);
         Ok(url.into())
     }
 
+    async fn fetch_oidc_discovery(&self, cancel: &CancellationToken) -> Result<Value> {
+        let url = self.validated_https_url(&self.endpoints.oidc_discovery_url)?;
+        let client = self.http_client(url.as_str())?;
+        let (status, bytes) = send_and_read_bytes(
+            client.get(url),
+            Duration::from_secs(self.timeout_secs),
+            cancel,
+            MAX_OAUTH_RESPONSE_BYTES,
+            "SIWC OIDC discovery timed out",
+            "SIWC OIDC discovery failed",
+        )
+        .await?;
+        if !status.is_success() {
+            return Err(AgentError::Model(format!(
+                "SIWC OIDC discovery returned HTTP {}",
+                status.as_u16()
+            )));
+        }
+        serde_json::from_slice(&bytes)
+            .map_err(|_| AgentError::Model("malformed SIWC OIDC discovery document".into()))
+    }
+
+    async fn verify_id_token(
+        &self,
+        id_token: &str,
+        expected_client_id: &str,
+        expected_nonce: &str,
+        cancel: &CancellationToken,
+    ) -> Result<(String, Option<String>)> {
+        let parts: Vec<&str> = id_token.split('.').collect();
+        if parts.len() != 3 {
+            return Err(AgentError::Model("malformed SIWC ID token".into()));
+        }
+        let header_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(parts[0])
+            .map_err(|_| AgentError::Model("invalid SIWC ID token header encoding".into()))?;
+        let claims_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(parts[1])
+            .map_err(|_| AgentError::Model("invalid SIWC ID token payload encoding".into()))?;
+        let sig_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(parts[2])
+            .map_err(|_| AgentError::Model("invalid SIWC ID token signature encoding".into()))?;
+        let header: Value = serde_json::from_slice(&header_bytes)
+            .map_err(|_| AgentError::Model("malformed SIWC ID token header JSON".into()))?;
+        let claims: Value = serde_json::from_slice(&claims_bytes)
+            .map_err(|_| AgentError::Model("malformed SIWC ID token claims JSON".into()))?;
+        let alg = header
+            .get("alg")
+            .and_then(Value::as_str)
+            .ok_or_else(|| AgentError::Model("SIWC ID token missing alg".into()))?;
+        let kid = header.get("kid").and_then(Value::as_str);
+
+        let discovery = self.fetch_oidc_discovery(cancel).await?;
+        let expected_issuer = discovery
+            .get("issuer")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| AgentError::Model("OIDC discovery missing issuer".into()))?;
+        let jwks_uri = discovery
+            .get("jwks_uri")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| AgentError::Model("OIDC discovery missing jwks_uri".into()))?;
+        let jwks_url = self.validated_https_url(jwks_uri)?;
+        let client = self.http_client(jwks_url.as_str())?;
+        let (status, jwks_bytes) = send_and_read_bytes(
+            client.get(jwks_url),
+            Duration::from_secs(self.timeout_secs),
+            cancel,
+            MAX_OAUTH_RESPONSE_BYTES,
+            "SIWC JWKS fetch timed out",
+            "SIWC JWKS fetch failed",
+        )
+        .await?;
+        if !status.is_success() {
+            return Err(AgentError::Model(format!(
+                "SIWC JWKS endpoint returned HTTP {}",
+                status.as_u16()
+            )));
+        }
+        let jwks: Value = serde_json::from_slice(&jwks_bytes)
+            .map_err(|_| AgentError::Model("malformed SIWC JWKS response".into()))?;
+        let keys = jwks
+            .get("keys")
+            .and_then(Value::as_array)
+            .ok_or_else(|| AgentError::Model("SIWC JWKS missing keys array".into()))?;
+        let signing_input = format!("{}.{}", parts[0], parts[1]);
+        let verified = keys.iter().any(|key| {
+            if let Some(expected_kid) = kid {
+                if key.get("kid").and_then(Value::as_str) != Some(expected_kid) {
+                    return false;
+                }
+            }
+            verify_jwk_signature(key, alg, signing_input.as_bytes(), &sig_bytes)
+        });
+        if !verified {
+            return Err(AgentError::Model(
+                "SIWC ID token signature verification failed".into(),
+            ));
+        }
+
+        // Validate standard OIDC claims: iss, aud, exp, nonce, sub.
+        if claims.get("iss").and_then(Value::as_str) != Some(expected_issuer) {
+            return Err(AgentError::Model("SIWC ID token issuer mismatch".into()));
+        }
+        let aud_ok = match claims.get("aud") {
+            Some(Value::String(s)) => s == expected_client_id,
+            Some(Value::Array(arr)) => arr.iter().any(|v| v.as_str() == Some(expected_client_id)),
+            _ => false,
+        };
+        if !aud_ok {
+            return Err(AgentError::Model("SIWC ID token audience mismatch".into()));
+        }
+        let exp = claims
+            .get("exp")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| AgentError::Model("SIWC ID token missing exp".into()))?;
+        if exp <= now_unix() {
+            return Err(AgentError::Model("SIWC ID token is expired".into()));
+        }
+        if claims.get("nonce").and_then(Value::as_str) != Some(expected_nonce) {
+            return Err(AgentError::Model("SIWC ID token nonce mismatch".into()));
+        }
+        let sub = claims
+            .get("sub")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| AgentError::Model("SIWC ID token missing sub".into()))?
+            .to_owned();
+        let email = claims
+            .get("email")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_owned);
+        Ok((sub, email))
+    }
+
     /// Exchange an authorization code + PKCE verifier at the SIWC token endpoint.
+    #[allow(clippy::too_many_arguments)]
     pub async fn exchange_code(
         &self,
         code: &str,
         redirect_uri: &str,
         code_verifier: &str,
         host_id: &str,
-        initial_client_id: &str,
+        issued_client_id: &str,
+        expected_nonce: &str,
         cancel: CancellationToken,
     ) -> Result<SiwcCredentials> {
         let token_url = self.validated_https_url(&self.endpoints.token_url)?;
         let client = self.http_client(token_url.as_str())?;
         let form = [
             ("grant_type", "authorization_code"),
-            ("client_id", initial_client_id),
+            ("client_id", issued_client_id),
             ("code", code),
             ("redirect_uri", redirect_uri),
             ("code_verifier", code_verifier),
+            ("resource", self.endpoints.api_base_url.as_str()),
         ];
-        let request = client.post(token_url).form(&form);
-        let response = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => return Err(AgentError::Cancelled),
-            res = tokio::time::timeout(Duration::from_secs(self.timeout_secs), request.send()) => {
-                res.map_err(|_| AgentError::Model("SIWC token exchange timed out".into()))?
-                    .map_err(|_| AgentError::Model("SIWC token exchange failed".into()))?
-            }
-        };
-        if !response.status().is_success() {
+        let (status, bytes) = send_and_read_bytes(
+            client.post(token_url).form(&form),
+            Duration::from_secs(self.timeout_secs),
+            &cancel,
+            MAX_OAUTH_RESPONSE_BYTES,
+            "SIWC token exchange timed out",
+            "SIWC token exchange failed",
+        )
+        .await?;
+        if !status.is_success() {
             return Err(AgentError::Model(format!(
                 "SIWC token exchange rejected (HTTP {})",
-                response.status().as_u16()
+                status.as_u16()
             )));
         }
-        let payload: Value = response
-            .json()
-            .await
+        let payload: Value = serde_json::from_slice(&bytes)
             .map_err(|_| AgentError::Model("malformed SIWC token response".into()))?;
-        parse_token_response(payload, host_id, initial_client_id, None)
+        let id_token = payload
+            .get("id_token")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| AgentError::Model("SIWC token response missing id_token".into()))?;
+        let (verified_sub, verified_email) = self
+            .verify_id_token(id_token, issued_client_id, expected_nonce, &cancel)
+            .await?;
+        parse_token_response(
+            payload,
+            host_id,
+            issued_client_id,
+            Some((verified_sub, verified_email)),
+            None,
+        )
     }
 }
 
@@ -201,24 +364,40 @@ impl SiwcAuthPort for SiwcOAuthClient {
         let redirect_uri = format!("http://127.0.0.1:{port}/callback");
         let (verifier, challenge) = Self::generate_pkce();
         let state = uuid::Uuid::new_v4().to_string();
+        let nonce = uuid::Uuid::new_v4().to_string();
         let host_id = format!("huginn-{}", uuid::Uuid::new_v4());
         let authorize_url = self.build_authorize_url(
             &redirect_uri,
             &state,
+            &nonce,
             &challenge,
             &host_id,
             SIWC_INITIAL_CLIENT_ID,
         )?;
         if self.endpoints.open_browser {
-            let _ = launch_browser(&authorize_url);
+            if let Err(err) = launch_browser(&authorize_url) {
+                return Err(AgentError::Configuration(format!(
+                    "failed to open browser for Sign in with ChatGPT ({err}); open this URL manually or check your desktop browser launcher: {authorize_url}"
+                )));
+            }
         }
-        let code = await_loopback_callback(listener, &state, cancel.clone()).await?;
+        let callback = await_loopback_callback(listener, &state, cancel.clone()).await?;
+        let issued_client_id = callback
+            .client_id
+            .filter(|id| !id.trim().is_empty() && id != SIWC_INITIAL_CLIENT_ID)
+            .ok_or_else(|| {
+                AgentError::Model(
+                    "SIWC OAuth callback did not supply an issued client_id for dynamic registration"
+                        .into(),
+                )
+            })?;
         self.exchange_code(
-            &code,
+            &callback.code,
             &redirect_uri,
             &verifier,
             &host_id,
-            SIWC_INITIAL_CLIENT_ID,
+            &issued_client_id,
+            &nonce,
             cancel,
         )
         .await
@@ -235,30 +414,30 @@ impl SiwcAuthPort for SiwcOAuthClient {
             ("grant_type", "refresh_token"),
             ("client_id", credentials.client_id.as_str()),
             ("refresh_token", credentials.refresh_token.as_str()),
+            ("resource", self.endpoints.api_base_url.as_str()),
         ];
-        let request = client.post(token_url).form(&form);
-        let response = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => return Err(AgentError::Cancelled),
-            res = tokio::time::timeout(Duration::from_secs(self.timeout_secs), request.send()) => {
-                res.map_err(|_| AgentError::Model("SIWC token refresh timed out".into()))?
-                    .map_err(|_| AgentError::Model("SIWC token refresh failed".into()))?
-            }
-        };
-        if !response.status().is_success() {
+        let (status, bytes) = send_and_read_bytes(
+            client.post(token_url).form(&form),
+            Duration::from_secs(self.timeout_secs),
+            &cancel,
+            MAX_OAUTH_RESPONSE_BYTES,
+            "SIWC token refresh timed out",
+            "SIWC token refresh failed",
+        )
+        .await?;
+        if !status.is_success() {
             return Err(AgentError::Model(format!(
                 "SIWC token refresh rejected (HTTP {}); re-authenticate via /login",
-                response.status().as_u16()
+                status.as_u16()
             )));
         }
-        let payload: Value = response
-            .json()
-            .await
+        let payload: Value = serde_json::from_slice(&bytes)
             .map_err(|_| AgentError::Model("malformed SIWC refresh response".into()))?;
         parse_token_response(
             payload,
             &credentials.host_id,
             &credentials.client_id,
+            None,
             Some(credentials),
         )
     }
@@ -268,37 +447,34 @@ impl SiwcAuthPort for SiwcOAuthClient {
         credentials: &SiwcCredentials,
         cancel: CancellationToken,
     ) -> SiwcRevocationOutcome {
-        let Ok(discovery_client) = self.http_client(&self.endpoints.oidc_discovery_url) else {
-            return SiwcRevocationOutcome::LocalOnly {
-                reason: "invalid OIDC discovery configuration".into(),
-            };
-        };
-        let discovery_resp = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => {
-                return SiwcRevocationOutcome::LocalOnly { reason: "revocation cancelled".into() };
+        let discovery = match self.fetch_oidc_discovery(&cancel).await {
+            Ok(doc) => doc,
+            Err(AgentError::Cancelled) => {
+                return SiwcRevocationOutcome::LocalOnly {
+                    reason: "revocation cancelled".into(),
+                };
             }
-            res = tokio::time::timeout(
-                Duration::from_secs(self.timeout_secs),
-                discovery_client.get(&self.endpoints.oidc_discovery_url).send(),
-            ) => res,
+            Err(_) => {
+                return SiwcRevocationOutcome::LocalOnly {
+                    reason: "OIDC discovery was unavailable".into(),
+                };
+            }
         };
-        let revocation_endpoint = match discovery_resp {
-            Ok(Ok(resp)) if resp.status().is_success() => match resp.json::<Value>().await {
-                Ok(doc) => doc
-                    .get("revocation_endpoint")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
-                Err(_) => None,
-            },
-            _ => None,
-        };
-        let Some(revocation_endpoint) = revocation_endpoint else {
+        let Some(revocation_endpoint) = discovery
+            .get("revocation_endpoint")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+        else {
             return SiwcRevocationOutcome::LocalOnly {
                 reason: "OIDC discovery did not return a revocation endpoint".into(),
             };
         };
-        let Ok(revoke_client) = self.http_client(&revocation_endpoint) else {
+        let Ok(revoke_url) = self.validated_https_url(&revocation_endpoint) else {
+            return SiwcRevocationOutcome::LocalOnly {
+                reason: "discovered revocation endpoint failed transport policy".into(),
+            };
+        };
+        let Ok(revoke_client) = self.http_client(revoke_url.as_str()) else {
             return SiwcRevocationOutcome::LocalOnly {
                 reason: "discovered revocation endpoint failed transport policy".into(),
             };
@@ -308,25 +484,152 @@ impl SiwcAuthPort for SiwcOAuthClient {
             ("token", credentials.refresh_token.as_str()),
             ("token_type_hint", "refresh_token"),
         ];
-        let revoke_resp = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => {
-                return SiwcRevocationOutcome::LocalOnly { reason: "revocation cancelled".into() };
-            }
-            res = tokio::time::timeout(
+        let mut last_reason = "could not reach remote revocation endpoint".to_string();
+        for attempt in 0..REVOKE_MAX_ATTEMPTS {
+            let result = send_and_read_bytes(
+                revoke_client.post(revoke_url.clone()).form(&form),
                 Duration::from_secs(self.timeout_secs),
-                revoke_client.post(&revocation_endpoint).form(&form).send(),
-            ) => res,
-        };
-        match revoke_resp {
-            Ok(Ok(resp)) if resp.status().is_success() => SiwcRevocationOutcome::RemoteConfirmed,
-            Ok(Ok(resp)) => SiwcRevocationOutcome::LocalOnly {
-                reason: format!("remote revocation returned HTTP {}", resp.status().as_u16()),
-            },
-            _ => SiwcRevocationOutcome::LocalOnly {
-                reason: "could not reach remote revocation endpoint".into(),
-            },
+                &cancel,
+                MAX_OAUTH_RESPONSE_BYTES,
+                "remote revocation timed out",
+                "could not reach remote revocation endpoint",
+            )
+            .await;
+            match result {
+                Ok((status, _)) if status.is_success() => {
+                    return SiwcRevocationOutcome::RemoteConfirmed;
+                }
+                Ok((status, _)) if status.is_server_error() => {
+                    last_reason = format!("remote revocation returned HTTP {}", status.as_u16());
+                }
+                Ok((status, _)) => {
+                    return SiwcRevocationOutcome::LocalOnly {
+                        reason: format!("remote revocation returned HTTP {}", status.as_u16()),
+                    };
+                }
+                Err(AgentError::Cancelled) => {
+                    return SiwcRevocationOutcome::LocalOnly {
+                        reason: "revocation cancelled".into(),
+                    };
+                }
+                Err(_) => {
+                    last_reason = "could not reach remote revocation endpoint".to_string();
+                }
+            }
+            if attempt + 1 < REVOKE_MAX_ATTEMPTS {
+                let backoff = Duration::from_millis(150 * (attempt as u64 + 1));
+                tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => {
+                        return SiwcRevocationOutcome::LocalOnly {
+                            reason: "revocation cancelled".into(),
+                        };
+                    }
+                    _ = tokio::time::sleep(backoff) => {}
+                }
+            }
         }
+        SiwcRevocationOutcome::LocalOnly {
+            reason: last_reason,
+        }
+    }
+}
+
+async fn send_and_read_bytes(
+    request: reqwest::RequestBuilder,
+    timeout: Duration,
+    cancel: &CancellationToken,
+    max_bytes: usize,
+    timeout_msg: &str,
+    err_msg: &str,
+) -> Result<(reqwest::StatusCode, Vec<u8>)> {
+    let op = async {
+        let resp = request
+            .send()
+            .await
+            .map_err(|_| AgentError::Model(err_msg.into()))?;
+        let status = resp.status();
+        let mut bytes = Vec::new();
+        let mut chunks = resp.bytes_stream();
+        while let Some(chunk) = chunks.next().await {
+            let chunk = chunk.map_err(|_| AgentError::Model(err_msg.into()))?;
+            if bytes.len().saturating_add(chunk.len()) > max_bytes {
+                return Err(AgentError::Model(
+                    "SIWC response exceeded size limit".into(),
+                ));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok((status, bytes))
+    };
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => Err(AgentError::Cancelled),
+        res = tokio::time::timeout(timeout, op) => {
+            res.map_err(|_| AgentError::Model(timeout_msg.into()))?
+        }
+    }
+}
+
+fn verify_jwk_signature(key: &Value, alg: &str, signing_input: &[u8], signature: &[u8]) -> bool {
+    let kty = key.get("kty").and_then(Value::as_str).unwrap_or_default();
+    match (alg, kty) {
+        ("RS256", "RSA") => {
+            let (Some(n_b64), Some(e_b64)) = (
+                key.get("n").and_then(Value::as_str),
+                key.get("e").and_then(Value::as_str),
+            ) else {
+                return false;
+            };
+            let (Ok(n), Ok(e)) = (
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(n_b64),
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(e_b64),
+            ) else {
+                return false;
+            };
+            RsaPublicKeyComponents { n, e }
+                .verify(&RSA_PKCS1_2048_8192_SHA256, signing_input, signature)
+                .is_ok()
+        }
+        ("ES256", "EC") => {
+            if key.get("crv").and_then(Value::as_str) != Some("P-256") {
+                return false;
+            }
+            let (Some(x_b64), Some(y_b64)) = (
+                key.get("x").and_then(Value::as_str),
+                key.get("y").and_then(Value::as_str),
+            ) else {
+                return false;
+            };
+            let (Ok(x), Ok(y)) = (
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(x_b64),
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(y_b64),
+            ) else {
+                return false;
+            };
+            let mut point = Vec::with_capacity(1 + x.len() + y.len());
+            point.push(0x04);
+            point.extend_from_slice(&x);
+            point.extend_from_slice(&y);
+            UnparsedPublicKey::new(&ECDSA_P256_SHA256_FIXED, point)
+                .verify(signing_input, signature)
+                .is_ok()
+        }
+        ("EdDSA", "OKP") => {
+            if key.get("crv").and_then(Value::as_str) != Some("Ed25519") {
+                return false;
+            }
+            let Some(x_b64) = key.get("x").and_then(Value::as_str) else {
+                return false;
+            };
+            let Ok(x) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(x_b64) else {
+                return false;
+            };
+            UnparsedPublicKey::new(&ED25519, x)
+                .verify(signing_input, signature)
+                .is_ok()
+        }
+        _ => false,
     }
 }
 
@@ -341,6 +644,7 @@ fn parse_token_response(
     payload: Value,
     host_id: &str,
     default_client_id: &str,
+    verified_identity: Option<(String, Option<String>)>,
     previous: Option<&SiwcCredentials>,
 ) -> Result<SiwcCredentials> {
     let access_token = payload
@@ -372,10 +676,20 @@ fn parse_token_response(
         .map(|s| s.split_whitespace().map(str::to_owned).collect())
         .or_else(|| previous.map(|p| p.granted_scopes.clone()))
         .unwrap_or_default();
-    let account_email = payload
-        .get("email")
-        .and_then(Value::as_str)
-        .map(str::to_owned)
+    let (account_sub, verified_email) = match verified_identity {
+        Some((sub, email)) => (Some(sub), email),
+        None => (
+            previous.and_then(|p| p.account_sub.clone()),
+            previous.and_then(|p| p.account_email.clone()),
+        ),
+    };
+    let account_email = verified_email
+        .or_else(|| {
+            payload
+                .get("email")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
         .or_else(|| previous.and_then(|p| p.account_email.clone()));
     let creds = SiwcCredentials {
         host_id: host_id.to_owned(),
@@ -384,66 +698,96 @@ fn parse_token_response(
         refresh_token,
         expires_at_unix: now_unix().saturating_add(expires_in),
         granted_scopes,
+        account_sub,
         account_email,
     };
     creds.validate_grants()?;
     Ok(creds)
 }
 
+struct LoopbackCallback {
+    code: String,
+    client_id: Option<String>,
+}
+
 async fn await_loopback_callback(
     listener: TcpListener,
     expected_state: &str,
     cancel: CancellationToken,
-) -> Result<String> {
-    let accept = tokio::select! {
+) -> Result<LoopbackCallback> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(OAUTH_CALLBACK_TIMEOUT_SECS);
+    let op = async {
+        let (mut stream, _) = listener
+            .accept()
+            .await
+            .map_err(|_| AgentError::Model("SIWC loopback callback accept failed".into()))?;
+        let mut buf = Vec::with_capacity(1024);
+        let mut chunk = [0u8; 1024];
+        loop {
+            let n = stream
+                .read(&mut chunk)
+                .await
+                .map_err(|_| AgentError::Model("failed to read OAuth callback request".into()))?;
+            if n == 0 {
+                break;
+            }
+            if buf.len() + n > MAX_CALLBACK_REQUEST_BYTES {
+                return Err(AgentError::Model(
+                    "OAuth callback request exceeded size limit".into(),
+                ));
+            }
+            buf.extend_from_slice(&chunk[..n]);
+            if buf.windows(2).any(|w| w == b"\r\n") || buf.contains(&b'\n') {
+                break;
+            }
+        }
+        let request = String::from_utf8_lossy(&buf);
+        let request_line = request.lines().next().unwrap_or_default();
+        let target = request_line.split_whitespace().nth(1).unwrap_or_default();
+        let parsed = reqwest::Url::parse(&format!("http://127.0.0.1{target}"))
+            .map_err(|_| AgentError::Model("malformed OAuth callback URL".into()))?;
+        let mut code = None;
+        let mut state = None;
+        let mut client_id = None;
+        let mut error = None;
+        for (k, v) in parsed.query_pairs() {
+            match k.as_ref() {
+                "code" => code = Some(v.into_owned()),
+                "state" => state = Some(v.into_owned()),
+                "client_id" => client_id = Some(v.into_owned()),
+                "error" => error = Some(v.into_owned()),
+                _ => {}
+            }
+        }
+        let response_body = if error.is_some()
+            || state.as_deref() != Some(expected_state)
+            || code.is_none()
+        {
+            "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nSign-in failed or state mismatch. You may close this tab.\r\n"
+        } else {
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nSign-in received by Huginn. You may close this tab.\r\n"
+        };
+        let _ = stream.write_all(response_body.as_bytes()).await;
+        let _ = stream.shutdown().await;
+        if let Some(err) = error {
+            return Err(AgentError::Model(format!(
+                "SIWC authorization denied: {err}"
+            )));
+        }
+        if state.as_deref() != Some(expected_state) {
+            return Err(AgentError::Model("SIWC OAuth state mismatch".into()));
+        }
+        let code =
+            code.ok_or_else(|| AgentError::Model("SIWC OAuth callback missing code".into()))?;
+        Ok(LoopbackCallback { code, client_id })
+    };
+    tokio::select! {
         biased;
-        _ = cancel.cancelled() => return Err(AgentError::Cancelled),
-        res = tokio::time::timeout(Duration::from_secs(OAUTH_CALLBACK_TIMEOUT_SECS), listener.accept()) => {
+        _ = cancel.cancelled() => Err(AgentError::Cancelled),
+        res = tokio::time::timeout_at(deadline, op) => {
             res.map_err(|_| AgentError::Model("SIWC browser sign-in timed out".into()))?
-                .map_err(|_| AgentError::Model("SIWC loopback callback accept failed".into()))?
-        }
-    };
-    let (mut stream, _) = accept;
-    let mut buf = vec![0u8; 8192];
-    let read = stream
-        .read(&mut buf)
-        .await
-        .map_err(|_| AgentError::Model("failed to read OAuth callback request".into()))?;
-    let request = String::from_utf8_lossy(&buf[..read]);
-    let request_line = request.lines().next().unwrap_or_default();
-    let target = request_line.split_whitespace().nth(1).unwrap_or_default();
-    let parsed = reqwest::Url::parse(&format!("http://127.0.0.1{target}"))
-        .map_err(|_| AgentError::Model("malformed OAuth callback URL".into()))?;
-    let mut code = None;
-    let mut state = None;
-    let mut error = None;
-    for (k, v) in parsed.query_pairs() {
-        match k.as_ref() {
-            "code" => code = Some(v.into_owned()),
-            "state" => state = Some(v.into_owned()),
-            "error" => error = Some(v.into_owned()),
-            _ => {}
         }
     }
-    let response_body = if error.is_some()
-        || state.as_deref() != Some(expected_state)
-        || code.is_none()
-    {
-        "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nSign-in failed or state mismatch. You may close this tab.\r\n"
-    } else {
-        "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nSign-in received by Huginn. You may close this tab.\r\n"
-    };
-    let _ = stream.write_all(response_body.as_bytes()).await;
-    let _ = stream.shutdown().await;
-    if let Some(err) = error {
-        return Err(AgentError::Model(format!(
-            "SIWC authorization denied: {err}"
-        )));
-    }
-    if state.as_deref() != Some(expected_state) {
-        return Err(AgentError::Model("SIWC OAuth state mismatch".into()));
-    }
-    code.ok_or_else(|| AgentError::Model("SIWC OAuth callback missing code".into()))
 }
 
 fn launch_browser(url: &str) -> std::io::Result<()> {
@@ -460,22 +804,86 @@ fn launch_browser(url: &str) -> std::io::Result<()> {
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = url;
-        Ok(())
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "automatic browser launch is unsupported on this platform",
+        ))
+    }
+}
+
+/// Shared single-flight credential refresh coordinator used by both catalog discovery and streaming.
+struct SiwcRefreshCoordinator {
+    auth: Arc<dyn SiwcAuthPort>,
+    persistence: Option<Arc<OnceLock<Arc<dyn SiwcCredentialPersistence>>>>,
+    gate: AsyncMutex<Option<SiwcCredentials>>,
+}
+
+impl SiwcRefreshCoordinator {
+    fn new(
+        auth: Arc<dyn SiwcAuthPort>,
+        persistence: Option<Arc<OnceLock<Arc<dyn SiwcCredentialPersistence>>>>,
+    ) -> Self {
+        Self {
+            auth,
+            persistence,
+            gate: AsyncMutex::new(None),
+        }
+    }
+
+    async fn resolve(
+        &self,
+        fallback: &SiwcCredentials,
+        cancel: CancellationToken,
+    ) -> Result<SiwcCredentials> {
+        let mut guard = self.gate.lock().await;
+        // Prefer the latest persisted credentials (if host persistence is wired), then cached,
+        // then the caller-provided snapshot.
+        let mut current = if let Some(slot) = &self.persistence {
+            if let Some(store) = slot.get() {
+                match store.load_latest().await? {
+                    Some(persisted) => persisted,
+                    None => guard.clone().unwrap_or_else(|| fallback.clone()),
+                }
+            } else {
+                guard.clone().unwrap_or_else(|| fallback.clone())
+            }
+        } else {
+            guard.clone().unwrap_or_else(|| fallback.clone())
+        };
+        if !current.needs_refresh(now_unix()) {
+            *guard = Some(current.clone());
+            return Ok(current);
+        }
+        let refreshed = self.auth.refresh(&current, cancel).await?;
+        // Persist rotated credentials BEFORE exposing the new access token so logout and restart
+        // always see the latest refresh token.
+        if let Some(slot) = &self.persistence {
+            if let Some(store) = slot.get() {
+                store.persist_rotated(&refreshed).await?;
+            }
+        }
+        current = refreshed;
+        *guard = Some(current.clone());
+        Ok(current)
     }
 }
 
 /// Dedicated SIWC adapter: `/v1/models` (`visibility == "list"`, `slug`) and `/v1/responses`
 /// (`store: false`, `stream: true`, text-only).
 pub struct SiwcAdapter {
-    auth: Arc<dyn SiwcAuthPort>,
+    coordinator: Arc<SiwcRefreshCoordinator>,
     endpoints: SiwcEndpoints,
     timeout_secs: u64,
 }
 
 impl SiwcAdapter {
-    pub fn new(auth: Arc<dyn SiwcAuthPort>, timeout_secs: u64) -> Self {
+    pub fn new(
+        auth: Arc<dyn SiwcAuthPort>,
+        persistence: Option<Arc<OnceLock<Arc<dyn SiwcCredentialPersistence>>>>,
+        timeout_secs: u64,
+    ) -> Self {
         Self {
-            auth,
+            coordinator: Arc::new(SiwcRefreshCoordinator::new(auth, persistence)),
             endpoints: SiwcEndpoints::default(),
             timeout_secs,
         }
@@ -484,11 +892,12 @@ impl SiwcAdapter {
     #[cfg(test)]
     pub fn with_endpoints(
         auth: Arc<dyn SiwcAuthPort>,
+        persistence: Option<Arc<OnceLock<Arc<dyn SiwcCredentialPersistence>>>>,
         endpoints: SiwcEndpoints,
         timeout_secs: u64,
     ) -> Self {
         Self {
-            auth,
+            coordinator: Arc::new(SiwcRefreshCoordinator::new(auth, persistence)),
             endpoints,
             timeout_secs,
         }
@@ -505,26 +914,14 @@ impl SiwcAdapter {
             .ok_or(ProviderError::Unavailable)?
             .expose();
         let creds = SiwcCredentials::from_secret_json(raw)?;
-        if creds.needs_refresh(now_unix()) {
-            self.auth.refresh(&creds, cancel).await
-        } else {
-            Ok(creds)
-        }
+        self.coordinator.resolve(&creds, cancel).await
     }
 
-    pub async fn discover_models_with_material(
+    async fn discover_models_with_credentials(
         &self,
-        material: &ConnectionMaterial,
+        creds: &SiwcCredentials,
         cancel: CancellationToken,
     ) -> Result<ModelCatalog> {
-        let creds = match self
-            .resolve_valid_credentials(material, cancel.clone())
-            .await
-        {
-            Ok(c) => c,
-            Err(AgentError::Cancelled) => return Err(AgentError::Cancelled),
-            Err(_) => return Ok(ModelCatalog::Unavailable),
-        };
         let api_base = self.endpoints.api_base_url.trim_end_matches('/');
         let url = format!("{api_base}/models");
         let client = crate::model::transport_client(
@@ -532,28 +929,25 @@ impl SiwcAdapter {
             self.timeout_secs,
             self.endpoints.allow_loopback_http,
         )?;
-        let req = client.get(&url).bearer_auth(&creds.access_token);
-        let resp = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => return Err(AgentError::Cancelled),
-            res = tokio::time::timeout(Duration::from_secs(self.timeout_secs), req.send()) => match res {
-                Ok(Ok(r)) => r,
-                _ => return Ok(ModelCatalog::Unavailable),
-            },
-        };
-        if !resp.status().is_success() {
-            return Ok(ModelCatalog::Unavailable);
-        }
-        let mut bytes = Vec::new();
-        let mut chunks = resp.bytes_stream();
-        while let Some(chunk) = chunks.next().await {
-            let Ok(chunk) = chunk else {
-                return Ok(ModelCatalog::Unavailable);
-            };
-            if bytes.len() + chunk.len() > MAX_CATALOG_RESPONSE_BYTES {
+        let (status, bytes) = match send_and_read_bytes(
+            client.get(&url).bearer_auth(&creds.access_token),
+            Duration::from_secs(self.timeout_secs),
+            &cancel,
+            MAX_CATALOG_RESPONSE_BYTES,
+            "SIWC model discovery timed out",
+            "SIWC model discovery failed",
+        )
+        .await
+        {
+            Ok(pair) => pair,
+            Err(AgentError::Cancelled) => return Err(AgentError::Cancelled),
+            Err(AgentError::Model(msg)) if msg.contains("size limit") => {
                 return Ok(ModelCatalog::Invalid);
             }
-            bytes.extend_from_slice(&chunk);
+            Err(_) => return Ok(ModelCatalog::Unavailable),
+        };
+        if !status.is_success() {
+            return Ok(ModelCatalog::Unavailable);
         }
         let Ok(doc) = serde_json::from_slice::<Value>(&bytes) else {
             return Ok(ModelCatalog::Invalid);
@@ -591,6 +985,22 @@ impl SiwcAdapter {
             });
         }
         Ok(ModelCatalog::Available(models))
+    }
+
+    pub async fn discover_models_with_material(
+        &self,
+        material: &ConnectionMaterial,
+        cancel: CancellationToken,
+    ) -> Result<ModelCatalog> {
+        let creds = match self
+            .resolve_valid_credentials(material, cancel.clone())
+            .await
+        {
+            Ok(c) => c,
+            Err(AgentError::Cancelled) => return Err(AgentError::Cancelled),
+            Err(_) => return Ok(ModelCatalog::Unavailable),
+        };
+        self.discover_models_with_credentials(&creds, cancel).await
     }
 }
 
@@ -649,7 +1059,7 @@ impl ProviderAdapter for SiwcAdapter {
             .resolve_valid_credentials(&material, cancel.clone())
             .await?;
         let models = match self
-            .discover_models_with_material(&material, cancel)
+            .discover_models_with_credentials(&creds, cancel)
             .await?
         {
             ModelCatalog::Available(models) => models,
@@ -672,8 +1082,8 @@ impl ProviderAdapter for SiwcAdapter {
             client,
             responses_url: format!("{api_base}/responses"),
             model: selection.model.clone(),
-            credentials: Arc::new(AsyncMutex::new(creds)),
-            auth: self.auth.clone(),
+            fallback_credentials: creds,
+            coordinator: self.coordinator.clone(),
             timeout_secs: self.timeout_secs,
         }))
     }
@@ -684,8 +1094,8 @@ pub struct SiwcResponsesProvider {
     client: reqwest::Client,
     responses_url: String,
     model: String,
-    credentials: Arc<AsyncMutex<SiwcCredentials>>,
-    auth: Arc<dyn SiwcAuthPort>,
+    fallback_credentials: SiwcCredentials,
+    coordinator: Arc<SiwcRefreshCoordinator>,
     timeout_secs: u64,
 }
 
@@ -704,27 +1114,18 @@ impl ModelProvider for SiwcResponsesProvider {
         request: ModelRequest,
         cancel: CancellationToken,
     ) -> Result<BoxStream<'static, Result<ModelDelta>>> {
-        if !request.tools.is_empty() {
-            return Err(AgentError::Model(
-                "SIWC Responses API first slice is text-only; tool calling is not enabled yet"
-                    .into(),
-            ));
-        }
+        // SIWC first vertical slice is text-only: omit tool definitions from `/v1/responses`
+        // (even when the workspace registry has active tools) and reject image attachments.
         if request.messages.iter().any(|m| !m.images.is_empty()) {
             return Err(AgentError::Model(
                 "SIWC Responses API first slice is text-only; image attachments are not enabled yet"
                     .into(),
             ));
         }
-        // Single-flight refresh before opening the stream.
-        let access_token = {
-            let mut guard = self.credentials.lock().await;
-            if guard.needs_refresh(now_unix()) {
-                let refreshed = self.auth.refresh(&guard, cancel.clone()).await?;
-                *guard = refreshed;
-            }
-            guard.access_token.clone()
-        };
+        let creds = self
+            .coordinator
+            .resolve(&self.fallback_credentials, cancel.clone())
+            .await?;
         let input: Vec<Value> = request
             .messages
             .iter()
@@ -741,16 +1142,19 @@ impl ModelProvider for SiwcResponsesProvider {
                 })
             })
             .collect();
-        let body = json!({
+        let mut body = json!({
             "model": self.model,
             "input": input,
             "store": false,
             "stream": true,
         });
+        if request.max_tokens > 0 {
+            body["max_output_tokens"] = json!(request.max_tokens);
+        }
         let req = self
             .client
             .post(&self.responses_url)
-            .bearer_auth(&access_token)
+            .bearer_auth(&creds.access_token)
             .json(&body);
         let response = tokio::select! {
             biased;
@@ -782,6 +1186,7 @@ impl ModelProvider for SiwcResponsesProvider {
             queued: VecDeque::new(),
             cancel,
             ended: false,
+            completed: false,
         };
         Ok(futures::stream::unfold(state, |mut state| async move {
             loop {
@@ -811,17 +1216,10 @@ impl ModelProvider for SiwcResponsesProvider {
                 match chunk {
                     Some(Ok(bytes)) => {
                         state.buffer.extend_from_slice(&bytes);
-                        match drain_responses_sse(&mut state.buffer) {
-                            Ok((items, done)) => {
-                                state.queued.extend(items.into_iter().map(Ok));
-                                if done {
-                                    state.ended = true;
-                                }
-                            }
-                            Err(err) => {
-                                state.queued.push_back(Err(err));
-                                state.ended = true;
-                            }
+                        let outcome = drain_responses_sse(&mut state.buffer, &mut state.completed);
+                        state.queued.extend(outcome.items);
+                        if outcome.ended {
+                            state.ended = true;
                         }
                     }
                     Some(Err(_)) => {
@@ -831,6 +1229,11 @@ impl ModelProvider for SiwcResponsesProvider {
                         state.ended = true;
                     }
                     None => {
+                        if !state.completed {
+                            state.queued.push_back(Err(AgentError::Model(
+                                "SIWC stream ended before response.completed".into(),
+                            )));
+                        }
                         state.ended = true;
                     }
                 }
@@ -846,11 +1249,17 @@ struct ResponsesStreamState {
     queued: VecDeque<Result<ModelDelta>>,
     cancel: CancellationToken,
     ended: bool,
+    completed: bool,
 }
 
-fn drain_responses_sse(buffer: &mut Vec<u8>) -> Result<(Vec<ModelDelta>, bool)> {
-    let mut out = Vec::new();
-    let mut done = false;
+struct DrainOutcome {
+    items: Vec<Result<ModelDelta>>,
+    ended: bool,
+}
+
+fn drain_responses_sse(buffer: &mut Vec<u8>, completed: &mut bool) -> DrainOutcome {
+    let mut items = Vec::new();
+    let mut ended = false;
     loop {
         let delimiter = buffer
             .windows(2)
@@ -865,11 +1274,31 @@ fn drain_responses_sse(buffer: &mut Vec<u8>) -> Result<(Vec<ModelDelta>, bool)> 
             )
             .min_by_key(|(pos, _)| *pos);
         let Some((end, len)) = delimiter else {
+            if buffer.len() > MAX_SSE_FRAME_BYTES {
+                buffer.clear();
+                items.push(Err(AgentError::Model(
+                    "SIWC SSE frame exceeded size limit".into(),
+                )));
+                ended = true;
+            }
             break;
         };
+        if end > MAX_SSE_FRAME_BYTES {
+            buffer.clear();
+            items.push(Err(AgentError::Model(
+                "SIWC SSE frame exceeded size limit".into(),
+            )));
+            ended = true;
+            break;
+        }
         let raw: Vec<u8> = buffer.drain(..end + len).collect();
-        let text = std::str::from_utf8(&raw)
-            .map_err(|_| AgentError::Model("invalid UTF-8 in Responses SSE event".into()))?;
+        let Ok(text) = std::str::from_utf8(&raw) else {
+            items.push(Err(AgentError::Model(
+                "invalid UTF-8 in Responses SSE event".into(),
+            )));
+            ended = true;
+            break;
+        };
         let data = text
             .lines()
             .filter_map(|line| line.strip_prefix("data:").map(str::trim_start))
@@ -879,12 +1308,21 @@ fn drain_responses_sse(buffer: &mut Vec<u8>) -> Result<(Vec<ModelDelta>, bool)> 
             continue;
         }
         if data.trim() == "[DONE]" {
-            out.push(ModelDelta::Finished);
-            done = true;
+            if !*completed {
+                items.push(Err(AgentError::Model(
+                    "SIWC stream sent [DONE] without response.completed".into(),
+                )));
+            }
+            ended = true;
             break;
         }
-        let value: Value = serde_json::from_str(&data)
-            .map_err(|_| AgentError::Model("malformed Responses SSE JSON".into()))?;
+        let Ok(value) = serde_json::from_str::<Value>(&data) else {
+            items.push(Err(AgentError::Model(
+                "malformed Responses SSE JSON".into(),
+            )));
+            ended = true;
+            break;
+        };
         let event_type = value
             .get("type")
             .and_then(Value::as_str)
@@ -892,38 +1330,43 @@ fn drain_responses_sse(buffer: &mut Vec<u8>) -> Result<(Vec<ModelDelta>, bool)> 
         match event_type {
             "response.output_text.delta" => {
                 if let Some(delta) = value.get("delta").and_then(Value::as_str) {
-                    out.push(ModelDelta::Text(delta.to_owned()));
+                    items.push(Ok(ModelDelta::Text(delta.to_owned())));
                 }
             }
             "response.completed" => {
+                *completed = true;
                 if let Some(usage) = value
                     .get("response")
                     .and_then(|r| r.get("usage"))
                     .filter(|u| u.is_object())
                 {
-                    out.push(ModelDelta::Usage {
+                    items.push(Ok(ModelDelta::Usage {
                         input_tokens: usage.get("input_tokens").and_then(Value::as_u64),
                         output_tokens: usage.get("output_tokens").and_then(Value::as_u64),
                         semantics: UsageSemantics::Cumulative,
-                    });
+                    }));
                 }
-                out.push(ModelDelta::Finished);
-                done = true;
+                items.push(Ok(ModelDelta::Finished));
+                ended = true;
+                break;
             }
             "response.failed" | "error" => {
-                return Err(AgentError::Model(
+                items.push(Err(AgentError::Model(
                     "SIWC Responses API reported a stream error".into(),
-                ));
+                )));
+                ended = true;
+                break;
             }
             _ => {}
         }
     }
-    Ok((out, done))
+    DrainOutcome { items, ended }
 }
 
 /// Plugin registering the dedicated Sign in with ChatGPT (SIWC) adapter.
 pub struct SiwcProviderPlugin {
     pub auth: Arc<dyn SiwcAuthPort>,
+    pub persistence: Option<Arc<OnceLock<Arc<dyn SiwcCredentialPersistence>>>>,
     pub timeout_secs: u64,
 }
 
@@ -944,7 +1387,11 @@ impl Plugin for SiwcProviderPlugin {
             .clone();
         catalog.register(
             ctx,
-            Arc::new(SiwcAdapter::new(self.auth.clone(), self.timeout_secs)),
+            Arc::new(SiwcAdapter::new(
+                self.auth.clone(),
+                self.persistence.clone(),
+                self.timeout_secs,
+            )),
         )?;
         Ok(())
     }
@@ -958,144 +1405,238 @@ mod tests {
         routing::{get, post},
         Json, Router,
     };
-    use huginn_core::{
-        connections::{ConnectionSettings, Secret},
-        providers::{ConnectionIdentity, ProviderRegistration},
-    };
-    use std::sync::Mutex;
+    use ring::signature::{Ed25519KeyPair, KeyPair};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    fn fixture_req(text: &str) -> ModelRequest {
-        ModelRequest {
-            messages: vec![huginn_core::Message::text(huginn_core::Role::User, text)],
-            tools: vec![],
-            max_tokens: 128,
+    fn test_token(prefix: &str, suffix: &str) -> String {
+        format!("{prefix}-{suffix}")
+    }
+
+    fn sign_test_id_token(
+        keypair: &Ed25519KeyPair,
+        issuer: &str,
+        aud: &str,
+        nonce: &str,
+        sub: &str,
+    ) -> String {
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&json!({"alg": "EdDSA", "kid": "test-k1", "typ": "JWT"})).unwrap(),
+        );
+        let claims = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&json!({
+                "iss": issuer,
+                "aud": aud,
+                "sub": sub,
+                "nonce": nonce,
+                "email": "dev@example.com",
+                "exp": now_unix() + 3600,
+            }))
+            .unwrap(),
+        );
+        let signing_input = format!("{header}.{claims}");
+        let sig = keypair.sign(signing_input.as_bytes());
+        let sig_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sig.as_ref());
+        format!("{signing_input}.{sig_b64}")
+    }
+
+    struct InMemoryPersistence {
+        stored: AsyncMutex<Option<SiwcCredentials>>,
+        writes: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl SiwcCredentialPersistence for InMemoryPersistence {
+        async fn persist_rotated(&self, credentials: &SiwcCredentials) -> Result<()> {
+            self.writes.fetch_add(1, Ordering::SeqCst);
+            *self.stored.lock().await = Some(credentials.clone());
+            Ok(())
+        }
+        async fn load_latest(&self) -> Result<Option<SiwcCredentials>> {
+            Ok(self.stored.lock().await.clone())
         }
     }
 
-    #[tokio::test]
-    async fn siwc_vertical_slice_covers_pkce_callback_models_responses_refresh_and_revoke() {
-        let revoked_tokens = Arc::new(Mutex::new(Vec::<String>::new()));
-        let revoked_capture = revoked_tokens.clone();
-        let seen_responses_body = Arc::new(Mutex::new(None::<Value>));
-        let body_capture = seen_responses_body.clone();
-        let response_mode = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let mode_for_responses = response_mode.clone();
-
-        let access_v1 = ["siwc", "access", "v1"].join("-");
-        let access_v2 = ["siwc", "access", "v2"].join("-");
-        let refresh_v1 = ["siwc", "r1", "val"].join("-");
-        let refresh_v2 = ["siwc", "r2", "val"].join("-");
-
+    async fn spawn_mock_server(app: Router) -> (String, tokio::task::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let base = format!("http://{}", listener.local_addr().unwrap());
-        let revoke_url = format!("{base}/api/accounts/oauth/revoke");
-        let revoke_url_for_oidc = revoke_url.clone();
-        let a1 = access_v1.clone();
-        let a2 = access_v2.clone();
-        let r1 = refresh_v1.clone();
-        let r2 = refresh_v2.clone();
-        let expected_auth = format!("Bearer {access_v2}");
+        let addr = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (format!("http://{addr}"), task)
+    }
 
-        let router = Router::new()
-            .route(
-                "/.well-known/openid-configuration",
-                get(move || {
-                    let url = revoke_url_for_oidc.clone();
-                    async move { Json(json!({ "revocation_endpoint": url })) }
-                }),
-            )
-            .route(
-                "/api/accounts/oauth/token",
-                post(move |body: String| {
-                    let a1 = a1.clone();
-                    let a2 = a2.clone();
-                    let r1 = r1.clone();
-                    let r2 = r2.clone();
-                    async move {
-                        if body.contains("grant_type=refresh_token") {
-                            Json(json!({
-                                "access_token": a2,
-                                "refresh_token": r2,
-                                "client_id": "issued-client-123",
-                                "expires_in": 3600,
-                                "scope": SIWC_REQUESTED_SCOPES,
-                            }))
-                        } else {
-                            Json(json!({
-                                "access_token": a1,
-                                "refresh_token": r1,
-                                "client_id": "issued-client-123",
-                                "expires_in": 3600,
-                                "scope": SIWC_REQUESTED_SCOPES,
-                            }))
-                        }
-                    }
-                }),
-            )
-            .route(
-                "/api/accounts/oauth/revoke",
-                post(move |body: String| {
-                    let revoked_capture = revoked_capture.clone();
-                    async move {
-                        revoked_capture.lock().unwrap().push(body);
-                        StatusCode::OK
-                    }
-                }),
-            )
-            .route(
-                "/v1/models",
-                get(|| async {
-                    Json(json!({
-                        "models": [
-                            { "slug": "gpt-5", "visibility": "list" },
-                            { "slug": "internal-hidden", "visibility": "hide" }
-                        ]
-                    }))
-                }),
-            )
-            .route(
-                "/v1/responses",
-                post(
-                    move |headers: axum::http::HeaderMap, Json(body): Json<Value>| {
-                        let body_capture = body_capture.clone();
-                        let expected_auth = expected_auth.clone();
-                        let mode = mode_for_responses.load(std::sync::atomic::Ordering::SeqCst);
+    #[tokio::test]
+    async fn siwc_full_vertical_slice_oauth_id_token_refresh_persistence_responses_and_revocation()
+    {
+        let rng = ring::rand::SystemRandom::new();
+        let pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+        let keypair = Arc::new(Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap());
+        let pub_x =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(keypair.public_key().as_ref());
+
+        let token_refreshes = Arc::new(AtomicUsize::new(0));
+        let revoke_attempts = Arc::new(AtomicUsize::new(0));
+        let seen_responses_body = Arc::new(AsyncMutex::new(None::<Value>));
+        let expected_verifier = Arc::new(AsyncMutex::new(String::new()));
+        let expected_nonce = Arc::new(AsyncMutex::new(String::new()));
+        let base_slot = Arc::new(OnceLock::<String>::new());
+
+        let token_refreshes_c = token_refreshes.clone();
+        let revoke_attempts_c = revoke_attempts.clone();
+        let seen_body_c = seen_responses_body.clone();
+        let verifier_c = expected_verifier.clone();
+        let nonce_c = expected_nonce.clone();
+        let keypair_c = keypair.clone();
+        let base_for_oidc = base_slot.clone();
+        let base_for_token = base_slot.clone();
+
+        let (base, task) = spawn_mock_server(
+            Router::new()
+                .route(
+                    "/oauth/token",
+                    post(move |body: String| {
+                        let refreshes = token_refreshes_c.clone();
+                        let verifier_c = verifier_c.clone();
+                        let nonce_c = nonce_c.clone();
+                        let keypair_c = keypair_c.clone();
+                        let base_for_token = base_for_token.clone();
                         async move {
-                            assert_eq!(headers["authorization"], expected_auth);
-                            *body_capture.lock().unwrap() = Some(body);
-                            match mode {
-                                1 => (StatusCode::UNAUTHORIZED, [("content-type", "text/plain")], String::new()),
-                                2 => (StatusCode::PAYMENT_REQUIRED, [("content-type", "text/plain")], String::new()),
-                                3 => (StatusCode::TOO_MANY_REQUESTS, [("content-type", "text/plain")], String::new()),
-                                4 => (
-                                    StatusCode::OK,
-                                    [("content-type", "text/event-stream")],
-                                    format!("data: {}\n\n", json!({"type": "response.failed"})),
-                                ),
-                                _ => {
-                                    let events = [
-                                        json!({"type": "response.output_text.delta", "delta": "Hello "}),
-                                        json!({"type": "response.output_text.delta", "delta": "SIWC"}),
-                                        json!({"type": "response.completed", "response": {"usage": {"input_tokens": 12, "output_tokens": 4}}}),
-                                    ];
-                                    let data = events
-                                        .iter()
-                                        .map(|e| format!("data: {e}\n\n"))
-                                        .collect::<String>();
-                                    (StatusCode::OK, [("content-type", "text/event-stream")], data)
-                                }
+                            let params: std::collections::HashMap<String, String> =
+                                reqwest::Url::parse(&format!("http://127.0.0.1/?{body}"))
+                                    .unwrap()
+                                    .query_pairs()
+                                    .into_owned()
+                                    .collect();
+                            let issuer = base_for_token.get().unwrap().clone();
+                            assert_eq!(
+                                params.get("resource").map(String::as_str),
+                                Some(format!("{issuer}/v1").as_str())
+                            );
+                            if params.get("grant_type").map(String::as_str)
+                                == Some("refresh_token")
+                            {
+                                refreshes.fetch_add(1, Ordering::SeqCst);
+                                Json(json!({
+                                    "access_token": test_token("acc", "rotated"),
+                                    "refresh_token": test_token("ref", "rotated"),
+                                    "client_id": "issued-client-1",
+                                    "expires_in": 3600,
+                                    "scope": SIWC_REQUESTED_SCOPES,
+                                }))
+                            } else {
+                                assert_eq!(
+                                    params.get("grant_type").map(String::as_str),
+                                    Some("authorization_code")
+                                );
+                                assert_eq!(
+                                    params.get("client_id").map(String::as_str),
+                                    Some("issued-client-1")
+                                );
+                                assert_eq!(
+                                    params.get("code").map(String::as_str),
+                                    Some("auth-code-1")
+                                );
+                                assert_eq!(
+                                    params.get("code_verifier").map(String::as_str),
+                                    Some(verifier_c.lock().await.as_str())
+                                );
+                                let nonce = nonce_c.lock().await.clone();
+                                let id_token = sign_test_id_token(
+                                    &keypair_c,
+                                    &issuer,
+                                    "issued-client-1",
+                                    &nonce,
+                                    "chatgpt-sub-42",
+                                );
+                                Json(json!({
+                                    "access_token": test_token("acc", "initial"),
+                                    "refresh_token": test_token("ref", "initial"),
+                                    "id_token": id_token,
+                                    "client_id": "issued-client-1",
+                                    "expires_in": 10,
+                                    "scope": SIWC_REQUESTED_SCOPES,
+                                }))
                             }
                         }
-                    },
+                    }),
+                )
+                .route(
+                    "/.well-known/openid-configuration",
+                    get(move || {
+                        let base_for_oidc = base_for_oidc.clone();
+                        async move {
+                            let issuer = base_for_oidc.get().unwrap().clone();
+                            Json(json!({
+                                "issuer": issuer,
+                                "jwks_uri": format!("{issuer}/.well-known/jwks.json"),
+                                "revocation_endpoint": format!("{issuer}/oauth/revoke"),
+                            }))
+                        }
+                    }),
+                )
+                .route(
+                    "/.well-known/jwks.json",
+                    get(move || {
+                        let pub_x = pub_x.clone();
+                        async move {
+                            Json(json!({
+                                "keys": [{
+                                    "kty": "OKP",
+                                    "crv": "Ed25519",
+                                    "kid": "test-k1",
+                                    "x": pub_x,
+                                }]
+                            }))
+                        }
+                    }),
+                )
+                .route(
+                    "/oauth/revoke",
+                    post(move || {
+                        let attempts = revoke_attempts_c.clone();
+                        async move {
+                            let n = attempts.fetch_add(1, Ordering::SeqCst);
+                            if n == 0 {
+                                StatusCode::SERVICE_UNAVAILABLE
+                            } else {
+                                StatusCode::OK
+                            }
+                        }
+                    }),
+                )
+                .route(
+                    "/v1/models",
+                    get(|| async {
+                        Json(json!({
+                            "models": [
+                                {"slug": "gpt-5-chatgpt", "visibility": "list"},
+                                {"slug": "hidden-model", "visibility": "hide"}
+                            ]
+                        }))
+                    }),
+                )
+                .route(
+                    "/v1/responses",
+                    post(move |Json(body): Json<Value>| {
+                        let seen_body = seen_body_c.clone();
+                        async move {
+                            *seen_body.lock().await = Some(body);
+                            let sse = concat!(
+                                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"siwc \"}\n\n",
+                                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n",
+                                "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":5,\"output_tokens\":2}}}\n\n"
+                            );
+                            ([("content-type", "text/event-stream")], sse)
+                        }
+                    }),
                 ),
-            );
-        let server_task = tokio::spawn(async move {
-            axum::serve(listener, router).await.unwrap();
-        });
+        )
+        .await;
+        base_slot.set(base.clone()).unwrap();
 
         let endpoints = SiwcEndpoints {
-            authorize_url: format!("{base}/api/accounts/authorize"),
-            token_url: format!("{base}/api/accounts/oauth/token"),
+            authorize_url: format!("{base}/authorize"),
+            token_url: format!("{base}/oauth/token"),
             oidc_discovery_url: format!("{base}/.well-known/openid-configuration"),
             api_base_url: format!("{base}/v1"),
             allow_loopback_http: true,
@@ -1103,204 +1644,197 @@ mod tests {
         };
         let oauth = Arc::new(SiwcOAuthClient::with_endpoints(endpoints.clone(), 5));
 
-        // 1. Loopback callback success, state mismatch, and error denial.
-        let cb_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let cb_port = cb_listener.local_addr().unwrap().port();
-        let cb_task = tokio::spawn(await_loopback_callback(
-            cb_listener,
-            "state-ok",
-            CancellationToken::new(),
-        ));
-        let client = reqwest::Client::new();
-        let _ = client
-            .get(format!(
-                "http://127.0.0.1:{cb_port}/callback?code=abc&state=state-ok"
-            ))
-            .send()
-            .await;
-        assert_eq!(cb_task.await.unwrap().unwrap(), "abc");
-
-        let bad_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let bad_port = bad_listener.local_addr().unwrap().port();
-        let bad_task = tokio::spawn(await_loopback_callback(
-            bad_listener,
-            "expected",
-            CancellationToken::new(),
-        ));
-        let _ = client
-            .get(format!(
-                "http://127.0.0.1:{bad_port}/callback?code=abc&state=wrong"
-            ))
-            .send()
-            .await;
-        assert!(bad_task.await.unwrap().is_err());
-
-        // 2. PKCE + authorize URL + code exchange + refresh rotation.
+        // 1. PKCE + documented authorize URL parameters.
         let (verifier, challenge) = SiwcOAuthClient::generate_pkce();
+        *expected_verifier.lock().await = verifier.clone();
+        *expected_nonce.lock().await = "nonce-123".into();
         let auth_url = oauth
             .build_authorize_url(
                 "http://127.0.0.1:4321/callback",
-                "state-xyz",
+                "state-1",
+                "nonce-123",
                 &challenge,
-                "host-abc",
+                "host-1",
                 SIWC_INITIAL_CLIENT_ID,
             )
             .unwrap();
-        assert!(auth_url.contains("client_id=dynamic_agent_client"));
+        assert!(auth_url.contains("code_challenge_method=S256"));
+        assert!(auth_url.contains("agent_name_hint=Huginn"));
+        assert!(auth_url.contains("ext_agent_host_id=host-1"));
+        assert!(auth_url.contains("nonce=nonce-123"));
+        assert!(auth_url.contains("resource="));
+
+        // 2. Loopback callback extracts issued client_id + state mismatch rejected.
+        let cb_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let cb_addr = cb_listener.local_addr().unwrap();
+        let sender = tokio::spawn(async move {
+            let mut s = tokio::net::TcpStream::connect(cb_addr).await.unwrap();
+            s.write_all(
+                b"GET /callback?code=auth-code-1&state=expected-state&client_id=issued-client-1 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            )
+            .await
+            .unwrap();
+        });
+        let cb = await_loopback_callback(cb_listener, "expected-state", CancellationToken::new())
+            .await
+            .unwrap();
+        sender.await.unwrap();
+        assert_eq!(cb.code, "auth-code-1");
+        assert_eq!(cb.client_id.as_deref(), Some("issued-client-1"));
+
+        // 3. Exchange code verifies ID token signature, iss, aud, exp, nonce, and sub.
         let creds = oauth
             .exchange_code(
-                "code-123",
+                &cb.code,
                 "http://127.0.0.1:4321/callback",
                 &verifier,
-                "host-abc",
-                SIWC_INITIAL_CLIENT_ID,
+                "host-1",
+                cb.client_id.as_deref().unwrap(),
+                "nonce-123",
                 CancellationToken::new(),
             )
             .await
             .unwrap();
-        assert_eq!(creds.client_id, "issued-client-123");
+        assert_eq!(creds.client_id, "issued-client-1");
+        assert_eq!(creds.account_sub.as_deref(), Some("chatgpt-sub-42"));
+        assert_eq!(creds.account_email.as_deref(), Some("dev@example.com"));
 
-        let refreshed = oauth
-            .refresh(&creds, CancellationToken::new())
-            .await
-            .unwrap();
-        assert_eq!(refreshed.access_token, access_v2);
-        assert_eq!(refreshed.refresh_token, refresh_v2);
-
-        // 3. Discovery filters visibility == "list" and passes slug.
-        let adapter = SiwcAdapter::with_endpoints(oauth.clone(), endpoints, 5);
-        assert_eq!(adapter.descriptor().id, SIWC_PROVIDER_ID);
-        assert!(!adapter.onboarding().allow_manual_model_when_unsupported);
+        // 4. Adapter single-flight refresh persists rotated credentials before use and does not double-refresh.
+        let persistence_impl = Arc::new(InMemoryPersistence {
+            stored: AsyncMutex::new(Some(creds.clone())),
+            writes: AtomicUsize::new(0),
+        });
+        let persistence_slot = Arc::new(OnceLock::new());
+        let _ =
+            persistence_slot.set(persistence_impl.clone() as Arc<dyn SiwcCredentialPersistence>);
+        let adapter =
+            SiwcAdapter::with_endpoints(oauth.clone(), Some(persistence_slot), endpoints, 5);
         let material = ConnectionMaterial {
-            settings: ConnectionSettings {
+            settings: huginn_core::connections::ConnectionSettings {
                 provider: SIWC_PROVIDER_ID.into(),
                 endpoint: Some(format!("{base}/v1")),
-                model: "gpt-5".into(),
+                model: "gpt-5-chatgpt".into(),
                 requires_secret: true,
-                allow_loopback_http: true,
+                allow_loopback_http: false,
                 reasoning_effort: None,
             },
-            secret: Some(Secret::new(refreshed.to_secret_json().unwrap()).unwrap()),
+            secret: Some(
+                huginn_core::connections::Secret::new(creds.to_secret_json().unwrap()).unwrap(),
+            ),
         };
-        let catalog = adapter
-            .discover_models(&material, CancellationToken::new())
-            .await
-            .unwrap();
-        assert!(
-            matches!(catalog, ModelCatalog::Available(ref m) if m.len() == 1 && m[0].id == "gpt-5")
-        );
-
-        // 4. Responses API streaming + error mappings + tool/image rejection.
         let selection = ModelSelection {
-            connection: ConnectionIdentity {
-                id: "siwc-conn".into(),
-                adapter: ProviderRegistration::new(SIWC_PROVIDER_ID.into(), 1),
+            connection: huginn_core::providers::ConnectionIdentity {
+                id: "siwc-1".into(),
+                adapter: huginn_core::providers::ProviderRegistration::new(
+                    SIWC_PROVIDER_ID.into(),
+                    1,
+                ),
                 revision: 1,
             },
-            model: "gpt-5".into(),
+            model: "gpt-5-chatgpt".into(),
             reasoning_effort: None,
         };
-        let model = adapter
+        let provider = adapter
             .create_connection_model(&selection, material, CancellationToken::new())
             .await
             .unwrap();
-        assert_eq!(
-            model.attribution().unwrap().provider.as_deref(),
-            Some(SIWC_PROVIDER_ID)
-        );
+        // Exactly ONE refresh occurred (shared between resolve + catalog validation) and it was persisted.
+        assert_eq!(token_refreshes.load(Ordering::SeqCst), 1);
+        assert_eq!(persistence_impl.writes.load(Ordering::SeqCst), 1);
+        let persisted = persistence_impl.stored.lock().await.clone().unwrap();
+        assert_eq!(persisted.refresh_token, test_token("ref", "rotated"));
 
-        let mut tool_req = fixture_req("hi");
-        tool_req.tools.push(huginn_core::ToolDefinition {
-            name: "list_files".into(),
-            description: "list".into(),
-            input_schema: json!({}),
-        });
-        assert!(model
-            .stream(tool_req, CancellationToken::new())
-            .await
-            .is_err());
-
-        let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
-        png.extend_from_slice(&[0; 21]);
-        let img = huginn_core::ImageAttachment::from_bytes(png, None).unwrap();
-        let img_req = ModelRequest {
-            messages: vec![huginn_core::Message::user_with_images("img", vec![img])],
-            tools: vec![],
-            max_tokens: 64,
-        };
-        assert!(model
-            .stream(img_req, CancellationToken::new())
-            .await
-            .is_err());
-
-        let deltas: Vec<_> = model
-            .stream(fixture_req("hello"), CancellationToken::new())
+        // 5. Text-only prompt succeeds even when workspace tools are registered, and forwards max_output_tokens.
+        let deltas: Vec<_> = provider
+            .stream(
+                ModelRequest {
+                    messages: vec![huginn_core::Message::text(huginn_core::Role::User, "hi")],
+                    tools: vec![huginn_core::ToolDefinition {
+                        name: "read_file".into(),
+                        description: "read".into(),
+                        input_schema: json!({}),
+                    }],
+                    max_tokens: 256,
+                },
+                CancellationToken::new(),
+            )
             .await
             .unwrap()
             .collect()
             .await;
-        let combined: String = deltas
+        let text: String = deltas
             .iter()
             .filter_map(|d| match d {
                 Ok(ModelDelta::Text(t)) => Some(t.as_str()),
                 _ => None,
             })
             .collect();
-        assert_eq!(combined, "Hello SIWC");
-        assert!(deltas.iter().any(|d| matches!(
-            d,
-            Ok(ModelDelta::Usage {
-                input_tokens: Some(12),
-                output_tokens: Some(4),
-                ..
-            })
-        )));
-        let sent_body = seen_responses_body.lock().unwrap().clone().unwrap();
-        assert_eq!(sent_body["store"], false);
-        assert_eq!(sent_body["stream"], true);
+        assert_eq!(text, "siwc ok");
+        let sent = seen_responses_body.lock().await.clone().unwrap();
+        assert_eq!(sent["store"], false);
+        assert_eq!(sent["stream"], true);
+        assert_eq!(sent["max_output_tokens"], 256);
+        assert!(sent.get("tools").is_none());
 
-        // Error statuses: 401, 402, 429, and SSE response.failed.
-        for code in [1, 2, 3] {
-            response_mode.store(code, std::sync::atomic::Ordering::SeqCst);
-            assert!(model
-                .stream(fixture_req("err"), CancellationToken::new())
-                .await
-                .is_err());
-        }
-        response_mode.store(4, std::sync::atomic::Ordering::SeqCst);
-        let err_deltas: Vec<_> = model
-            .stream(fixture_req("sse-err"), CancellationToken::new())
+        // 6. Image attachments are still rejected.
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        png.extend_from_slice(&13u32.to_be_bytes());
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&4u32.to_be_bytes());
+        png.extend_from_slice(&4u32.to_be_bytes());
+        png.extend_from_slice(&[8, 2, 0, 0, 0]);
+        let img = huginn_core::ImageAttachment::from_bytes(png, None).unwrap();
+        assert!(provider
+            .stream(
+                ModelRequest {
+                    messages: vec![huginn_core::Message::user_with_images("see", vec![img])],
+                    tools: vec![],
+                    max_tokens: 64,
+                },
+                CancellationToken::new(),
+            )
             .await
-            .unwrap()
-            .collect()
-            .await;
-        assert!(err_deltas.iter().any(Result::is_err));
+            .is_err());
 
-        // 5. OIDC-discovered remote revocation.
+        // 7. Remote revocation retries transient 503 and succeeds on the second attempt.
         let outcome = oauth
-            .revoke_remote(&refreshed, CancellationToken::new())
+            .revoke_remote(&persisted, CancellationToken::new())
             .await;
         assert_eq!(outcome, SiwcRevocationOutcome::RemoteConfirmed);
-        assert_eq!(revoked_tokens.lock().unwrap().len(), 1);
-        assert!(revoked_tokens.lock().unwrap()[0].contains(&refresh_v2));
+        assert_eq!(revoke_attempts.load(Ordering::SeqCst), 2);
 
-        // Local-only fallback when OIDC discovery is unreachable.
-        let broken_oauth = SiwcOAuthClient::with_endpoints(
-            SiwcEndpoints {
-                oidc_discovery_url: format!("{base}/missing-oidc"),
-                allow_loopback_http: true,
-                open_browser: false,
-                ..SiwcEndpoints::default()
-            },
-            2,
-        );
-        assert!(matches!(
-            broken_oauth
-                .revoke_remote(&refreshed, CancellationToken::new())
-                .await,
-            SiwcRevocationOutcome::LocalOnly { .. }
-        ));
+        task.abort();
+    }
 
-        server_task.abort();
+    #[test]
+    fn sse_parser_delivers_text_before_failed_rejects_done_without_completed_and_caps_frame_size() {
+        // Text delta + response.failed in one chunk delivers the text delta first, then error.
+        let mut buf = concat!(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"prefix\"}\n\n",
+            "data: {\"type\":\"response.failed\"}\n\n"
+        )
+        .as_bytes()
+        .to_vec();
+        let mut completed = false;
+        let out = drain_responses_sse(&mut buf, &mut completed);
+        assert!(out.ended);
+        assert!(!completed);
+        assert_eq!(out.items.len(), 2);
+        assert!(matches!(&out.items[0], Ok(ModelDelta::Text(t)) if t == "prefix"));
+        assert!(out.items[1].is_err());
+
+        // [DONE] without response.completed is treated as an incomplete error.
+        let mut done_buf = b"data: [DONE]\n\n".to_vec();
+        let mut done_completed = false;
+        let done_out = drain_responses_sse(&mut done_buf, &mut done_completed);
+        assert!(done_out.ended);
+        assert!(matches!(done_out.items.as_slice(), [Err(_)]));
+
+        // Oversized pending SSE frame without delimiter fails cleanly.
+        let mut huge = vec![b'a'; MAX_SSE_FRAME_BYTES + 1];
+        let mut huge_completed = false;
+        let huge_out = drain_responses_sse(&mut huge, &mut huge_completed);
+        assert!(huge_out.ended);
+        assert!(matches!(huge_out.items.as_slice(), [Err(_)]));
     }
 }

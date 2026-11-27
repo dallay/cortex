@@ -1873,19 +1873,62 @@ Enter save Esc close"
             return;
         }
         if let Event::Paste(text) = &event {
-            if let Some(loaded) = crate::clipboard::try_load_pasted_image_path(text) {
-                match loaded {
-                    Ok(image) => {
-                        let _ = state.attach_image(image);
-                    }
-                    Err(error) => {
-                        state.status.set_diagnostic(error);
-                    }
-                }
+            if crate::clipboard::parse_pasted_image_path(text).is_some() {
+                let raw = text.clone();
                 let crate::state::UiState {
                     editor, completion, ..
                 } = &mut *state;
                 completion.dismiss(editor);
+                drop(state);
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    let ui = self.ui.clone();
+                    handle.spawn(async move {
+                        let outcome = tokio::time::timeout(
+                            Duration::from_secs(5),
+                            tokio::task::spawn_blocking(move || {
+                                crate::clipboard::try_load_pasted_image_path(&raw)
+                                    .map(|res| (res, None))
+                                    .unwrap_or_else(|| (Err(String::new()), Some(raw)))
+                            }),
+                        )
+                        .await;
+                        let mut state = ui.lock();
+                        match outcome {
+                            Ok(Ok((Ok(image), None))) => {
+                                let _ = state.attach_image(image);
+                            }
+                            Ok(Ok((Err(error), None))) => {
+                                state.status.set_diagnostic(error);
+                            }
+                            Ok(Ok((_, Some(fallback_text)))) => {
+                                state.insert_pasted_text(&fallback_text);
+                            }
+                            Ok(Err(_)) => {
+                                state
+                                    .status
+                                    .set_diagnostic("Failed to read pasted image file.".into());
+                            }
+                            Err(_) => {
+                                state
+                                    .status
+                                    .set_diagnostic("Timed out reading pasted image file.".into());
+                            }
+                        }
+                        ui.dirty.notify_one();
+                    });
+                } else if let Some(loaded) = crate::clipboard::try_load_pasted_image_path(text) {
+                    let mut state = self.ui.lock();
+                    match loaded {
+                        Ok(image) => {
+                            let _ = state.attach_image(image);
+                        }
+                        Err(error) => {
+                            state.status.set_diagnostic(error);
+                        }
+                    }
+                } else {
+                    self.ui.lock().insert_pasted_text(text);
+                }
                 return;
             }
             state.insert_pasted_text(text);
@@ -1945,20 +1988,65 @@ Enter save Esc close"
                 state.insert_editor_text("\n")
             }
             KeyCode::Char('j') if ctrl => state.insert_editor_text("\n"),
-            KeyCode::Char('v') if ctrl => match crate::clipboard::read_clipboard_image() {
-                Ok(Some(image)) => {
-                    let _ = state.attach_image(image);
+            KeyCode::Char('v') if ctrl => {
+                drop(state);
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    let ui = self.ui.clone();
+                    handle.spawn(async move {
+                        let outcome = tokio::time::timeout(
+                            Duration::from_secs(5),
+                            tokio::task::spawn_blocking(crate::clipboard::read_clipboard_image),
+                        )
+                        .await;
+                        let mut state = ui.lock();
+                        match outcome {
+                            Ok(Ok(Ok(Some(image)))) => {
+                                let _ = state.attach_image(image);
+                            }
+                            Ok(Ok(Ok(None))) => {
+                                state.status.set_notice(
+                                    "Clipboard does not contain a supported image (PNG/JPEG/WebP)."
+                                        .into(),
+                                );
+                            }
+                            Ok(Ok(Err(error))) => {
+                                state.status.set_diagnostic(error);
+                            }
+                            Ok(Err(_)) => {
+                                state
+                                    .status
+                                    .set_diagnostic("Failed to read image from clipboard.".into());
+                            }
+                            Err(_) => {
+                                state.status.set_diagnostic(
+                                    "Timed out reading image from clipboard.".into(),
+                                );
+                            }
+                        }
+                        ui.dirty.notify_one();
+                    });
+                } else {
+                    let result = crate::clipboard::read_clipboard_image();
+                    let mut state = self.ui.lock();
+                    match result {
+                        Ok(Some(image)) => {
+                            let _ = state.attach_image(image);
+                        }
+                        Ok(None) => {
+                            state.status.set_notice(
+                                "Clipboard does not contain a supported image (PNG/JPEG/WebP)."
+                                    .into(),
+                            );
+                        }
+                        Err(error) => {
+                            state.status.set_diagnostic(error);
+                        }
+                    }
                 }
-                Ok(None) => {
-                    state.status.set_notice(
-                        "Clipboard does not contain a supported image (PNG/JPEG/WebP).".into(),
-                    );
-                }
-                Err(error) => {
-                    state.status.set_diagnostic(error);
-                }
-            },
-            KeyCode::Backspace if key.modifiers.contains(KeyModifiers::ALT) => {
+            }
+            KeyCode::Backspace
+                if key.modifiers.contains(KeyModifiers::ALT) && !state.attachments.is_empty() =>
+            {
                 state.remove_last_attachment();
             }
             KeyCode::Enter => {

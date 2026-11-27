@@ -92,7 +92,7 @@ impl std::str::FromStr for ReasoningEffort {
     }
 }
 
-/// Whether `endpoint` is an official OpenAI Platform API base URL.
+/// Whether `endpoint` is the canonical official OpenAI Platform API `/v1` base URL.
 pub fn is_official_openai_api_endpoint(endpoint: &str) -> bool {
     let Ok(url) = url::Url::parse(endpoint) else {
         return false;
@@ -107,46 +107,33 @@ pub fn is_official_openai_api_endpoint(endpoint: &str) -> bool {
     {
         return false;
     }
-    matches!(url.path().trim_end_matches('/'), "" | "/v1")
-}
-
-fn is_iso_date_suffix(suffix: &str) -> bool {
-    let bytes = suffix.as_bytes();
-    bytes.len() == 10
-        && bytes[0..4].iter().all(u8::is_ascii_digit)
-        && bytes[4] == b'-'
-        && bytes[5..7].iter().all(u8::is_ascii_digit)
-        && bytes[7] == b'-'
-        && bytes[8..10].iter().all(u8::is_ascii_digit)
-}
-
-fn matches_base_or_dated_snapshot(normalized: &str, base: &str) -> bool {
-    normalized == base
-        || normalized
-            .strip_prefix(base)
-            .and_then(|rest| rest.strip_prefix('-'))
-            .is_some_and(is_iso_date_suffix)
+    url.path().trim_end_matches('/') == "/v1"
 }
 
 /// Conservative allowlist of OpenAI API models verified for Chat Completions `reasoning_effort`.
 ///
-/// Explicitly excludes Responses-only models (`o3-pro`, `o3-deep-research`,
-/// `o4-mini-deep-research`, `gpt-5-pro`, `gpt-5-codex`, `o1-pro`) and non-reasoning
-/// aliases (`o1-mini`, `o1-preview`, `gpt-5-chat-latest`).
+/// Matches exact verified base aliases and verified dated snapshots only. Explicitly excludes
+/// Responses-only models (`o3-pro`, `o3-deep-research`, `o4-mini-deep-research`, `gpt-5-pro`,
+/// `gpt-5-codex`, `o1-pro`) and non-reasoning aliases (`o1-mini`, `o1-preview`, `gpt-5-chat-latest`).
 pub fn is_verified_openai_reasoning_model(model: &str) -> bool {
     let normalized = model.trim().to_ascii_lowercase();
-    const VERIFIED_CHAT_COMPLETIONS_BASES: &[&str] = &[
+    const VERIFIED_CHAT_COMPLETIONS_REASONING_MODELS: &[&str] = &[
         "o1",
+        "o1-2024-12-17",
         "o3",
+        "o3-2025-04-16",
         "o3-mini",
+        "o3-mini-2025-01-31",
         "o4-mini",
+        "o4-mini-2025-04-16",
         "gpt-5",
+        "gpt-5-2025-08-07",
         "gpt-5-mini",
+        "gpt-5-mini-2025-08-07",
         "gpt-5-nano",
+        "gpt-5-nano-2025-08-07",
     ];
-    VERIFIED_CHAT_COMPLETIONS_BASES
-        .iter()
-        .any(|base| matches_base_or_dated_snapshot(&normalized, base))
+    VERIFIED_CHAT_COMPLETIONS_REASONING_MODELS.contains(&normalized.as_str())
 }
 
 /// Whether the given provider, endpoint, and model support verified OpenAI Chat Completions
@@ -162,36 +149,40 @@ pub fn supports_openai_reasoning_effort(
 }
 
 /// Conservative allowlist of OpenAI API models verified for Chat Completions image input.
+///
+/// Matches exact verified Chat Completions aliases and snapshots only, excluding Responses-only
+/// models (`o3-pro`, `o3-deep-research`, `o4-mini-deep-research`, `gpt-5-pro`, `gpt-5-codex`),
+/// text-only reasoning models (`o3-mini`), and audio/realtime/TTS variants.
 pub fn is_verified_openai_vision_model(model: &str) -> bool {
     let normalized = model.trim().to_ascii_lowercase();
-    if normalized == "gpt-4o"
-        || (normalized.starts_with("gpt-4o-")
-            && !normalized.starts_with("gpt-4o-audio")
-            && !normalized.starts_with("gpt-4o-realtime")
-            && !normalized.starts_with("gpt-4o-transcribe")
-            && !normalized.starts_with("gpt-4o-mini-audio")
-            && !normalized.starts_with("gpt-4o-mini-realtime")
-            && !normalized.starts_with("gpt-4o-mini-transcribe")
-            && !normalized.starts_with("gpt-4o-mini-tts"))
-    {
-        return true;
-    }
-    if normalized == "gpt-4.1" || normalized.starts_with("gpt-4.1-") {
-        return true;
-    }
-    if normalized == "gpt-5" || normalized.starts_with("gpt-5-") {
-        return true;
-    }
-    if (normalized == "o3" || normalized.starts_with("o3-"))
-        && normalized != "o3-mini"
-        && !normalized.starts_with("o3-mini-")
-    {
-        return true;
-    }
-    if normalized == "o4-mini" || normalized.starts_with("o4-mini-") {
-        return true;
-    }
-    false
+    const VERIFIED_CHAT_COMPLETIONS_VISION_MODELS: &[&str] = &[
+        "gpt-4o",
+        "gpt-4o-2024-05-13",
+        "gpt-4o-2024-08-06",
+        "gpt-4o-2024-11-20",
+        "chatgpt-4o-latest",
+        "gpt-4o-mini",
+        "gpt-4o-mini-2024-07-18",
+        "gpt-4.1",
+        "gpt-4.1-2025-04-14",
+        "gpt-4.1-mini",
+        "gpt-4.1-mini-2025-04-14",
+        "gpt-4.1-nano",
+        "gpt-4.1-nano-2025-04-14",
+        "o1",
+        "o1-2024-12-17",
+        "o3",
+        "o3-2025-04-16",
+        "o4-mini",
+        "o4-mini-2025-04-16",
+        "gpt-5",
+        "gpt-5-2025-08-07",
+        "gpt-5-mini",
+        "gpt-5-mini-2025-08-07",
+        "gpt-5-nano",
+        "gpt-5-nano-2025-08-07",
+    ];
+    VERIFIED_CHAT_COMPLETIONS_VISION_MODELS.contains(&normalized.as_str())
 }
 
 /// Whether the given provider, endpoint, and model support verified OpenAI Chat Completions
