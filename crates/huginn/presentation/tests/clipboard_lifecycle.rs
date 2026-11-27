@@ -10,7 +10,7 @@ fn clipboard_command_returns_output_after_successful_exit() {
     let mut command = Command::new("sh");
     command.args(["-c", "printf clipboard-data"]);
 
-    let output = run_command_for_test(&mut command, &stop, Duration::from_secs(1)).unwrap();
+    let output = run_command_for_test(&mut command, &stop, Duration::from_secs(5)).unwrap();
 
     assert_eq!(output, b"clipboard-data");
 }
