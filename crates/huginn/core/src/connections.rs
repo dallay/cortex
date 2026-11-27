@@ -304,6 +304,22 @@ pub trait ConnectionManagement: Send + Sync {
         Ok(crate::providers::ModelCatalog::Unsupported)
     }
     async fn revoke(&self, id: uuid::Uuid) -> ConnectionResult<()>;
+    /// Run the local Sign in with ChatGPT (SIWC) OAuth flow and persist under `OsSecrets`.
+    async fn sign_in_siwc(&self, cancel: CancellationToken) -> ConnectionResult<ConnectionRecord> {
+        let _ = cancel;
+        Err(ConnectionError::AdapterUnavailable)
+    }
+    /// Revoke a connection and return a user-facing status message (distinguishing confirmed
+    /// remote OAuth revocation from local-only cleanup when applicable).
+    async fn revoke_with_report(
+        &self,
+        id: uuid::Uuid,
+        cancel: CancellationToken,
+    ) -> ConnectionResult<String> {
+        let _ = cancel;
+        self.revoke(id).await?;
+        Ok("Connection revoked locally. Next inference is blocked, including in a pinned turn. Remote completion remains unknown.".into())
+    }
 }
 pub struct ConnectionsService(pub std::sync::Arc<dyn ConnectionManagement>);
 pub fn connections_id() -> crate::kernel::ServiceId {

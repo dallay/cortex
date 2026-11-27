@@ -222,6 +222,7 @@ pub struct ConnectionManager {
     access: Arc<ConnectionAccess>,
     providers: Arc<dyn ProviderManagement>,
     catalog: Arc<dyn ProviderCatalog>,
+    siwc_auth: Option<Arc<dyn huginn_core::siwc::SiwcAuthPort>>,
     state: AsyncMutex<State>,
     owner: u64,
     retired: CancellationToken,
@@ -284,6 +285,7 @@ impl ConnectionManager {
             access: access.clone(),
             providers: providers.clone(),
             catalog,
+            siwc_auth: None,
             state: AsyncMutex::new(State {
                 metadata,
                 failed: false,
@@ -515,6 +517,110 @@ impl ConnectionManager {
         publication.armed = false;
         Ok(selection)
     }
+    pub fn with_siwc_auth(mut self, auth: Arc<dyn huginn_core::siwc::SiwcAuthPort>) -> Self {
+        self.siwc_auth = Some(auth);
+        self
+    }
+
+    pub async fn sign_in_siwc(
+        &self,
+        cancel: CancellationToken,
+    ) -> ConnectionResult<ConnectionRecord> {
+        let Some(auth) = self.siwc_auth.clone() else {
+            return Err(ConnectionError::AdapterUnavailable);
+        };
+        if self.access.secrets.mode() != SecretMode::Secure {
+            return Err(ConnectionError::BackendUnavailable);
+        }
+        // Enforce single SIWC account in this first vertical slice.
+        let existing = self.list().await?;
+        if existing
+            .iter()
+            .any(|record| record.settings.provider == huginn_core::siwc::SIWC_PROVIDER_ID)
+        {
+            return Err(ConnectionError::InvalidConfiguration);
+        }
+        let creds = auth.sign_in(cancel).await.map_err(|err| match err {
+            huginn_core::AgentError::Cancelled => ConnectionError::Cancelled,
+            _ => ConnectionError::InvalidConfiguration,
+        })?;
+        creds
+            .validate_grants()
+            .map_err(|_| ConnectionError::InvalidConfiguration)?;
+        let secret_json = creds
+            .to_secret_json()
+            .map_err(|_| ConnectionError::InvalidConfiguration)?;
+        let secret = Secret::new(secret_json)?;
+        let settings = ConnectionSettings {
+            provider: huginn_core::siwc::SIWC_PROVIDER_ID.into(),
+            endpoint: Some(huginn_core::siwc::SIWC_API_BASE_URL.into()),
+            model: "chatgpt-siwc-pending-selection".into(),
+            requires_secret: true,
+            allow_loopback_http: false,
+            reasoning_effort: None,
+        };
+        self.run_operation(async {
+            let _operation = self.operation().await?;
+            self.write_connection(None, settings, Some(secret), SecretMode::Secure)
+                .await
+        })
+        .await
+    }
+
+    pub async fn revoke_with_report(
+        &self,
+        id: Uuid,
+        cancel: CancellationToken,
+    ) -> ConnectionResult<String> {
+        let record = {
+            let state = self.state.lock().await;
+            Self::check_state(&state)?;
+            state.metadata.connections.get(&id).cloned()
+        };
+        let mut remote_report = None;
+        if let Some(record) =
+            record.filter(|r| r.settings.provider == huginn_core::siwc::SIWC_PROVIDER_ID)
+        {
+            if let (Some(auth), Some(reference)) = (self.siwc_auth.as_ref(), record.secret.as_ref())
+            {
+                match self.access.secrets.read_mode(record.mode, reference).await {
+                    Ok(secret) => {
+                        match huginn_core::siwc::SiwcCredentials::from_secret_json(secret.expose())
+                        {
+                            Ok(creds) => {
+                                remote_report = Some(auth.revoke_remote(&creds, cancel).await);
+                            }
+                            Err(_) => {
+                                remote_report =
+                                    Some(huginn_core::siwc::SiwcRevocationOutcome::LocalOnly {
+                                        reason: "stored OAuth credentials could not be parsed"
+                                            .into(),
+                                    });
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        remote_report = Some(huginn_core::siwc::SiwcRevocationOutcome::LocalOnly {
+                            reason: "stored OAuth credentials were unavailable".into(),
+                        });
+                    }
+                }
+            }
+        }
+        self.revoke(id).await?;
+        Ok(match remote_report {
+            Some(huginn_core::siwc::SiwcRevocationOutcome::RemoteConfirmed) => {
+                "Sign in with ChatGPT session revoked remotely and deleted locally.".into()
+            }
+            Some(huginn_core::siwc::SiwcRevocationOutcome::LocalOnly { reason }) => {
+                format!(
+                    "Local Sign in with ChatGPT credentials deleted, but remote revocation was not confirmed ({reason})."
+                )
+            }
+            None => "Connection revoked locally. Next inference is blocked, including in a pinned turn. Remote completion remains unknown.".into(),
+        })
+    }
+
     pub async fn list(&self) -> ConnectionResult<Vec<ConnectionRecord>> {
         self.run_operation(async {
             let _operation = self.operation().await?;
@@ -1246,6 +1352,16 @@ impl ConnectionManagement for ConnectionManager {
     }
     async fn revoke(&self, id: Uuid) -> ConnectionResult<()> {
         self.revoke(id).await
+    }
+    async fn sign_in_siwc(&self, cancel: CancellationToken) -> ConnectionResult<ConnectionRecord> {
+        self.sign_in_siwc(cancel).await
+    }
+    async fn revoke_with_report(
+        &self,
+        id: Uuid,
+        cancel: CancellationToken,
+    ) -> ConnectionResult<String> {
+        self.revoke_with_report(id, cancel).await
     }
 }
 
