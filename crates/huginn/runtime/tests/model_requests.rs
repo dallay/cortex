@@ -163,3 +163,16 @@ async fn official_reasoning_payload_uses_completion_tokens_and_optional_effort()
     assert!(bodies[2].get("max_completion_tokens").is_none());
     assert!(bodies[2].get("reasoning_effort").is_none());
 }
+
+#[test]
+fn test_proxy_rejects_invalid_proxy_urls_and_certificates() {
+    let mut provider =
+        OpenAiProvider::new("https://api.openai.com/v1", "o3-mini".into(), None, 2).unwrap();
+
+    assert!(provider
+        .trust_test_proxy("file:///tmp/proxy", b"invalid")
+        .is_err());
+    assert!(provider
+        .trust_test_proxy("http://127.0.0.1:8080", b"invalid")
+        .is_err());
+}

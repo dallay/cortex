@@ -1,3 +1,5 @@
+#![cfg(debug_assertions)]
+
 use huginn_core::{AgentError, CancellationToken, ModelProvider, ModelRequest};
 use huginn_runtime::model::OpenAiProvider;
 use std::sync::{

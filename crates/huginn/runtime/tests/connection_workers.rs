@@ -1,3 +1,5 @@
+#![cfg(debug_assertions)]
+
 use huginn_core::connections::*;
 use huginn_runtime::connections::{test_hooks::WorkerProbe, SqliteConnections};
 use std::sync::{atomic::Ordering, Arc};

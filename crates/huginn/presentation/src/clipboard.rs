@@ -4,7 +4,7 @@ use std::{
     fs::File,
     io::Read,
     path::{Path, PathBuf},
-    process::{Child, Command, Output, Stdio},
+    process::{Child, Command, ExitStatus, Output, Stdio},
     sync::mpsc::{self, TryRecvError},
     thread,
     time::{Duration, Instant},
@@ -133,6 +133,25 @@ fn join_output_reader(reader: Option<thread::JoinHandle<()>>) {
     }
 }
 
+fn finish_clipboard_output(
+    child: &mut Child,
+    reader: Option<thread::JoinHandle<()>>,
+    stop: &CancellationToken,
+    status: ExitStatus,
+    stdout: Vec<u8>,
+) -> Result<Output, String> {
+    join_output_reader(reader);
+    if stop.is_cancelled() {
+        stop_child(child);
+        return Err("clipboard read cancelled".into());
+    }
+    Ok(Output {
+        status,
+        stdout,
+        stderr: Vec::new(),
+    })
+}
+
 fn run_clipboard_command(
     command: &mut Command,
     stop: &CancellationToken,
@@ -197,15 +216,13 @@ fn run_clipboard_command(
 
         if let Some(status) = status.as_ref() {
             if let Some(stdout) = stdout.take() {
-                join_output_reader(reader);
-                if stop.is_cancelled() {
-                    return Err("clipboard read cancelled".into());
-                }
-                return Ok(Output {
-                    status: status.to_owned(),
+                return finish_clipboard_output(
+                    &mut child,
+                    reader,
+                    stop,
+                    status.to_owned(),
                     stdout,
-                    stderr: Vec::new(),
-                });
+                );
             }
         }
         if Instant::now() >= deadline {
@@ -215,6 +232,31 @@ fn run_clipboard_command(
         }
         thread::sleep(Duration::from_millis(10));
     }
+}
+
+#[cfg(all(feature = "test-hooks", debug_assertions))]
+#[doc(hidden)]
+pub fn cancel_after_child_exit_for_test(
+    command: &mut Command,
+    stop: &CancellationToken,
+) -> Result<(), String> {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|_| "could not start clipboard command".to_string())?;
+    let status = child
+        .wait()
+        .map_err(|error| format!("error waiting for clipboard child: {error}"))?;
+    stop.cancel();
+    finish_clipboard_output(&mut child, None, stop, status, Vec::new()).map(|_| ())
 }
 
 #[cfg(all(feature = "test-hooks", debug_assertions))]
@@ -230,6 +272,46 @@ pub fn run_command_for_test(
     } else {
         Err("clipboard command failed".into())
     }
+}
+
+#[cfg(any(target_os = "linux", all(feature = "test-hooks", debug_assertions)))]
+fn read_clipboard_commands(
+    stop: &CancellationToken,
+    commands: impl IntoIterator<Item = Command>,
+) -> Result<Option<ImageAttachment>, String> {
+    let mut any_tool_ran = false;
+    for mut command in commands {
+        let output = match run_clipboard_command(&mut command, stop, CLIPBOARD_TIMEOUT) {
+            Ok(output) => {
+                any_tool_ran = true;
+                output
+            }
+            Err(error) if error == "could not start clipboard command" => continue,
+            Err(error) => return Err(error),
+        };
+        if output.status.success() && !output.stdout.is_empty() {
+            return ImageAttachment::from_bytes(output.stdout, Some("clipboard.png".into()))
+                .map(Some)
+                .map_err(|error| error.to_string());
+        }
+    }
+    if any_tool_ran {
+        Ok(None)
+    } else {
+        Err(
+            "no clipboard tool found (install wl-paste or xclip, or paste an image file path)"
+                .into(),
+        )
+    }
+}
+
+#[cfg(all(feature = "test-hooks", debug_assertions))]
+#[doc(hidden)]
+pub fn read_commands_for_test(
+    stop: &CancellationToken,
+    commands: Vec<Command>,
+) -> Result<Option<ImageAttachment>, String> {
+    read_clipboard_commands(stop, commands)
 }
 
 #[cfg(target_os = "macos")]
@@ -278,36 +360,9 @@ fn read_macos_clipboard_image(stop: &CancellationToken) -> Result<Option<ImageAt
 
 #[cfg(target_os = "linux")]
 fn read_linux_clipboard_image(stop: &CancellationToken) -> Result<Option<ImageAttachment>, String> {
-    let mut any_tool_ran = false;
-    for (bin, args) in [
-        ("wl-paste", &["--no-newline", "--type", "image/png"][..]),
-        (
-            "xclip",
-            &["-selection", "clipboard", "-t", "image/png", "-o"][..],
-        ),
-    ] {
-        let mut command = Command::new(bin);
-        command.args(args);
-        let output = match run_clipboard_command(&mut command, stop, CLIPBOARD_TIMEOUT) {
-            Ok(output) => {
-                any_tool_ran = true;
-                output
-            }
-            Err(error) if error == "could not start clipboard command" => continue,
-            Err(error) => return Err(error),
-        };
-        if output.status.success() && !output.stdout.is_empty() {
-            return ImageAttachment::from_bytes(output.stdout, Some("clipboard.png".into()))
-                .map(Some)
-                .map_err(|err| err.to_string());
-        }
-    }
-    if any_tool_ran {
-        Ok(None)
-    } else {
-        Err(
-            "no clipboard tool found (install wl-paste or xclip, or paste an image file path)"
-                .into(),
-        )
-    }
+    let mut wayland = Command::new("wl-paste");
+    wayland.args(["--no-newline", "--type", "image/png"]);
+    let mut x11 = Command::new("xclip");
+    x11.args(["-selection", "clipboard", "-t", "image/png", "-o"]);
+    read_clipboard_commands(stop, [wayland, x11])
 }
