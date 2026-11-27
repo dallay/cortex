@@ -195,16 +195,18 @@ fn run_clipboard_command(
             }
         }
 
-        if let (Some(status), Some(stdout)) = (status, stdout.take()) {
-            join_output_reader(reader);
-            if stop.is_cancelled() {
-                return Err("clipboard read cancelled".into());
+        if let Some(status) = status.as_ref() {
+            if let Some(stdout) = stdout.take() {
+                join_output_reader(reader);
+                if stop.is_cancelled() {
+                    return Err("clipboard read cancelled".into());
+                }
+                return Ok(Output {
+                    status: status.to_owned(),
+                    stdout,
+                    stderr: Vec::new(),
+                });
             }
-            return Ok(Output {
-                status,
-                stdout,
-                stderr: Vec::new(),
-            });
         }
         if Instant::now() >= deadline {
             stop_child(&mut child);
