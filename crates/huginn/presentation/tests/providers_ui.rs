@@ -26,7 +26,7 @@ struct Manager {
     fail: AtomicBool,
     uncertain: AtomicBool,
     recovery_fail: AtomicBool,
-    discovery_calls: AtomicUsize,
+    catalog_discovery_calls: Arc<AtomicUsize>,
     discovery: Mutex<Option<ConnectionResult<ModelCatalog>>>,
 }
 #[async_trait]
@@ -144,7 +144,6 @@ impl ConnectionManagement for Manager {
         _: uuid::Uuid,
         _: CancellationToken,
     ) -> ConnectionResult<ModelCatalog> {
-        self.discovery_calls.fetch_add(1, Ordering::SeqCst);
         self.discovery
             .lock()
             .unwrap()
@@ -165,7 +164,9 @@ struct Catalog(
     Vec<AuthenticationMethod>,
     ProviderRegistration,
     Vec<(ProviderRegistration, ProviderDescriptor)>,
+    Arc<AtomicUsize>,
 );
+#[async_trait]
 impl ProviderCatalog for Catalog {
     fn onboarding(&self, registration: &ProviderRegistration) -> Result<ProviderOnboarding> {
         Ok(ProviderOnboarding {
@@ -175,6 +176,15 @@ impl ProviderCatalog for Catalog {
             allow_manual_model_when_unsupported: registration.provider == "custom-dyn",
             ..ProviderOnboarding::default()
         })
+    }
+    async fn discover_models(
+        &self,
+        _: &ProviderRegistration,
+        _: &huginn_core::connections::ConnectionMaterial,
+        _: CancellationToken,
+    ) -> Result<ModelCatalog> {
+        self.3.fetch_add(1, Ordering::SeqCst);
+        Ok(ModelCatalog::Unsupported)
     }
     fn adapters(&self) -> Vec<(ProviderRegistration, ProviderDescriptor)> {
         let mut adapters = vec![(
@@ -234,6 +244,7 @@ impl Plugin for Host {
                 self.authentication.clone(),
                 ProviderRegistration::new("double".into(), 1),
                 self.extra_adapters.clone(),
+                self.manager.catalog_discovery_calls.clone(),
             ))),
         )
     }
@@ -647,7 +658,12 @@ async fn fixed_provider_endpoint_accepts_trailing_slash_and_rejects_changes() {
         .unwrap()
         .contains("No request was sent"));
     assert!(rejected_manager.records.lock().unwrap().is_empty());
-    assert_eq!(rejected_manager.discovery_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        rejected_manager
+            .catalog_discovery_calls
+            .load(Ordering::SeqCst),
+        0
+    );
 }
 
 #[tokio::test]

@@ -714,6 +714,7 @@ async fn siwc_full_vertical_slice_oauth_id_token_refresh_persistence_responses_a
 
     let token_refreshes = Arc::new(AtomicUsize::new(0));
     let revoke_attempts = Arc::new(AtomicUsize::new(0));
+    let responses_requests = Arc::new(AtomicUsize::new(0));
     let seen_responses_body = Arc::new(AsyncMutex::new(None::<serde_json::Value>));
     let expected_verifier = Arc::new(AsyncMutex::new(String::new()));
     let expected_nonce = Arc::new(AsyncMutex::new(String::new()));
@@ -721,6 +722,7 @@ async fn siwc_full_vertical_slice_oauth_id_token_refresh_persistence_responses_a
 
     let token_refreshes_c = token_refreshes.clone();
     let revoke_attempts_c = revoke_attempts.clone();
+    let responses_requests_c = responses_requests.clone();
     let seen_body_c = seen_responses_body.clone();
     let verifier_c = expected_verifier.clone();
     let nonce_c = expected_nonce.clone();
@@ -856,8 +858,10 @@ async fn siwc_full_vertical_slice_oauth_id_token_refresh_persistence_responses_a
             .route(
                 "/v1/responses",
                 post(move |Json(body): Json<serde_json::Value>| {
+                    let requests = responses_requests_c.clone();
                     let seen_body = seen_body_c.clone();
                     async move {
+                        requests.fetch_add(1, Ordering::SeqCst);
                         *seen_body.lock().await = Some(body);
                         let sse = concat!(
                             "data: {\"type\":\"response.output_text.delta\",\"delta\":\"siwc \"}\n\n",
@@ -998,6 +1002,11 @@ async fn siwc_full_vertical_slice_oauth_id_token_refresh_persistence_responses_a
         .unwrap()
         .collect()
         .await;
+    assert!(deltas.iter().all(|delta| delta.is_ok()), "{deltas:?}");
+    assert!(
+        matches!(deltas.last(), Some(Ok(ModelDelta::Finished))),
+        "Responses stream must finish successfully: {deltas:?}"
+    );
     let text: String = deltas
         .iter()
         .filter_map(|d| match d {
@@ -1011,6 +1020,7 @@ async fn siwc_full_vertical_slice_oauth_id_token_refresh_persistence_responses_a
     assert_eq!(sent["stream"], true);
     assert_eq!(sent["max_output_tokens"], 256);
     assert!(sent.get("tools").is_none());
+    assert_eq!(responses_requests.load(Ordering::SeqCst), 1);
 
     // 6. Image attachments are still rejected.
     let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
@@ -1020,7 +1030,7 @@ async fn siwc_full_vertical_slice_oauth_id_token_refresh_persistence_responses_a
     png.extend_from_slice(&4u32.to_be_bytes());
     png.extend_from_slice(&[8, 2, 0, 0, 0]);
     let img = huginn_core::ImageAttachment::from_bytes(png, None).unwrap();
-    assert!(provider
+    let image_error = provider
         .stream(
             ModelRequest {
                 messages: vec![huginn_core::Message::user_with_images("see", vec![img])],
@@ -1030,7 +1040,19 @@ async fn siwc_full_vertical_slice_oauth_id_token_refresh_persistence_responses_a
             CancellationToken::new(),
         )
         .await
-        .is_err());
+        .err()
+        .expect("SIWC must reject image attachments");
+    assert!(
+        image_error
+            .to_string()
+            .contains("image attachments are not enabled yet"),
+        "unexpected image rejection: {image_error}"
+    );
+    assert_eq!(
+        responses_requests.load(Ordering::SeqCst),
+        1,
+        "image rejection must happen before the Responses request"
+    );
 
     // 7. Remote revocation retries transient 503 and succeeds on the second attempt.
     let outcome = oauth
