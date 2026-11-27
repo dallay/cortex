@@ -65,6 +65,11 @@ name = "connection_workers"
 path = "tests/connection_workers.rs"
 required-features = ["test-hooks"]
 
+[[test]]
+name = "model_requests"
+path = "tests/model_requests.rs"
+required-features = ["test-hooks"]
+
 [dev-dependencies]
 wit-component = "=0.263.0"
 wit-parser = "=0.263.0"

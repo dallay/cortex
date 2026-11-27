@@ -1886,17 +1886,24 @@ Enter save Esc close"
                     state.pending_image_reads += 1;
                     drop(state);
                     let ui = self.ui.clone();
+                    let stop = self.ui.stop.clone();
                     handle.spawn(async move {
-                        let outcome = tokio::time::timeout(
-                            Duration::from_secs(5),
-                            tokio::task::spawn_blocking(move || {
-                                crate::clipboard::try_load_pasted_image_path(&raw)
-                                    .map(|res| (res, None))
-                                    .unwrap_or_else(|| (Err(String::new()), Some(raw)))
-                            }),
-                        )
-                        .await;
+                        let outcome = tokio::select! {
+                            biased;
+                            _ = stop.cancelled() => return,
+                            outcome = tokio::time::timeout(
+                                Duration::from_secs(5),
+                                tokio::task::spawn_blocking(move || {
+                                    crate::clipboard::try_load_pasted_image_path(&raw)
+                                        .map(|res| (res, None))
+                                        .unwrap_or_else(|| (Err(String::new()), Some(raw)))
+                                }),
+                            ) => outcome,
+                        };
                         let mut state = ui.lock();
+                        if stop.is_cancelled() {
+                            return;
+                        }
                         state.pending_image_reads -= 1;
                         match outcome {
                             Ok(Ok((Ok(image), None))) => {
@@ -2009,13 +2016,23 @@ Enter save Esc close"
                     state.pending_image_reads += 1;
                     drop(state);
                     let ui = self.ui.clone();
+                    let stop = self.ui.stop.clone();
                     handle.spawn(async move {
-                        let outcome = tokio::time::timeout(
-                            Duration::from_secs(5),
-                            tokio::task::spawn_blocking(crate::clipboard::read_clipboard_image),
-                        )
-                        .await;
+                        let read_stop = stop.clone();
+                        let outcome = tokio::select! {
+                            biased;
+                            _ = stop.cancelled() => return,
+                            outcome = tokio::time::timeout(
+                                Duration::from_secs(5),
+                                tokio::task::spawn_blocking(move || {
+                                    crate::clipboard::read_clipboard_image(&read_stop)
+                                }),
+                            ) => outcome,
+                        };
                         let mut state = ui.lock();
+                        if stop.is_cancelled() {
+                            return;
+                        }
                         state.pending_image_reads -= 1;
                         match outcome {
                             Ok(Ok(Ok(Some(image)))) => {
@@ -2044,7 +2061,8 @@ Enter save Esc close"
                         ui.dirty.notify_one();
                     });
                 } else {
-                    let result = crate::clipboard::read_clipboard_image();
+                    let stop = self.ui.stop.clone();
+                    let result = crate::clipboard::read_clipboard_image(&stop);
                     match result {
                         Ok(Some(image)) => {
                             let _ = state.attach_image(image);
