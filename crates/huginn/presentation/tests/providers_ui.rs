@@ -12,12 +12,13 @@ use huginn_presentation::{providers::ProvidersUiPlugin, state::Ui};
 use std::{
     collections::BTreeMap,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     },
 };
 
 const SENTINEL: &str = "p03-ui-secret-sentinel-never-public";
+const FIXED_ENDPOINT: &str = "https://api.example.invalid/v1";
 #[derive(Default)]
 struct Manager {
     records: Mutex<BTreeMap<uuid::Uuid, ConnectionRecord>>,
@@ -25,6 +26,7 @@ struct Manager {
     fail: AtomicBool,
     uncertain: AtomicBool,
     recovery_fail: AtomicBool,
+    discovery_calls: AtomicUsize,
     discovery: Mutex<Option<ConnectionResult<ModelCatalog>>>,
 }
 #[async_trait]
@@ -142,6 +144,7 @@ impl ConnectionManagement for Manager {
         _: uuid::Uuid,
         _: CancellationToken,
     ) -> ConnectionResult<ModelCatalog> {
+        self.discovery_calls.fetch_add(1, Ordering::SeqCst);
         self.discovery
             .lock()
             .unwrap()
@@ -166,6 +169,9 @@ struct Catalog(
 impl ProviderCatalog for Catalog {
     fn onboarding(&self, registration: &ProviderRegistration) -> Result<ProviderOnboarding> {
         Ok(ProviderOnboarding {
+            default_endpoint: (registration.provider == "fixed-endpoint")
+                .then(|| FIXED_ENDPOINT.into()),
+            allow_endpoint_edit: registration.provider != "fixed-endpoint",
             allow_manual_model_when_unsupported: registration.provider == "custom-dyn",
             ..ProviderOnboarding::default()
         })
@@ -546,6 +552,102 @@ async fn login(ui: &Ui) {
         drop(state);
     }
     submit(ui).await;
+}
+
+fn fixed_endpoint_adapter() -> (ProviderRegistration, ProviderDescriptor) {
+    (
+        ProviderRegistration::new("fixed-endpoint".into(), 1),
+        ProviderDescriptor {
+            id: "fixed-endpoint".into(),
+            display_name: "Fixed endpoint provider".into(),
+            models: vec![ModelDescriptor {
+                id: "alpha".into(),
+                supports_tools: true,
+            }],
+            authentication: vec![AuthenticationMethod::ApiKey],
+        },
+    )
+}
+
+async fn open_fixed_endpoint_form(ui: &Ui) {
+    ui.dispatch_command("/login");
+    settle(ui).await;
+    ui.lock().workflow_mut().unwrap().insert("Fixed endpoint");
+    submit(ui).await;
+    assert!(ui
+        .lock()
+        .workflow()
+        .unwrap()
+        .snapshot()
+        .0
+        .contains("Authentication method"));
+    submit(ui).await;
+    assert!(ui
+        .lock()
+        .workflow()
+        .unwrap()
+        .snapshot()
+        .0
+        .contains("Step 3 of 4"));
+}
+
+fn enter_fixed_endpoint_form(ui: &Ui, endpoint: &str) {
+    let mut state = ui.lock();
+    let form = state.workflow_mut().unwrap();
+    for _ in FIXED_ENDPOINT.chars() {
+        form.backspace();
+    }
+    form.insert(endpoint);
+    for _ in 0..4 {
+        form.navigate(true);
+    }
+    form.insert(SENTINEL);
+}
+
+#[tokio::test]
+async fn fixed_provider_endpoint_accepts_trailing_slash_and_rejects_changes() {
+    let (_supervisor, accepted_ui, accepted_manager) =
+        setup_with_catalog(vec![], vec![fixed_endpoint_adapter()]).await;
+    open_fixed_endpoint_form(&accepted_ui).await;
+    enter_fixed_endpoint_form(&accepted_ui, &format!("{FIXED_ENDPOINT}/"));
+    submit(&accepted_ui).await;
+    let accepted_error = {
+        let accepted_state = accepted_ui.lock();
+        accepted_state
+            .workflow()
+            .and_then(|form| form.error_message())
+            .map(str::to_owned)
+    };
+    let expected_endpoint = format!("{FIXED_ENDPOINT}/");
+    {
+        let accepted_records = accepted_manager.records.lock().unwrap();
+        assert_eq!(accepted_records.len(), 1, "{accepted_error:?}");
+        assert_eq!(
+            accepted_records
+                .values()
+                .next()
+                .unwrap()
+                .settings
+                .endpoint
+                .as_deref(),
+            Some(expected_endpoint.as_str())
+        );
+    }
+
+    let (_supervisor, rejected_ui, rejected_manager) =
+        setup_with_catalog(vec![], vec![fixed_endpoint_adapter()]).await;
+    open_fixed_endpoint_form(&rejected_ui).await;
+    enter_fixed_endpoint_form(&rejected_ui, "https://custom.example.invalid/v1");
+    submit(&rejected_ui).await;
+    let rejected = rejected_ui.lock();
+    assert!(rejected
+        .workflow()
+        .unwrap()
+        .error_message()
+        .unwrap()
+        .contains("No request was sent"));
+    assert!(rejected_manager.records.lock().unwrap().is_empty());
+    assert_eq!(rejected_manager.discovery_calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

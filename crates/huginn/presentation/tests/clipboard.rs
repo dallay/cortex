@@ -1,6 +1,6 @@
 use huginn_core::{ImageAttachment, Message, Session, MAX_IMAGES_PER_MESSAGE};
 use huginn_presentation::{
-    clipboard::{parse_pasted_image_path, try_load_pasted_image_path},
+    clipboard::{load_image_file, parse_pasted_image_path, try_load_pasted_image_path},
     state::UiState,
 };
 use std::path::PathBuf;
@@ -65,4 +65,36 @@ fn loads_valid_png_path_and_ui_state_manages_preview_and_session_budget() {
     budgeted.synchronize(&session);
     // 3 * 5 MiB = 15 MiB already in session; attaching another 5 MiB exceeds 16 MiB.
     assert!(budgeted.attach_image(big).is_err());
+}
+
+#[test]
+fn pasted_image_loading_rejects_missing_nonfile_invalid_and_oversized_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("missing.png");
+    assert!(try_load_pasted_image_path(&format!("'{}'", missing.display())).is_none());
+    assert_eq!(
+        load_image_file(&missing).unwrap_err(),
+        "could not read image file metadata"
+    );
+
+    let directory = dir.path().join("directory.png");
+    std::fs::create_dir(&directory).unwrap();
+    assert!(matches!(
+        try_load_pasted_image_path(&format!("'{}'", directory.display())),
+        Some(Err(error)) if error == "pasted path is not a regular file"
+    ));
+
+    let invalid = dir.path().join("invalid.png");
+    std::fs::write(&invalid, b"not an image").unwrap();
+    assert!(matches!(
+        try_load_pasted_image_path(&format!("'{}'", invalid.display())),
+        Some(Err(error)) if error.contains("unsupported image format")
+    ));
+
+    let oversized = dir.path().join("oversized.png");
+    std::fs::write(&oversized, vec![0; huginn_core::MAX_IMAGE_BYTES + 1]).unwrap();
+    assert!(matches!(
+        try_load_pasted_image_path(&format!("'{}'", oversized.display())),
+        Some(Err(error)) if error.contains("5 MiB per-image limit")
+    ));
 }

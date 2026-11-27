@@ -565,6 +565,26 @@ mod tests {
         assert_eq!(endpoint_problem(&settings(None, false)), None);
     }
 
+    #[test]
+    fn validation_rejects_endpoint_credentials_metadata_and_nonliteral_loopback_hosts() {
+        for endpoint in [
+            "https://user:password@example.com/v1",
+            "https://example.com/v1?token=redacted",
+            "https://example.com/v1#fragment",
+            "http://localhost:11434",
+        ] {
+            assert_eq!(
+                settings(Some(endpoint), true).validate(),
+                Err(ConnectionError::InvalidConfiguration),
+                "endpoint should be rejected: {endpoint}"
+            );
+        }
+
+        assert!(settings(Some("http://127.0.0.1:11434"), true)
+            .validate()
+            .is_ok());
+    }
+
     #[tokio::test]
     async fn default_discover_models_returns_unsupported() {
         struct Stub;

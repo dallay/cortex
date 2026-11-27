@@ -43,7 +43,8 @@ const MAX_CATALOG_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_OAUTH_RESPONSE_BYTES: usize = 512 * 1024;
 const MAX_CALLBACK_REQUEST_BYTES: usize = 8192;
 const CALLBACK_READ_TIMEOUT: Duration = Duration::from_secs(1);
-const MAX_SSE_FRAME_BYTES: usize = 1024 * 1024;
+#[doc(hidden)]
+pub const MAX_SSE_FRAME_BYTES: usize = 1024 * 1024;
 const OAUTH_CALLBACK_TIMEOUT_SECS: u64 = 180;
 const REVOKE_MAX_ATTEMPTS: usize = 3;
 
@@ -83,7 +84,7 @@ impl SiwcOAuthClient {
         }
     }
 
-    #[cfg(test)]
+    #[doc(hidden)]
     pub const fn with_endpoints(endpoints: SiwcEndpoints, timeout_secs: u64) -> Self {
         Self {
             endpoints,
@@ -92,24 +93,16 @@ impl SiwcOAuthClient {
     }
 
     fn http_client(&self, url: &str) -> Result<reqwest::Client> {
-        #[cfg(test)]
-        let allow_loopback = self.endpoints.allow_loopback_http;
-        #[cfg(not(test))]
-        let allow_loopback = false;
-        crate::model::transport_client(url, self.timeout_secs, allow_loopback)
+        crate::model::transport_client(url, self.timeout_secs, self.endpoints.allow_loopback_http)
     }
 
     fn validated_https_url(&self, raw: &str) -> Result<reqwest::Url> {
         let parsed = reqwest::Url::parse(raw)
             .map_err(|_| AgentError::Configuration("invalid SIWC endpoint URL".into()))?;
-        #[cfg(not(test))]
-        if parsed.scheme() != "https" {
-            return Err(AgentError::Configuration(
-                "SIWC OAuth endpoints require HTTPS".into(),
-            ));
-        }
-        #[cfg(test)]
-        if parsed.scheme() != "https" && !self.endpoints.allow_loopback_http {
+        if parsed.scheme() != "https"
+            && (!self.endpoints.allow_loopback_http
+                || !huginn_core::connections::is_loopback_endpoint(&parsed))
+        {
             return Err(AgentError::Configuration(
                 "SIWC OAuth endpoints require HTTPS".into(),
             ));
@@ -706,12 +699,15 @@ fn parse_token_response(
     Ok(creds)
 }
 
-struct LoopbackCallback {
-    code: String,
-    client_id: Option<String>,
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct LoopbackCallback {
+    pub code: String,
+    pub client_id: Option<String>,
 }
 
-async fn await_loopback_callback(
+#[doc(hidden)]
+pub async fn await_loopback_callback(
     listener: TcpListener,
     expected_state: &str,
     cancel: CancellationToken,
@@ -921,7 +917,7 @@ impl SiwcAdapter {
         }
     }
 
-    #[cfg(test)]
+    #[doc(hidden)]
     pub fn with_endpoints(
         auth: Arc<dyn SiwcAuthPort>,
         persistence: Option<Arc<OnceLock<Arc<dyn SiwcCredentialPersistence>>>>,
@@ -1288,12 +1284,14 @@ struct ResponsesStreamState {
     completed: bool,
 }
 
-struct DrainOutcome {
-    items: Vec<Result<ModelDelta>>,
-    ended: bool,
+#[doc(hidden)]
+pub struct DrainOutcome {
+    pub items: Vec<Result<ModelDelta>>,
+    pub ended: bool,
 }
 
-fn drain_responses_sse(buffer: &mut Vec<u8>, completed: &mut bool) -> DrainOutcome {
+#[doc(hidden)]
+pub fn drain_responses_sse(buffer: &mut Vec<u8>, completed: &mut bool) -> DrainOutcome {
     let mut items = Vec::new();
     let mut ended = false;
     loop {
@@ -1451,544 +1449,5 @@ impl Plugin for SiwcProviderPlugin {
             )),
         )?;
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::{
-        http::StatusCode,
-        routing::{get, post},
-        Json, Router,
-    };
-    use ring::signature::{Ed25519KeyPair, KeyPair};
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    fn test_token(prefix: &str, suffix: &str) -> String {
-        format!("{prefix}-{suffix}")
-    }
-
-    fn sign_test_id_token(
-        keypair: &Ed25519KeyPair,
-        issuer: &str,
-        aud: &str,
-        nonce: &str,
-        sub: &str,
-    ) -> String {
-        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
-            serde_json::to_vec(&json!({"alg": "EdDSA", "kid": "test-k1", "typ": "JWT"})).unwrap(),
-        );
-        let claims = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
-            serde_json::to_vec(&json!({
-                "iss": issuer,
-                "aud": aud,
-                "sub": sub,
-                "nonce": nonce,
-                "email": "dev@example.com",
-                "exp": now_unix() + 3600,
-            }))
-            .unwrap(),
-        );
-        let signing_input = format!("{header}.{claims}");
-        let sig = keypair.sign(signing_input.as_bytes());
-        let sig_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sig.as_ref());
-        format!("{signing_input}.{sig_b64}")
-    }
-
-    struct InMemoryPersistence {
-        stored: AsyncMutex<Option<SiwcCredentials>>,
-        writes: AtomicUsize,
-    }
-
-    #[async_trait]
-    impl SiwcCredentialPersistence for InMemoryPersistence {
-        async fn persist_rotated(
-            &self,
-            _: ConnectionRevision,
-            credentials: &SiwcCredentials,
-        ) -> Result<()> {
-            self.writes.fetch_add(1, Ordering::SeqCst);
-            *self.stored.lock().await = Some(credentials.clone());
-            Ok(())
-        }
-        async fn load_latest(&self, _: ConnectionRevision) -> Result<Option<SiwcCredentials>> {
-            Ok(self.stored.lock().await.clone())
-        }
-    }
-
-    #[tokio::test]
-    async fn loopback_callback_continues_after_an_idle_peer() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let mut idle = tokio::net::TcpStream::connect(address).await.unwrap();
-        let callback = tokio::spawn(await_loopback_callback(
-            listener,
-            "expected",
-            CancellationToken::new(),
-        ));
-        let mut response = Vec::new();
-        tokio::time::timeout(Duration::from_secs(5), idle.read_to_end(&mut response))
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(response.starts_with(b"HTTP/1.1 400"));
-        let mut browser = tokio::net::TcpStream::connect(address).await.unwrap();
-        browser
-            .write_all(b"GET /callback?code=ok&state=expected HTTP/1.1\r\n\r\n")
-            .await
-            .unwrap();
-        assert_eq!(
-            tokio::time::timeout(Duration::from_secs(5), callback)
-                .await
-                .unwrap()
-                .unwrap()
-                .unwrap()
-                .code,
-            "ok"
-        );
-    }
-
-    #[tokio::test]
-    async fn refresh_cache_requires_matching_host_and_account_and_prefers_persisted_credentials() {
-        let origin = Some(ConnectionRevision {
-            id: Default::default(),
-            revision: Default::default(),
-        });
-        let fallback = SiwcCredentials {
-            host_id: "host".into(),
-            client_id: "client".into(),
-            access_token: test_token("fallback", "access"),
-            refresh_token: test_token("fallback", "refresh"),
-            expires_at_unix: now_unix() + 3600,
-            granted_scopes: vec![],
-            account_sub: Some("account".into()),
-            account_email: None,
-        };
-        let mut cached = fallback.clone();
-        cached.access_token = test_token("cached", "access");
-        let store = Arc::new(InMemoryPersistence {
-            stored: AsyncMutex::new(None),
-            writes: AtomicUsize::new(0),
-        });
-        let slot = Arc::new(OnceLock::<Arc<dyn SiwcCredentialPersistence>>::new());
-        let coordinator =
-            SiwcRefreshCoordinator::new(Arc::new(SiwcOAuthClient::new(5)), Some(slot.clone()));
-        *coordinator.gate.lock().await = Some((origin, cached.clone()));
-        assert_eq!(
-            coordinator
-                .resolve(origin, &fallback, CancellationToken::new())
-                .await
-                .unwrap(),
-            cached
-        );
-        assert!(slot.set(store.clone()).is_ok());
-        for (host, account) in [("different", "account"), ("host", "different")] {
-            *coordinator.gate.lock().await = Some((origin, cached.clone()));
-            let mut other = fallback.clone();
-            other.host_id = host.into();
-            other.account_sub = Some(account.into());
-            assert_eq!(
-                coordinator
-                    .resolve(origin, &other, CancellationToken::new())
-                    .await
-                    .unwrap(),
-                other
-            );
-        }
-        *store.stored.lock().await = Some(cached.clone());
-        assert_eq!(
-            coordinator
-                .resolve(origin, &fallback, CancellationToken::new())
-                .await
-                .unwrap(),
-            cached
-        );
-    }
-
-    async fn spawn_mock_server(app: Router) -> (String, tokio::task::JoinHandle<()>) {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let task = tokio::spawn(async move {
-            let _ = axum::serve(listener, app).await;
-        });
-        (format!("http://{addr}"), task)
-    }
-
-    #[tokio::test]
-    async fn siwc_full_vertical_slice_oauth_id_token_refresh_persistence_responses_and_revocation()
-    {
-        let rng = ring::rand::SystemRandom::new();
-        let pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
-        let keypair = Arc::new(Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap());
-        let pub_x =
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(keypair.public_key().as_ref());
-
-        let token_refreshes = Arc::new(AtomicUsize::new(0));
-        let revoke_attempts = Arc::new(AtomicUsize::new(0));
-        let seen_responses_body = Arc::new(AsyncMutex::new(None::<Value>));
-        let expected_verifier = Arc::new(AsyncMutex::new(String::new()));
-        let expected_nonce = Arc::new(AsyncMutex::new(String::new()));
-        let base_slot = Arc::new(OnceLock::<String>::new());
-
-        let token_refreshes_c = token_refreshes.clone();
-        let revoke_attempts_c = revoke_attempts.clone();
-        let seen_body_c = seen_responses_body.clone();
-        let verifier_c = expected_verifier.clone();
-        let nonce_c = expected_nonce.clone();
-        let keypair_c = keypair.clone();
-        let base_for_oidc = base_slot.clone();
-        let base_for_token = base_slot.clone();
-
-        let (base, task) = spawn_mock_server(
-            Router::new()
-                .route(
-                    "/oauth/token",
-                    post(move |body: String| {
-                        let refreshes = token_refreshes_c.clone();
-                        let verifier_c = verifier_c.clone();
-                        let nonce_c = nonce_c.clone();
-                        let keypair_c = keypair_c.clone();
-                        let base_for_token = base_for_token.clone();
-                        async move {
-                            let params: std::collections::HashMap<String, String> =
-                                reqwest::Url::parse(&format!("http://127.0.0.1/?{body}"))
-                                    .unwrap()
-                                    .query_pairs()
-                                    .into_owned()
-                                    .collect();
-                            let issuer = base_for_token.get().unwrap().clone();
-                            assert_eq!(
-                                params.get("resource").map(String::as_str),
-                                Some(format!("{issuer}/v1").as_str())
-                            );
-                            if params.get("grant_type").map(String::as_str)
-                                == Some("refresh_token")
-                            {
-                                refreshes.fetch_add(1, Ordering::SeqCst);
-                                Json(json!({
-                                    "access_token": test_token("acc", "rotated"),
-                                    "refresh_token": test_token("ref", "rotated"),
-                                    "client_id": "issued-client-1",
-                                    "expires_in": 3600,
-                                    "scope": SIWC_REQUESTED_SCOPES,
-                                }))
-                            } else {
-                                assert_eq!(
-                                    params.get("grant_type").map(String::as_str),
-                                    Some("authorization_code")
-                                );
-                                assert_eq!(
-                                    params.get("client_id").map(String::as_str),
-                                    Some("issued-client-1")
-                                );
-                                assert_eq!(
-                                    params.get("code").map(String::as_str),
-                                    Some("auth-code-1")
-                                );
-                                assert_eq!(
-                                    params.get("code_verifier").map(String::as_str),
-                                    Some(verifier_c.lock().await.as_str())
-                                );
-                                let nonce = nonce_c.lock().await.clone();
-                                let id_token = sign_test_id_token(
-                                    &keypair_c,
-                                    &issuer,
-                                    "issued-client-1",
-                                    &nonce,
-                                    "chatgpt-sub-42",
-                                );
-                                Json(json!({
-                                    "access_token": test_token("acc", "initial"),
-                                    "refresh_token": test_token("ref", "initial"),
-                                    "id_token": id_token,
-                                    "client_id": "issued-client-1",
-                                    "expires_in": 10,
-                                    "scope": SIWC_REQUESTED_SCOPES,
-                                }))
-                            }
-                        }
-                    }),
-                )
-                .route(
-                    "/.well-known/openid-configuration",
-                    get(move || {
-                        let base_for_oidc = base_for_oidc.clone();
-                        async move {
-                            let issuer = base_for_oidc.get().unwrap().clone();
-                            Json(json!({
-                                "issuer": issuer,
-                                "jwks_uri": format!("{issuer}/.well-known/jwks.json"),
-                                "revocation_endpoint": format!("{issuer}/oauth/revoke"),
-                            }))
-                        }
-                    }),
-                )
-                .route(
-                    "/.well-known/jwks.json",
-                    get(move || {
-                        let pub_x = pub_x.clone();
-                        async move {
-                            Json(json!({
-                                "keys": [{
-                                    "kty": "OKP",
-                                    "crv": "Ed25519",
-                                    "kid": "test-k1",
-                                    "x": pub_x,
-                                }]
-                            }))
-                        }
-                    }),
-                )
-                .route(
-                    "/oauth/revoke",
-                    post(move || {
-                        let attempts = revoke_attempts_c.clone();
-                        async move {
-                            let n = attempts.fetch_add(1, Ordering::SeqCst);
-                            if n == 0 {
-                                StatusCode::SERVICE_UNAVAILABLE
-                            } else {
-                                StatusCode::OK
-                            }
-                        }
-                    }),
-                )
-                .route(
-                    "/v1/models",
-                    get(|| async {
-                        Json(json!({
-                            "models": [
-                                {"slug": "gpt-5-chatgpt", "visibility": "list"},
-                                {"slug": "hidden-model", "visibility": "hide"}
-                            ]
-                        }))
-                    }),
-                )
-                .route(
-                    "/v1/responses",
-                    post(move |Json(body): Json<Value>| {
-                        let seen_body = seen_body_c.clone();
-                        async move {
-                            *seen_body.lock().await = Some(body);
-                            let sse = concat!(
-                                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"siwc \"}\n\n",
-                                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n",
-                                "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":5,\"output_tokens\":2}}}\n\n"
-                            );
-                            ([("content-type", "text/event-stream")], sse)
-                        }
-                    }),
-                ),
-        )
-        .await;
-        base_slot.set(base.clone()).unwrap();
-
-        let endpoints = SiwcEndpoints {
-            authorize_url: format!("{base}/authorize"),
-            token_url: format!("{base}/oauth/token"),
-            oidc_discovery_url: format!("{base}/.well-known/openid-configuration"),
-            api_base_url: format!("{base}/v1"),
-            allow_loopback_http: true,
-            open_browser: false,
-        };
-        let oauth = Arc::new(SiwcOAuthClient::with_endpoints(endpoints.clone(), 5));
-
-        // 1. PKCE + documented authorize URL parameters.
-        let (verifier, challenge) = SiwcOAuthClient::generate_pkce();
-        *expected_verifier.lock().await = verifier.clone();
-        *expected_nonce.lock().await = "nonce-123".into();
-        let auth_url = oauth
-            .build_authorize_url(
-                "http://127.0.0.1:4321/callback",
-                "state-1",
-                "nonce-123",
-                &challenge,
-                "host-1",
-                SIWC_INITIAL_CLIENT_ID,
-            )
-            .unwrap();
-        assert!(auth_url.contains("code_challenge_method=S256"));
-        assert!(auth_url.contains("agent_name_hint=Huginn"));
-        assert!(auth_url.contains("ext_agent_host_id=host-1"));
-        assert!(auth_url.contains("nonce=nonce-123"));
-        assert!(auth_url.contains("resource="));
-
-        // 2. Loopback callback extracts issued client_id + state mismatch rejected.
-        let cb_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let cb_addr = cb_listener.local_addr().unwrap();
-        let sender = tokio::spawn(async move {
-            let mut s = tokio::net::TcpStream::connect(cb_addr).await.unwrap();
-            s.write_all(
-                b"GET /callback?code=auth-code-1&state=expected-state&client_id=issued-client-1 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
-            )
-            .await
-            .unwrap();
-        });
-        let cb = await_loopback_callback(cb_listener, "expected-state", CancellationToken::new())
-            .await
-            .unwrap();
-        sender.await.unwrap();
-        assert_eq!(cb.code, "auth-code-1");
-        assert_eq!(cb.client_id.as_deref(), Some("issued-client-1"));
-
-        // 3. Exchange code verifies ID token signature, iss, aud, exp, nonce, and sub.
-        let creds = oauth
-            .exchange_code(
-                &cb.code,
-                "http://127.0.0.1:4321/callback",
-                &verifier,
-                "host-1",
-                cb.client_id.as_deref().unwrap(),
-                "nonce-123",
-                CancellationToken::new(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(creds.client_id, "issued-client-1");
-        assert_eq!(creds.account_sub.as_deref(), Some("chatgpt-sub-42"));
-        assert_eq!(creds.account_email.as_deref(), Some("dev@example.com"));
-
-        // 4. Adapter single-flight refresh persists rotated credentials before use and does not double-refresh.
-        let persistence_impl = Arc::new(InMemoryPersistence {
-            stored: AsyncMutex::new(Some(creds.clone())),
-            writes: AtomicUsize::new(0),
-        });
-        let persistence_slot = Arc::new(OnceLock::new());
-        let _ =
-            persistence_slot.set(persistence_impl.clone() as Arc<dyn SiwcCredentialPersistence>);
-        let adapter =
-            SiwcAdapter::with_endpoints(oauth.clone(), Some(persistence_slot), endpoints, 5);
-        let material = ConnectionMaterial {
-            origin: Some(ConnectionRevision {
-                id: Default::default(),
-                revision: Default::default(),
-            }),
-            settings: huginn_core::connections::ConnectionSettings {
-                provider: SIWC_PROVIDER_ID.into(),
-                endpoint: Some(format!("{base}/v1")),
-                model: "gpt-5-chatgpt".into(),
-                requires_secret: true,
-                allow_loopback_http: false,
-                reasoning_effort: None,
-            },
-            secret: Some(
-                huginn_core::connections::Secret::new(creds.to_secret_json().unwrap()).unwrap(),
-            ),
-        };
-        let selection = ModelSelection {
-            connection: huginn_core::providers::ConnectionIdentity {
-                id: "siwc-1".into(),
-                adapter: huginn_core::providers::ProviderRegistration::new(
-                    SIWC_PROVIDER_ID.into(),
-                    1,
-                ),
-                revision: 1,
-            },
-            model: "gpt-5-chatgpt".into(),
-            reasoning_effort: None,
-        };
-        let provider = adapter
-            .create_connection_model(&selection, material, CancellationToken::new())
-            .await
-            .unwrap();
-        // Exactly ONE refresh occurred (shared between resolve + catalog validation) and it was persisted.
-        assert_eq!(token_refreshes.load(Ordering::SeqCst), 1);
-        assert_eq!(persistence_impl.writes.load(Ordering::SeqCst), 1);
-        let persisted = persistence_impl.stored.lock().await.clone().unwrap();
-        assert_eq!(persisted.refresh_token, test_token("ref", "rotated"));
-
-        // 5. Text-only prompt succeeds even when workspace tools are registered, and forwards max_output_tokens.
-        let deltas: Vec<_> = provider
-            .stream(
-                ModelRequest {
-                    messages: vec![huginn_core::Message::text(huginn_core::Role::User, "hi")],
-                    tools: vec![huginn_core::ToolDefinition {
-                        name: "read_file".into(),
-                        description: "read".into(),
-                        input_schema: json!({}),
-                    }],
-                    max_tokens: 256,
-                },
-                CancellationToken::new(),
-            )
-            .await
-            .unwrap()
-            .collect()
-            .await;
-        let text: String = deltas
-            .iter()
-            .filter_map(|d| match d {
-                Ok(ModelDelta::Text(t)) => Some(t.as_str()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(text, "siwc ok");
-        let sent = seen_responses_body.lock().await.clone().unwrap();
-        assert_eq!(sent["store"], false);
-        assert_eq!(sent["stream"], true);
-        assert_eq!(sent["max_output_tokens"], 256);
-        assert!(sent.get("tools").is_none());
-
-        // 6. Image attachments are still rejected.
-        let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
-        png.extend_from_slice(&13u32.to_be_bytes());
-        png.extend_from_slice(b"IHDR");
-        png.extend_from_slice(&4u32.to_be_bytes());
-        png.extend_from_slice(&4u32.to_be_bytes());
-        png.extend_from_slice(&[8, 2, 0, 0, 0]);
-        let img = huginn_core::ImageAttachment::from_bytes(png, None).unwrap();
-        assert!(provider
-            .stream(
-                ModelRequest {
-                    messages: vec![huginn_core::Message::user_with_images("see", vec![img])],
-                    tools: vec![],
-                    max_tokens: 64,
-                },
-                CancellationToken::new(),
-            )
-            .await
-            .is_err());
-
-        // 7. Remote revocation retries transient 503 and succeeds on the second attempt.
-        let outcome = oauth
-            .revoke_remote(&persisted, CancellationToken::new())
-            .await;
-        assert_eq!(outcome, SiwcRevocationOutcome::RemoteConfirmed);
-        assert_eq!(revoke_attempts.load(Ordering::SeqCst), 2);
-
-        task.abort();
-    }
-
-    #[test]
-    fn sse_parser_delivers_text_before_failed_rejects_done_without_completed_and_caps_frame_size() {
-        // Text delta + response.failed in one chunk delivers the text delta first, then error.
-        let mut buf = concat!(
-            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"prefix\"}\n\n",
-            "data: {\"type\":\"response.failed\"}\n\n"
-        )
-        .as_bytes()
-        .to_vec();
-        let mut completed = false;
-        let out = drain_responses_sse(&mut buf, &mut completed);
-        assert!(out.ended);
-        assert!(!completed);
-        assert_eq!(out.items.len(), 2);
-        assert!(matches!(&out.items[0], Ok(ModelDelta::Text(t)) if t == "prefix"));
-        assert!(out.items[1].is_err());
-
-        // [DONE] without response.completed is treated as an incomplete error.
-        let mut done_buf = b"data: [DONE]\n\n".to_vec();
-        let mut done_completed = false;
-        let done_out = drain_responses_sse(&mut done_buf, &mut done_completed);
-        assert!(done_out.ended);
-        assert!(matches!(done_out.items.as_slice(), [Err(_)]));
-
-        // Oversized pending SSE frame without delimiter fails cleanly.
-        let mut huge = vec![b'a'; MAX_SSE_FRAME_BYTES + 1];
-        let mut huge_completed = false;
-        let huge_out = drain_responses_sse(&mut huge, &mut huge_completed);
-        assert!(huge_out.ended);
-        assert!(matches!(huge_out.items.as_slice(), [Err(_)]));
     }
 }

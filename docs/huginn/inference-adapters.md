@@ -54,10 +54,12 @@ text/tool parser, finish validation, tool-result serialization, and sanitized
 transport errors. For verified OpenAI API reasoning models on
 `https://api.openai.com/v1`, an explicitly selected `reasoning_effort` (`low`,
 `medium`, or `high`) is pinned per turn and serialized in the Chat Completions
-request body (omitted when unset/`off`). Unsupported models and non-OpenAI
-endpoints reject reasoning configuration explicitly. A model can consume its
-output budget reasoning without producing usable text, and a `length` finish
-fails explicitly rather than returning a successful partial result.
+request body (omitted when unset/`off`), and the request specifies
+`max_completion_tokens` instead of `max_tokens`. Compatible non-official endpoints
+preserve `max_tokens`. Unsupported models and non-OpenAI endpoints reject reasoning
+configuration explicitly. A model can consume its output budget reasoning without
+producing usable text, and a `length` finish fails explicitly rather than
+returning a successful partial result.
 
 The router keeps connection/model/generation fixed across tool continuation and
 compaction. Selection changes affect subsequent turns only. Manager revocation

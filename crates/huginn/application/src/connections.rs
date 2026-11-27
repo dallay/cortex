@@ -1469,6 +1469,18 @@ impl huginn_core::siwc::SiwcCredentialPersistence for ConnectionManager {
                 .secret
                 .as_ref()
                 .ok_or(ConnectionError::MissingSecret)?;
+            if let Ok(current_secret) = self.access.secrets.read_mode(record.mode, reference).await
+            {
+                if let Ok(current_creds) =
+                    huginn_core::siwc::SiwcCredentials::from_secret_json(current_secret.expose())
+                {
+                    if current_creds.host_id != credentials.host_id
+                        || current_creds.account_sub != credentials.account_sub
+                    {
+                        return Err(ConnectionError::Revoked);
+                    }
+                }
+            }
             self.access
                 .secrets
                 .write_mode(record.mode, reference, &secret)

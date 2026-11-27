@@ -94,6 +94,42 @@ fn json_read_only_turn_lists_and_resumes_a_session() {
 }
 
 #[test]
+fn resume_rejects_a_different_workspace_before_running_the_prompt() {
+    let saved_workspace = tempfile::tempdir().unwrap();
+    let requested_workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let db = data.path().join("sessions.db");
+
+    let mut create = huginn_command(saved_workspace.path(), &db);
+    create.args(["run", "create a session"]);
+    let created = create.output().unwrap();
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+
+    let mut list = huginn_command(saved_workspace.path(), &db);
+    list.arg("sessions");
+    let listed = list.output().unwrap();
+    assert!(listed.status.success());
+    let session: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let id = session["id"].as_str().unwrap();
+
+    let mut resume = huginn_command(requested_workspace.path(), &db);
+    resume.args(["resume", id, "--prompt", "this prompt must not run"]);
+    let rejected = resume.output().unwrap();
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr)
+        .contains("resume workspace differs from saved session"));
+    assert!(
+        rejected.stdout.is_empty(),
+        "unexpected output: {}",
+        String::from_utf8_lossy(&rejected.stdout)
+    );
+}
+
+#[test]
 fn run_without_model_fails_with_configuration_guidance() {
     let home = tempfile::tempdir().unwrap();
     let workspace = tempfile::tempdir().unwrap();

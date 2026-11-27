@@ -14,6 +14,24 @@ fn minimal_png(width: u32, height: u32) -> Vec<u8> {
     bytes
 }
 
+fn minimal_jpeg(width: u16, height: u16) -> Vec<u8> {
+    let mut bytes = vec![0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x08];
+    bytes.extend_from_slice(&height.to_be_bytes());
+    bytes.extend_from_slice(&width.to_be_bytes());
+    bytes.extend_from_slice(&[3, 0x01, 0x11, 0, 0x02, 0x11, 0]);
+    bytes
+}
+
+fn minimal_webp(width: u32, height: u32) -> Vec<u8> {
+    let mut bytes = vec![0; 30];
+    bytes[0..4].copy_from_slice(b"RIFF");
+    bytes[8..12].copy_from_slice(b"WEBP");
+    bytes[12..16].copy_from_slice(b"VP8X");
+    bytes[24..27].copy_from_slice(&(width - 1).to_le_bytes()[..3]);
+    bytes[27..30].copy_from_slice(&(height - 1).to_le_bytes()[..3]);
+    bytes
+}
+
 fn valid_creds() -> SiwcCredentials {
     SiwcCredentials {
         host_id: "host-1".into(),
@@ -39,6 +57,44 @@ fn validates_magic_bytes_dimensions_and_redacts_debug() {
     let debug = format!("{img:?}");
     assert!(debug.contains("byte_len: 29"));
     assert!(!debug.contains("137, 80, 78"));
+}
+
+#[test]
+fn parses_jpeg_and_webp_dimensions_and_formats_attachment_sizes() {
+    let jpeg = ImageAttachment::from_bytes(minimal_jpeg(640, 480), None).unwrap();
+    assert_eq!(jpeg.format, ImageFormat::Jpeg);
+    assert_eq!(jpeg.dimensions, Some((640, 480)));
+
+    let webp = ImageAttachment::from_bytes(minimal_webp(320, 240), None).unwrap();
+    assert_eq!(webp.format, ImageFormat::WebP);
+    assert_eq!(webp.dimensions, Some((320, 240)));
+
+    let mut kilobyte_png = minimal_png(1, 1);
+    kilobyte_png.resize(1024, 0);
+    let kilobyte = ImageAttachment::from_bytes(kilobyte_png, None).unwrap();
+    assert_eq!(kilobyte.chip_label(2), "[Image 2: PNG 1x1, 1 KB]");
+
+    let mut megabyte_png = minimal_png(1, 1);
+    megabyte_png.resize(1024 * 1024, 0);
+    let megabyte = ImageAttachment::from_bytes(megabyte_png, None).unwrap();
+    assert_eq!(megabyte.chip_label(3), "[Image 3: PNG 1x1, 1.0 MB]");
+}
+
+#[test]
+fn malformed_jpeg_and_truncated_webp_keep_dimensions_unknown() {
+    let zero_width_jpeg = ImageAttachment::from_bytes(minimal_jpeg(0, 480), None).unwrap();
+    assert_eq!(zero_width_jpeg.dimensions, None);
+
+    let mut invalid_segment_jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x01];
+    invalid_segment_jpeg.resize(16, 0);
+    let invalid_segment = ImageAttachment::from_bytes(invalid_segment_jpeg, None).unwrap();
+    assert_eq!(invalid_segment.dimensions, None);
+
+    let mut truncated_webp = minimal_webp(320, 240);
+    truncated_webp.truncate(29);
+    let truncated = ImageAttachment::from_bytes(truncated_webp, None).unwrap();
+    assert_eq!(truncated.format, ImageFormat::WebP);
+    assert_eq!(truncated.dimensions, None);
 }
 
 #[test]
@@ -153,6 +209,23 @@ fn siwc_validates_required_scopes_and_redacts_tokens_in_debug() {
     let mut missing_scope = creds;
     missing_scope.granted_scopes.pop();
     assert!(missing_scope.validate_grants().is_err());
+}
+
+#[test]
+fn siwc_secret_json_round_trips_and_rejects_malformed_or_under_scoped_credentials() {
+    let creds = valid_creds();
+    let secret_json = creds.to_secret_json().unwrap();
+    assert_eq!(
+        SiwcCredentials::from_secret_json(&secret_json).unwrap(),
+        creds
+    );
+    assert!(SiwcCredentials::from_secret_json("not JSON").is_err());
+
+    let mut missing_scope = valid_creds();
+    missing_scope.granted_scopes.pop();
+    let secret_json = serde_json::to_string(&missing_scope).unwrap();
+    let error = SiwcCredentials::from_secret_json(&secret_json).unwrap_err();
+    assert!(error.to_string().contains("missing required scope"));
 }
 
 #[test]

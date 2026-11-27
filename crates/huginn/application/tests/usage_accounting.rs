@@ -111,6 +111,7 @@ type ScriptStep = Vec<Result<ModelDelta>>;
 struct ScriptedProvider {
     attribution: Option<UsageAttribution>,
     steps: Mutex<VecDeque<ScriptStep>>,
+    request_limits: Option<Arc<Mutex<Vec<u32>>>>,
 }
 
 impl ScriptedProvider {
@@ -118,7 +119,23 @@ impl ScriptedProvider {
         Self {
             attribution,
             steps: Mutex::new(steps.into()),
+            request_limits: None,
         }
+    }
+
+    fn recording_requests(
+        attribution: Option<UsageAttribution>,
+        steps: Vec<ScriptStep>,
+    ) -> (Self, Arc<Mutex<Vec<u32>>>) {
+        let request_limits = Arc::new(Mutex::new(Vec::new()));
+        (
+            Self {
+                attribution,
+                steps: Mutex::new(steps.into()),
+                request_limits: Some(request_limits.clone()),
+            },
+            request_limits,
+        )
     }
 }
 
@@ -130,9 +147,12 @@ impl ModelProvider for ScriptedProvider {
 
     async fn stream(
         &self,
-        _: ModelRequest,
+        request: ModelRequest,
         _: CancellationToken,
     ) -> Result<BoxStream<'static, Result<ModelDelta>>> {
+        if let Some(request_limits) = &self.request_limits {
+            request_limits.lock().unwrap().push(request.max_tokens);
+        }
         let items = self
             .steps
             .lock()
@@ -166,6 +186,63 @@ fn make_loop(
         lifecycle: CancellationToken::new(),
     };
     (engine, sessions)
+}
+
+#[tokio::test]
+async fn continuation_request_uses_only_the_remaining_turn_output_budget() {
+    let (model, request_limits) = ScriptedProvider::recording_requests(
+        Some(attr("openai", "budgeted-model")),
+        vec![
+            vec![
+                Ok(ModelDelta::ToolCall(ToolCall {
+                    id: "call-1".into(),
+                    name: "inspect".into(),
+                    arguments: serde_json::json!({}),
+                })),
+                Ok(ModelDelta::Usage {
+                    input_tokens: Some(10),
+                    output_tokens: Some(5),
+                    semantics: UsageSemantics::Cumulative,
+                }),
+                Ok(ModelDelta::Finished),
+            ],
+            vec![
+                Ok(ModelDelta::Text("final answer".into())),
+                Ok(ModelDelta::Usage {
+                    input_tokens: Some(10),
+                    output_tokens: Some(4),
+                    semantics: UsageSemantics::Cumulative,
+                }),
+                Ok(ModelDelta::Finished),
+            ],
+        ],
+    );
+    let config = LoopConfig {
+        max_turn_tokens: Some(40),
+        max_output_tokens: 100,
+        ..Default::default()
+    };
+    let (engine, _) = make_loop(
+        Arc::new(model),
+        vec![Arc::new(CallbackTool {
+            name: "inspect".into(),
+            on_execute: None,
+        })],
+        config,
+    );
+    let mut session = Session::new(".".into());
+    engine
+        .run(
+            &mut session,
+            "inspect the workspace".into(),
+            &AutoApprove,
+            &RecordingSink::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(*request_limits.lock().unwrap(), vec![40, 25]);
 }
 
 #[tokio::test]
