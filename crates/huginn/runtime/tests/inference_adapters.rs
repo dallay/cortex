@@ -24,6 +24,7 @@ use std::{
 const SECRET: &str = "p04-sentinel-secret";
 fn material(provider: &str, endpoint: &str) -> ConnectionMaterial {
     ConnectionMaterial {
+        origin: None,
         settings: ConnectionSettings {
             provider: provider.into(),
             endpoint: Some(endpoint.into()),

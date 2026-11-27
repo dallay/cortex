@@ -1827,6 +1827,7 @@ async fn legacy_factory_rejects_even_no_auth_connection_material() {
             .create_connection_model(
                 &selection,
                 ConnectionMaterial {
+                    origin: None,
                     settings: no_auth(endpoint),
                     secret: None
                 },
@@ -2509,8 +2510,8 @@ async fn siwc_sign_in_enforces_secure_store_single_account_and_revocation_report
     use huginn_core::{
         kernel::{Manifest, Plugin, PluginContext},
         siwc::{
-            SiwcAuthPort, SiwcCredentials, SiwcRevocationOutcome, SIWC_PROVIDER_ID,
-            SIWC_REQUIRED_SCOPES,
+            SiwcAuthPort, SiwcCredentialPersistence, SiwcCredentials, SiwcRevocationOutcome,
+            SIWC_PROVIDER_ID, SIWC_REQUIRED_SCOPES,
         },
         ModelDelta, ModelRequest,
     };
@@ -2655,9 +2656,10 @@ async fn siwc_sign_in_enforces_secure_store_single_account_and_revocation_report
 
     // 3. With Secure secrets, first sign_in succeeds, second fails (single account),
     //    and revoke_with_report distinguishes confirmed vs local-only revocation.
+    let secure_secrets = Secrets::new(SecretMode::Secure);
     let secure_mgr = ConnectionManager::open(
         Arc::new(Metadata::default()),
-        ConnectionAccess::new(Secrets::new(SecretMode::Secure)),
+        ConnectionAccess::new(secure_secrets.clone()),
         h.providers.0.clone(),
         catalog,
     )
@@ -2673,17 +2675,54 @@ async fn siwc_sign_in_enforces_secure_store_single_account_and_revocation_report
         secure_mgr.sign_in_siwc(CancellationToken::new()).await,
         Err(ConnectionError::InvalidConfiguration)
     );
+    let origin = ConnectionRevision::from(&rec);
+    let mut rotated = secure_mgr.load_latest(origin).await.unwrap().unwrap();
+    for failure in [ConnectionError::Locked, ConnectionError::SecretStore] {
+        *secure_secrets.read_error.lock().unwrap() = Some(failure);
+        assert!(matches!(
+            secure_mgr.load_latest(origin).await,
+            Err(huginn_core::AgentError::Connection(error)) if error == failure
+        ));
+    }
+    *secure_secrets.read_error.lock().unwrap() = Some(ConnectionError::MissingSecret);
+    assert!(secure_mgr.load_latest(origin).await.unwrap().is_none());
+    *secure_secrets.read_error.lock().unwrap() = None;
+    rotated.refresh_token.push_str("-rotated");
+    secure_mgr.persist_rotated(origin, &rotated).await.unwrap();
+    assert_eq!(
+        secure_mgr.load_latest(origin).await.unwrap(),
+        Some(rotated.clone())
+    );
     let confirmed = secure_mgr
         .revoke_with_report(rec.id, CancellationToken::new())
         .await
         .unwrap();
     assert!(confirmed.contains("revoked remotely"));
 
+    assert!(matches!(
+        secure_mgr.persist_rotated(origin, &rotated).await,
+        Err(huginn_core::AgentError::Connection(
+            ConnectionError::Revoked
+        ))
+    ));
+
     remote_ok.store(false, Ordering::SeqCst);
     let rec2 = secure_mgr
         .sign_in_siwc(CancellationToken::new())
         .await
         .unwrap();
+    // A refresh that began before logout must not write into the new sign-in,
+    // even when it belongs to the same account on the same host.
+    let replacement = ConnectionRevision::from(&rec2);
+    let expected = secure_mgr.load_latest(replacement).await.unwrap();
+    assert!(matches!(
+        secure_mgr.persist_rotated(origin, &rotated).await,
+        Err(huginn_core::AgentError::Connection(
+            ConnectionError::Revoked
+        ))
+    ));
+    assert_eq!(secure_mgr.load_latest(replacement).await.unwrap(), expected);
+
     let local_only = secure_mgr
         .revoke_with_report(rec2.id, CancellationToken::new())
         .await

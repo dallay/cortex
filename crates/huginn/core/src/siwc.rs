@@ -1,7 +1,7 @@
 //! Domain contracts and ports for Sign in with ChatGPT (SIWC) OAuth over Responses API.
 //!
 //! Pure domain types only — no network, browser, or OS secret-store I/O.
-use crate::{AgentError, CancellationToken, Result};
+use crate::{connections::ConnectionRevision, AgentError, CancellationToken, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -116,8 +116,12 @@ pub trait SiwcAuthPort: Send + Sync {
 /// Host-owned persistence hook for rotated SIWC OAuth credentials, serialized with logout.
 #[async_trait]
 pub trait SiwcCredentialPersistence: Send + Sync {
-    /// Persist rotated credentials to the host secret store before the new access token is used.
-    async fn persist_rotated(&self, credentials: &SiwcCredentials) -> Result<()>;
-    /// Read the latest persisted SIWC credentials for the active connection, if any.
-    async fn load_latest(&self) -> Result<Option<SiwcCredentials>>;
+    /// Persist rotated credentials before use, only if the originating revision is still live.
+    async fn persist_rotated(
+        &self,
+        origin: ConnectionRevision,
+        credentials: &SiwcCredentials,
+    ) -> Result<()>;
+    /// Read credentials for the originating revision. Absence and store failures are distinct.
+    async fn load_latest(&self, origin: ConnectionRevision) -> Result<Option<SiwcCredentials>>;
 }

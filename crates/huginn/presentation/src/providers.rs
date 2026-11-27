@@ -615,7 +615,11 @@ impl Management {
         if requires_secret && secret.is_none() && previous.is_none() {
             return Ok(form_error("An API key is required for this connection."));
         }
-        let material = ConnectionMaterial { settings, secret };
+        let material = ConnectionMaterial {
+            origin: None,
+            settings,
+            secret,
+        };
         if previous.is_some() && discover {
             return Ok(form_error(
                 "A model ID is required when updating. Use /login to discover models for a new connection.",

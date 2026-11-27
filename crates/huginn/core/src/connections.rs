@@ -332,7 +332,25 @@ pub trait ConnectionStore: Send + Sync {
     async fn save(&self, previous: u64, next: &ConnectionMetadata) -> ConnectionResult<()>;
 }
 
+/// Identifies the saved connection generation that supplied the credentials.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ConnectionRevision {
+    pub id: uuid::Uuid,
+    pub revision: uuid::Uuid,
+}
+
+impl From<&ConnectionRecord> for ConnectionRevision {
+    fn from(record: &ConnectionRecord) -> Self {
+        Self {
+            id: record.id,
+            revision: record.revision,
+        }
+    }
+}
+
 pub struct ConnectionMaterial {
+    /// Absent for runtime-only configurations and unsaved connection forms.
+    pub origin: Option<ConnectionRevision>,
     pub settings: ConnectionSettings,
     pub secret: Option<Secret>,
 }

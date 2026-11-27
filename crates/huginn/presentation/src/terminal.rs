@@ -1812,6 +1812,9 @@ Enter save Esc close"
         // a steering message the loop drains at its next step boundary; it is
         // never queued as a turn of its own.
         if !state.busy {
+            if !state.attachments.is_empty() && state.check_draft_image_budget(0).is_err() {
+                return DraftDelivery::Refused;
+            }
             let images = std::mem::take(&mut state.attachments);
             self.ui.enqueue_submitted_images(images);
             if prompts.try_send(line.to_owned()).is_err() {
@@ -1879,8 +1882,9 @@ Enter save Esc close"
                     editor, completion, ..
                 } = &mut *state;
                 completion.dismiss(editor);
-                drop(state);
                 if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    state.pending_image_reads += 1;
+                    drop(state);
                     let ui = self.ui.clone();
                     handle.spawn(async move {
                         let outcome = tokio::time::timeout(
@@ -1893,6 +1897,7 @@ Enter save Esc close"
                         )
                         .await;
                         let mut state = ui.lock();
+                        state.pending_image_reads -= 1;
                         match outcome {
                             Ok(Ok((Ok(image), None))) => {
                                 let _ = state.attach_image(image);
@@ -1917,7 +1922,6 @@ Enter save Esc close"
                         ui.dirty.notify_one();
                     });
                 } else if let Some(loaded) = crate::clipboard::try_load_pasted_image_path(text) {
-                    let mut state = self.ui.lock();
                     match loaded {
                         Ok(image) => {
                             let _ = state.attach_image(image);
@@ -1927,7 +1931,7 @@ Enter save Esc close"
                         }
                     }
                 } else {
-                    self.ui.lock().insert_pasted_text(text);
+                    state.insert_pasted_text(text);
                 }
                 return;
             }
@@ -1951,6 +1955,18 @@ Enter save Esc close"
             } else {
                 self.ui.stop.cancel();
             }
+            return;
+        }
+        // Keep async read results with this draft, including when Enter would run a command.
+        if state.pending_image_reads != 0
+            && key.code == KeyCode::Enter
+            && !key
+                .modifiers
+                .intersects(KeyModifiers::ALT | KeyModifiers::SHIFT)
+        {
+            state
+                .status
+                .set_notice("Reading image; press Enter again when it finishes".into());
             return;
         }
         match Self::completion_key(&mut state, key) {
@@ -1989,8 +2005,9 @@ Enter save Esc close"
             }
             KeyCode::Char('j') if ctrl => state.insert_editor_text("\n"),
             KeyCode::Char('v') if ctrl => {
-                drop(state);
                 if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    state.pending_image_reads += 1;
+                    drop(state);
                     let ui = self.ui.clone();
                     handle.spawn(async move {
                         let outcome = tokio::time::timeout(
@@ -1999,6 +2016,7 @@ Enter save Esc close"
                         )
                         .await;
                         let mut state = ui.lock();
+                        state.pending_image_reads -= 1;
                         match outcome {
                             Ok(Ok(Ok(Some(image)))) => {
                                 let _ = state.attach_image(image);
@@ -2027,7 +2045,6 @@ Enter save Esc close"
                     });
                 } else {
                     let result = crate::clipboard::read_clipboard_image();
-                    let mut state = self.ui.lock();
                     match result {
                         Ok(Some(image)) => {
                             let _ = state.attach_image(image);

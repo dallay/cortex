@@ -1326,3 +1326,42 @@ fn a_full_steering_queue_refuses_visibly_and_keeps_the_draft() {
     pty.send("\x03");
     pty.finish(true);
 }
+
+#[test]
+fn session_image_budget_refuses_submission_without_losing_the_draft() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("image.png");
+    let mut png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\x00\x00\x00\x20\x00\x00\x00\x10\x08\x02\x00\x00\x00".to_vec();
+    png.resize(5 * 1024 * 1024, 0);
+    std::fs::write(&path, &png).unwrap();
+    png[19] = 33;
+    let next_path = dir.path().join("next-image.png");
+    std::fs::write(&next_path, png).unwrap();
+    let next_paste = format!("\x1b[200~'{}'\x1b[201~", next_path.display());
+    let paste = format!("\x1b[200~'{}'\x1b[201~", path.display());
+
+    let mut pty = start("image-budget", true);
+    pty.wait_for("Huginn");
+    pty.send(&paste);
+    pty.wait_for("[Image 1:");
+    pty.send("hold\r");
+    pty.wait_for("STREAM_HELD");
+    pty.send("keep my draft");
+    pty.send(&next_paste);
+    pty.wait_for("PNG 33x16");
+    pty.send("\x1b");
+    pty.wait_for("retained images");
+    pty.send("\r");
+    pty.wait_for("per-session memory limit");
+    let screen = pty.screen_text();
+    assert!(screen.contains("keep my draft"), "{screen}");
+    assert!(screen.contains("PNG 33x16"), "{screen}");
+    assert!(!screen.contains("User: keep my draft"), "{screen}");
+
+    // Remove the image and submit the original text.
+    pty.send("\x1b\x7f\r");
+    pty.wait_for("User: keep my draft");
+    pty.wait_for("Idle");
+    pty.send("\x03");
+    pty.finish(true);
+}

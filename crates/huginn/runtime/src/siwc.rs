@@ -8,7 +8,7 @@ use base64::Engine as _;
 use futures::{stream::BoxStream, StreamExt};
 use huginn_application::providers::catalog_id;
 use huginn_core::{
-    connections::ConnectionMaterial,
+    connections::{ConnectionMaterial, ConnectionRevision},
     kernel::{Manifest, Plugin, PluginContext},
     providers::{
         AuthenticationMethod, DiscoveredModel, ModelCatalog, ModelSelection, ProviderAdapter,
@@ -42,6 +42,7 @@ use tokio::{
 const MAX_CATALOG_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_OAUTH_RESPONSE_BYTES: usize = 512 * 1024;
 const MAX_CALLBACK_REQUEST_BYTES: usize = 8192;
+const CALLBACK_READ_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_SSE_FRAME_BYTES: usize = 1024 * 1024;
 const OAUTH_CALLBACK_TIMEOUT_SECS: u64 = 180;
 const REVOKE_MAX_ATTEMPTS: usize = 3;
@@ -726,9 +727,11 @@ async fn await_loopback_callback(
             let mut chunk = [0u8; 1024];
             let mut read_failed = false;
             loop {
-                let n = match stream.read(&mut chunk).await {
-                    Ok(n) => n,
-                    Err(_) => {
+                let n = match tokio::time::timeout(CALLBACK_READ_TIMEOUT, stream.read(&mut chunk))
+                    .await
+                {
+                    Ok(Ok(n)) => n,
+                    _ => {
                         read_failed = true;
                         break;
                     }
@@ -847,7 +850,7 @@ fn launch_browser(url: &str) -> std::io::Result<()> {
 struct SiwcRefreshCoordinator {
     auth: Arc<dyn SiwcAuthPort>,
     persistence: Option<Arc<OnceLock<Arc<dyn SiwcCredentialPersistence>>>>,
-    gate: AsyncMutex<Option<SiwcCredentials>>,
+    gate: AsyncMutex<Option<(Option<ConnectionRevision>, SiwcCredentials)>>,
 }
 
 impl SiwcRefreshCoordinator {
@@ -864,38 +867,35 @@ impl SiwcRefreshCoordinator {
 
     async fn resolve(
         &self,
+        origin: Option<ConnectionRevision>,
         fallback: &SiwcCredentials,
         cancel: CancellationToken,
     ) -> Result<SiwcCredentials> {
         let mut guard = self.gate.lock().await;
-        // Prefer the latest persisted credentials (if host persistence is wired), then cached,
-        // then the caller-provided snapshot.
-        let mut current = if let Some(slot) = &self.persistence {
-            if let Some(store) = slot.get() {
-                match store.load_latest().await? {
-                    Some(persisted) => persisted,
-                    None => guard.clone().unwrap_or_else(|| fallback.clone()),
-                }
-            } else {
-                guard.clone().unwrap_or_else(|| fallback.clone())
-            }
-        } else {
-            guard.clone().unwrap_or_else(|| fallback.clone())
+        let persistence = origin.zip(self.persistence.as_ref().and_then(|slot| slot.get()));
+        let persisted = match persistence {
+            Some((origin, store)) => store.load_latest(origin).await?,
+            None => None,
         };
-        if !current.needs_refresh(now_unix()) {
-            *guard = Some(current.clone());
-            return Ok(current);
-        }
-        let refreshed = self.auth.refresh(&current, cancel).await?;
-        // Persist rotated credentials BEFORE exposing the new access token so logout and restart
-        // always see the latest refresh token.
-        if let Some(slot) = &self.persistence {
-            if let Some(store) = slot.get() {
-                store.persist_rotated(&refreshed).await?;
+        let mut current = persisted.unwrap_or_else(|| {
+            guard
+                .as_ref()
+                .filter(|(cached_origin, cached)| {
+                    *cached_origin == origin
+                        && cached.host_id == fallback.host_id
+                        && cached.account_sub == fallback.account_sub
+                })
+                .map_or_else(|| fallback.clone(), |(_, cached)| cached.clone())
+        });
+        if current.needs_refresh(now_unix()) {
+            let refreshed = self.auth.refresh(&current, cancel).await?;
+            // Keep logout and restart on the latest refresh token before using it.
+            if let Some((origin, store)) = persistence {
+                store.persist_rotated(origin, &refreshed).await?;
             }
+            current = refreshed;
         }
-        current = refreshed;
-        *guard = Some(current.clone());
+        *guard = Some((origin, current.clone()));
         Ok(current)
     }
 }
@@ -946,7 +946,9 @@ impl SiwcAdapter {
             .ok_or(ProviderError::Unavailable)?
             .expose();
         let creds = SiwcCredentials::from_secret_json(raw)?;
-        self.coordinator.resolve(&creds, cancel).await
+        self.coordinator
+            .resolve(material.origin, &creds, cancel)
+            .await
     }
 
     async fn discover_models_with_credentials(
@@ -1114,6 +1116,7 @@ impl ProviderAdapter for SiwcAdapter {
             client,
             responses_url: format!("{api_base}/responses"),
             model: selection.model.clone(),
+            origin: material.origin,
             fallback_credentials: creds,
             coordinator: self.coordinator.clone(),
             timeout_secs: self.timeout_secs,
@@ -1126,6 +1129,7 @@ pub struct SiwcResponsesProvider {
     client: reqwest::Client,
     responses_url: String,
     model: String,
+    origin: Option<ConnectionRevision>,
     fallback_credentials: SiwcCredentials,
     coordinator: Arc<SiwcRefreshCoordinator>,
     timeout_secs: u64,
@@ -1156,7 +1160,7 @@ impl ModelProvider for SiwcResponsesProvider {
         }
         let creds = self
             .coordinator
-            .resolve(&self.fallback_credentials, cancel.clone())
+            .resolve(self.origin, &self.fallback_credentials, cancel.clone())
             .await?;
         let input: Vec<Value> = request
             .messages
@@ -1499,14 +1503,107 @@ mod tests {
 
     #[async_trait]
     impl SiwcCredentialPersistence for InMemoryPersistence {
-        async fn persist_rotated(&self, credentials: &SiwcCredentials) -> Result<()> {
+        async fn persist_rotated(
+            &self,
+            _: ConnectionRevision,
+            credentials: &SiwcCredentials,
+        ) -> Result<()> {
             self.writes.fetch_add(1, Ordering::SeqCst);
             *self.stored.lock().await = Some(credentials.clone());
             Ok(())
         }
-        async fn load_latest(&self) -> Result<Option<SiwcCredentials>> {
+        async fn load_latest(&self, _: ConnectionRevision) -> Result<Option<SiwcCredentials>> {
             Ok(self.stored.lock().await.clone())
         }
+    }
+
+    #[tokio::test]
+    async fn loopback_callback_continues_after_an_idle_peer() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut idle = tokio::net::TcpStream::connect(address).await.unwrap();
+        let callback = tokio::spawn(await_loopback_callback(
+            listener,
+            "expected",
+            CancellationToken::new(),
+        ));
+        let mut response = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), idle.read_to_end(&mut response))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(response.starts_with(b"HTTP/1.1 400"));
+        let mut browser = tokio::net::TcpStream::connect(address).await.unwrap();
+        browser
+            .write_all(b"GET /callback?code=ok&state=expected HTTP/1.1\r\n\r\n")
+            .await
+            .unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), callback)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap()
+                .code,
+            "ok"
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_cache_requires_matching_host_and_account_and_prefers_persisted_credentials() {
+        let origin = Some(ConnectionRevision {
+            id: Default::default(),
+            revision: Default::default(),
+        });
+        let fallback = SiwcCredentials {
+            host_id: "host".into(),
+            client_id: "client".into(),
+            access_token: test_token("fallback", "access"),
+            refresh_token: test_token("fallback", "refresh"),
+            expires_at_unix: now_unix() + 3600,
+            granted_scopes: vec![],
+            account_sub: Some("account".into()),
+            account_email: None,
+        };
+        let mut cached = fallback.clone();
+        cached.access_token = test_token("cached", "access");
+        let store = Arc::new(InMemoryPersistence {
+            stored: AsyncMutex::new(None),
+            writes: AtomicUsize::new(0),
+        });
+        let slot = Arc::new(OnceLock::<Arc<dyn SiwcCredentialPersistence>>::new());
+        let coordinator =
+            SiwcRefreshCoordinator::new(Arc::new(SiwcOAuthClient::new(5)), Some(slot.clone()));
+        *coordinator.gate.lock().await = Some((origin, cached.clone()));
+        assert_eq!(
+            coordinator
+                .resolve(origin, &fallback, CancellationToken::new())
+                .await
+                .unwrap(),
+            cached
+        );
+        assert!(slot.set(store.clone()).is_ok());
+        for (host, account) in [("different", "account"), ("host", "different")] {
+            *coordinator.gate.lock().await = Some((origin, cached.clone()));
+            let mut other = fallback.clone();
+            other.host_id = host.into();
+            other.account_sub = Some(account.into());
+            assert_eq!(
+                coordinator
+                    .resolve(origin, &other, CancellationToken::new())
+                    .await
+                    .unwrap(),
+                other
+            );
+        }
+        *store.stored.lock().await = Some(cached.clone());
+        assert_eq!(
+            coordinator
+                .resolve(origin, &fallback, CancellationToken::new())
+                .await
+                .unwrap(),
+            cached
+        );
     }
 
     async fn spawn_mock_server(app: Router) -> (String, tokio::task::JoinHandle<()>) {
@@ -1763,6 +1860,10 @@ mod tests {
         let adapter =
             SiwcAdapter::with_endpoints(oauth.clone(), Some(persistence_slot), endpoints, 5);
         let material = ConnectionMaterial {
+            origin: Some(ConnectionRevision {
+                id: Default::default(),
+                revision: Default::default(),
+            }),
             settings: huginn_core::connections::ConnectionSettings {
                 provider: SIWC_PROVIDER_ID.into(),
                 endpoint: Some(format!("{base}/v1")),

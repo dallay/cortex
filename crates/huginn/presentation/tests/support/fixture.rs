@@ -659,7 +659,9 @@ async fn main() -> Result<()> {
     }
     let ui = connection.ui.clone();
     let policy = huginn_application::authorization::HostPolicy::new(ui.clone(), Default::default());
-    while let Some(prompt) = ui.prompt().await {
+    let image_budget = std::env::args().nth(1).as_deref() == Some("image-budget");
+    while let Some((prompt, images)) = ui.prompt_submission().await {
+        let seed_image_budget = image_budget && prompt == "hold";
         let cancel = CancellationToken::new();
         ui.begin(cancel.clone());
         let result = Engine {
@@ -667,6 +669,16 @@ async fn main() -> Result<()> {
         }
         .run(&mut session, prompt, &policy, ui.as_ref(), cancel)
         .await;
+        if seed_image_budget {
+            // Model a turn whose retained images are not yet reflected in the composer.
+            let [image] = images.as_slice() else {
+                panic!("expected the pasted image on the submitted draft");
+            };
+            session.messages.push(Message::user_with_images(
+                "retained images",
+                vec![image.clone(), image.clone(), image.clone()],
+            ));
+        }
         ui.synchronize(&session);
         if let Err(error) = result {
             ui.notification(error.to_string());

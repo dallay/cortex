@@ -213,6 +213,7 @@ pub struct UiState {
     pending_pastes: Vec<PendingPaste>,
     pub attachments: Vec<huginn_core::ImageAttachment>,
     session_image_bytes: usize,
+    pub(crate) pending_image_reads: usize,
     pub files: Vec<String>,
     pub files_ready: bool,
     completion_editor: Option<(String, usize, bool)>,
@@ -406,11 +407,23 @@ impl UiState {
             self.status.set_diagnostic(msg.clone());
             return Err(msg);
         }
+        self.check_draft_image_budget(attachment.bytes.len())?;
+        let chip = attachment.chip_label(self.attachments.len() + 1);
+        self.attachments.push(attachment);
+        self.status
+            .set_notice(format!("Attached {chip} (Alt+Backspace to remove)"));
+        Ok(())
+    }
+
+    pub(crate) fn check_draft_image_budget(
+        &mut self,
+        additional_bytes: usize,
+    ) -> std::result::Result<(), String> {
         let draft_bytes: usize = self.attachments.iter().map(|img| img.bytes.len()).sum();
         if self
             .session_image_bytes
             .saturating_add(draft_bytes)
-            .saturating_add(attachment.bytes.len())
+            .saturating_add(additional_bytes)
             > huginn_core::MAX_SESSION_IMAGE_BYTES
         {
             let msg = format!(
@@ -420,10 +433,6 @@ impl UiState {
             self.status.set_diagnostic(msg.clone());
             return Err(msg);
         }
-        let chip = attachment.chip_label(self.attachments.len() + 1);
-        self.attachments.push(attachment);
-        self.status
-            .set_notice(format!("Attached {chip} (Alt+Backspace to remove)"));
         Ok(())
     }
 
