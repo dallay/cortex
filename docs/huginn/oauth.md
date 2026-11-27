@@ -10,16 +10,31 @@ Huginn specifically, a particular account or workspace, or successful operation.
 
 Huginn appears to fit the documented category because it is open-source and
 locally executed. That is an inference, not an OpenAI eligibility decision.
-Huginn does not implement SIWC. **OAuth remains unsupported in Huginn**; this
-document does not enable it.
+As of **November 27, 2026**, Huginn implements the dedicated local-only SIWC
+vertical slice (`chatgpt-siwc`) behind explicit user consent in `/login`,
+separate from the OpenAI Platform API-key / Chat Completions route and from
+Ollama:
 
-`/login` and `/providers` report unsupported OAuth separately from available
-API-key/no-auth methods. An adapter declaring only `AuthenticationMethod::OAuth`
-is present but has no supported login method: it must not be reported as an
-absent adapter. The enum is descriptive, not authorization to start a flow.
-There are no OAuth choices, token fields, browser/device actions, token exchange,
-refresh, or OAuth credential persistence in this UI. Existing API-key and local
-forms remain available. Connection readiness is local, not proof of remote access.
+- **Implemented first slice (`chatgpt-siwc`):** single local account, browser
+  PKCE (`S256`) + `127.0.0.1` loopback callback, `client_id=dynamic_agent_client`
+  registration and issued `client_id` reuse, required scope validation, strict
+  `OsSecrets` persistence (no silent ephemeral downgrade), single-flight refresh
+  rotation, OIDC-discovered remote revocation reporting on `/logout`, model
+  discovery via `GET /v1/models` (`visibility == "list"`, `slug`), and text-only
+  streaming inference via `POST /v1/responses` (`store: false`, `stream: true`).
+- **Still unsupported:** OAuth on OpenAI-compatible Chat Completions routes,
+  Ollama, multi-account SIWC, and tools/images over SIWC Responses API.
+- **Verification boundary:** deterministic local mock-server tests verify PKCE,
+  token rotation, `/v1/models`, `/v1/responses` SSE, and OIDC revocation; real
+  OpenAI account/workspace eligibility still requires separate manual acceptance
+  with a live ChatGPT account.
+
+`/login` and `/providers` continue to report unsupported OAuth separately on
+adapters that do not implement SIWC (such as `openai`, `ollama`, and
+`ollama-cloud`). An adapter declaring only `AuthenticationMethod::OAuth` other
+than `chatgpt-siwc` has no supported login method and must not be reported as an
+absent adapter. Existing API-key and local forms remain available. Connection
+readiness is local, not proof of remote access.
 
 The remaining blockers are product implementation and validation, plus the lack
 of confirmation for Huginn or any specific account/workspace. The documented

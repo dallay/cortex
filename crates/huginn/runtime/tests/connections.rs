@@ -80,6 +80,7 @@ async fn metadata_restart_cas_lock_and_sentinel_absence() {
             model: "alpha".into(),
             requires_secret: true,
             allow_loopback_http: false,
+            reasoning_effort: None,
         },
         secret: Some(SecretReference::new()),
         mode: SecretMode::Secure,
@@ -160,6 +161,7 @@ fn explicit(model: &str, env: &str) -> ConfiguredChoice {
         model: model.into(),
         credential_env: Some(env.into()),
         allow_loopback_http: false,
+        reasoning_effort: None,
     })
 }
 #[test]
@@ -256,8 +258,53 @@ fn cli_toml_environment_atomic_precedence_matrix() {
             model: "alpha".into(),
             credential_env: None,
             allow_loopback_http: false,
+            reasoning_effort: None,
         }
         .into_choice(&environment)
         .is_err());
     }
+}
+
+#[test]
+fn explicit_toml_reasoning_effort_parses_and_validates_boundaries() {
+    use huginn_core::providers::ReasoningEffort;
+
+    let environment = BTreeMap::from([("OPENAI_KEY".into(), "sk-test".into())]);
+
+    // 1. Valid reasoning_effort on verified OpenAI API model and endpoint succeeds.
+    let parsed = ExplicitConnectionConfig::parse_toml(
+        "provider = 'openai'\nendpoint = 'https://api.openai.com/v1'\nmodel = 'o3-mini'\ncredential_env = 'OPENAI_KEY'\nreasoning_effort = 'high'",
+    )
+    .unwrap();
+    let ConnectionChoice::Explicit { settings, .. } = parsed.into_choice(&environment).unwrap()
+    else {
+        panic!("expected explicit choice");
+    };
+    assert_eq!(settings.reasoning_effort, Some(ReasoningEffort::High));
+
+    // 2. Unsupported reasoning_effort value fails TOML parsing.
+    assert!(ExplicitConnectionConfig::parse_toml(
+        "provider = 'openai'\nendpoint = 'https://api.openai.com/v1'\nmodel = 'o3-mini'\ncredential_env = 'OPENAI_KEY'\nreasoning_effort = 'xhigh'",
+    )
+    .is_err());
+
+    // 3. Valid reasoning_effort on unsupported model fails in into_choice.
+    let unsupported_model = ExplicitConnectionConfig::parse_toml(
+        "provider = 'openai'\nendpoint = 'https://api.openai.com/v1'\nmodel = 'gpt-4o'\ncredential_env = 'OPENAI_KEY'\nreasoning_effort = 'medium'",
+    )
+    .unwrap();
+    assert_eq!(
+        unsupported_model.into_choice(&environment).err(),
+        Some(ConnectionError::InvalidConfiguration)
+    );
+
+    // 4. Valid reasoning_effort on non-OpenAI endpoint fails in into_choice.
+    let unsupported_endpoint = ExplicitConnectionConfig::parse_toml(
+        "provider = 'openai'\nendpoint = 'https://custom.example.invalid/v1'\nmodel = 'o3-mini'\ncredential_env = 'OPENAI_KEY'\nreasoning_effort = 'low'",
+    )
+    .unwrap();
+    assert_eq!(
+        unsupported_endpoint.into_choice(&environment).err(),
+        Some(ConnectionError::InvalidConfiguration)
+    );
 }

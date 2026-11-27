@@ -72,11 +72,17 @@ credential or invalid ID in the winning tier fails, even if persistence contains
 a working connection. Lower tiers are not evaluated. Provenance reports the
 winning tier without credentials.
 
-`ExplicitConnectionConfig::parse_toml` accepts a provider, endpoint, model and
-optional `credential_env` name, never a secret field. The chosen environment
-map resolves exactly that name; it does not fall back to `AGENT_API_KEY` or any
-other connection. URLs with userinfo, query parameters or fragments are rejected
-as metadata. Endpoint TLS policy and transport adapters belong to P0.4.
+`ExplicitConnectionConfig::parse_toml` accepts a provider, endpoint, model,
+optional `credential_env` name (never a secret field), optional
+`allow_loopback_http`, and optional `reasoning_effort` (`low`, `medium`, or
+`high`). `reasoning_effort` is accepted only for verified OpenAI Chat
+Completions reasoning models (`o1`, `o3`, `o3-mini`, `o4-mini`, `gpt-5`,
+`gpt-5-mini`, `gpt-5-nano`, and their `YYYY-MM-DD` dated snapshots) on the
+official OpenAI API endpoint (`https://api.openai.com/v1`); unsupported values,
+models, or endpoints are rejected. The chosen environment map resolves exactly
+`credential_env`; it does not fall back to `AGENT_API_KEY` or any other
+connection. URLs with userinfo, query parameters or fragments are rejected as
+metadata. Endpoint TLS policy and transport adapters belong to P0.4.
 
 These source adapters are headless API inputs. Existing `huginn` flags and legacy
 TOML/environment behavior have not yet been migrated to this API; callers must

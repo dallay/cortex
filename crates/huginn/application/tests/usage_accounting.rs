@@ -684,10 +684,12 @@ async fn mid_turn_selection_change_preserves_attribution_to_pinned_model_a() {
     let sel_a = ModelSelection {
         connection: conn_a,
         model: "model-a".into(),
+        reasoning_effort: None,
     };
     let sel_b = ModelSelection {
         connection: conn_b,
         model: "model-b".into(),
+        reasoning_effort: None,
     };
     management
         .0

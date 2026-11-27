@@ -342,6 +342,19 @@ impl AgentLoop for LeasedAgentLoop {
         events: &dyn EventSink,
         cancellation: CancellationToken,
     ) -> Result<()> {
+        self.run_with_images(session, prompt, vec![], approvals, events, cancellation)
+            .await
+    }
+
+    async fn run_with_images(
+        &self,
+        session: &mut Session,
+        prompt: String,
+        images: Vec<huginn_core::ImageAttachment>,
+        approvals: &dyn ApprovalPolicy,
+        events: &dyn EventSink,
+        cancellation: CancellationToken,
+    ) -> Result<()> {
         let _operation = huginn_core::SessionOperation::try_enter(&session.id)?;
         let _admission = self.admission.enter()?;
         let model = self.model.acquire()?;
@@ -350,7 +363,7 @@ impl AgentLoop for LeasedAgentLoop {
         let inference_hooks = self.inference_hooks.acquire()?;
         let config = self.live_config(&hooks, &inference_hooks);
         self.execution(&model, &sessions, &config)
-            .run(session, prompt, approvals, events, cancellation)
+            .run_with_images(session, prompt, images, approvals, events, cancellation)
             .await
     }
 

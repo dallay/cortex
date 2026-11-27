@@ -13,6 +13,7 @@ pub mod providers;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod seatbelt;
 pub mod sessions;
+pub mod siwc;
 pub mod skills;
 pub mod tools;
 #[cfg(feature = "experimental-wasm")]

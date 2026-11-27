@@ -331,6 +331,20 @@ impl ProviderAdapter for InferenceAdapter {
         } else {
             ToolSupport::Unknown
         };
+        let reasoning_effort = selection
+            .reasoning_effort
+            .or(material.settings.reasoning_effort);
+        if reasoning_effort.is_some()
+            && !huginn_core::providers::supports_openai_reasoning_effort(
+                &material.settings.provider,
+                material.settings.endpoint.as_deref(),
+                &selection.model,
+            )
+        {
+            return Err(AgentError::Configuration(
+                "reasoning effort is not supported for this model or endpoint".into(),
+            ));
+        }
         let base = match self.kind {
             Kind::OpenAi => endpoint,
             Kind::Ollama | Kind::OllamaCloud => format!("{}/v1", endpoint.trim_end_matches('/')),
@@ -344,14 +358,25 @@ impl ProviderAdapter for InferenceAdapter {
                 .map(|secret| secret.expose().to_owned()),
             self.timeout_secs,
             material.settings.allow_loopback_http,
-        )?;
-        Ok(Arc::new(CapabilityModel { inner, tools }))
+        )?
+        .with_reasoning_effort(reasoning_effort);
+        let vision = huginn_core::providers::supports_openai_vision(
+            &material.settings.provider,
+            material.settings.endpoint.as_deref(),
+            &selection.model,
+        );
+        Ok(Arc::new(CapabilityModel {
+            inner,
+            tools,
+            vision,
+        }))
     }
 }
 
 struct CapabilityModel {
     inner: crate::model::OpenAiProvider,
     tools: ToolSupport,
+    vision: bool,
 }
 #[async_trait]
 impl ModelProvider for CapabilityModel {
@@ -366,6 +391,11 @@ impl ModelProvider for CapabilityModel {
         if !request.tools.is_empty() && self.tools == ToolSupport::Unsupported {
             return Err(AgentError::Model(
                 "selected Ollama model does not support tools; no fallback".into(),
+            ));
+        }
+        if request.messages.iter().any(|m| !m.images.is_empty()) && !self.vision {
+            return Err(AgentError::Model(
+                "selected model does not support image attachments; remove the image or switch to a compatible OpenAI vision model".into(),
             ));
         }
         self.inner.stream(request, cancel).await

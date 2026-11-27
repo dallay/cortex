@@ -15,6 +15,8 @@ pub struct ExplicitConnectionConfig {
     pub credential_env: Option<String>,
     #[serde(default)]
     pub allow_loopback_http: bool,
+    #[serde(default)]
+    pub reasoning_effort: Option<huginn_core::providers::ReasoningEffort>,
 }
 impl ExplicitConnectionConfig {
     pub fn parse_toml(text: &str) -> ConnectionResult<Self> {
@@ -47,6 +49,7 @@ impl ExplicitConnectionConfig {
             model: self.model,
             requires_secret,
             allow_loopback_http: self.allow_loopback_http,
+            reasoning_effort: self.reasoning_effort,
         };
         settings.validate()?;
         Ok(ConnectionChoice::Explicit { settings, secret })

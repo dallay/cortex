@@ -599,16 +599,23 @@ impl<'a> LoopExecution<'a> {
         &self,
         model: Result<Option<Arc<dyn ModelProvider>>>,
         session: &mut Session,
-        input: (String, &[String], Option<crate::skills::SkillCatalog>),
+        input: (
+            String,
+            Vec<huginn_core::ImageAttachment>,
+            &[String],
+            Option<crate::skills::SkillCatalog>,
+        ),
         scope: TurnHost<'_>,
         cancel: CancellationToken,
         turn: huginn_core::TurnId,
     ) -> Result<()> {
-        let (prompt, selected, catalog_snapshot) = input;
+        let (prompt, images, selected, catalog_snapshot) = input;
         let TurnHost { approvals, sink } = scope;
         let mut spent = 0_u64;
         recover(session);
-        session.messages.push(Message::text(Role::User, prompt));
+        session
+            .messages
+            .push(Message::user_with_images(prompt, images));
         self.sessions.save(session).await?;
         // Preserve the attempted prompt and normal error events even if pinning failed.
         let model = model?;
@@ -1062,6 +1069,21 @@ impl AgentLoop for StandardLoop {
             .run(session, prompt, approvals, events, cancellation)
             .await
     }
+
+    async fn run_with_images(
+        &self,
+        session: &mut Session,
+        prompt: String,
+        images: Vec<huginn_core::ImageAttachment>,
+        approvals: &dyn ApprovalPolicy,
+        events: &dyn EventSink,
+        cancellation: CancellationToken,
+    ) -> Result<()> {
+        let _operation = huginn_core::SessionOperation::try_enter(&session.id)?;
+        self.execution()
+            .run_with_images(session, prompt, images, approvals, events, cancellation)
+            .await
+    }
 }
 
 impl StandardLoop {
@@ -1101,10 +1123,46 @@ impl LoopExecution<'_> {
         events: &dyn EventSink,
         cancellation: CancellationToken,
     ) -> Result<()> {
+        self.run_with_images(session, prompt, vec![], approvals, events, cancellation)
+            .await
+    }
+
+    pub(crate) async fn run_with_images(
+        &self,
+        session: &mut Session,
+        prompt: String,
+        images: Vec<huginn_core::ImageAttachment>,
+        approvals: &dyn ApprovalPolicy,
+        events: &dyn EventSink,
+        cancellation: CancellationToken,
+    ) -> Result<()> {
+        if images.len() > huginn_core::MAX_IMAGES_PER_MESSAGE {
+            return Err(AgentError::Configuration(format!(
+                "at most {} images may be attached to a single message",
+                huginn_core::MAX_IMAGES_PER_MESSAGE
+            )));
+        }
+        let incoming_bytes: usize = images.iter().map(|img| img.bytes.len()).sum();
+        if session
+            .in_memory_image_bytes()
+            .saturating_add(incoming_bytes)
+            > huginn_core::MAX_SESSION_IMAGE_BYTES
+        {
+            return Err(AgentError::Configuration(format!(
+                "attached images exceed the {} MiB per-session memory limit",
+                huginn_core::MAX_SESSION_IMAGE_BYTES / (1024 * 1024)
+            )));
+        }
         // Validate and load before pinning a model, mutating history or emitting TurnStarted.
         let Some(invocation) = crate::skills::invocation(&prompt)? else {
             return self
-                .run_with_skills(session, prompt, &[], approvals, events, cancellation)
+                .run_with_skills_and_catalog(
+                    session,
+                    (prompt, images, &[], None),
+                    approvals,
+                    events,
+                    cancellation,
+                )
                 .await;
         };
         let prepared = async {
@@ -1142,7 +1200,7 @@ impl LoopExecution<'_> {
         }
         self.run_with_skills_and_catalog(
             session,
-            (prompt, &selected, Some(catalog)),
+            (prompt, images, &selected, Some(catalog)),
             approvals,
             events,
             cancellation,
@@ -1190,7 +1248,7 @@ impl LoopExecution<'_> {
     ) -> Result<()> {
         self.run_with_skills_and_catalog(
             session,
-            (prompt, selected, None),
+            (prompt, vec![], selected, None),
             approvals,
             events,
             cancellation,
@@ -1201,12 +1259,17 @@ impl LoopExecution<'_> {
     async fn run_with_skills_and_catalog(
         &self,
         session: &mut Session,
-        input: (String, &[String], Option<crate::skills::SkillCatalog>),
+        input: (
+            String,
+            Vec<huginn_core::ImageAttachment>,
+            &[String],
+            Option<crate::skills::SkillCatalog>,
+        ),
         approvals: &dyn ApprovalPolicy,
         events: &dyn EventSink,
         cancellation: CancellationToken,
     ) -> Result<()> {
-        let (prompt, selected, catalog_snapshot) = input;
+        let (prompt, images, selected, catalog_snapshot) = input;
         // Pin before instruction/session I/O; every request in this turn reuses it.
         let model = self.pin_model(cancellation.clone()).await;
         // Allocation is persisted with the session before the turn reports itself, so a
@@ -1226,7 +1289,7 @@ impl LoopExecution<'_> {
             .turn(
                 model,
                 session,
-                (prompt, selected, catalog_snapshot),
+                (prompt, images, selected, catalog_snapshot),
                 TurnHost {
                     approvals,
                     sink: events,

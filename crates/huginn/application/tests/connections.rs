@@ -473,6 +473,7 @@ fn settings() -> ConnectionSettings {
         model: "alpha".into(),
         requires_secret: true,
         allow_loopback_http: false,
+        reasoning_effort: None,
     }
 }
 fn secret(value: &str) -> Option<Secret> {
@@ -1819,6 +1820,7 @@ async fn legacy_factory_rejects_even_no_auth_connection_material() {
     let selection = ModelSelection {
         connection: identity,
         model: "alpha".into(),
+        reasoning_effort: None,
     };
     for endpoint in ["https://one.invalid", "https://two.invalid"] {
         assert!(adapter
@@ -2074,6 +2076,7 @@ async fn saved_connection_discovery_uses_host_secrets_respects_cancellation_and_
         model: "alpha".into(),
         requires_secret: true,
         allow_loopback_http: false,
+        reasoning_effort: None,
     };
     let record = manager.create(cfg.clone(), secret(SENTINEL)).await.unwrap();
 
@@ -2245,6 +2248,7 @@ async fn discover_models_handles_static_catalog_no_auth_errors_and_pre_cancelled
                 model: "local-1".into(),
                 requires_secret: false,
                 allow_loopback_http: true,
+                reasoning_effort: None,
             },
             None,
         )
@@ -2300,6 +2304,391 @@ async fn discover_models_handles_static_catalog_no_auth_errors_and_pre_cancelled
             .await,
         Err(ConnectionError::InvalidConfiguration)
     );
+
+    h.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn reasoning_effort_is_turn_pinned_validated_and_cleared_on_incompatible_model() {
+    use futures::StreamExt;
+    use huginn_core::{
+        kernel::{Manifest, Plugin, PluginContext},
+        providers::ReasoningEffort,
+        ModelDelta, ModelRequest,
+    };
+
+    type EffortLog = Arc<Mutex<Vec<(String, Option<ReasoningEffort>)>>>;
+    let seen_efforts: EffortLog = Arc::new(Mutex::new(Vec::new()));
+    struct OpenAiTestAdapter {
+        seen: EffortLog,
+    }
+    struct EffortRecordingModel {
+        model: String,
+        effort: Option<ReasoningEffort>,
+        seen: EffortLog,
+    }
+    #[async_trait]
+    impl ModelProvider for EffortRecordingModel {
+        async fn stream(
+            &self,
+            _: ModelRequest,
+            _: CancellationToken,
+        ) -> huginn_core::Result<futures::stream::BoxStream<'static, huginn_core::Result<ModelDelta>>>
+        {
+            self.seen
+                .lock()
+                .unwrap()
+                .push((self.model.clone(), self.effort));
+            Ok(futures::stream::iter(vec![
+                Ok(ModelDelta::Text("ok".into())),
+                Ok(ModelDelta::Finished),
+            ])
+            .boxed())
+        }
+    }
+    #[async_trait]
+    impl ProviderAdapter for OpenAiTestAdapter {
+        fn descriptor(&self) -> ProviderDescriptor {
+            ProviderDescriptor {
+                id: "openai".into(),
+                display_name: "OpenAI".into(),
+                models: vec![],
+                authentication: vec![AuthenticationMethod::ApiKey],
+            }
+        }
+        fn has_connection_catalog(&self) -> bool {
+            true
+        }
+        async fn create_model(
+            &self,
+            _: &ModelSelection,
+            _: CancellationToken,
+        ) -> huginn_core::Result<Arc<dyn ModelProvider>> {
+            Err(ProviderError::Unavailable.into())
+        }
+        async fn create_connection_model(
+            &self,
+            selection: &ModelSelection,
+            material: ConnectionMaterial,
+            _: CancellationToken,
+        ) -> huginn_core::Result<Arc<dyn ModelProvider>> {
+            assert_eq!(
+                selection.reasoning_effort,
+                material.settings.reasoning_effort
+            );
+            Ok(Arc::new(EffortRecordingModel {
+                model: selection.model.clone(),
+                effort: selection.reasoning_effort,
+                seen: self.seen.clone(),
+            }))
+        }
+    }
+    struct OpenAiPlugin(EffortLog);
+    #[async_trait]
+    impl Plugin for OpenAiPlugin {
+        fn manifest(&self) -> Manifest {
+            Manifest {
+                id: "test.openai".into(),
+                provides: vec![],
+                requires: vec![catalog_id()],
+            }
+        }
+        async fn activate(&mut self, ctx: &mut PluginContext) -> huginn_core::Result<()> {
+            let catalog = ctx
+                .resolve::<ProviderCatalogService>(&catalog_id())?
+                .0
+                .clone();
+            catalog.register(
+                ctx,
+                Arc::new(OpenAiTestAdapter {
+                    seen: self.0.clone(),
+                }),
+            )?;
+            Ok(())
+        }
+    }
+
+    let store = Arc::new(Metadata::default());
+    let mut h = open(store.clone(), Secrets::new(SecretMode::Secure)).await;
+    h.supervisor
+        .register(Box::new(OpenAiPlugin(seen_efforts.clone())))
+        .unwrap();
+    h.supervisor.start().await.unwrap();
+
+    let openai_rec = h
+        .manager
+        .create(
+            ConnectionSettings {
+                provider: "openai".into(),
+                endpoint: Some("https://api.openai.com/v1".into()),
+                model: "o3-mini".into(),
+                requires_secret: true,
+                allow_loopback_http: false,
+                reasoning_effort: None,
+            },
+            secret("sk-test"),
+        )
+        .await
+        .unwrap();
+
+    // 1. Selecting a supported reasoning effort persists and publishes to the router.
+    let sel = h
+        .manager
+        .select_reasoning_effort(openai_rec.id, Some(ReasoningEffort::High))
+        .await
+        .unwrap();
+    assert_eq!(sel.reasoning_effort, Some(ReasoningEffort::High));
+
+    // 2. Pin turn 1 with High, then change to Low mid-turn; turn 1 keeps High, turn 2 gets Low.
+    let turn1 = h
+        .model
+        .0
+        .pin_turn(CancellationToken::new())
+        .await
+        .unwrap()
+        .unwrap();
+    let sel_low = h
+        .manager
+        .select_reasoning_effort(openai_rec.id, Some(ReasoningEffort::Low))
+        .await
+        .unwrap();
+    assert_eq!(sel_low.reasoning_effort, Some(ReasoningEffort::Low));
+    let turn2 = h
+        .model
+        .0
+        .pin_turn(CancellationToken::new())
+        .await
+        .unwrap()
+        .unwrap();
+
+    let req = ModelRequest {
+        messages: vec![],
+        tools: vec![],
+        max_tokens: 16,
+    };
+    let _: Vec<_> = turn1
+        .stream(req.clone(), CancellationToken::new())
+        .await
+        .unwrap()
+        .collect()
+        .await;
+    let _: Vec<_> = turn2
+        .stream(req, CancellationToken::new())
+        .await
+        .unwrap()
+        .collect()
+        .await;
+    assert_eq!(
+        *seen_efforts.lock().unwrap(),
+        vec![
+            ("o3-mini".into(), Some(ReasoningEffort::High)),
+            ("o3-mini".into(), Some(ReasoningEffort::Low)),
+        ]
+    );
+
+    // 3. Switching to a non-reasoning model clears reasoning_effort cleanly and rejects re-enabling it.
+    let switched = h
+        .manager
+        .select_model(openai_rec.id, "gpt-4o".into())
+        .await
+        .unwrap();
+    assert_eq!(switched.model, "gpt-4o");
+    assert_eq!(switched.reasoning_effort, None);
+    assert_eq!(
+        h.manager
+            .select_reasoning_effort(openai_rec.id, Some(ReasoningEffort::Medium))
+            .await,
+        Err(ConnectionError::InvalidConfiguration)
+    );
+
+    h.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn siwc_sign_in_enforces_secure_store_single_account_and_revocation_reporting() {
+    use huginn_core::{
+        kernel::{Manifest, Plugin, PluginContext},
+        siwc::{
+            SiwcAuthPort, SiwcCredentials, SiwcRevocationOutcome, SIWC_PROVIDER_ID,
+            SIWC_REQUIRED_SCOPES,
+        },
+        ModelDelta, ModelRequest,
+    };
+    use std::sync::atomic::AtomicBool;
+
+    struct FakeSiwcAuth {
+        remote_ok: Arc<AtomicBool>,
+    }
+    #[async_trait]
+    impl SiwcAuthPort for FakeSiwcAuth {
+        async fn sign_in(&self, _: CancellationToken) -> huginn_core::Result<SiwcCredentials> {
+            Ok(SiwcCredentials {
+                host_id: "host-1".into(),
+                client_id: "client-1".into(),
+                access_token: ["a", "1"].join("-"),
+                refresh_token: ["r", "1"].join("-"),
+                expires_at_unix: 1_900_000_000,
+                granted_scopes: SIWC_REQUIRED_SCOPES
+                    .iter()
+                    .map(|s| (*s).to_string())
+                    .collect(),
+                account_email: None,
+            })
+        }
+        async fn refresh(
+            &self,
+            creds: &SiwcCredentials,
+            _: CancellationToken,
+        ) -> huginn_core::Result<SiwcCredentials> {
+            Ok(creds.clone())
+        }
+        async fn revoke_remote(
+            &self,
+            _: &SiwcCredentials,
+            _: CancellationToken,
+        ) -> SiwcRevocationOutcome {
+            if self.remote_ok.load(Ordering::SeqCst) {
+                SiwcRevocationOutcome::RemoteConfirmed
+            } else {
+                SiwcRevocationOutcome::LocalOnly {
+                    reason: "offline".into(),
+                }
+            }
+        }
+    }
+    struct SiwcStubAdapter;
+    #[async_trait]
+    impl ProviderAdapter for SiwcStubAdapter {
+        fn descriptor(&self) -> ProviderDescriptor {
+            ProviderDescriptor {
+                id: SIWC_PROVIDER_ID.into(),
+                display_name: "Sign in with ChatGPT".into(),
+                models: vec![],
+                authentication: vec![AuthenticationMethod::OAuth],
+            }
+        }
+        fn has_connection_catalog(&self) -> bool {
+            true
+        }
+        async fn create_model(
+            &self,
+            _: &ModelSelection,
+            _: CancellationToken,
+        ) -> huginn_core::Result<Arc<dyn ModelProvider>> {
+            Err(ProviderError::Unavailable.into())
+        }
+        async fn create_connection_model(
+            &self,
+            _: &ModelSelection,
+            _: ConnectionMaterial,
+            _: CancellationToken,
+        ) -> huginn_core::Result<Arc<dyn ModelProvider>> {
+            struct Dummy;
+            #[async_trait]
+            impl ModelProvider for Dummy {
+                async fn stream(
+                    &self,
+                    _: ModelRequest,
+                    _: CancellationToken,
+                ) -> huginn_core::Result<
+                    futures::stream::BoxStream<'static, huginn_core::Result<ModelDelta>>,
+                > {
+                    unreachable!()
+                }
+            }
+            Ok(Arc::new(Dummy))
+        }
+    }
+    struct SiwcStubPlugin;
+    #[async_trait]
+    impl Plugin for SiwcStubPlugin {
+        fn manifest(&self) -> Manifest {
+            Manifest {
+                id: "test.siwc".into(),
+                provides: vec![],
+                requires: vec![catalog_id()],
+            }
+        }
+        async fn activate(&mut self, ctx: &mut PluginContext) -> huginn_core::Result<()> {
+            ctx.resolve::<ProviderCatalogService>(&catalog_id())?
+                .0
+                .register(ctx, Arc::new(SiwcStubAdapter))?;
+            Ok(())
+        }
+    }
+
+    // 1. Without SIWC auth wired, sign_in_siwc returns AdapterUnavailable.
+    let store = Arc::new(Metadata::default());
+    let mut h = open(store.clone(), Secrets::new(SecretMode::Secure)).await;
+    h.supervisor.register(Box::new(SiwcStubPlugin)).unwrap();
+    h.supervisor.start().await.unwrap();
+    assert_eq!(
+        h.manager.sign_in_siwc(CancellationToken::new()).await,
+        Err(ConnectionError::AdapterUnavailable)
+    );
+
+    // 2. With Ephemeral secrets, SIWC refuses silent downgrade.
+    let remote_ok = Arc::new(AtomicBool::new(true));
+    let auth = Arc::new(FakeSiwcAuth {
+        remote_ok: remote_ok.clone(),
+    });
+    let catalog = h
+        .supervisor
+        .resolve::<ProviderCatalogService>(&catalog_id())
+        .unwrap()
+        .0
+        .clone();
+    let eph = ConnectionManager::open(
+        Arc::new(Metadata::default()),
+        ConnectionAccess::new(Secrets::new(SecretMode::Ephemeral)),
+        h.providers.0.clone(),
+        catalog.clone(),
+    )
+    .await
+    .unwrap()
+    .with_siwc_auth(auth.clone());
+    assert_eq!(
+        eph.sign_in_siwc(CancellationToken::new()).await,
+        Err(ConnectionError::BackendUnavailable)
+    );
+
+    // 3. With Secure secrets, first sign_in succeeds, second fails (single account),
+    //    and revoke_with_report distinguishes confirmed vs local-only revocation.
+    let secure_mgr = ConnectionManager::open(
+        Arc::new(Metadata::default()),
+        ConnectionAccess::new(Secrets::new(SecretMode::Secure)),
+        h.providers.0.clone(),
+        catalog,
+    )
+    .await
+    .unwrap()
+    .with_siwc_auth(auth);
+    let rec = secure_mgr
+        .sign_in_siwc(CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(rec.settings.provider, SIWC_PROVIDER_ID);
+    assert_eq!(
+        secure_mgr.sign_in_siwc(CancellationToken::new()).await,
+        Err(ConnectionError::InvalidConfiguration)
+    );
+    let confirmed = secure_mgr
+        .revoke_with_report(rec.id, CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(confirmed.contains("revoked remotely"));
+
+    remote_ok.store(false, Ordering::SeqCst);
+    let rec2 = secure_mgr
+        .sign_in_siwc(CancellationToken::new())
+        .await
+        .unwrap();
+    let local_only = secure_mgr
+        .revoke_with_report(rec2.id, CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(local_only.contains("not confirmed"));
+    assert!(local_only.contains("offline"));
 
     h.supervisor.shutdown().await;
 }

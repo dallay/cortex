@@ -151,12 +151,14 @@ async fn manual_compaction_summarizes_every_complete_turn_without_splitting_tool
                     arguments: serde_json::json!({}),
                 }],
                 tool_call_id: None,
+                images: vec![],
             });
             session.messages.push(huginn_core::Message {
                 role: Role::Tool,
                 content: format!("result {turn}"),
                 tool_calls: vec![],
                 tool_call_id: Some(format!("call-{turn}")),
+                images: vec![],
             });
             session.messages.push(huginn_core::Message::text(
                 Role::Assistant,

@@ -61,6 +61,9 @@ pub struct ConnectionSettings {
     /// Explicit per-connection exception; never permits LAN/private HTTP.
     #[serde(default)]
     pub allow_loopback_http: bool,
+    /// Optional reasoning effort for verified OpenAI Chat Completions models.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<crate::providers::ReasoningEffort>,
 }
 impl ConnectionSettings {
     /// True when persisted settings violate only the explicit local-HTTP opt-in.
@@ -108,6 +111,15 @@ impl ConnectionSettings {
             {
                 return Err(ConnectionError::InvalidConfiguration);
             }
+        }
+        if self.reasoning_effort.is_some()
+            && !crate::providers::supports_openai_reasoning_effort(
+                &self.provider,
+                self.endpoint.as_deref(),
+                &self.model,
+            )
+        {
+            return Err(ConnectionError::InvalidConfiguration);
         }
         Ok(())
     }
@@ -273,6 +285,15 @@ pub trait ConnectionManagement: Send + Sync {
         id: uuid::Uuid,
         model: String,
     ) -> ConnectionResult<crate::providers::ModelSelection>;
+    /// Update the reasoning effort preference for a saved connection's selected model.
+    async fn select_reasoning_effort(
+        &self,
+        id: uuid::Uuid,
+        effort: Option<crate::providers::ReasoningEffort>,
+    ) -> ConnectionResult<crate::providers::ModelSelection> {
+        let _ = (id, effort);
+        Err(ConnectionError::InvalidConfiguration)
+    }
     /// Discover models for a saved connection under host authority without exposing secrets.
     async fn discover_models(
         &self,
@@ -283,6 +304,22 @@ pub trait ConnectionManagement: Send + Sync {
         Ok(crate::providers::ModelCatalog::Unsupported)
     }
     async fn revoke(&self, id: uuid::Uuid) -> ConnectionResult<()>;
+    /// Run the local Sign in with ChatGPT (SIWC) OAuth flow and persist under `OsSecrets`.
+    async fn sign_in_siwc(&self, cancel: CancellationToken) -> ConnectionResult<ConnectionRecord> {
+        let _ = cancel;
+        Err(ConnectionError::AdapterUnavailable)
+    }
+    /// Revoke a connection and return a user-facing status message (distinguishing confirmed
+    /// remote OAuth revocation from local-only cleanup when applicable).
+    async fn revoke_with_report(
+        &self,
+        id: uuid::Uuid,
+        cancel: CancellationToken,
+    ) -> ConnectionResult<String> {
+        let _ = cancel;
+        self.revoke(id).await?;
+        Ok("Connection revoked locally. Next inference is blocked, including in a pinned turn. Remote completion remains unknown.".into())
+    }
 }
 pub struct ConnectionsService(pub std::sync::Arc<dyn ConnectionManagement>);
 pub fn connections_id() -> crate::kernel::ServiceId {
@@ -353,7 +390,122 @@ mod tests {
             model: "model".into(),
             requires_secret: false,
             allow_loopback_http,
+            reasoning_effort: None,
         }
+    }
+
+    #[test]
+    fn reasoning_effort_validation_accepts_verified_openai_api_models_only() {
+        use crate::providers::{supports_openai_reasoning_effort, ReasoningEffort};
+
+        assert!(supports_openai_reasoning_effort(
+            "openai",
+            Some("https://api.openai.com/v1"),
+            "o3-mini"
+        ));
+        assert!(supports_openai_reasoning_effort(
+            "openai",
+            Some("https://api.openai.com/v1/"),
+            "gpt-5"
+        ));
+        assert!(supports_openai_reasoning_effort(
+            "openai",
+            Some("https://api.openai.com"),
+            "o4-mini-2025-04-16"
+        ));
+        assert!(supports_openai_reasoning_effort(
+            "openai",
+            Some("https://api.openai.com/v1"),
+            "gpt-5-mini-2025-08-07"
+        ));
+        for unsupported in [
+            "gpt-4o",
+            "o1-mini",
+            "o1-preview",
+            "o1-pro",
+            "o3-pro",
+            "o3-deep-research",
+            "o4-mini-deep-research",
+            "gpt-5-pro",
+            "gpt-5-codex",
+            "gpt-5-chat-latest",
+        ] {
+            assert!(
+                !supports_openai_reasoning_effort(
+                    "openai",
+                    Some("https://api.openai.com/v1"),
+                    unsupported
+                ),
+                "expected {unsupported} to be rejected"
+            );
+        }
+        assert!(!supports_openai_reasoning_effort(
+            "openai",
+            Some("https://custom.example.com/v1"),
+            "o3-mini"
+        ));
+        assert!(!supports_openai_reasoning_effort(
+            "ollama",
+            Some("https://api.openai.com/v1"),
+            "o3-mini"
+        ));
+
+        let valid = ConnectionSettings {
+            provider: "openai".into(),
+            endpoint: Some("https://api.openai.com/v1".into()),
+            model: "o3-mini".into(),
+            requires_secret: true,
+            allow_loopback_http: false,
+            reasoning_effort: Some(ReasoningEffort::High),
+        };
+        assert!(valid.validate().is_ok());
+
+        let invalid_model = ConnectionSettings {
+            model: "gpt-4o".into(),
+            ..valid.clone()
+        };
+        assert_eq!(
+            invalid_model.validate(),
+            Err(ConnectionError::InvalidConfiguration)
+        );
+
+        let invalid_endpoint = ConnectionSettings {
+            endpoint: Some("https://proxy.example.com/v1".into()),
+            ..valid
+        };
+        assert_eq!(
+            invalid_endpoint.validate(),
+            Err(ConnectionError::InvalidConfiguration)
+        );
+    }
+
+    #[test]
+    fn legacy_json_without_reasoning_effort_deserializes_as_none_and_omits_key() {
+        use crate::providers::{SelectionMode, SelectionSnapshot};
+
+        let legacy_settings_json = r#"{
+            "provider": "openai",
+            "endpoint": "https://api.openai.com/v1",
+            "model": "gpt-4o",
+            "requires_secret": true,
+            "allow_loopback_http": false
+        }"#;
+        let settings: ConnectionSettings = serde_json::from_str(legacy_settings_json).unwrap();
+        assert_eq!(settings.reasoning_effort, None);
+        let serialized_settings = serde_json::to_string(&settings).unwrap();
+        assert!(!serialized_settings.contains("reasoning_effort"));
+
+        let legacy_snapshot_json = r#"{
+            "provider": "openai",
+            "connection": "conn-1",
+            "model": "gpt-4o",
+            "mode": {"Managed": "Secure"}
+        }"#;
+        let snapshot: SelectionSnapshot = serde_json::from_str(legacy_snapshot_json).unwrap();
+        assert_eq!(snapshot.mode, SelectionMode::Managed(SecretMode::Secure));
+        assert_eq!(snapshot.reasoning_effort, None);
+        let serialized_snapshot = serde_json::to_string(&snapshot).unwrap();
+        assert!(!serialized_snapshot.contains("reasoning_effort"));
     }
 
     #[test]

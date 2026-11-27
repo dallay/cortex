@@ -1275,6 +1275,7 @@ async fn model_command_searches_large_catalog_without_reentering_credentials_and
                 model: "model-001".into(),
                 requires_secret: true,
                 allow_loopback_http: true,
+                reasoning_effort: None,
             },
             Some(Secret::new(A.into()).unwrap()),
         )
@@ -1405,6 +1406,7 @@ async fn model_command_preserves_selection_on_cancel_empty_and_failures_without_
                 model: "alpha".into(),
                 requires_secret: true,
                 allow_loopback_http: true,
+                reasoning_effort: None,
             },
             Some(Secret::new(A.into()).unwrap()),
         )
@@ -1501,6 +1503,7 @@ async fn model_command_retains_manual_entry_only_for_custom_unsupported_not_olla
                 model: "initial-custom".into(),
                 requires_secret: true,
                 allow_loopback_http: true,
+                reasoning_effort: None,
             },
             Some(Secret::new(A.into()).unwrap()),
         )
@@ -1515,6 +1518,7 @@ async fn model_command_retains_manual_entry_only_for_custom_unsupported_not_olla
                 model: "initial-ollama".into(),
                 requires_secret: false,
                 allow_loopback_http: true,
+                reasoning_effort: None,
             },
             None,
         )

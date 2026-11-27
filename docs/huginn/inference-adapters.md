@@ -51,7 +51,11 @@ the real-server probe below tests usable calls and result continuation.
 Ollama uses the documented OpenAI-compatible `/v1/chat/completions` SSE transport,
 not a guessed native NDJSON translation. Both adapters share Huginn's fragmented
 text/tool parser, finish validation, tool-result serialization, and sanitized
-transport errors. Reasoning fields are currently ignored. A model can consume its
+transport errors. For verified OpenAI API reasoning models on
+`https://api.openai.com/v1`, an explicitly selected `reasoning_effort` (`low`,
+`medium`, or `high`) is pinned per turn and serialized in the Chat Completions
+request body (omitted when unset/`off`). Unsupported models and non-OpenAI
+endpoints reject reasoning configuration explicitly. A model can consume its
 output budget reasoning without producing usable text, and a `length` finish
 fails explicitly rather than returning a successful partial result.
 
