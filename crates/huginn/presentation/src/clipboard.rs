@@ -194,7 +194,7 @@ fn read_linux_clipboard_image() -> Result<Option<ImageAttachment>, String> {
         {
             any_tool_ran = true;
             let (tx, rx) = std::sync::mpsc::channel();
-            let reader_handle = child.stdout.take().map(|mut out| {
+            let reader_handle = child.stdout.take().map(|out| {
                 std::thread::spawn(move || {
                     let mut bytes = Vec::new();
                     let _ = out

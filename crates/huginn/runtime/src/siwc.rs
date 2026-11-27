@@ -888,7 +888,13 @@ fn launch_browser(url: &str) -> std::io::Result<()> {
 struct SiwcRefreshCoordinator {
     auth: Arc<dyn SiwcAuthPort>,
     persistence: Option<Arc<OnceLock<Arc<dyn SiwcCredentialPersistence>>>>,
-    gate: AsyncMutex<Option<(Option<ConnectionRevision>, SiwcCredentials)>>,
+    gate: AsyncMutex<SiwcRefreshState>,
+}
+
+#[derive(Default)]
+struct SiwcRefreshState {
+    cached: Option<(Option<ConnectionRevision>, SiwcCredentials)>,
+    pending_persistence: Option<(ConnectionRevision, SiwcCredentials)>,
 }
 
 impl SiwcRefreshCoordinator {
@@ -899,7 +905,7 @@ impl SiwcRefreshCoordinator {
         Self {
             auth,
             persistence,
-            gate: AsyncMutex::new(None),
+            gate: AsyncMutex::new(SiwcRefreshState::default()),
         }
     }
 
@@ -911,31 +917,64 @@ impl SiwcRefreshCoordinator {
     ) -> Result<SiwcCredentials> {
         let mut guard = self.gate.lock().await;
         let persistence = origin.zip(self.persistence.as_ref().and_then(|slot| slot.get()));
+        let pending = guard
+            .pending_persistence
+            .clone()
+            .filter(|(pending_origin, pending)| {
+                Some(*pending_origin) == origin && same_siwc_identity(pending, fallback)
+            });
+        if guard.pending_persistence.is_some() && pending.is_none() {
+            guard.pending_persistence = None;
+        }
         let persisted = match persistence {
             Some((origin, store)) => store.load_latest(origin).await?,
             None => None,
         };
-        let mut current = persisted.unwrap_or_else(|| {
-            guard
-                .as_ref()
-                .filter(|(cached_origin, cached)| {
-                    *cached_origin == origin
-                        && cached.host_id == fallback.host_id
-                        && cached.account_sub == fallback.account_sub
-                })
-                .map_or_else(|| fallback.clone(), |(_, cached)| cached.clone())
+        let pending_credentials = if let Some((pending_origin, pending_credentials)) = pending {
+            if let Some((_, store)) = persistence {
+                if persisted.as_ref() != Some(&pending_credentials) {
+                    store
+                        .persist_rotated(pending_origin, &pending_credentials)
+                        .await?;
+                }
+                guard.pending_persistence = None;
+                Some(pending_credentials)
+            } else {
+                guard.pending_persistence = None;
+                None
+            }
+        } else {
+            None
+        };
+        let mut current = pending_credentials.unwrap_or_else(|| {
+            persisted.unwrap_or_else(|| {
+                guard
+                    .cached
+                    .as_ref()
+                    .filter(|(cached_origin, cached)| {
+                        *cached_origin == origin && same_siwc_identity(cached, fallback)
+                    })
+                    .map_or_else(|| fallback.clone(), |(_, cached)| cached.clone())
+            })
         });
         if current.needs_refresh(now_unix()) {
             let refreshed = self.auth.refresh(&current, cancel).await?;
             // Keep logout and restart on the latest refresh token before using it.
-            if let Some((origin, store)) = persistence {
-                store.persist_rotated(origin, &refreshed).await?;
+            if let Some((refresh_origin, store)) = persistence {
+                if let Err(error) = store.persist_rotated(refresh_origin, &refreshed).await {
+                    guard.pending_persistence = Some((refresh_origin, refreshed));
+                    return Err(error);
+                }
             }
             current = refreshed;
         }
-        *guard = Some((origin, current.clone()));
+        guard.cached = Some((origin, current.clone()));
         Ok(current)
     }
+}
+
+fn same_siwc_identity(left: &SiwcCredentials, right: &SiwcCredentials) -> bool {
+    left.host_id == right.host_id && left.account_sub == right.account_sub
 }
 
 /// Dedicated SIWC adapter: `/v1/models` (`visibility == "list"`, `slug`) and `/v1/responses`
@@ -1491,5 +1530,155 @@ impl Plugin for SiwcProviderPlugin {
             )),
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct RotationAuth {
+        refreshed: SiwcCredentials,
+        refreshes: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl SiwcAuthPort for RotationAuth {
+        async fn sign_in(&self, _: CancellationToken) -> Result<SiwcCredentials> {
+            Err(AgentError::Configuration("unused test sign-in".into()))
+        }
+
+        async fn refresh(
+            &self,
+            _: &SiwcCredentials,
+            _: CancellationToken,
+        ) -> Result<SiwcCredentials> {
+            self.refreshes.fetch_add(1, Ordering::SeqCst);
+            Ok(self.refreshed.clone())
+        }
+
+        async fn revoke_remote(
+            &self,
+            _: &SiwcCredentials,
+            _: CancellationToken,
+        ) -> SiwcRevocationOutcome {
+            SiwcRevocationOutcome::RemoteConfirmed
+        }
+    }
+
+    struct FailingPersistence {
+        writes: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl SiwcCredentialPersistence for FailingPersistence {
+        async fn persist_rotated(&self, _: ConnectionRevision, _: &SiwcCredentials) -> Result<()> {
+            if self.writes.fetch_add(1, Ordering::SeqCst) == 0 {
+                Err(AgentError::Configuration(
+                    "fixture persistence failure".into(),
+                ))
+            } else {
+                Ok(())
+            }
+        }
+
+        async fn load_latest(&self, _: ConnectionRevision) -> Result<Option<SiwcCredentials>> {
+            Ok(None)
+        }
+    }
+
+    fn credentials(
+        host_id: &str,
+        account_sub: &str,
+        expires_at_unix: u64,
+        access_token: &str,
+        refresh_token: &str,
+    ) -> SiwcCredentials {
+        SiwcCredentials {
+            host_id: host_id.into(),
+            client_id: "client-1".into(),
+            access_token: access_token.into(),
+            refresh_token: refresh_token.into(),
+            expires_at_unix,
+            granted_scopes: huginn_core::siwc::SIWC_REQUIRED_SCOPES
+                .iter()
+                .map(|scope| (*scope).to_owned())
+                .collect(),
+            account_sub: Some(account_sub.into()),
+            account_email: None,
+        }
+    }
+
+    async fn assert_pending_is_not_reused_after_scope_change(change_origin: bool) {
+        let origin = ConnectionRevision {
+            id: uuid::Uuid::from_u128(1),
+            revision: uuid::Uuid::from_u128(2),
+        };
+        let changed_origin = ConnectionRevision {
+            id: uuid::Uuid::from_u128(3),
+            revision: uuid::Uuid::from_u128(4),
+        };
+        let stale = credentials("host-1", "account-1", 0, "access-r0", "refresh-r0");
+        let rotated = credentials(
+            "host-1",
+            "account-1",
+            now_unix() + 3600,
+            "access-r1",
+            "refresh-r1",
+        );
+        let auth = Arc::new(RotationAuth {
+            refreshed: rotated,
+            refreshes: AtomicUsize::new(0),
+        });
+        let persistence = Arc::new(FailingPersistence {
+            writes: AtomicUsize::new(0),
+        });
+        let persistence_slot: Arc<OnceLock<Arc<dyn SiwcCredentialPersistence>>> =
+            Arc::new(OnceLock::new());
+        let _ = persistence_slot.set(persistence.clone());
+        let coordinator = SiwcRefreshCoordinator::new(auth.clone(), Some(persistence_slot));
+
+        assert!(coordinator
+            .resolve(Some(origin), &stale, CancellationToken::new())
+            .await
+            .is_err());
+
+        let replacement = if change_origin {
+            credentials(
+                "host-1",
+                "account-1",
+                now_unix() + 3600,
+                "access-new-origin",
+                "refresh-new-origin",
+            )
+        } else {
+            credentials(
+                "host-2",
+                "account-2",
+                now_unix() + 3600,
+                "access-new-account",
+                "refresh-new-account",
+            )
+        };
+        let retry_origin = if change_origin {
+            Some(changed_origin)
+        } else {
+            Some(origin)
+        };
+        let resolved = coordinator
+            .resolve(retry_origin, &replacement, CancellationToken::new())
+            .await
+            .unwrap();
+
+        assert_eq!(resolved, replacement);
+        assert_eq!(auth.refreshes.load(Ordering::SeqCst), 1);
+        assert_eq!(persistence.writes.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn pending_rotations_are_not_reused_across_origins_or_identities() {
+        assert_pending_is_not_reused_after_scope_change(true).await;
+        assert_pending_is_not_reused_after_scope_change(false).await;
     }
 }

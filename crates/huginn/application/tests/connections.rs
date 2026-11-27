@@ -2519,6 +2519,7 @@ async fn siwc_sign_in_enforces_secure_store_single_account_and_revocation_report
 
     struct FakeSiwcAuth {
         remote_ok: Arc<AtomicBool>,
+        revocation_calls: Arc<AtomicUsize>,
     }
     #[async_trait]
     impl SiwcAuthPort for FakeSiwcAuth {
@@ -2549,6 +2550,7 @@ async fn siwc_sign_in_enforces_secure_store_single_account_and_revocation_report
             _: &SiwcCredentials,
             _: CancellationToken,
         ) -> SiwcRevocationOutcome {
+            self.revocation_calls.fetch_add(1, Ordering::SeqCst);
             if self.remote_ok.load(Ordering::SeqCst) {
                 SiwcRevocationOutcome::RemoteConfirmed
             } else {
@@ -2631,8 +2633,10 @@ async fn siwc_sign_in_enforces_secure_store_single_account_and_revocation_report
 
     // 2. With Ephemeral secrets, SIWC refuses silent downgrade.
     let remote_ok = Arc::new(AtomicBool::new(true));
+    let revocation_calls = Arc::new(AtomicUsize::new(0));
     let auth = Arc::new(FakeSiwcAuth {
         remote_ok: remote_ok.clone(),
+        revocation_calls: revocation_calls.clone(),
     });
     let catalog = h
         .supervisor
@@ -2657,9 +2661,11 @@ async fn siwc_sign_in_enforces_secure_store_single_account_and_revocation_report
     // 3. With Secure secrets, first sign_in succeeds, second fails (single account),
     //    and revoke_with_report distinguishes confirmed vs local-only revocation.
     let secure_secrets = Secrets::new(SecretMode::Secure);
+    let secure_store = Arc::new(Metadata::default());
+    let secure_access = ConnectionAccess::new(secure_secrets.clone());
     let secure_mgr = ConnectionManager::open(
-        Arc::new(Metadata::default()),
-        ConnectionAccess::new(secure_secrets.clone()),
+        secure_store.clone(),
+        secure_access.clone(),
         h.providers.0.clone(),
         catalog,
     )
@@ -2676,6 +2682,14 @@ async fn siwc_sign_in_enforces_secure_store_single_account_and_revocation_report
         Err(ConnectionError::InvalidConfiguration)
     );
     let origin = ConnectionRevision::from(&rec);
+    let reference = rec.secret.clone().unwrap();
+    let stored_secret = secure_secrets
+        .value
+        .lock()
+        .unwrap()
+        .get(&reference)
+        .unwrap()
+        .clone();
     let mut rotated = secure_mgr.load_latest(origin).await.unwrap().unwrap();
     for failure in [ConnectionError::Locked, ConnectionError::SecretStore] {
         *secure_secrets.read_error.lock().unwrap() = Some(failure);
@@ -2686,17 +2700,62 @@ async fn siwc_sign_in_enforces_secure_store_single_account_and_revocation_report
     }
     *secure_secrets.read_error.lock().unwrap() = Some(ConnectionError::MissingSecret);
     assert!(secure_mgr.load_latest(origin).await.unwrap().is_none());
+    *secure_secrets.read_error.lock().unwrap() = Some(ConnectionError::Locked);
+    assert!(matches!(
+        secure_mgr.persist_rotated(origin, &rotated).await,
+        Err(huginn_core::AgentError::Connection(ConnectionError::Locked))
+    ));
+    assert_eq!(
+        secure_secrets
+            .value
+            .lock()
+            .unwrap()
+            .get(&reference)
+            .unwrap(),
+        &stored_secret
+    );
     *secure_secrets.read_error.lock().unwrap() = None;
+    let malformed_secret = "{invalid siwc json".to_owned();
+    secure_secrets
+        .value
+        .lock()
+        .unwrap()
+        .insert(reference.clone(), malformed_secret.clone());
+    assert!(secure_mgr.persist_rotated(origin, &rotated).await.is_err());
+    assert_eq!(
+        secure_secrets
+            .value
+            .lock()
+            .unwrap()
+            .get(&reference)
+            .unwrap(),
+        &malformed_secret
+    );
+    secure_secrets
+        .value
+        .lock()
+        .unwrap()
+        .insert(reference, stored_secret);
     rotated.refresh_token.push_str("-rotated");
     secure_mgr.persist_rotated(origin, &rotated).await.unwrap();
     assert_eq!(
         secure_mgr.load_latest(origin).await.unwrap(),
         Some(rotated.clone())
     );
-    let confirmed = secure_mgr
-        .revoke_with_report(rec.id, CancellationToken::new())
-        .await
-        .unwrap();
+    let selection = secure_mgr.select(rec.id).await.unwrap();
+    secure_secrets.read_suspend.store(1, Ordering::SeqCst);
+    let mut revoking = Box::pin(secure_mgr.revoke_with_report(rec.id, CancellationToken::new()));
+    assert!(futures::poll!(revoking.as_mut()).is_pending());
+    secure_secrets.read_entered.notified().await;
+    assert!(
+        secure_access
+            .resolve(&selection.connection, CancellationToken::new())
+            .await
+            .is_err(),
+        "pending local revoke must block provider use"
+    );
+    secure_secrets.read_release.notify_one();
+    let confirmed = revoking.await.unwrap();
     assert!(confirmed.contains("revoked remotely"));
 
     assert!(matches!(
@@ -2729,6 +2788,38 @@ async fn siwc_sign_in_enforces_secure_store_single_account_and_revocation_report
         .unwrap();
     assert!(local_only.contains("not confirmed"));
     assert!(local_only.contains("offline"));
+
+    let rec3 = secure_mgr
+        .sign_in_siwc(CancellationToken::new())
+        .await
+        .unwrap();
+    let selection = secure_mgr.select(rec3.id).await.unwrap();
+    let revocations_before_failure = revocation_calls.load(Ordering::SeqCst);
+    secure_store.fail.store(1, Ordering::SeqCst);
+    assert_eq!(
+        secure_mgr
+            .revoke_with_report(rec3.id, CancellationToken::new())
+            .await,
+        Err(ConnectionError::Metadata)
+    );
+    assert_eq!(
+        revocation_calls.load(Ordering::SeqCst),
+        revocations_before_failure + 1,
+        "remote revocation must still be attempted after local persistence fails"
+    );
+    assert!(
+        secure_access
+            .resolve(&selection.connection, CancellationToken::new())
+            .await
+            .is_err(),
+        "local authorization must remain invalidated"
+    );
+    assert!(secure_store
+        .load()
+        .await
+        .unwrap()
+        .connections
+        .contains_key(&rec3.id));
 
     h.supervisor.shutdown().await;
 }

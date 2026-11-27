@@ -593,7 +593,7 @@ impl ConnectionManager {
 
         // Capture the latest stored token and revoke locally under the same operation
         // guard, so refresh persistence cannot write between the read and revocation.
-        let candidate = self
+        let (candidate, local_result) = self
             .run_operation(async {
                 let _operation = self.operation().await?;
                 let mut state = self.state.lock().await;
@@ -610,6 +610,7 @@ impl ConnectionManager {
                     else {
                         return RemoteCandidate::None;
                     };
+                    self.invalidate(id).await;
                     match self.access.secrets.read_mode(record.mode, reference).await {
                         Ok(secret) => {
                             if self.access.epoch.load(Ordering::SeqCst) != self.owner
@@ -634,8 +635,8 @@ impl ConnectionManager {
                     }
                 }
                 .await;
-                self.revoke_locked(&mut state, id).await?;
-                Ok(candidate)
+                let local_result = self.revoke_locked(&mut state, id).await;
+                Ok((candidate, local_result))
             })
             .await?;
 
@@ -657,6 +658,7 @@ impl ConnectionManager {
             }
         };
 
+        local_result?;
         Ok(match remote_report {
             Some(huginn_core::siwc::SiwcRevocationOutcome::RemoteConfirmed) => {
                 "Sign in with ChatGPT session revoked remotely and deleted locally.".into()
@@ -1469,17 +1471,18 @@ impl huginn_core::siwc::SiwcCredentialPersistence for ConnectionManager {
                 .secret
                 .as_ref()
                 .ok_or(ConnectionError::MissingSecret)?;
-            if let Ok(current_secret) = self.access.secrets.read_mode(record.mode, reference).await
+            let current_secret = self
+                .access
+                .secrets
+                .read_mode(record.mode, reference)
+                .await?;
+            let current_creds =
+                huginn_core::siwc::SiwcCredentials::from_secret_json(current_secret.expose())
+                    .map_err(|_| ConnectionError::InvalidConfiguration)?;
+            if current_creds.host_id != credentials.host_id
+                || current_creds.account_sub != credentials.account_sub
             {
-                if let Ok(current_creds) =
-                    huginn_core::siwc::SiwcCredentials::from_secret_json(current_secret.expose())
-                {
-                    if current_creds.host_id != credentials.host_id
-                        || current_creds.account_sub != credentials.account_sub
-                    {
-                        return Err(ConnectionError::Revoked);
-                    }
-                }
+                return Err(ConnectionError::Revoked);
             }
             self.access
                 .secrets

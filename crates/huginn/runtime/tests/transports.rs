@@ -685,6 +685,246 @@ async fn spawn_loopback_mock_server(app: Router) -> (String, tokio::task::JoinHa
     (format!("http://{addr}"), task)
 }
 
+struct FailOncePersistence {
+    stored: tokio::sync::Mutex<Option<huginn_core::siwc::SiwcCredentials>>,
+    writes: std::sync::atomic::AtomicUsize,
+    write_before_error: bool,
+}
+
+#[async_trait]
+impl huginn_core::siwc::SiwcCredentialPersistence for FailOncePersistence {
+    async fn persist_rotated(
+        &self,
+        _: huginn_core::connections::ConnectionRevision,
+        credentials: &huginn_core::siwc::SiwcCredentials,
+    ) -> Result<()> {
+        let attempt = self
+            .writes
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if attempt == 0 {
+            if self.write_before_error {
+                *self.stored.lock().await = Some(credentials.clone());
+            }
+            return Err(huginn_core::AgentError::Configuration(
+                "fixture persistence failure".into(),
+            ));
+        }
+        *self.stored.lock().await = Some(credentials.clone());
+        Ok(())
+    }
+
+    async fn load_latest(
+        &self,
+        _: huginn_core::connections::ConnectionRevision,
+    ) -> Result<Option<huginn_core::siwc::SiwcCredentials>> {
+        Ok(self.stored.lock().await.clone())
+    }
+}
+
+struct RotatingSiwcAuth {
+    refreshed: huginn_core::siwc::SiwcCredentials,
+    refreshes: std::sync::atomic::AtomicUsize,
+    input_refresh_tokens: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl huginn_core::siwc::SiwcAuthPort for RotatingSiwcAuth {
+    async fn sign_in(&self, _: CancellationToken) -> Result<huginn_core::siwc::SiwcCredentials> {
+        Err(huginn_core::AgentError::Configuration(
+            "sign-in is not used by this fixture".into(),
+        ))
+    }
+
+    async fn refresh(
+        &self,
+        credentials: &huginn_core::siwc::SiwcCredentials,
+        _: CancellationToken,
+    ) -> Result<huginn_core::siwc::SiwcCredentials> {
+        self.refreshes
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.input_refresh_tokens
+            .lock()
+            .unwrap()
+            .push(credentials.refresh_token.clone());
+        Ok(self.refreshed.clone())
+    }
+
+    async fn revoke_remote(
+        &self,
+        _: &huginn_core::siwc::SiwcCredentials,
+        _: CancellationToken,
+    ) -> huginn_core::siwc::SiwcRevocationOutcome {
+        huginn_core::siwc::SiwcRevocationOutcome::RemoteConfirmed
+    }
+}
+
+async fn verify_siwc_rotation_retry(write_before_error: bool) {
+    use axum::{http::HeaderMap, routing::get};
+    use huginn_core::{
+        connections::{ConnectionMaterial, ConnectionRevision, ConnectionSettings, Secret},
+        providers::{ConnectionIdentity, ModelSelection, ProviderAdapter, ProviderRegistration},
+        siwc::{SiwcAuthPort, SiwcCredentialPersistence, SiwcCredentials, SIWC_PROVIDER_ID},
+    };
+    use huginn_runtime::siwc::{SiwcAdapter, SiwcEndpoints};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        OnceLock,
+    };
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let scopes: Vec<String> = huginn_core::siwc::SIWC_REQUIRED_SCOPES
+        .iter()
+        .map(|scope| (*scope).to_owned())
+        .collect();
+    let stale = SiwcCredentials {
+        host_id: "host-1".into(),
+        client_id: "client-1".into(),
+        access_token: "access-r0".into(),
+        refresh_token: "refresh-r0".into(),
+        expires_at_unix: 0,
+        granted_scopes: scopes.clone(),
+        account_sub: Some("account-1".into()),
+        account_email: Some("dev@example.com".into()),
+    };
+    let rotated = SiwcCredentials {
+        access_token: "access-r1".into(),
+        refresh_token: "refresh-r1".into(),
+        expires_at_unix: now + 3600,
+        ..stale.clone()
+    };
+    let persistence = Arc::new(FailOncePersistence {
+        stored: tokio::sync::Mutex::new(Some(stale.clone())),
+        writes: AtomicUsize::new(0),
+        write_before_error,
+    });
+    let auth = Arc::new(RotatingSiwcAuth {
+        refreshed: rotated.clone(),
+        refreshes: AtomicUsize::new(0),
+        input_refresh_tokens: Mutex::new(Vec::new()),
+    });
+    let persistence_slot: Arc<OnceLock<Arc<dyn SiwcCredentialPersistence>>> =
+        Arc::new(OnceLock::new());
+    let _ = persistence_slot.set(persistence.clone());
+    let models_requests = Arc::new(AtomicUsize::new(0));
+    let responses_requests = Arc::new(AtomicUsize::new(0));
+    let models_requests_handler = models_requests.clone();
+    let responses_requests_handler = responses_requests.clone();
+    let persistence_handler = persistence.clone();
+    let expected_rotated = rotated.clone();
+    let (base, task) = spawn_loopback_mock_server(
+        Router::new()
+            .route(
+                "/v1/models",
+                get(move |headers: HeaderMap| {
+                    let requests = models_requests_handler.clone();
+                    let persistence = persistence_handler.clone();
+                    let expected = expected_rotated.clone();
+                    async move {
+                        requests.fetch_add(1, Ordering::SeqCst);
+                        assert_eq!(headers["authorization"], "Bearer access-r1");
+                        assert_eq!(persistence.stored.lock().await.as_ref(), Some(&expected));
+                        Json(json!({"models": [{"slug": "gpt-5-chatgpt", "visibility": "list"}]}))
+                    }
+                }),
+            )
+            .route(
+                "/v1/responses",
+                post(move || {
+                    let requests = responses_requests_handler.clone();
+                    async move {
+                        requests.fetch_add(1, Ordering::SeqCst);
+                        ([("content-type", "text/event-stream")], "data: [DONE]\n\n")
+                    }
+                }),
+            ),
+    )
+    .await;
+    let endpoints = SiwcEndpoints {
+        authorize_url: format!("{base}/authorize"),
+        token_url: format!("{base}/token"),
+        oidc_discovery_url: format!("{base}/.well-known/openid-configuration"),
+        api_base_url: format!("{base}/v1"),
+        allow_loopback_http: true,
+        open_browser: false,
+    };
+    let adapter = SiwcAdapter::with_endpoints(
+        auth.clone() as Arc<dyn SiwcAuthPort>,
+        Some(persistence_slot),
+        endpoints,
+        5,
+    );
+    let selection = ModelSelection {
+        connection: ConnectionIdentity {
+            id: "siwc-retry".into(),
+            adapter: ProviderRegistration::new(SIWC_PROVIDER_ID.into(), 1),
+            revision: 1,
+        },
+        model: "gpt-5-chatgpt".into(),
+        reasoning_effort: None,
+    };
+    let origin = Some(ConnectionRevision {
+        id: Default::default(),
+        revision: Default::default(),
+    });
+    let material = |credentials: &SiwcCredentials| ConnectionMaterial {
+        origin,
+        settings: ConnectionSettings {
+            provider: SIWC_PROVIDER_ID.into(),
+            endpoint: Some(format!("{base}/v1")),
+            model: "gpt-5-chatgpt".into(),
+            requires_secret: true,
+            allow_loopback_http: false,
+            reasoning_effort: None,
+        },
+        secret: Some(Secret::new(credentials.to_secret_json().unwrap()).unwrap()),
+    };
+
+    let first_attempt = adapter
+        .create_connection_model(&selection, material(&stale), CancellationToken::new())
+        .await;
+    let first_error = first_attempt
+        .err()
+        .expect("the first persistence error must fail model creation");
+    assert!(first_error
+        .to_string()
+        .contains("fixture persistence failure"));
+    assert_eq!(models_requests.load(Ordering::SeqCst), 0);
+    assert_eq!(responses_requests.load(Ordering::SeqCst), 0);
+    assert_eq!(auth.refreshes.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        persistence.stored.lock().await.as_ref(),
+        write_before_error.then_some(&rotated).or(Some(&stale))
+    );
+
+    adapter
+        .create_connection_model(&selection, material(&stale), CancellationToken::new())
+        .await
+        .expect("retry should persist the pending rotation before discovery");
+
+    assert_eq!(auth.refreshes.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        auth.input_refresh_tokens.lock().unwrap().as_slice(),
+        ["refresh-r0"]
+    );
+    assert_eq!(
+        persistence.writes.load(Ordering::SeqCst),
+        if write_before_error { 1 } else { 2 }
+    );
+    assert_eq!(persistence.stored.lock().await.as_ref(), Some(&rotated));
+    assert_eq!(models_requests.load(Ordering::SeqCst), 1);
+    assert_eq!(responses_requests.load(Ordering::SeqCst), 0);
+    task.abort();
+}
+
+#[tokio::test]
+async fn siwc_rotation_is_retained_and_retried_after_persistence_errors() {
+    verify_siwc_rotation_retry(false).await;
+    verify_siwc_rotation_retry(true).await;
+}
+
 #[tokio::test]
 async fn siwc_full_vertical_slice_oauth_id_token_refresh_persistence_responses_and_revocation() {
     use axum::routing::get;
