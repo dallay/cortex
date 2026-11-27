@@ -1327,6 +1327,7 @@ async fn effect_unknown_is_not_replayed(under_test: &UnderTest) -> std::result::
         content: String::new(),
         tool_calls: vec![write_call("pending")],
         tool_call_id: None,
+        images: vec![],
     });
     host.sessions.save(&session).await.unwrap();
     let mut resumed = host.sessions.load(&session.id).await.unwrap();
@@ -1579,6 +1580,7 @@ async fn compaction_keeps_turn_boundary(
         content: String::new(),
         tool_calls: vec![write_call("t1")],
         tool_call_id: None,
+        images: vec![],
     });
     session
         .messages
@@ -1593,6 +1595,7 @@ async fn compaction_keeps_turn_boundary(
         content: String::new(),
         tool_calls: vec![write_call("t2")],
         tool_call_id: None,
+        images: vec![],
     });
 
     implementation
@@ -2257,6 +2260,7 @@ async fn completed_results_survive_a_resume(
         content: String::new(),
         tool_calls: vec![write_call("answered")],
         tool_call_id: None,
+        images: vec![],
     });
     session
         .messages
@@ -2266,6 +2270,7 @@ async fn completed_results_survive_a_resume(
         content: String::new(),
         tool_calls: vec![write_call("pending")],
         tool_call_id: None,
+        images: vec![],
     });
     host.sessions.save(&session).await.unwrap();
     let mut resumed = host.sessions.load(&session.id).await.unwrap();

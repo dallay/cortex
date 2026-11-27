@@ -21,6 +21,15 @@ keyboard, or rendering capabilities to adapters.
   verified OpenAI API reasoning models (`o1`, `o3*`, `o4-mini*`, `gpt-5*` on
   `https://api.openai.com/v1`) for the **next turn**; unsupported or unverified
   models are rejected explicitly without advertising unavailable options.
+- Image paste in the composer: press `Ctrl+V` to attach an image from the OS
+  clipboard (macOS/Linux) or paste/drag a local PNG, JPEG, or WebP file path.
+  Attached images appear as preview chips above the composer (`Alt+Backspace` or
+  `Backspace` on an empty draft removes the last attachment). Limits: 5 MiB per
+  image, 4 images per message, and 16 MiB total in-memory per active session.
+  Images are supported on verified OpenAI API vision models (`gpt-4o*`,
+  `gpt-4.1*`, `gpt-5*`, `o3*` excluding `o3-mini`, `o4-mini*`), are kept in
+  memory for follow-up turns in the active session only, and are never persisted
+  as binary blobs in `sessions.db`.
 - `/logout`: confirm local revocation and credential cleanup.
 
 In settings forms, Tab or the vertical arrows move between fields; the horizontal

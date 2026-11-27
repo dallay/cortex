@@ -142,6 +142,47 @@ pub fn supports_openai_reasoning_effort(
         && is_verified_openai_reasoning_model(model)
 }
 
+/// Conservative allowlist of OpenAI API models verified for Chat Completions image input.
+pub fn is_verified_openai_vision_model(model: &str) -> bool {
+    let normalized = model.trim().to_ascii_lowercase();
+    if normalized == "gpt-4o"
+        || (normalized.starts_with("gpt-4o-")
+            && !normalized.starts_with("gpt-4o-audio")
+            && !normalized.starts_with("gpt-4o-realtime")
+            && !normalized.starts_with("gpt-4o-transcribe")
+            && !normalized.starts_with("gpt-4o-mini-audio")
+            && !normalized.starts_with("gpt-4o-mini-realtime")
+            && !normalized.starts_with("gpt-4o-mini-transcribe")
+            && !normalized.starts_with("gpt-4o-mini-tts"))
+    {
+        return true;
+    }
+    if normalized == "gpt-4.1" || normalized.starts_with("gpt-4.1-") {
+        return true;
+    }
+    if normalized == "gpt-5" || normalized.starts_with("gpt-5-") {
+        return true;
+    }
+    if (normalized == "o3" || normalized.starts_with("o3-"))
+        && normalized != "o3-mini"
+        && !normalized.starts_with("o3-mini-")
+    {
+        return true;
+    }
+    if normalized == "o4-mini" || normalized.starts_with("o4-mini-") {
+        return true;
+    }
+    false
+}
+
+/// Whether the given provider, endpoint, and model support verified OpenAI Chat Completions
+/// image input.
+pub fn supports_openai_vision(provider: &str, endpoint: Option<&str>, model: &str) -> bool {
+    provider == "openai"
+        && endpoint.is_some_and(is_official_openai_api_endpoint)
+        && is_verified_openai_vision_model(model)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModelSelection {
     pub connection: ConnectionIdentity,

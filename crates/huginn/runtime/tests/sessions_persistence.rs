@@ -213,6 +213,7 @@ async fn reopened_store_loads_the_latest_confirmed_session_snapshot() {
         content: "confirmed prompt".into(),
         tool_call_id: None,
         tool_calls: vec![],
+        images: vec![],
     });
     first_store
         .save(&session)

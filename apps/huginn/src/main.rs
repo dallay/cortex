@@ -746,24 +746,28 @@ async fn tui_chat(
         ui.synchronize(session);
         ui.finish_operation(startup_operation);
         let implementation = supervisor.resolve::<LoopService>(&composition::loop_id())?;
-        while let Some(prompt) = ui.prompt().await {
+        while let Some((prompt, images)) = ui.prompt_submission().await {
             if !current_model_ready(&model_readiness) {
                 ui.notification("No model configured. Use /login, then /model. No restart needed.".into());
                 ui.synchronize(session);
                 continue;
             }
-            let prompt = match prompts::expand(session, prompt) {
-                Ok(prompt) => prompt,
-                Err(error) => {
-                    ui.notification(error.to_string());
-                    ui.synchronize(session);
-                    continue;
+            let prompt = if prompt.is_empty() {
+                prompt
+            } else {
+                match prompts::expand(session, prompt) {
+                    Ok(prompt) => prompt,
+                    Err(error) => {
+                        ui.notification(error.to_string());
+                        ui.synchronize(session);
+                        continue;
+                    }
                 }
             };
             let cancel = CancellationToken::new();
             let operation = ui.begin(cancel.clone());
             let scoped_events = huginn_core::ScopedEventSink { sink: ui.as_ref(), operation };
-            let result = if matches!(prompt.as_str(), "/compact" | "/summarize") {
+            let result = if images.is_empty() && matches!(prompt.as_str(), "/compact" | "/summarize") {
                 let request = huginn_core::ApprovalRequest {
                     id: uuid::Uuid::new_v4().to_string(),
                     action: "session.compact".into(),
@@ -785,12 +789,25 @@ async fn tui_chat(
                     }
                     Err(error) => Err(error),
                 }
-            } else {
+            } else if images.is_empty() {
                 interruptible(
                     cancel.clone(),
                     implementation
                         .0
                         .run(session, prompt, policy.as_ref(), &scoped_events, cancel),
+                )
+                    .await
+            } else {
+                interruptible(
+                    cancel.clone(),
+                    implementation.0.run_with_images(
+                        session,
+                        prompt,
+                        images,
+                        policy.as_ref(),
+                        &scoped_events,
+                        cancel,
+                    ),
                 )
                     .await
             };

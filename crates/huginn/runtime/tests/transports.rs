@@ -176,6 +176,68 @@ async fn openai_provider_serializes_reasoning_effort_only_when_configured() {
     assert!(bodies[1].get("reasoning_effort").is_none());
     task.abort();
 }
+
+#[tokio::test]
+async fn openai_provider_serializes_image_attachments_as_multimodal_content() {
+    let seen = Arc::new(Mutex::new(None::<serde_json::Value>));
+    let capture = seen.clone();
+    let (url, task) = server(Router::new().route(
+        "/v1/chat/completions",
+        post(move |Json(body): Json<serde_json::Value>| {
+            let capture = capture.clone();
+            async move {
+                *capture.lock().unwrap() = Some(body);
+                let data = format!(
+                    "data: {}\n\ndata: [DONE]\n\n",
+                    json!({"choices":[{"delta":{"content":"looks good"},"finish_reason":"stop"}]})
+                );
+                ([("content-type", "text/event-stream")], data)
+            }
+        }),
+    ))
+    .await;
+
+    let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    png.extend_from_slice(&13u32.to_be_bytes());
+    png.extend_from_slice(b"IHDR");
+    png.extend_from_slice(&4u32.to_be_bytes());
+    png.extend_from_slice(&4u32.to_be_bytes());
+    png.extend_from_slice(&[8, 2, 0, 0, 0]);
+    let attachment =
+        huginn_core::ImageAttachment::from_bytes(png, Some("shot.png".into())).unwrap();
+
+    let provider = OpenAiProvider::with_transport(
+        &url,
+        "gpt-4o".into(),
+        Some("fixture-secret".into()),
+        2,
+        true,
+    )
+    .unwrap();
+    let mut req = request();
+    req.messages = vec![huginn_core::Message::user_with_images(
+        "what is in this image?",
+        vec![attachment],
+    )];
+    let _deltas: Vec<_> = provider
+        .stream(req, CancellationToken::new())
+        .await
+        .unwrap()
+        .collect()
+        .await;
+
+    let body = seen.lock().unwrap().clone().unwrap();
+    let content = body["messages"][0]["content"].as_array().unwrap();
+    assert_eq!(content.len(), 2);
+    assert_eq!(content[0]["type"], "text");
+    assert_eq!(content[0]["text"], "what is in this image?");
+    assert_eq!(content[1]["type"], "image_url");
+    assert!(content[1]["image_url"]["url"]
+        .as_str()
+        .unwrap()
+        .starts_with("data:image/png;base64,"));
+    task.abort();
+}
 #[tokio::test]
 async fn http_errors_timeout_and_cancellation_do_not_leak_credentials() {
     let (url, task) = server(Router::new().route(

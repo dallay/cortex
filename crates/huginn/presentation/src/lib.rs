@@ -1,5 +1,6 @@
 //! Replaceable presentation capability. Terminal APIs stay inside this crate.
 pub mod approval;
+pub mod clipboard;
 pub mod completion;
 pub mod contributions;
 pub mod files;
@@ -37,6 +38,9 @@ pub fn presentation_id() -> ServiceId {
 #[async_trait]
 pub trait Interaction: ApprovalPrompt + EventSink {
     async fn prompt(&self) -> Option<String>;
+    async fn prompt_submission(&self) -> Option<(String, Vec<huginn_core::ImageAttachment>)> {
+        self.prompt().await.map(|text| (text, Vec::new()))
+    }
     fn begin(&self, cancel: CancellationToken) -> crate::event::OperationId;
     fn finish_operation(&self, operation: crate::event::OperationId);
     fn synchronize(&self, session: &Session);

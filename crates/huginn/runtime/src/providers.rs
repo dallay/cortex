@@ -360,13 +360,23 @@ impl ProviderAdapter for InferenceAdapter {
             material.settings.allow_loopback_http,
         )?
         .with_reasoning_effort(reasoning_effort);
-        Ok(Arc::new(CapabilityModel { inner, tools }))
+        let vision = huginn_core::providers::supports_openai_vision(
+            &material.settings.provider,
+            material.settings.endpoint.as_deref(),
+            &selection.model,
+        );
+        Ok(Arc::new(CapabilityModel {
+            inner,
+            tools,
+            vision,
+        }))
     }
 }
 
 struct CapabilityModel {
     inner: crate::model::OpenAiProvider,
     tools: ToolSupport,
+    vision: bool,
 }
 #[async_trait]
 impl ModelProvider for CapabilityModel {
@@ -381,6 +391,11 @@ impl ModelProvider for CapabilityModel {
         if !request.tools.is_empty() && self.tools == ToolSupport::Unsupported {
             return Err(AgentError::Model(
                 "selected Ollama model does not support tools; no fallback".into(),
+            ));
+        }
+        if request.messages.iter().any(|m| !m.images.is_empty()) && !self.vision {
+            return Err(AgentError::Model(
+                "selected model does not support image attachments; remove the image or switch to a compatible OpenAI vision model".into(),
             ));
         }
         self.inner.stream(request, cancel).await

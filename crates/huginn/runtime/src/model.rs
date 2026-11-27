@@ -189,7 +189,26 @@ fn status_failure(status: reqwest::StatusCode) -> AgentError {
 }
 
 fn wire_message(message: &Message) -> Value {
-    let mut result = json!({"role": message.role, "content": message.content});
+    use base64::Engine as _;
+    let content = if message.images.is_empty() {
+        json!(message.content)
+    } else {
+        let mut parts = Vec::with_capacity(message.images.len() + 1);
+        if !message.content.is_empty() {
+            parts.push(json!({"type": "text", "text": message.content}));
+        }
+        for image in &message.images {
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&image.bytes);
+            parts.push(json!({
+                "type": "image_url",
+                "image_url": {
+                    "url": format!("data:{};base64,{encoded}", image.format.mime_type())
+                }
+            }));
+        }
+        Value::Array(parts)
+    };
+    let mut result = json!({"role": message.role, "content": content});
     if !message.tool_calls.is_empty() {
         result["tool_calls"] = Value::Array(message.tool_calls.iter().map(|call| json!({
             "id":call.id,"type":"function","function":{"name":call.name,"arguments":call.arguments.to_string()}

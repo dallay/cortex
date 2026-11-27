@@ -211,6 +211,8 @@ pub struct UiState {
     pub editor: Editor,
     pub completion: Completion,
     pending_pastes: Vec<PendingPaste>,
+    pub attachments: Vec<huginn_core::ImageAttachment>,
+    session_image_bytes: usize,
     pub files: Vec<String>,
     pub files_ready: bool,
     completion_editor: Option<(String, usize, bool)>,
@@ -390,6 +392,68 @@ impl UiState {
     pub(crate) fn clear_editor(&mut self) {
         self.editor = Editor::default();
         self.pending_pastes.clear();
+    }
+
+    pub fn attach_image(
+        &mut self,
+        attachment: huginn_core::ImageAttachment,
+    ) -> std::result::Result<(), String> {
+        if self.attachments.len() >= huginn_core::MAX_IMAGES_PER_MESSAGE {
+            let msg = format!(
+                "At most {} images can be attached to one message.",
+                huginn_core::MAX_IMAGES_PER_MESSAGE
+            );
+            self.status.set_diagnostic(msg.clone());
+            return Err(msg);
+        }
+        let draft_bytes: usize = self.attachments.iter().map(|img| img.bytes.len()).sum();
+        if self
+            .session_image_bytes
+            .saturating_add(draft_bytes)
+            .saturating_add(attachment.bytes.len())
+            > huginn_core::MAX_SESSION_IMAGE_BYTES
+        {
+            let msg = format!(
+                "Attached images exceed the {} MiB per-session memory limit.",
+                huginn_core::MAX_SESSION_IMAGE_BYTES / (1024 * 1024)
+            );
+            self.status.set_diagnostic(msg.clone());
+            return Err(msg);
+        }
+        let chip = attachment.chip_label(self.attachments.len() + 1);
+        self.attachments.push(attachment);
+        self.status
+            .set_notice(format!("Attached {chip} (Alt+Backspace to remove)"));
+        Ok(())
+    }
+
+    pub fn remove_last_attachment(&mut self) -> bool {
+        if let Some(removed) = self.attachments.pop() {
+            let chip = removed.chip_label(self.attachments.len() + 1);
+            self.status.set_notice(format!("Removed {chip}"));
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn remove_attachment(&mut self, index: usize) -> bool {
+        if index < self.attachments.len() {
+            let removed = self.attachments.remove(index);
+            let chip = removed.chip_label(index + 1);
+            self.status.set_notice(format!("Removed {chip}"));
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn attachment_chips(&self) -> Vec<String> {
+        self.attachments
+            .iter()
+            .enumerate()
+            .map(|(i, img)| img.chip_label(i + 1))
+            .collect()
     }
 
     pub(crate) fn backspace_editor(&mut self) {
@@ -848,6 +912,7 @@ pub struct Ui {
     pub save_ui_config: SaveUiConfig,
     requests: tokio::sync::Mutex<()>,
     prompts: tokio::sync::Mutex<mpsc::Receiver<String>>,
+    submitted_images: Mutex<std::collections::VecDeque<Vec<huginn_core::ImageAttachment>>>,
     prompt_templates: Mutex<Vec<(String, String)>>,
 }
 impl Ui {
@@ -901,6 +966,7 @@ impl Ui {
             save_ui_config,
             requests: tokio::sync::Mutex::new(()),
             prompts: tokio::sync::Mutex::new(receiver),
+            submitted_images: Mutex::new(std::collections::VecDeque::new()),
             prompt_templates: Mutex::new(Vec::new()),
         });
         (ui, sender)
@@ -909,6 +975,18 @@ impl Ui {
         self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+    pub(crate) fn enqueue_submitted_images(&self, images: Vec<huginn_core::ImageAttachment>) {
+        self.submitted_images
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push_back(images);
+    }
+    pub(crate) fn take_last_enqueued_images(&self) -> Option<Vec<huginn_core::ImageAttachment>> {
+        self.submitted_images
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pop_back()
     }
     /// Returns true only when a contributed command consumed the input.
     /// No callback runs under a state/registry lock.
@@ -1922,14 +2000,37 @@ impl Interaction for Ui {
         Self::set_prompt_templates(self, templates);
     }
     async fn prompt(&self) -> Option<String> {
+        self.prompt_submission().await.map(|(text, _)| text)
+    }
+    async fn prompt_submission(&self) -> Option<(String, Vec<huginn_core::ImageAttachment>)> {
         let mut prompts = self.prompts.lock().await;
         let prompt = tokio::select! { biased; _ = self.stop.cancelled() => None, prompt = prompts.recv() => prompt };
         drop(prompts);
-        if let Some(text) = prompt.as_ref() {
-            // Show the turn before the model answers; the wait is not feedback.
-            self.lock().echo_user_turn(text);
-        }
-        prompt
+        let text = prompt?;
+        let images = self
+            .submitted_images
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pop_front()
+            .unwrap_or_default();
+        // Show the turn before the model answers; the wait is not feedback.
+        let echoed = if images.is_empty() {
+            text.clone()
+        } else {
+            let chips = images
+                .iter()
+                .enumerate()
+                .map(|(i, img)| img.chip_label(i + 1))
+                .collect::<Vec<_>>()
+                .join(" ");
+            if text.is_empty() {
+                chips
+            } else {
+                format!("{chips}\n{text}")
+            }
+        };
+        self.lock().echo_user_turn(&echoed);
+        Some((text, images))
     }
     fn begin(&self, cancel: CancellationToken) -> crate::event::OperationId {
         // Same order as emit's commit: operation registry, then UiState.
