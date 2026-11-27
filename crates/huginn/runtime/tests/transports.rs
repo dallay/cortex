@@ -238,6 +238,242 @@ async fn openai_provider_serializes_image_attachments_as_multimodal_content() {
         .starts_with("data:image/png;base64,"));
     task.abort();
 }
+
+#[tokio::test]
+async fn siwc_vertical_slice_covers_pkce_models_responses_refresh_and_oidc_revoke() {
+    use axum::routing::get;
+    use huginn_core::{
+        connections::{ConnectionMaterial, ConnectionSettings, Secret},
+        providers::{
+            ConnectionIdentity, ModelCatalog, ModelSelection, ProviderAdapter, ProviderRegistration,
+        },
+        siwc::{
+            SiwcAuthPort, SiwcRevocationOutcome, SIWC_INITIAL_CLIENT_ID, SIWC_PROVIDER_ID,
+            SIWC_REQUESTED_SCOPES,
+        },
+    };
+    use huginn_runtime::siwc::{SiwcAdapter, SiwcEndpoints, SiwcOAuthClient};
+
+    let revoked_tokens = Arc::new(Mutex::new(Vec::<String>::new()));
+    let revoked_capture = revoked_tokens.clone();
+    let seen_responses_body = Arc::new(Mutex::new(None::<serde_json::Value>));
+    let body_capture = seen_responses_body.clone();
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let revoke_url = format!("{base}/api/accounts/oauth/revoke");
+    let revoke_url_for_oidc = revoke_url.clone();
+
+    let router = Router::new()
+        .route(
+            "/.well-known/openid-configuration",
+            get(move || {
+                let url = revoke_url_for_oidc.clone();
+                async move { Json(json!({ "revocation_endpoint": url })) }
+            }),
+        )
+        .route(
+            "/api/accounts/oauth/token",
+            post(|body: String| async move {
+                if body.contains("grant_type=refresh_token") {
+                    Json(json!({
+                        "access_token": "siwc-access-rotated",
+                        "refresh_token": "siwc-refresh-rotated",
+                        "client_id": "issued-client-123",
+                        "expires_in": 3600,
+                        "scope": SIWC_REQUESTED_SCOPES,
+                    }))
+                } else {
+                    Json(json!({
+                        "access_token": "siwc-access-initial",
+                        "refresh_token": "siwc-refresh-initial",
+                        "client_id": "issued-client-123",
+                        "expires_in": 3600,
+                        "scope": SIWC_REQUESTED_SCOPES,
+                    }))
+                }
+            }),
+        )
+        .route(
+            "/api/accounts/oauth/revoke",
+            post(move |body: String| {
+                let revoked_capture = revoked_capture.clone();
+                async move {
+                    revoked_capture.lock().unwrap().push(body);
+                    StatusCode::OK
+                }
+            }),
+        )
+        .route(
+            "/v1/models",
+            get(|| async {
+                Json(json!({
+                    "models": [
+                        { "slug": "gpt-5", "visibility": "list" },
+                        { "slug": "internal-hidden", "visibility": "hide" }
+                    ]
+                }))
+            }),
+        )
+        .route(
+            "/v1/responses",
+            post(move |headers: axum::http::HeaderMap, Json(body): Json<serde_json::Value>| {
+                let body_capture = body_capture.clone();
+                async move {
+                    assert_eq!(headers["authorization"], "Bearer siwc-access-rotated");
+                    *body_capture.lock().unwrap() = Some(body);
+                    let events = [
+                        json!({"type": "response.output_text.delta", "delta": "Hello "}),
+                        json!({"type": "response.output_text.delta", "delta": "SIWC"}),
+                        json!({"type": "response.completed", "response": {"usage": {"input_tokens": 12, "output_tokens": 4}}}),
+                    ];
+                    let data = events
+                        .iter()
+                        .map(|e| format!("data: {e}\n\n"))
+                        .collect::<String>();
+                    ([("content-type", "text/event-stream")], data)
+                }
+            }),
+        );
+    let server_task = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+
+    let endpoints = SiwcEndpoints {
+        authorize_url: format!("{base}/api/accounts/authorize"),
+        token_url: format!("{base}/api/accounts/oauth/token"),
+        oidc_discovery_url: format!("{base}/.well-known/openid-configuration"),
+        api_base_url: format!("{base}/v1"),
+        allow_loopback_http: true,
+        open_browser: false,
+    };
+    let oauth = Arc::new(SiwcOAuthClient::with_endpoints(endpoints.clone(), 5));
+
+    // 1. PKCE + authorize URL + code exchange.
+    let (verifier, challenge) = SiwcOAuthClient::generate_pkce();
+    let auth_url = oauth
+        .build_authorize_url(
+            "http://127.0.0.1:4321/callback",
+            "state-xyz",
+            &challenge,
+            "host-abc",
+            SIWC_INITIAL_CLIENT_ID,
+        )
+        .unwrap();
+    assert!(auth_url.contains("client_id=dynamic_agent_client"));
+    assert!(auth_url.contains("code_challenge_method=S256"));
+    let creds = oauth
+        .exchange_code(
+            "code-123",
+            "http://127.0.0.1:4321/callback",
+            &verifier,
+            "host-abc",
+            SIWC_INITIAL_CLIENT_ID,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(creds.client_id, "issued-client-123");
+
+    // 2. Refresh rotation.
+    let refreshed = oauth
+        .refresh(&creds, CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(refreshed.access_token, "siwc-access-rotated");
+    assert_eq!(refreshed.refresh_token, "siwc-refresh-rotated");
+
+    // 3. Discovery filters visibility == "list" and passes slug.
+    let adapter = SiwcAdapter::with_endpoints(oauth.clone(), endpoints, 5);
+    let material = ConnectionMaterial {
+        settings: ConnectionSettings {
+            provider: SIWC_PROVIDER_ID.into(),
+            endpoint: Some(format!("{base}/v1")),
+            model: "gpt-5".into(),
+            requires_secret: true,
+            allow_loopback_http: true,
+            reasoning_effort: None,
+        },
+        secret: Some(Secret::new(refreshed.to_secret_json().unwrap()).unwrap()),
+    };
+    let catalog = adapter
+        .discover_models(&material, CancellationToken::new())
+        .await
+        .unwrap();
+    match catalog {
+        ModelCatalog::Available(models) => {
+            assert_eq!(models.len(), 1);
+            assert_eq!(models[0].id, "gpt-5");
+        }
+        other => panic!("expected available SIWC catalog, got {other:?}"),
+    }
+
+    // 4. Responses API streaming (store: false, stream: true) and text-only enforcement.
+    let selection = ModelSelection {
+        connection: ConnectionIdentity {
+            id: "siwc-conn".into(),
+            adapter: ProviderRegistration::new(SIWC_PROVIDER_ID.into(), 1),
+            revision: 1,
+        },
+        model: "gpt-5".into(),
+        reasoning_effort: None,
+    };
+    let model = adapter
+        .create_connection_model(&selection, material, CancellationToken::new())
+        .await
+        .unwrap();
+
+    // Reject tools cleanly in first text-only slice.
+    let mut tool_req = request();
+    tool_req.tools.push(huginn_core::ToolDefinition {
+        name: "list_files".into(),
+        description: "list".into(),
+        input_schema: json!({}),
+    });
+    assert!(model
+        .stream(tool_req, CancellationToken::new())
+        .await
+        .is_err());
+
+    let mut text_req = request();
+    text_req.messages = vec![huginn_core::Message::text(huginn_core::Role::User, "hello")];
+    let deltas: Vec<_> = model
+        .stream(text_req, CancellationToken::new())
+        .await
+        .unwrap()
+        .collect()
+        .await;
+    let combined: String = deltas
+        .iter()
+        .filter_map(|d| match d {
+            Ok(ModelDelta::Text(t)) => Some(t.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(combined, "Hello SIWC");
+    assert!(deltas.iter().any(|d| matches!(
+        d,
+        Ok(ModelDelta::Usage {
+            input_tokens: Some(12),
+            output_tokens: Some(4),
+            ..
+        })
+    )));
+    let sent_body = seen_responses_body.lock().unwrap().clone().unwrap();
+    assert_eq!(sent_body["store"], false);
+    assert_eq!(sent_body["stream"], true);
+    assert_eq!(sent_body["model"], "gpt-5");
+
+    // 5. OIDC-discovered remote revocation.
+    let outcome = oauth
+        .revoke_remote(&refreshed, CancellationToken::new())
+        .await;
+    assert_eq!(outcome, SiwcRevocationOutcome::RemoteConfirmed);
+    assert_eq!(revoked_tokens.lock().unwrap().len(), 1);
+    assert!(revoked_tokens.lock().unwrap()[0].contains("siwc-refresh-rotated"));
+
+    server_task.abort();
+}
 #[tokio::test]
 async fn http_errors_timeout_and_cancellation_do_not_leak_credentials() {
     let (url, task) = server(Router::new().route(

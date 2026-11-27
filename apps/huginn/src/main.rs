@@ -313,6 +313,13 @@ async fn enable_connection_management(
     supervisor.register(Box::new(huginn_runtime::providers::CustomProviderPlugin {
         timeout_secs: config.timeout_secs,
     }))?;
+    let siwc_auth = Arc::new(huginn_runtime::siwc::SiwcOAuthClient::new(
+        config.timeout_secs,
+    ));
+    supervisor.register(Box::new(huginn_runtime::siwc::SiwcProviderPlugin {
+        auth: siwc_auth.clone(),
+        timeout_secs: config.timeout_secs,
+    }))?;
     supervisor.start().await?;
     let providers = supervisor.resolve::<ProvidersService>(&providers_id())?;
     let catalog = supervisor.resolve::<ProviderCatalogService>(&catalog_id())?;
@@ -333,7 +340,9 @@ async fn enable_connection_management(
         Err(error) => return Err(error.into()),
     };
     let manager = Arc::new(
-        ConnectionManager::open(store, access, providers.0.clone(), catalog.0.clone()).await?,
+        ConnectionManager::open(store, access, providers.0.clone(), catalog.0.clone())
+            .await?
+            .with_siwc_auth(siwc_auth),
     );
     // Explicit configuration still wins at startup; UI choices are deliberate
     // runtime changes. Never combine stored credentials with legacy settings.

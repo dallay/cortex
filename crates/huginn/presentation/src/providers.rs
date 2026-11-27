@@ -345,6 +345,46 @@ impl Management {
         registration: ProviderRegistration,
         descriptor: ProviderDescriptor,
     ) -> Result<CommandResult> {
+        if descriptor.id == huginn_core::siwc::SIWC_PROVIDER_ID {
+            let owner = self.clone();
+            return Ok(CommandResult::Workflow(
+                Workflow::new(
+                    "Sign in with ChatGPT (SIWC OAuth) — Consent",
+                    "Opens your browser for OpenAI Sign in with ChatGPT (PKCE loopback on 127.0.0.1). Uses your ChatGPT plan over the Responses API (text-only, store: false, separate from OpenAI Platform API billing). Requires OS secure storage (Keychain / Secret Service). Single account only.",
+                    vec![choice(
+                        "confirm",
+                        "Action",
+                        vec![
+                            "Continue in browser (Sign in with ChatGPT)".into(),
+                            "Back to provider catalog".into(),
+                        ],
+                    )],
+                    Arc::new(move |input, cancel| {
+                        let owner = owner.clone();
+                        Box::pin(async move {
+                            if index(&input, "confirm") != 0 {
+                                return owner.login().map(|result| match result {
+                                    CommandResult::Workflow(workflow) => {
+                                        CommandResult::Workflow(workflow.without_history())
+                                    }
+                                    other => other,
+                                });
+                            }
+                            match owner.connections.sign_in_siwc(cancel).await {
+                                Ok(_) => owner.configured_result(),
+                                Err(ConnectionError::Cancelled) => {
+                                    Err(huginn_core::AgentError::Cancelled)
+                                }
+                                Err(error) => Ok(form_error(format!(
+                                    "Sign in with ChatGPT failed: {error}. Existing API-key and Ollama connections are unchanged."
+                                ))),
+                            }
+                        })
+                    }),
+                )?
+                .with_overlay_kind(OverlayKind::Login)?,
+            ));
+        }
         let authentication = self
             .catalog
             .onboarding(&registration)?
@@ -789,8 +829,8 @@ impl Management {
                                                          let Some(record) = record else { return Ok(failure(ConnectionError::InvalidSelection)); };
                                                          if command == "/logout" {
                                                              if index(&input, "confirm") != 1 { return Ok(notice("Connection kept.")); }
-                                                             return Ok(match management.connections.revoke(record.id).await {
-                                                                 Ok(()) => notice("Connection revoked locally. Next inference is blocked, including in a pinned turn. Remote completion remains unknown."),
+                                                             return Ok(match management.connections.revoke_with_report(record.id, cancel).await {
+                                                                 Ok(report) => notice(report),
                                                                  Err(error) => failure(error),
                                                              });
                                                          }
@@ -819,8 +859,8 @@ impl Management {
                 let id = record.id;
                 Box::pin(async move {
                     if index(&input, "confirm") != 1 { return Ok(notice("Connection kept.")); }
-                    Ok(match management.connections.revoke(id).await {
-                        Ok(()) => notice("Connection revoked locally. Remote completion remains unknown."),
+                    Ok(match management.connections.revoke_with_report(id, huginn_core::CancellationToken::new()).await {
+                        Ok(report) => notice(report),
                         Err(error) => failure(error)
                     })
                 })

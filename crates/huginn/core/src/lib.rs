@@ -705,6 +705,7 @@ pub trait ApprovalPrompt: Send + Sync {
 }
 pub mod hooks;
 pub mod images;
+pub mod siwc;
 pub mod tools;
 pub use images::{
     ImageAttachment, ImageFormat, MAX_IMAGES_PER_MESSAGE, MAX_IMAGE_BYTES, MAX_SESSION_IMAGE_BYTES,
