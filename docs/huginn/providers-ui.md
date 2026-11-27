@@ -17,6 +17,10 @@ keyboard, or rendering capabilities to adapters.
 - `/providers`: inspect connection status, select a model, update configuration or
   credentials, or disconnect.
 - `/model`: choose the connection and model for the **next turn**.
+- `/reasoning`: configure `reasoning_effort` (`off`, `low`, `medium`, `high`) for
+  verified OpenAI API reasoning models (`o1`, `o3*`, `o4-mini*`, `gpt-5*` on
+  `https://api.openai.com/v1`) for the **next turn**; unsupported or unverified
+  models are rejected explicitly without advertising unavailable options.
 - `/logout`: confirm local revocation and credential cleanup.
 
 In settings forms, Tab or the vertical arrows move between fields; the horizontal

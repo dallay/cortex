@@ -111,6 +111,30 @@ impl ConnectionManagement for Manager {
                 revision: 1,
             },
             model,
+            reasoning_effort: None,
+        })
+    }
+    async fn select_reasoning_effort(
+        &self,
+        id: uuid::Uuid,
+        effort: Option<huginn_core::providers::ReasoningEffort>,
+    ) -> ConnectionResult<ModelSelection> {
+        self.status(id).await?;
+        let mut records = self.records.lock().unwrap();
+        let record = records
+            .get_mut(&id)
+            .ok_or(ConnectionError::InvalidSelection)?;
+        record.settings.reasoning_effort = effort;
+        record.settings.validate()?;
+        let model = record.settings.model.clone();
+        Ok(ModelSelection {
+            connection: ConnectionIdentity {
+                id: id.to_string(),
+                adapter: ProviderRegistration::new(record.settings.provider.clone(), 1),
+                revision: 1,
+            },
+            model,
+            reasoning_effort: effort,
         })
     }
     async fn discover_models(
@@ -1002,6 +1026,7 @@ async fn standalone_login_does_not_enter_existing_connection_management() {
                 model: "alpha".into(),
                 requires_secret: false,
                 allow_loopback_http: false,
+                reasoning_effort: None,
             },
             secret: None,
             mode: SecretMode::Ephemeral,
@@ -1422,6 +1447,7 @@ async fn model_command_covers_dynamic_discovery_outcomes_and_manual_entry_bounda
                     model: "m1".into(),
                     requires_secret: true,
                     allow_loopback_http: false,
+                    reasoning_effort: None,
                 },
                 secret: Some(SecretReference::new()),
                 mode: SecretMode::Secure,
@@ -1438,6 +1464,7 @@ async fn model_command_covers_dynamic_discovery_outcomes_and_manual_entry_bounda
                     model: "llama".into(),
                     requires_secret: false,
                     allow_loopback_http: true,
+                    reasoning_effort: None,
                 },
                 secret: None,
                 mode: SecretMode::Secure,
@@ -1454,6 +1481,7 @@ async fn model_command_covers_dynamic_discovery_outcomes_and_manual_entry_bounda
                     model: "x".into(),
                     requires_secret: false,
                     allow_loopback_http: false,
+                    reasoning_effort: None,
                 },
                 secret: None,
                 mode: SecretMode::Secure,
@@ -1613,4 +1641,93 @@ async fn model_command_covers_dynamic_discovery_outcomes_and_manual_entry_bounda
         *manager.selected.lock().unwrap(),
         Some((custom_id, "beta".into()))
     );
+}
+
+#[tokio::test]
+async fn reasoning_command_configures_verified_openai_models_and_rejects_unsupported() {
+    use huginn_core::providers::ReasoningEffort;
+
+    let openai_reg = ProviderRegistration::new("openai".into(), 1);
+    let (_supervisor, ui, manager) = setup_with_catalog(
+        vec![AuthenticationMethod::ApiKey],
+        vec![(
+            openai_reg,
+            ProviderDescriptor {
+                id: "openai".into(),
+                display_name: "OpenAI".into(),
+                models: vec![],
+                authentication: vec![AuthenticationMethod::ApiKey],
+            },
+        )],
+    )
+    .await;
+
+    let openai_id = uuid::Uuid::new_v4();
+    manager.records.lock().unwrap().insert(
+        openai_id,
+        ConnectionRecord {
+            id: openai_id,
+            revision: uuid::Uuid::new_v4(),
+            settings: ConnectionSettings {
+                provider: "openai".into(),
+                endpoint: Some("https://api.openai.com/v1".into()),
+                model: "o3-mini".into(),
+                requires_secret: true,
+                allow_loopback_http: false,
+                reasoning_effort: None,
+            },
+            secret: Some(SecretReference::new()),
+            mode: SecretMode::Secure,
+        },
+    );
+
+    // 1. Verified reasoning model opens /reasoning picker and saves High for next turn.
+    ui.dispatch_command("/reasoning");
+    settle(&ui).await;
+    {
+        let mut state = ui.lock();
+        let form = state.workflow_mut().unwrap();
+        // Choices: Off (0) -> Low (1) -> Medium (2) -> High (3)
+        form.choice(true);
+        form.choice(true);
+        form.choice(true);
+    }
+    submit(&ui).await;
+    assert_eq!(
+        manager.records.lock().unwrap()[&openai_id]
+            .settings
+            .reasoning_effort,
+        Some(ReasoningEffort::High)
+    );
+    assert!(ui
+        .lock()
+        .status
+        .notice
+        .contains("Reasoning effort set to high"));
+
+    // 2. Unsupported model (gpt-4o) rejects without advertising options.
+    manager
+        .records
+        .lock()
+        .unwrap()
+        .get_mut(&openai_id)
+        .unwrap()
+        .settings
+        .model = "gpt-4o".into();
+    manager
+        .records
+        .lock()
+        .unwrap()
+        .get_mut(&openai_id)
+        .unwrap()
+        .settings
+        .reasoning_effort = None;
+    ui.dispatch_command("/reasoning");
+    settle(&ui).await;
+    assert!(ui.lock().workflow().is_none());
+    assert!(ui
+        .lock()
+        .status
+        .notice
+        .contains("Reasoning effort is not supported or verified"));
 }

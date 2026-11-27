@@ -179,6 +179,7 @@ async fn seed(root: &std::path::Path, endpoint: String) {
                 model: "test-candidate".into(),
                 requires_secret: false,
                 allow_loopback_http: true,
+                reasoning_effort: None,
             },
             mode: SecretMode::Secure,
             secret: None,

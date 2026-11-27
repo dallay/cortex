@@ -42,6 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             model: model.clone(),
             requires_secret: false,
             allow_loopback_http: true,
+            reasoning_effort: None,
         },
         secret: None,
     };
@@ -52,6 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             revision: 1,
         },
         model,
+        reasoning_effort: None,
     };
     let model = adapter
         .create_connection_model(&selection, material, CancellationToken::new())

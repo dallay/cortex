@@ -8,7 +8,7 @@ use huginn_core::{
         ModelSelection, ProviderAction, ProviderActionOutput, ProviderAdapter, ProviderCatalog,
         ProviderCatalogService, ProviderDescriptor, ProviderError, ProviderManagement,
         ProviderOnboarding, ProviderRegistration, ProvidersDiagnostic, ProvidersService,
-        SelectionMode, SelectionSnapshot,
+        ReasoningEffort, SelectionMode, SelectionSnapshot,
     },
     AgentError, CancellationToken, ModelDelta, ModelProvider, ModelRequest, ModelService, Result,
 };
@@ -50,7 +50,7 @@ impl Connection {
 struct State {
     adapters: BTreeMap<String, Arc<AdapterEntry>>,
     connections: BTreeMap<String, Arc<Connection>>,
-    selected: Option<(Arc<Connection>, String)>,
+    selected: Option<(Arc<Connection>, String, Option<ReasoningEffort>)>,
     candidate: Option<ModelSelection>,
     observed: tokio::sync::watch::Sender<ConnectionSnapshot>,
     revision: u64,
@@ -103,7 +103,7 @@ impl State {
         if self
             .selected
             .as_ref()
-            .is_some_and(|(entry, _)| Arc::ptr_eq(entry, connection))
+            .is_some_and(|(entry, _, _)| Arc::ptr_eq(entry, connection))
             || self
                 .candidate
                 .as_ref()
@@ -122,7 +122,7 @@ impl State {
         if self
             .selected
             .as_ref()
-            .is_some_and(|(entry, _)| Arc::ptr_eq(&entry.adapter, adapter))
+            .is_some_and(|(entry, _, _)| Arc::ptr_eq(&entry.adapter, adapter))
             || self
                 .candidate
                 .as_ref()
@@ -275,7 +275,8 @@ impl Providers {
     fn snapshot(&self) -> Result<(Arc<Connection>, ModelSelection)> {
         self.check()?;
         let state = self.lock()?;
-        let (connection, model) = state.selected.clone().ok_or(ProviderError::Unconfigured)?;
+        let (connection, model, reasoning_effort) =
+            state.selected.clone().ok_or(ProviderError::Unconfigured)?;
         drop(state);
         if !connection.active() {
             return Err(ProviderError::Revoked.into());
@@ -285,6 +286,7 @@ impl Providers {
             ModelSelection {
                 connection: connection.identity.clone(),
                 model,
+                reasoning_effort,
             },
         ))
     }
@@ -446,7 +448,11 @@ impl ProviderManagement for Providers {
         if !connection.active() {
             return Err(ProviderError::Revoked.into());
         }
-        state.selected = Some((connection, selection.model.clone()));
+        state.selected = Some((
+            connection,
+            selection.model.clone(),
+            selection.reasoning_effort,
+        ));
         state.candidate = None;
         let available = state.observe(
             ConnectionPhase::Selected,
@@ -455,6 +461,7 @@ impl ProviderManagement for Providers {
                 connection: selection.connection.id.clone(),
                 model: selection.model.clone(),
                 mode,
+                reasoning_effort: selection.reasoning_effort,
             }),
         );
         drop(state);
@@ -499,14 +506,15 @@ impl ProviderManagement for Providers {
             selection: state
                 .selected
                 .as_ref()
-                .map(|(entry, model)| ModelSelection {
+                .map(|(entry, model, reasoning_effort)| ModelSelection {
                     connection: entry.identity.clone(),
                     model: model.clone(),
+                    reasoning_effort: *reasoning_effort,
                 }),
             ready: state
                 .selected
                 .as_ref()
-                .is_some_and(|(entry, _)| entry.active()),
+                .is_some_and(|(entry, _, _)| entry.active()),
         })
     }
     async fn execute(
@@ -551,7 +559,11 @@ impl ProviderManagement for Providers {
                     return Err(ProviderError::InvalidModel.into());
                 }
                 if direct_select {
-                    state.selected = Some((connection, selection.model.clone()));
+                    state.selected = Some((
+                        connection,
+                        selection.model.clone(),
+                        selection.reasoning_effort,
+                    ));
                     state.candidate = None;
                     let available = state.observe(
                         ConnectionPhase::Selected,
@@ -560,6 +572,7 @@ impl ProviderManagement for Providers {
                             connection: selection.connection.id.clone(),
                             model: selection.model.clone(),
                             mode: SelectionMode::Unmanaged,
+                            reasoning_effort: selection.reasoning_effort,
                         }),
                     );
                     if available {
@@ -659,8 +672,9 @@ impl ModelProvider for ModelRouter {
                 if let Some(credentials) = self.0.credentials.as_ref().filter(|_| connection.adapter.credential_backed) {
                     let mut material = credentials.resolve(&selection.connection, lifetime.token.clone()).await?;
                     // Preferences may change while this factory awaits credential I/O.
-                    // Only the turn snapshot chooses its model, never newer metadata.
+                    // Only the turn snapshot chooses its model and reasoning effort, never newer metadata.
                     material.settings.model.clone_from(&selection.model);
+                    material.settings.reasoning_effort = selection.reasoning_effort;
                     connection.adapter.implementation.create_connection_model(&selection, material, lifetime.token.clone()).await
                 } else {
                     connection.adapter.implementation.create_model(&selection, lifetime.token.clone()).await
@@ -816,7 +830,11 @@ impl Plugin for ProvidersPlugin {
             let mut state = providers.lock()?;
             let adapter = state.adapters[&handle.provider].clone();
             let identity = Providers::connect(&mut state, "legacy".into(), adapter)?;
-            state.selected = Some((state.connections[&identity.id].clone(), "configured".into()));
+            state.selected = Some((
+                state.connections[&identity.id].clone(),
+                "configured".into(),
+                None,
+            ));
             state.observe(
                 ConnectionPhase::Selected,
                 Some(SelectionSnapshot {
@@ -824,6 +842,7 @@ impl Plugin for ProvidersPlugin {
                     connection: identity.id,
                     model: "configured".into(),
                     mode: SelectionMode::Legacy,
+                    reasoning_effort: None,
                 }),
             );
         }

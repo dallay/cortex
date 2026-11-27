@@ -103,6 +103,77 @@ async fn http_adapter_sends_auth_and_assembles_tool_calls() {
         seen.lock().unwrap().as_ref().unwrap()["messages"][0]["role"],
         "user"
     );
+    assert!(seen
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .get("reasoning_effort")
+        .is_none());
+    task.abort();
+}
+
+#[tokio::test]
+async fn openai_provider_serializes_reasoning_effort_only_when_configured() {
+    let seen = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+    let capture = seen.clone();
+    let (url, task) = server(Router::new().route(
+        "/v1/chat/completions",
+        post(move |Json(body): Json<serde_json::Value>| {
+            let capture = capture.clone();
+            async move {
+                capture.lock().unwrap().push(body);
+                let data = format!(
+                    "data: {}\n\ndata: [DONE]\n\n",
+                    json!({"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]})
+                );
+                ([("content-type", "text/event-stream")], data)
+            }
+        }),
+    ))
+    .await;
+
+    let with_high = OpenAiProvider::with_transport(
+        &url,
+        "o3-mini".into(),
+        Some("fixture-secret".into()),
+        2,
+        true,
+    )
+    .unwrap()
+    .with_reasoning_effort(Some(huginn_core::providers::ReasoningEffort::High));
+    let mut req = request();
+    req.messages = vec![huginn_core::Message::text(
+        huginn_core::Role::User,
+        "reason",
+    )];
+    let _deltas: Vec<_> = with_high
+        .stream(req.clone(), CancellationToken::new())
+        .await
+        .unwrap()
+        .collect()
+        .await;
+
+    let without_effort = OpenAiProvider::with_transport(
+        &url,
+        "o3-mini".into(),
+        Some("fixture-secret".into()),
+        2,
+        true,
+    )
+    .unwrap()
+    .with_reasoning_effort(None);
+    let _deltas: Vec<_> = without_effort
+        .stream(req, CancellationToken::new())
+        .await
+        .unwrap()
+        .collect()
+        .await;
+
+    let bodies = seen.lock().unwrap();
+    assert_eq!(bodies.len(), 2);
+    assert_eq!(bodies[0]["reasoning_effort"], "high");
+    assert!(bodies[1].get("reasoning_effort").is_none());
     task.abort();
 }
 #[tokio::test]

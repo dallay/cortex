@@ -525,6 +525,7 @@ async fn main() -> Result<()> {
                 connection: "fixture".into(),
                 model: "alpha".into(),
                 mode: SelectionMode::Managed(huginn_core::connections::SecretMode::Ephemeral),
+                reasoning_effort: None,
             });
         });
         supervisor.register(Box::new(BarPlugin(sender)))?;

@@ -496,6 +496,7 @@ impl ConnectionManager {
         let selection = ModelSelection {
             connection: identity,
             model: record.settings.model.clone(),
+            reasoning_effort: record.settings.reasoning_effort,
         };
         let staged = self
             .providers
@@ -879,6 +880,13 @@ impl ConnectionManager {
                 .cloned()
                 .ok_or(ConnectionError::InvalidSelection)?;
             record.settings.model = model;
+            if !huginn_core::providers::supports_openai_reasoning_effort(
+                &record.settings.provider,
+                record.settings.endpoint.as_deref(),
+                &record.settings.model,
+            ) {
+                record.settings.reasoning_effort = None;
+            }
             record.settings.validate()?;
             let descriptor = self
                 .catalog
@@ -917,6 +925,51 @@ impl ConnectionManager {
             Ok(ModelSelection {
                 connection: self.access.identity(id)?,
                 model: record.settings.model,
+                reasoning_effort: record.settings.reasoning_effort,
+            })
+        })
+        .await
+    }
+    /// Update the reasoning effort preference for the NEXT turn on a saved connection.
+    /// Retains the authorization identity so already pinned turns keep their original setting.
+    pub async fn select_reasoning_effort(
+        &self,
+        id: Uuid,
+        effort: Option<huginn_core::providers::ReasoningEffort>,
+    ) -> ConnectionResult<ModelSelection> {
+        self.run_operation(async {
+            let _operation = self.operation().await?;
+            let mut state = self.state.lock().await;
+            Self::check_state(&state)?;
+            let mut record = state
+                .metadata
+                .connections
+                .get(&id)
+                .cloned()
+                .ok_or(ConnectionError::InvalidSelection)?;
+            record.settings.reasoning_effort = effort;
+            record.settings.validate()?;
+            self.check_secret(&record).await?;
+            if self.access.identity(id).is_err() {
+                self.install(&record).await?;
+            }
+            let mut next = state.metadata.clone();
+            next.connections.insert(id, record.clone());
+            next.selected = Some(id);
+            self.providers
+                .clear_selection()
+                .map_err(|_| ConnectionError::InvalidSelection)?;
+            state.model_save_pending = true;
+            self.persist(&mut state, next).await?;
+            state.model_save_pending = false;
+            state.failed = true;
+            state.pending_model = Some(record.clone());
+            self.publish_model(&mut state, &record).await?;
+            drop(state);
+            Ok(ModelSelection {
+                connection: self.access.identity(id)?,
+                model: record.settings.model,
+                reasoning_effort: record.settings.reasoning_effort,
             })
         })
         .await
@@ -1096,6 +1149,7 @@ impl ConnectionManager {
                         let selection = ModelSelection {
                             connection: identity,
                             model: settings.model,
+                            reasoning_effort: settings.reasoning_effort,
                         };
                         let staged = self
                             .providers
@@ -1175,6 +1229,13 @@ impl ConnectionManagement for ConnectionManager {
     }
     async fn select_model(&self, id: Uuid, model: String) -> ConnectionResult<ModelSelection> {
         self.select_model(id, model).await
+    }
+    async fn select_reasoning_effort(
+        &self,
+        id: Uuid,
+        effort: Option<huginn_core::providers::ReasoningEffort>,
+    ) -> ConnectionResult<ModelSelection> {
+        self.select_reasoning_effort(id, effort).await
     }
     async fn discover_models(
         &self,

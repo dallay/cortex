@@ -331,6 +331,20 @@ impl ProviderAdapter for InferenceAdapter {
         } else {
             ToolSupport::Unknown
         };
+        let reasoning_effort = selection
+            .reasoning_effort
+            .or(material.settings.reasoning_effort);
+        if reasoning_effort.is_some()
+            && !huginn_core::providers::supports_openai_reasoning_effort(
+                &material.settings.provider,
+                material.settings.endpoint.as_deref(),
+                &selection.model,
+            )
+        {
+            return Err(AgentError::Configuration(
+                "reasoning effort is not supported for this model or endpoint".into(),
+            ));
+        }
         let base = match self.kind {
             Kind::OpenAi => endpoint,
             Kind::Ollama | Kind::OllamaCloud => format!("{}/v1", endpoint.trim_end_matches('/')),
@@ -344,7 +358,8 @@ impl ProviderAdapter for InferenceAdapter {
                 .map(|secret| secret.expose().to_owned()),
             self.timeout_secs,
             material.settings.allow_loopback_http,
-        )?;
+        )?
+        .with_reasoning_effort(reasoning_effort);
         Ok(Arc::new(CapabilityModel { inner, tools }))
     }
 }

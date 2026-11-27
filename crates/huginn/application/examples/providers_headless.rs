@@ -124,6 +124,7 @@ async fn main() -> Result<()> {
         ProviderAction::Select(ModelSelection {
             connection: connection.clone(),
             model: "demo".into(),
+            reasoning_effort: None,
         })
     };
     management

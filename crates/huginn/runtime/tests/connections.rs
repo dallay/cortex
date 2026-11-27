@@ -80,6 +80,7 @@ async fn metadata_restart_cas_lock_and_sentinel_absence() {
             model: "alpha".into(),
             requires_secret: true,
             allow_loopback_http: false,
+            reasoning_effort: None,
         },
         secret: Some(SecretReference::new()),
         mode: SecretMode::Secure,
@@ -160,6 +161,7 @@ fn explicit(model: &str, env: &str) -> ConfiguredChoice {
         model: model.into(),
         credential_env: Some(env.into()),
         allow_loopback_http: false,
+        reasoning_effort: None,
     })
 }
 #[test]
@@ -256,6 +258,7 @@ fn cli_toml_environment_atomic_precedence_matrix() {
             model: "alpha".into(),
             credential_env: None,
             allow_loopback_http: false,
+            reasoning_effort: None,
         }
         .into_choice(&environment)
         .is_err());

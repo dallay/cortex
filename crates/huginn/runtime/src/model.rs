@@ -16,6 +16,7 @@ pub struct OpenAiProvider {
     model: String,
     key: Option<String>,
     timeout_secs: u64,
+    reasoning_effort: Option<huginn_core::providers::ReasoningEffort>,
 }
 impl OpenAiProvider {
     #[cfg(all(feature = "test-hooks", debug_assertions))]
@@ -54,7 +55,16 @@ impl OpenAiProvider {
             model,
             key,
             timeout_secs,
+            reasoning_effort: None,
         })
+    }
+
+    pub const fn with_reasoning_effort(
+        mut self,
+        reasoning_effort: Option<huginn_core::providers::ReasoningEffort>,
+    ) -> Self {
+        self.reasoning_effort = reasoning_effort;
+        self
     }
 }
 pub(crate) fn transport_client(
@@ -206,6 +216,9 @@ impl ModelProvider for OpenAiProvider {
     ) -> Result<BoxStream<'static, Result<ModelDelta>>> {
         let mut body = json!({"model":self.model,"messages":request.messages.iter().map(wire_message).collect::<Vec<_>>(),
             "stream":true,"max_tokens":request.max_tokens,"stream_options":{"include_usage":true}});
+        if let Some(effort) = self.reasoning_effort {
+            body["reasoning_effort"] = json!(effort.as_str());
+        }
         if !request.tools.is_empty() {
             body["tools"] = Value::Array(request.tools.iter().map(|t| json!({
             "type":"function","function":{"name":t.name,"description":t.description,"parameters":t.input_schema}

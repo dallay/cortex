@@ -53,10 +53,100 @@ pub struct ConnectionIdentity {
     pub revision: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    Low,
+    Medium,
+    High,
+}
+
+impl ReasoningEffort {
+    pub const ALL: [Self; 3] = [Self::Low, Self::Medium, Self::High];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+}
+
+impl std::fmt::Display for ReasoningEffort {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for ReasoningEffort {
+    type Err = ();
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "low" => Ok(Self::Low),
+            "medium" => Ok(Self::Medium),
+            "high" => Ok(Self::High),
+            _ => Err(()),
+        }
+    }
+}
+
+/// Whether `endpoint` is an official OpenAI Platform API base URL.
+pub fn is_official_openai_api_endpoint(endpoint: &str) -> bool {
+    let Ok(url) = url::Url::parse(endpoint) else {
+        return false;
+    };
+    if url.scheme() != "https"
+        || url.host_str() != Some("api.openai.com")
+        || url.port().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return false;
+    }
+    matches!(url.path().trim_end_matches('/'), "" | "/v1")
+}
+
+/// Conservative allowlist of OpenAI API models verified for Chat Completions `reasoning_effort`.
+pub fn is_verified_openai_reasoning_model(model: &str) -> bool {
+    let normalized = model.trim().to_ascii_lowercase();
+    if normalized == "o1" || normalized.starts_with("o1-20") {
+        return true;
+    }
+    if normalized == "o3" || normalized.starts_with("o3-") {
+        return true;
+    }
+    if normalized == "o4-mini" || normalized.starts_with("o4-mini-") {
+        return true;
+    }
+    if normalized == "gpt-5"
+        || (normalized.starts_with("gpt-5-") && !normalized.starts_with("gpt-5-chat"))
+    {
+        return true;
+    }
+    false
+}
+
+/// Whether the given provider, endpoint, and model support verified OpenAI Chat Completions
+/// `reasoning_effort` selection.
+pub fn supports_openai_reasoning_effort(
+    provider: &str,
+    endpoint: Option<&str>,
+    model: &str,
+) -> bool {
+    provider == "openai"
+        && endpoint.is_some_and(is_official_openai_api_endpoint)
+        && is_verified_openai_reasoning_model(model)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModelSelection {
     pub connection: ConnectionIdentity,
     pub model: String,
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 /// Local preparation only; none of these phases asserts remote connectivity.
@@ -81,6 +171,8 @@ pub struct SelectionSnapshot {
     pub connection: String,
     pub model: String,
     pub mode: SelectionMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConnectionSnapshot {

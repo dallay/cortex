@@ -46,6 +46,7 @@ async fn replacing_runtime_binding_removes_previous_runtime_secret() {
         model: "test-model".into(),
         requires_secret: true,
         allow_loopback_http: false,
+        reasoning_effort: None,
     };
 
     ConnectionManager::bind_runtime_for_test(

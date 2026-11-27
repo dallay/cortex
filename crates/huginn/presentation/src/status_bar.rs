@@ -182,8 +182,12 @@ impl StatusBar {
                 };
                 let reserved = if narrow { 10 } else { 34 };
                 let budget = usize::from(width).saturating_sub(reserved) / 2;
+                let reasoning = selection
+                    .reasoning_effort
+                    .map(|effort| format!(" [{effort}]"))
+                    .unwrap_or_default();
                 format!(
-                    "{}/{} {mode}",
+                    "{}/{}{reasoning} {mode}",
                     clip(&selection.provider, budget),
                     clip(&selection.model, budget)
                 )
