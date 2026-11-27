@@ -2789,6 +2789,34 @@ async fn siwc_sign_in_enforces_secure_store_single_account_and_revocation_report
     assert!(local_only.contains("not confirmed"));
     assert!(local_only.contains("offline"));
 
+    let rec4 = secure_mgr
+        .sign_in_siwc(CancellationToken::new())
+        .await
+        .unwrap();
+    let reference4 = rec4.secret.clone().unwrap();
+    let revocations_before_cleanup_failure = revocation_calls.load(Ordering::SeqCst);
+    secure_secrets.delete_fail.store(1, Ordering::SeqCst);
+    assert_eq!(
+        secure_mgr
+            .revoke_with_report(rec4.id, CancellationToken::new())
+            .await,
+        Err(ConnectionError::SecretStore)
+    );
+    assert_eq!(
+        revocation_calls.load(Ordering::SeqCst),
+        revocations_before_cleanup_failure + 1,
+        "remote revocation must still be attempted after secret deletion fails"
+    );
+    let after_cleanup_failure = secure_store.load().await.unwrap();
+    assert!(!after_cleanup_failure.connections.contains_key(&rec4.id));
+    assert!(after_cleanup_failure.cleanup.contains_key(&reference4));
+    assert_eq!(
+        secure_mgr.cleanup_status().await.unwrap().get(&reference4),
+        Some(&ConnectionError::SecretStore)
+    );
+    secure_mgr.reconcile().await.unwrap();
+    assert!(secure_mgr.cleanup_status().await.unwrap().is_empty());
+
     let rec3 = secure_mgr
         .sign_in_siwc(CancellationToken::new())
         .await
