@@ -313,8 +313,10 @@ async fn enable_connection_management(
     supervisor.register(Box::new(huginn_runtime::providers::CustomProviderPlugin {
         timeout_secs: config.timeout_secs,
     }))?;
-    let siwc_auth = Arc::new(huginn_runtime::siwc::SiwcOAuthClient::new(
+    let host_id_storage = config.db.parent().map(|p| p.join("siwc_host_id"));
+    let siwc_auth = Arc::new(huginn_runtime::siwc::SiwcOAuthClient::with_storage(
         config.timeout_secs,
+        host_id_storage,
     ));
     let siwc_persistence = Arc::new(std::sync::OnceLock::new());
     supervisor.register(Box::new(huginn_runtime::siwc::SiwcProviderPlugin {

@@ -1061,6 +1061,16 @@ async fn siwc_full_vertical_slice_oauth_id_token_refresh_persistence_responses_a
     assert_eq!(outcome, SiwcRevocationOutcome::RemoteConfirmed);
     assert_eq!(revoke_attempts.load(Ordering::SeqCst), 2);
 
+    // 8. Durable host ID is stable across sign-in attempts and client reloads.
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_path = temp_dir.path().join("siwc_host_id");
+    let client1 = SiwcOAuthClient::with_storage(5, Some(storage_path.clone()));
+    let host_id1 = client1.get_or_create_host_id().unwrap();
+    assert!(host_id1.starts_with("huginn-"));
+    assert_eq!(client1.get_or_create_host_id().unwrap(), host_id1);
+    let client2 = SiwcOAuthClient::with_storage(5, Some(storage_path));
+    assert_eq!(client2.get_or_create_host_id().unwrap(), host_id1);
+
     task.abort();
 }
 

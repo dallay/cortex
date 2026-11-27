@@ -30,7 +30,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashSet, VecDeque},
-    sync::{Arc, OnceLock},
+    path::PathBuf,
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
@@ -74,22 +75,63 @@ impl Default for SiwcEndpoints {
 pub struct SiwcOAuthClient {
     endpoints: SiwcEndpoints,
     timeout_secs: u64,
+    host_id_storage: Option<PathBuf>,
+    in_memory_host_id: Arc<Mutex<Option<String>>>,
 }
 
 impl SiwcOAuthClient {
     pub fn new(timeout_secs: u64) -> Self {
+        Self::with_endpoints(SiwcEndpoints::default(), timeout_secs)
+    }
+
+    pub fn with_storage(timeout_secs: u64, host_id_storage: Option<PathBuf>) -> Self {
         Self {
             endpoints: SiwcEndpoints::default(),
             timeout_secs,
+            host_id_storage,
+            in_memory_host_id: Arc::new(Mutex::new(None)),
         }
     }
 
     #[doc(hidden)]
-    pub const fn with_endpoints(endpoints: SiwcEndpoints, timeout_secs: u64) -> Self {
+    pub fn with_endpoints(endpoints: SiwcEndpoints, timeout_secs: u64) -> Self {
         Self {
             endpoints,
             timeout_secs,
+            host_id_storage: None,
+            in_memory_host_id: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Retrieve or create a durable host ID for the client.
+    pub fn get_or_create_host_id(&self) -> Result<String> {
+        let mut in_mem = self
+            .in_memory_host_id
+            .lock()
+            .map_err(|_| AgentError::Configuration("failed to acquire host ID lock".into()))?;
+        if let Some(existing) = in_mem.as_ref() {
+            return Ok(existing.clone());
+        }
+        if let Some(path) = &self.host_id_storage {
+            if path.exists() {
+                if let Ok(content) = std::fs::read_to_string(path) {
+                    let trimmed = content.trim();
+                    if !trimmed.is_empty() {
+                        *in_mem = Some(trimmed.to_string());
+                        return Ok(trimmed.to_string());
+                    }
+                }
+            }
+        }
+        let fresh = format!("huginn-{}", uuid::Uuid::new_v4());
+        if let Some(path) = &self.host_id_storage {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(path, fresh.as_bytes());
+        }
+        *in_mem = Some(fresh.clone());
+        Ok(fresh)
     }
 
     fn http_client(&self, url: &str) -> Result<reqwest::Client> {
@@ -359,7 +401,7 @@ impl SiwcAuthPort for SiwcOAuthClient {
         let (verifier, challenge) = Self::generate_pkce();
         let state = uuid::Uuid::new_v4().to_string();
         let nonce = uuid::Uuid::new_v4().to_string();
-        let host_id = format!("huginn-{}", uuid::Uuid::new_v4());
+        let host_id = self.get_or_create_host_id()?;
         let authorize_url = self.build_authorize_url(
             &redirect_uri,
             &state,

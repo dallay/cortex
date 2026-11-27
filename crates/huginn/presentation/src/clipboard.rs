@@ -109,6 +109,8 @@ pub fn read_clipboard_image() -> Result<Option<ImageAttachment>, String> {
     }
 }
 
+const CLIPBOARD_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1500);
+
 #[cfg(target_os = "macos")]
 fn read_macos_clipboard_image() -> Result<Option<ImageAttachment>, String> {
     let temp_path =
@@ -126,16 +128,44 @@ fn read_macos_clipboard_image() -> Result<Option<ImageAttachment>, String> {
          end try",
         temp_path.display()
     );
-    let output = std::process::Command::new("osascript")
+    let mut child = std::process::Command::new("osascript")
         .arg("-e")
         .arg(script)
-        .output()
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
         .map_err(|_| "could not access macOS clipboard".to_string())?;
-    if !output.status.success() {
+
+    let deadline = std::time::Instant::now() + CLIPBOARD_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = std::fs::remove_file(&temp_path);
+                    return Err("clipboard read timed out".into());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(15));
+            }
+            Err(err) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = std::fs::remove_file(&temp_path);
+                return Err(format!("error waiting for clipboard child: {err}"));
+            }
+        }
+    };
+
+    if !status.success() {
         let _ = std::fs::remove_file(&temp_path);
         return Err("could not read image from macOS clipboard".into());
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut stdout = String::new();
+    if let Some(mut stream) = child.stdout.take() {
+        let _ = stream.read_to_string(&mut stdout);
+    }
     if stdout.trim() != "ok" || !temp_path.exists() {
         let _ = std::fs::remove_file(&temp_path);
         return Ok(None);
@@ -163,17 +193,59 @@ fn read_linux_clipboard_image() -> Result<Option<ImageAttachment>, String> {
             .spawn()
         {
             any_tool_ran = true;
-            let mut bytes = Vec::new();
-            if let Some(stdout) = child.stdout.take() {
-                let _ = stdout
-                    .take((MAX_IMAGE_BYTES as u64) + 1)
-                    .read_to_end(&mut bytes);
+            let (tx, rx) = std::sync::mpsc::channel();
+            let reader_handle = child.stdout.take().map(|mut out| {
+                std::thread::spawn(move || {
+                    let mut bytes = Vec::new();
+                    let _ = out
+                        .take((MAX_IMAGE_BYTES as u64) + 1)
+                        .read_to_end(&mut bytes);
+                    let _ = tx.send(bytes);
+                })
+            });
+
+            let deadline = std::time::Instant::now() + CLIPBOARD_TIMEOUT;
+            let mut timed_out = false;
+            let status = loop {
+                match child.try_wait() {
+                    Ok(Some(status)) => break Some(status),
+                    Ok(None) => {
+                        if std::time::Instant::now() >= deadline {
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            timed_out = true;
+                            break None;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(15));
+                    }
+                    Err(_) => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        break None;
+                    }
+                }
+            };
+
+            if let Some(handle) = reader_handle {
+                let _ = handle.join();
             }
-            if let Ok(status) = child.wait() {
-                if status.success() && !bytes.is_empty() {
-                    return ImageAttachment::from_bytes(bytes, Some("clipboard.png".into()))
-                        .map(Some)
-                        .map_err(|err| err.to_string());
+
+            if timed_out {
+                return Err("clipboard read timed out".into());
+            }
+
+            if let Some(status) = status {
+                if status.success() {
+                    if let Ok(bytes) = rx.try_recv() {
+                        if !bytes.is_empty() {
+                            return ImageAttachment::from_bytes(
+                                bytes,
+                                Some("clipboard.png".into()),
+                            )
+                            .map(Some)
+                            .map_err(|err| err.to_string());
+                        }
+                    }
                 }
             }
         }
