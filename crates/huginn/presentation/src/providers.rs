@@ -7,8 +7,9 @@ use huginn_core::{
     },
     kernel::{Manifest, Plugin, PluginContext, ServiceId},
     providers::{
-        AuthenticationMethod, ModelCatalog, ProviderCatalog, ProviderCatalogService,
-        ProviderDescriptor, ProviderOnboarding, ProviderRegistration,
+        supports_openai_reasoning_effort, AuthenticationMethod, ModelCatalog, ProviderCatalog,
+        ProviderCatalogService, ProviderDescriptor, ProviderOnboarding, ProviderRegistration,
+        ReasoningEffort,
     },
     Result,
 };
@@ -77,6 +78,10 @@ fn register_ui(
         ("/providers", "Manage connections and credential status"),
         ("/model", "Choose the model for the next turn"),
         (
+            "/reasoning",
+            "Configure reasoning effort for verified OpenAI API models (next turn)",
+        ),
+        (
             "/logout",
             "Revoke a connection; remote completion may be unknown",
         ),
@@ -92,7 +97,13 @@ fn register_ui(
                                 Ok(CommandResult::Workflow(Workflow::new("Providers", "Loading…", vec![], Arc::new(move |_, _| {
                                     let management = management.clone();
                                     Box::pin(async move {
-                                        if name == "/login" { management.login() } else { management.connections(name).await }
+                                        if name == "/login" {
+                                            management.login()
+                                        } else if name == "/reasoning" {
+                                            management.reasoning().await
+                                        } else {
+                                            management.connections(name).await
+                                        }
                                     })
                                 }))?.with_overlay_kind(command_surface(name))?))
                             }))?;
@@ -103,7 +114,7 @@ fn command_surface(command: &str) -> OverlayKind {
     match command {
         "/login" => OverlayKind::Login,
         "/providers" => OverlayKind::Provider,
-        "/model" => OverlayKind::ModelPicker,
+        "/model" | "/reasoning" => OverlayKind::ModelPicker,
         "/logout" => OverlayKind::Confirm,
         _ => unreachable!("registered provider command"),
     }
@@ -334,6 +345,46 @@ impl Management {
         registration: ProviderRegistration,
         descriptor: ProviderDescriptor,
     ) -> Result<CommandResult> {
+        if descriptor.id == huginn_core::siwc::SIWC_PROVIDER_ID {
+            let owner = self.clone();
+            return Ok(CommandResult::Workflow(
+                Workflow::new(
+                    "Sign in with ChatGPT (SIWC OAuth) — Consent",
+                    "Opens your browser for OpenAI Sign in with ChatGPT (PKCE loopback on 127.0.0.1). Uses your ChatGPT plan over the Responses API (text-only, store: false, separate from OpenAI Platform API billing). Requires OS secure storage (Keychain / Secret Service). Single account only.",
+                    vec![choice(
+                        "confirm",
+                        "Action",
+                        vec![
+                            "Continue in browser (Sign in with ChatGPT)".into(),
+                            "Back to provider catalog".into(),
+                        ],
+                    )],
+                    Arc::new(move |input, cancel| {
+                        let owner = owner.clone();
+                        Box::pin(async move {
+                            if index(&input, "confirm") != 0 {
+                                return owner.login().map(|result| match result {
+                                    CommandResult::Workflow(workflow) => {
+                                        CommandResult::Workflow(workflow.without_history())
+                                    }
+                                    other => other,
+                                });
+                            }
+                            match owner.connections.sign_in_siwc(cancel).await {
+                                Ok(_) => owner.configured_result(),
+                                Err(ConnectionError::Cancelled) => {
+                                    Err(huginn_core::AgentError::Cancelled)
+                                }
+                                Err(error) => Ok(form_error(format!(
+                                    "Sign in with ChatGPT failed: {error}. Existing API-key and Ollama connections are unchanged."
+                                ))),
+                            }
+                        })
+                    }),
+                )?
+                .with_overlay_kind(OverlayKind::Login)?,
+            ));
+        }
         let authentication = self
             .catalog
             .onboarding(&registration)?
@@ -535,22 +586,40 @@ impl Management {
             ));
         }
         let discover = model.is_empty();
+        let endpoint_opt = (!endpoint.is_empty()).then_some(endpoint);
+        let model_value = if discover {
+            "discovery-placeholder".into()
+        } else {
+            model
+        };
+        let reasoning_effort = previous
+            .as_ref()
+            .and_then(|record| record.settings.reasoning_effort)
+            .filter(|_| {
+                !discover
+                    && supports_openai_reasoning_effort(
+                        &descriptor.id,
+                        endpoint_opt.as_deref(),
+                        &model_value,
+                    )
+            });
         let settings = ConnectionSettings {
             provider: descriptor.id,
-            endpoint: (!endpoint.is_empty()).then_some(endpoint),
-            model: if discover {
-                "discovery-placeholder".into()
-            } else {
-                model
-            },
+            endpoint: endpoint_opt,
+            model: model_value,
             requires_secret,
             allow_loopback_http,
+            reasoning_effort,
         };
         let secret = input.secrets.remove("credential");
         if requires_secret && secret.is_none() && previous.is_none() {
             return Ok(form_error("An API key is required for this connection."));
         }
-        let material = ConnectionMaterial { settings, secret };
+        let material = ConnectionMaterial {
+            origin: None,
+            settings,
+            secret,
+        };
         if previous.is_some() && discover {
             return Ok(form_error(
                 "A model ID is required when updating. Use /login to discover models for a new connection.",
@@ -718,8 +787,13 @@ impl Management {
                 Ok(()) => "credentials ready (remote availability not checked)".into(),
                 Err(error) => error.to_string(),
             };
+            let reasoning = record
+                .settings
+                .reasoning_effort
+                .map(|effort| format!(" · reasoning:{effort}"))
+                .unwrap_or_default();
             labels.push(format!(
-                "{} · {} · {} · {:?} · {status}",
+                "{} · {} · {}{reasoning} · {:?} · {status}",
                 record.id, record.settings.provider, record.settings.model, record.mode
             ));
         }
@@ -759,8 +833,8 @@ impl Management {
                                                          let Some(record) = record else { return Ok(failure(ConnectionError::InvalidSelection)); };
                                                          if command == "/logout" {
                                                              if index(&input, "confirm") != 1 { return Ok(notice("Connection kept.")); }
-                                                             return Ok(match management.connections.revoke(record.id).await {
-                                                                 Ok(()) => notice("Connection revoked locally. Next inference is blocked, including in a pinned turn. Remote completion remains unknown."),
+                                                             return Ok(match management.connections.revoke_with_report(record.id, cancel).await {
+                                                                 Ok(report) => notice(report),
                                                                  Err(error) => failure(error),
                                                              });
                                                          }
@@ -774,6 +848,9 @@ impl Management {
                                                                  _ => {}
                                                              }
                                                          }
+                                                         if command == "/reasoning" {
+                                                             return management.reasoning_form(record);
+                                                         }
                                                          management.model_form(record, cancel).await
                                                      })
                                                  }))?.with_overlay_kind(command_surface(command))?))
@@ -786,8 +863,8 @@ impl Management {
                 let id = record.id;
                 Box::pin(async move {
                     if index(&input, "confirm") != 1 { return Ok(notice("Connection kept.")); }
-                    Ok(match management.connections.revoke(id).await {
-                        Ok(()) => notice("Connection revoked locally. Remote completion remains unknown."),
+                    Ok(match management.connections.revoke_with_report(id, huginn_core::CancellationToken::new()).await {
+                        Ok(report) => notice(report),
                         Err(error) => failure(error)
                     })
                 })
@@ -878,6 +955,102 @@ impl Management {
                             ),
                             Err(error) => failure(error),
                         })
+                    })
+                }),
+            )?
+            .with_overlay_kind(OverlayKind::ModelPicker)?,
+        ))
+    }
+    async fn reasoning(&self) -> Result<CommandResult> {
+        if let Err(error) = self.connections.recover().await {
+            return Ok(failure(error));
+        }
+        let records = match self.connections.list().await {
+            Ok(records) => records,
+            Err(error) => return Ok(failure(error)),
+        };
+        if records.is_empty() {
+            return Ok(notice(
+                "No connections. Use /login to connect a provider, then /model.",
+            ));
+        }
+        let selected_id = self
+            .connections
+            .subscribe()
+            .borrow()
+            .selection
+            .as_ref()
+            .and_then(|selection| uuid::Uuid::parse_str(&selection.connection).ok());
+        if let Some(record) = selected_id.and_then(|id| records.iter().find(|r| r.id == id)) {
+            return self.reasoning_form(record.clone());
+        }
+        if records.len() == 1 {
+            return self.reasoning_form(records[0].clone());
+        }
+        self.connections("/reasoning").await
+    }
+    fn reasoning_form(&self, record: ConnectionRecord) -> Result<CommandResult> {
+        if !supports_openai_reasoning_effort(
+            &record.settings.provider,
+            record.settings.endpoint.as_deref(),
+            &record.settings.model,
+        ) {
+            return Ok(form_error(format!(
+                "Reasoning effort is not supported or verified for {}/{}. Unavailable options are not offered; current selection unchanged.",
+                record.settings.provider, record.settings.model
+            )));
+        }
+        let options = vec![
+            "Off (provider default)".into(),
+            "Low".into(),
+            "Medium".into(),
+            "High".into(),
+        ];
+        let mut effort_field = choice("effort", "Reasoning effort", options);
+        effort_field.initial = match record.settings.reasoning_effort {
+            None => "0",
+            Some(ReasoningEffort::Low) => "1",
+            Some(ReasoningEffort::Medium) => "2",
+            Some(ReasoningEffort::High) => "3",
+        }
+        .into();
+        let management = self.clone();
+        let id = record.id;
+        let model = record.settings.model;
+        Ok(CommandResult::Workflow(
+            Workflow::new(
+                "Next-turn reasoning effort",
+                format!(
+                    "Configure reasoning effort for {model}. Changes apply to the NEXT turn; an active turn keeps its pinned setting."
+                ),
+                vec![effort_field],
+                Arc::new(move |input, _| {
+                    let management = management.clone();
+                    let effort = match index(&input, "effort") {
+                        0 => Ok(None),
+                        1 => Ok(Some(ReasoningEffort::Low)),
+                        2 => Ok(Some(ReasoningEffort::Medium)),
+                        3 => Ok(Some(ReasoningEffort::High)),
+                        _ => Err(ConnectionError::InvalidSelection),
+                    };
+                    Box::pin(async move {
+                        let effort = match effort {
+                            Ok(effort) => effort,
+                            Err(error) => return Ok(failure(error)),
+                        };
+                        Ok(
+                            match management.connections.select_reasoning_effort(id, effort).await {
+                                Ok(_) => match effort {
+                                    Some(level) => notice(format!(
+                                        "Reasoning effort set to {level} for the NEXT turn. An active turn keeps its pinned setting."
+                                    )),
+                                    None => notice(
+                                        "Reasoning effort set to off (provider default) for the NEXT turn. An active turn keeps its pinned setting.",
+                                    ),
+                                },
+                                Err(error) => failure(error),
+                            },
+                        )
                     })
                 }),
             )?

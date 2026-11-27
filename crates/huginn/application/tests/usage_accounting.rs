@@ -17,9 +17,10 @@ use huginn_core::{
         ProviderDescriptor,
     },
     AgentError, AgentLoop, ApprovalDecision, ApprovalPolicy, ApprovalRequest, CancellationToken,
-    Event, EventSink, InstructionSource, Message, ModelDelta, ModelProvider, ModelRequest,
-    PreparedAction, Result, Role, Session, SessionInfo, SessionStore, Tool, ToolCall, ToolContext,
-    ToolDefinition, ToolRegistry, TurnUsage, UsageAttribution, UsageCompleteness, UsageSemantics,
+    Event, EventSink, ImageAttachment, InstructionSource, Message, ModelDelta, ModelProvider,
+    ModelRequest, PreparedAction, Result, Role, Session, SessionInfo, SessionStore, Tool, ToolCall,
+    ToolContext, ToolDefinition, ToolRegistry, TurnUsage, UsageAttribution, UsageCompleteness,
+    UsageSemantics,
 };
 use std::{
     collections::VecDeque,
@@ -111,6 +112,8 @@ type ScriptStep = Vec<Result<ModelDelta>>;
 struct ScriptedProvider {
     attribution: Option<UsageAttribution>,
     steps: Mutex<VecDeque<ScriptStep>>,
+    request_limits: Option<Arc<Mutex<Vec<u32>>>>,
+    reject_image_requests: bool,
 }
 
 impl ScriptedProvider {
@@ -118,7 +121,30 @@ impl ScriptedProvider {
         Self {
             attribution,
             steps: Mutex::new(steps.into()),
+            request_limits: None,
+            reject_image_requests: false,
         }
+    }
+
+    fn rejecting_image_requests(mut self) -> Self {
+        self.reject_image_requests = true;
+        self
+    }
+
+    fn recording_requests(
+        attribution: Option<UsageAttribution>,
+        steps: Vec<ScriptStep>,
+    ) -> (Self, Arc<Mutex<Vec<u32>>>) {
+        let request_limits = Arc::new(Mutex::new(Vec::new()));
+        (
+            Self {
+                attribution,
+                steps: Mutex::new(steps.into()),
+                request_limits: Some(request_limits.clone()),
+                reject_image_requests: false,
+            },
+            request_limits,
+        )
     }
 }
 
@@ -130,9 +156,22 @@ impl ModelProvider for ScriptedProvider {
 
     async fn stream(
         &self,
-        _: ModelRequest,
+        request: ModelRequest,
         _: CancellationToken,
     ) -> Result<BoxStream<'static, Result<ModelDelta>>> {
+        if self.reject_image_requests
+            && request
+                .messages
+                .iter()
+                .any(|message| !message.images.is_empty())
+        {
+            return Err(AgentError::Model(
+                "model does not support image inputs".into(),
+            ));
+        }
+        if let Some(request_limits) = &self.request_limits {
+            request_limits.lock().unwrap().push(request.max_tokens);
+        }
         let items = self
             .steps
             .lock()
@@ -151,6 +190,16 @@ fn attr(provider: &str, model: &str) -> UsageAttribution {
     }
 }
 
+fn one_pixel_png() -> ImageAttachment {
+    let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    bytes.extend_from_slice(&13u32.to_be_bytes());
+    bytes.extend_from_slice(b"IHDR");
+    bytes.extend_from_slice(&1u32.to_be_bytes());
+    bytes.extend_from_slice(&1u32.to_be_bytes());
+    bytes.extend_from_slice(&[8, 2, 0, 0, 0]);
+    ImageAttachment::from_bytes(bytes, None).unwrap()
+}
+
 fn make_loop(
     model: Arc<dyn ModelProvider>,
     tools: Vec<Arc<dyn Tool>>,
@@ -166,6 +215,106 @@ fn make_loop(
         lifecycle: CancellationToken::new(),
     };
     (engine, sessions)
+}
+
+#[tokio::test]
+async fn continuation_request_uses_only_the_remaining_turn_output_budget() {
+    let (model, request_limits) = ScriptedProvider::recording_requests(
+        Some(attr("openai", "budgeted-model")),
+        vec![
+            vec![
+                Ok(ModelDelta::ToolCall(ToolCall {
+                    id: "call-1".into(),
+                    name: "inspect".into(),
+                    arguments: serde_json::json!({}),
+                })),
+                Ok(ModelDelta::Usage {
+                    input_tokens: Some(10),
+                    output_tokens: Some(5),
+                    semantics: UsageSemantics::Cumulative,
+                }),
+                Ok(ModelDelta::Finished),
+            ],
+            vec![
+                Ok(ModelDelta::Text("final answer".into())),
+                Ok(ModelDelta::Usage {
+                    input_tokens: Some(10),
+                    output_tokens: Some(4),
+                    semantics: UsageSemantics::Cumulative,
+                }),
+                Ok(ModelDelta::Finished),
+            ],
+        ],
+    );
+    let config = LoopConfig {
+        max_turn_tokens: Some(40),
+        max_output_tokens: 100,
+        ..Default::default()
+    };
+    let (engine, _) = make_loop(
+        Arc::new(model),
+        vec![Arc::new(CallbackTool {
+            name: "inspect".into(),
+            on_execute: None,
+        })],
+        config,
+    );
+    let mut session = Session::new(".".into());
+    engine
+        .run(
+            &mut session,
+            "inspect the workspace".into(),
+            &AutoApprove,
+            &RecordingSink::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(*request_limits.lock().unwrap(), vec![40, 25]);
+}
+
+#[tokio::test]
+async fn rejected_image_request_does_not_poison_later_text_only_turns() {
+    let model = ScriptedProvider::new(
+        Some(attr("openai", "text-only-model")),
+        vec![vec![
+            Ok(ModelDelta::Text("text-only response".into())),
+            Ok(ModelDelta::Finished),
+        ]],
+    )
+    .rejecting_image_requests();
+    let (engine, _) = make_loop(Arc::new(model), vec![], LoopConfig::default());
+    let mut session = Session::new(".".into());
+
+    let rejected = engine
+        .run_with_images(
+            &mut session,
+            "describe this image".into(),
+            vec![one_pixel_png()],
+            &AutoApprove,
+            &RecordingSink::default(),
+            CancellationToken::new(),
+        )
+        .await;
+    assert!(rejected.is_err());
+    let rejected_message = session
+        .messages
+        .iter()
+        .find(|message| message.role == Role::User && message.content == "describe this image")
+        .unwrap();
+    assert!(rejected_message.images.is_empty());
+
+    engine
+        .run(
+            &mut session,
+            "continue with text only".into(),
+            &AutoApprove,
+            &RecordingSink::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -684,10 +833,12 @@ async fn mid_turn_selection_change_preserves_attribution_to_pinned_model_a() {
     let sel_a = ModelSelection {
         connection: conn_a,
         model: "model-a".into(),
+        reasoning_effort: None,
     };
     let sel_b = ModelSelection {
         connection: conn_b,
         model: "model-b".into(),
+        reasoning_effort: None,
     };
     management
         .0

@@ -15,6 +15,7 @@ fn assistant_with_tool_call(id: &str) -> Message {
             arguments: json!({}),
         }],
         tool_call_id: None,
+        images: vec![],
     }
 }
 

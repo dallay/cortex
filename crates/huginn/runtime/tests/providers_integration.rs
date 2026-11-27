@@ -234,6 +234,7 @@ impl Fixture {
                             model: if index == 0 { "alpha" } else { "beta" }.into(),
                             requires_secret: true,
                             allow_loopback_http: true,
+                            reasoning_effort: None,
                         },
                         Some(Secret::new(SECRETS[index].into()).unwrap()),
                     )

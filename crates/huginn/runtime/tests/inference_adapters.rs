@@ -24,12 +24,14 @@ use std::{
 const SECRET: &str = "p04-sentinel-secret";
 fn material(provider: &str, endpoint: &str) -> ConnectionMaterial {
     ConnectionMaterial {
+        origin: None,
         settings: ConnectionSettings {
             provider: provider.into(),
             endpoint: Some(endpoint.into()),
             model: "fixture".into(),
             requires_secret: true,
             allow_loopback_http: true,
+            reasoning_effort: None,
         },
         secret: Some(Secret::new(SECRET.into()).unwrap()),
     }
@@ -42,6 +44,7 @@ fn selection(provider: &str) -> ModelSelection {
             adapter: ProviderRegistration::new(provider.into(), 1),
         },
         model: "fixture".into(),
+        reasoning_effort: None,
     }
 }
 fn request() -> ModelRequest {
@@ -353,6 +356,7 @@ async fn router_pins_both_adapters_and_revocation_stops_subsequent_requests() {
         ProviderAction::Select(ModelSelection {
             connection: identity,
             model: "fixture".into(),
+            reasoning_effort: None,
         })
     };
     management

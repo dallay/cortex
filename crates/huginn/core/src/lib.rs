@@ -86,6 +86,9 @@ pub struct Message {
     pub tool_calls: Vec<ToolCall>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// In-memory image attachments for the active session only; never persisted to SQLite.
+    #[serde(skip)]
+    pub images: Vec<ImageAttachment>,
 }
 impl Message {
     pub fn text(role: Role, content: impl Into<String>) -> Self {
@@ -94,6 +97,16 @@ impl Message {
             content: content.into(),
             tool_calls: vec![],
             tool_call_id: None,
+            images: vec![],
+        }
+    }
+    pub fn user_with_images(content: impl Into<String>, images: Vec<ImageAttachment>) -> Self {
+        Self {
+            role: Role::User,
+            content: content.into(),
+            tool_calls: vec![],
+            tool_call_id: None,
+            images,
         }
     }
     pub const fn tool(id: String, content: String) -> Self {
@@ -102,6 +115,7 @@ impl Message {
             content,
             tool_calls: vec![],
             tool_call_id: Some(id),
+            images: vec![],
         }
     }
 }
@@ -488,6 +502,59 @@ pub struct Session {
     pub turn_seq: u64,
 }
 impl Session {
+    pub fn in_memory_image_bytes(&self) -> usize {
+        self.messages
+            .iter()
+            .flat_map(|m| &m.images)
+            .map(|img| img.bytes.len())
+            .sum()
+    }
+
+    /// Returns a persistence-safe copy with raw image bytes omitted and replaced by
+    /// lightweight non-sensitive textual markers so `sessions.db` never stores image blobs
+    /// and saving never clones in-memory image payloads.
+    pub fn for_persistence(&self) -> Self {
+        let messages = self
+            .messages
+            .iter()
+            .map(|msg| {
+                let count = msg.images.len();
+                let mut content = msg.content.clone();
+                if count > 0 {
+                    let marker = if count == 1 {
+                        "[Image attachment omitted from persisted history]".to_string()
+                    } else {
+                        format!("[{count} image attachments omitted from persisted history]")
+                    };
+                    if content.trim().is_empty() {
+                        content = marker;
+                    } else {
+                        content.push('\n');
+                        content.push_str(&marker);
+                    }
+                }
+                Message {
+                    role: msg.role.clone(),
+                    content,
+                    images: Vec::new(),
+                    tool_calls: msg.tool_calls.clone(),
+                    tool_call_id: msg.tool_call_id.clone(),
+                }
+            })
+            .collect();
+        Self {
+            skill_catalog_fingerprint: self.skill_catalog_fingerprint.clone(),
+            id: self.id.clone(),
+            workspace: self.workspace.clone(),
+            messages,
+            events: self.events.clone(),
+            summary: self.summary.clone(),
+            summary_through: self.summary_through,
+            interrupted: self.interrupted,
+            turn_seq: self.turn_seq,
+        }
+    }
+
     pub fn new(workspace: PathBuf) -> Self {
         Self {
             skill_catalog_fingerprint: None,
@@ -575,6 +642,25 @@ pub trait AgentLoop: Send + Sync {
         cancellation: CancellationToken,
     ) -> Result<()>;
 
+    /// Run a turn with validated in-memory image attachments.
+    async fn run_with_images(
+        &self,
+        session: &mut Session,
+        prompt: String,
+        images: Vec<ImageAttachment>,
+        approvals: &dyn ApprovalPolicy,
+        events: &dyn EventSink,
+        cancellation: CancellationToken,
+    ) -> Result<()> {
+        if !images.is_empty() {
+            return Err(AgentError::Model(
+                "image attachments are not supported by this agent loop".into(),
+            ));
+        }
+        self.run(session, prompt, approvals, events, cancellation)
+            .await
+    }
+
     /// Compact completed conversation history when supported by this loop.
     async fn compact(
         &self,
@@ -639,4 +725,9 @@ pub trait ApprovalPrompt: Send + Sync {
     fn granted(&self, _request: &ApprovalRequest) {}
 }
 pub mod hooks;
+pub mod images;
+pub mod siwc;
 pub mod tools;
+pub use images::{
+    ImageAttachment, ImageFormat, MAX_IMAGES_PER_MESSAGE, MAX_IMAGE_BYTES, MAX_SESSION_IMAGE_BYTES,
+};

@@ -26,6 +26,7 @@ async fn staged_selection_requires_exact_commit_and_snapshot_is_safe() {
     let selection = ModelSelection {
         connection,
         model: "alpha".into(),
+        reasoning_effort: None,
     };
     management
         .0

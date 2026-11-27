@@ -12,12 +12,13 @@ use huginn_presentation::{providers::ProvidersUiPlugin, state::Ui};
 use std::{
     collections::BTreeMap,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     },
 };
 
 const SENTINEL: &str = "p03-ui-secret-sentinel-never-public";
+const FIXED_ENDPOINT: &str = "https://api.example.invalid/v1";
 #[derive(Default)]
 struct Manager {
     records: Mutex<BTreeMap<uuid::Uuid, ConnectionRecord>>,
@@ -25,6 +26,7 @@ struct Manager {
     fail: AtomicBool,
     uncertain: AtomicBool,
     recovery_fail: AtomicBool,
+    catalog_discovery_calls: Arc<AtomicUsize>,
     discovery: Mutex<Option<ConnectionResult<ModelCatalog>>>,
 }
 #[async_trait]
@@ -111,6 +113,30 @@ impl ConnectionManagement for Manager {
                 revision: 1,
             },
             model,
+            reasoning_effort: None,
+        })
+    }
+    async fn select_reasoning_effort(
+        &self,
+        id: uuid::Uuid,
+        effort: Option<huginn_core::providers::ReasoningEffort>,
+    ) -> ConnectionResult<ModelSelection> {
+        self.status(id).await?;
+        let mut records = self.records.lock().unwrap();
+        let record = records
+            .get_mut(&id)
+            .ok_or(ConnectionError::InvalidSelection)?;
+        record.settings.reasoning_effort = effort;
+        record.settings.validate()?;
+        let model = record.settings.model.clone();
+        Ok(ModelSelection {
+            connection: ConnectionIdentity {
+                id: id.to_string(),
+                adapter: ProviderRegistration::new(record.settings.provider.clone(), 1),
+                revision: 1,
+            },
+            model,
+            reasoning_effort: effort,
         })
     }
     async fn discover_models(
@@ -138,13 +164,27 @@ struct Catalog(
     Vec<AuthenticationMethod>,
     ProviderRegistration,
     Vec<(ProviderRegistration, ProviderDescriptor)>,
+    Arc<AtomicUsize>,
 );
+#[async_trait]
 impl ProviderCatalog for Catalog {
     fn onboarding(&self, registration: &ProviderRegistration) -> Result<ProviderOnboarding> {
         Ok(ProviderOnboarding {
+            default_endpoint: (registration.provider == "fixed-endpoint")
+                .then(|| FIXED_ENDPOINT.into()),
+            allow_endpoint_edit: registration.provider != "fixed-endpoint",
             allow_manual_model_when_unsupported: registration.provider == "custom-dyn",
             ..ProviderOnboarding::default()
         })
+    }
+    async fn discover_models(
+        &self,
+        _: &ProviderRegistration,
+        _: &huginn_core::connections::ConnectionMaterial,
+        _: CancellationToken,
+    ) -> Result<ModelCatalog> {
+        self.3.fetch_add(1, Ordering::SeqCst);
+        Ok(ModelCatalog::Unsupported)
     }
     fn adapters(&self) -> Vec<(ProviderRegistration, ProviderDescriptor)> {
         let mut adapters = vec![(
@@ -204,6 +244,7 @@ impl Plugin for Host {
                 self.authentication.clone(),
                 ProviderRegistration::new("double".into(), 1),
                 self.extra_adapters.clone(),
+                self.manager.catalog_discovery_calls.clone(),
             ))),
         )
     }
@@ -522,6 +563,107 @@ async fn login(ui: &Ui) {
         drop(state);
     }
     submit(ui).await;
+}
+
+fn fixed_endpoint_adapter() -> (ProviderRegistration, ProviderDescriptor) {
+    (
+        ProviderRegistration::new("fixed-endpoint".into(), 1),
+        ProviderDescriptor {
+            id: "fixed-endpoint".into(),
+            display_name: "Fixed endpoint provider".into(),
+            models: vec![ModelDescriptor {
+                id: "alpha".into(),
+                supports_tools: true,
+            }],
+            authentication: vec![AuthenticationMethod::ApiKey],
+        },
+    )
+}
+
+async fn open_fixed_endpoint_form(ui: &Ui) {
+    ui.dispatch_command("/login");
+    settle(ui).await;
+    ui.lock().workflow_mut().unwrap().insert("Fixed endpoint");
+    submit(ui).await;
+    assert!(ui
+        .lock()
+        .workflow()
+        .unwrap()
+        .snapshot()
+        .0
+        .contains("Authentication method"));
+    submit(ui).await;
+    assert!(ui
+        .lock()
+        .workflow()
+        .unwrap()
+        .snapshot()
+        .0
+        .contains("Step 3 of 4"));
+}
+
+fn enter_fixed_endpoint_form(ui: &Ui, endpoint: &str) {
+    let mut state = ui.lock();
+    let form = state.workflow_mut().unwrap();
+    for _ in FIXED_ENDPOINT.chars() {
+        form.backspace();
+    }
+    form.insert(endpoint);
+    for _ in 0..4 {
+        form.navigate(true);
+    }
+    form.insert(SENTINEL);
+}
+
+#[tokio::test]
+async fn fixed_provider_endpoint_accepts_trailing_slash_and_rejects_changes() {
+    let (_supervisor, accepted_ui, accepted_manager) =
+        setup_with_catalog(vec![], vec![fixed_endpoint_adapter()]).await;
+    open_fixed_endpoint_form(&accepted_ui).await;
+    enter_fixed_endpoint_form(&accepted_ui, &format!("{FIXED_ENDPOINT}/"));
+    submit(&accepted_ui).await;
+    let accepted_error = {
+        let accepted_state = accepted_ui.lock();
+        accepted_state
+            .workflow()
+            .and_then(|form| form.error_message())
+            .map(str::to_owned)
+    };
+    let expected_endpoint = format!("{FIXED_ENDPOINT}/");
+    {
+        let accepted_records = accepted_manager.records.lock().unwrap();
+        assert_eq!(accepted_records.len(), 1, "{accepted_error:?}");
+        assert_eq!(
+            accepted_records
+                .values()
+                .next()
+                .unwrap()
+                .settings
+                .endpoint
+                .as_deref(),
+            Some(expected_endpoint.as_str())
+        );
+    }
+
+    let (_supervisor, rejected_ui, rejected_manager) =
+        setup_with_catalog(vec![], vec![fixed_endpoint_adapter()]).await;
+    open_fixed_endpoint_form(&rejected_ui).await;
+    enter_fixed_endpoint_form(&rejected_ui, "https://custom.example.invalid/v1");
+    submit(&rejected_ui).await;
+    let rejected = rejected_ui.lock();
+    assert!(rejected
+        .workflow()
+        .unwrap()
+        .error_message()
+        .unwrap()
+        .contains("No request was sent"));
+    assert!(rejected_manager.records.lock().unwrap().is_empty());
+    assert_eq!(
+        rejected_manager
+            .catalog_discovery_calls
+            .load(Ordering::SeqCst),
+        0
+    );
 }
 
 #[tokio::test]
@@ -1002,6 +1144,7 @@ async fn standalone_login_does_not_enter_existing_connection_management() {
                 model: "alpha".into(),
                 requires_secret: false,
                 allow_loopback_http: false,
+                reasoning_effort: None,
             },
             secret: None,
             mode: SecretMode::Ephemeral,
@@ -1422,6 +1565,7 @@ async fn model_command_covers_dynamic_discovery_outcomes_and_manual_entry_bounda
                     model: "m1".into(),
                     requires_secret: true,
                     allow_loopback_http: false,
+                    reasoning_effort: None,
                 },
                 secret: Some(SecretReference::new()),
                 mode: SecretMode::Secure,
@@ -1438,6 +1582,7 @@ async fn model_command_covers_dynamic_discovery_outcomes_and_manual_entry_bounda
                     model: "llama".into(),
                     requires_secret: false,
                     allow_loopback_http: true,
+                    reasoning_effort: None,
                 },
                 secret: None,
                 mode: SecretMode::Secure,
@@ -1454,6 +1599,7 @@ async fn model_command_covers_dynamic_discovery_outcomes_and_manual_entry_bounda
                     model: "x".into(),
                     requires_secret: false,
                     allow_loopback_http: false,
+                    reasoning_effort: None,
                 },
                 secret: None,
                 mode: SecretMode::Secure,
@@ -1613,4 +1759,93 @@ async fn model_command_covers_dynamic_discovery_outcomes_and_manual_entry_bounda
         *manager.selected.lock().unwrap(),
         Some((custom_id, "beta".into()))
     );
+}
+
+#[tokio::test]
+async fn reasoning_command_configures_verified_openai_models_and_rejects_unsupported() {
+    use huginn_core::providers::ReasoningEffort;
+
+    let openai_reg = ProviderRegistration::new("openai".into(), 1);
+    let (_supervisor, ui, manager) = setup_with_catalog(
+        vec![AuthenticationMethod::ApiKey],
+        vec![(
+            openai_reg,
+            ProviderDescriptor {
+                id: "openai".into(),
+                display_name: "OpenAI".into(),
+                models: vec![],
+                authentication: vec![AuthenticationMethod::ApiKey],
+            },
+        )],
+    )
+    .await;
+
+    let openai_id = uuid::Uuid::new_v4();
+    manager.records.lock().unwrap().insert(
+        openai_id,
+        ConnectionRecord {
+            id: openai_id,
+            revision: uuid::Uuid::new_v4(),
+            settings: ConnectionSettings {
+                provider: "openai".into(),
+                endpoint: Some("https://api.openai.com/v1".into()),
+                model: "o3-mini".into(),
+                requires_secret: true,
+                allow_loopback_http: false,
+                reasoning_effort: None,
+            },
+            secret: Some(SecretReference::new()),
+            mode: SecretMode::Secure,
+        },
+    );
+
+    // 1. Verified reasoning model opens /reasoning picker and saves High for next turn.
+    ui.dispatch_command("/reasoning");
+    settle(&ui).await;
+    {
+        let mut state = ui.lock();
+        let form = state.workflow_mut().unwrap();
+        // Choices: Off (0) -> Low (1) -> Medium (2) -> High (3)
+        form.choice(true);
+        form.choice(true);
+        form.choice(true);
+    }
+    submit(&ui).await;
+    assert_eq!(
+        manager.records.lock().unwrap()[&openai_id]
+            .settings
+            .reasoning_effort,
+        Some(ReasoningEffort::High)
+    );
+    assert!(ui
+        .lock()
+        .status
+        .notice
+        .contains("Reasoning effort set to high"));
+
+    // 2. Unsupported model (gpt-4o) rejects without advertising options.
+    manager
+        .records
+        .lock()
+        .unwrap()
+        .get_mut(&openai_id)
+        .unwrap()
+        .settings
+        .model = "gpt-4o".into();
+    manager
+        .records
+        .lock()
+        .unwrap()
+        .get_mut(&openai_id)
+        .unwrap()
+        .settings
+        .reasoning_effort = None;
+    ui.dispatch_command("/reasoning");
+    settle(&ui).await;
+    assert!(ui.lock().workflow().is_none());
+    assert!(ui
+        .lock()
+        .status
+        .notice
+        .contains("Reasoning effort is not supported or verified"));
 }

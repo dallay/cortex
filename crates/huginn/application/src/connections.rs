@@ -4,8 +4,8 @@ use huginn_core::{
     connections::{
         connections_id, ConnectionChoice, ConnectionCredentials, ConnectionError, ConnectionInputs,
         ConnectionManagement, ConnectionMaterial, ConnectionMetadata, ConnectionProvenance,
-        ConnectionRecord, ConnectionResult, ConnectionSettings, ConnectionStore,
-        ConnectionsService, Secret, SecretMode, SecretReference, SecretStore,
+        ConnectionRecord, ConnectionResult, ConnectionRevision, ConnectionSettings,
+        ConnectionStore, ConnectionsService, Secret, SecretMode, SecretReference, SecretStore,
     },
     providers::{
         AuthenticationMethod, ConnectionIdentity, ConnectionSnapshot, DiscoveredModel,
@@ -178,6 +178,10 @@ impl ConnectionCredentials for ConnectionAccess {
         }
         drop(bound);
         Ok(ConnectionMaterial {
+            origin: record
+                .secret
+                .as_ref()
+                .map(|_| ConnectionRevision::from(&record)),
             settings: record.settings,
             secret,
         })
@@ -222,6 +226,7 @@ pub struct ConnectionManager {
     access: Arc<ConnectionAccess>,
     providers: Arc<dyn ProviderManagement>,
     catalog: Arc<dyn ProviderCatalog>,
+    siwc_auth: Option<Arc<dyn huginn_core::siwc::SiwcAuthPort>>,
     state: AsyncMutex<State>,
     owner: u64,
     retired: CancellationToken,
@@ -284,6 +289,7 @@ impl ConnectionManager {
             access: access.clone(),
             providers: providers.clone(),
             catalog,
+            siwc_auth: None,
             state: AsyncMutex::new(State {
                 metadata,
                 failed: false,
@@ -496,6 +502,7 @@ impl ConnectionManager {
         let selection = ModelSelection {
             connection: identity,
             model: record.settings.model.clone(),
+            reasoning_effort: record.settings.reasoning_effort,
         };
         let staged = self
             .providers
@@ -514,6 +521,157 @@ impl ConnectionManager {
         publication.armed = false;
         Ok(selection)
     }
+    pub fn with_siwc_auth(mut self, auth: Arc<dyn huginn_core::siwc::SiwcAuthPort>) -> Self {
+        self.siwc_auth = Some(auth);
+        self
+    }
+
+    pub async fn sign_in_siwc(
+        &self,
+        cancel: CancellationToken,
+    ) -> ConnectionResult<ConnectionRecord> {
+        let Some(auth) = self.siwc_auth.clone() else {
+            return Err(ConnectionError::AdapterUnavailable);
+        };
+        if self.access.secrets.mode() != SecretMode::Secure {
+            return Err(ConnectionError::BackendUnavailable);
+        }
+        // Enforce single SIWC account in this first vertical slice.
+        let existing = self.list().await?;
+        if existing
+            .iter()
+            .any(|record| record.settings.provider == huginn_core::siwc::SIWC_PROVIDER_ID)
+        {
+            return Err(ConnectionError::InvalidConfiguration);
+        }
+        let creds = auth.sign_in(cancel).await.map_err(|err| match err {
+            huginn_core::AgentError::Cancelled => ConnectionError::Cancelled,
+            _ => ConnectionError::InvalidConfiguration,
+        })?;
+        creds
+            .validate_grants()
+            .map_err(|_| ConnectionError::InvalidConfiguration)?;
+        let secret_json = creds
+            .to_secret_json()
+            .map_err(|_| ConnectionError::InvalidConfiguration)?;
+        let secret = Secret::new(secret_json)?;
+        let settings = ConnectionSettings {
+            provider: huginn_core::siwc::SIWC_PROVIDER_ID.into(),
+            endpoint: Some(huginn_core::siwc::SIWC_API_BASE_URL.into()),
+            model: "chatgpt-siwc-pending-selection".into(),
+            requires_secret: true,
+            allow_loopback_http: false,
+            reasoning_effort: None,
+        };
+        self.run_operation(async {
+            let _operation = self.operation().await?;
+            self.write_connection(
+                None,
+                settings,
+                Some(secret),
+                SecretMode::Secure,
+                AuthenticationMethod::OAuth,
+            )
+            .await
+        })
+        .await
+    }
+
+    pub async fn revoke_with_report(
+        &self,
+        id: Uuid,
+        cancel: CancellationToken,
+    ) -> ConnectionResult<String> {
+        enum RemoteCandidate {
+            None,
+            Ready {
+                auth: Arc<dyn huginn_core::siwc::SiwcAuthPort>,
+                creds: huginn_core::siwc::SiwcCredentials,
+            },
+            LocalOnly(String),
+        }
+
+        // Capture the latest stored token and revoke locally under the same operation
+        // guard, so refresh persistence cannot write between the read and revocation.
+        let (candidate, local_result) = self
+            .run_operation(async {
+                let _operation = self.operation().await?;
+                let mut state = self.state.lock().await;
+                Self::check_state(&state)?;
+                let candidate = async {
+                    let record = state.metadata.connections.get(&id).cloned();
+                    let Some(record) = record
+                        .filter(|r| r.settings.provider == huginn_core::siwc::SIWC_PROVIDER_ID)
+                    else {
+                        return RemoteCandidate::None;
+                    };
+                    let (Some(auth), Some(reference)) =
+                        (self.siwc_auth.clone(), record.secret.as_ref())
+                    else {
+                        return RemoteCandidate::None;
+                    };
+                    self.invalidate(id).await;
+                    match self.access.secrets.read_mode(record.mode, reference).await {
+                        Ok(secret) => {
+                            if self.access.epoch.load(Ordering::SeqCst) != self.owner
+                                || self.retired.is_cancelled()
+                            {
+                                return RemoteCandidate::LocalOnly(
+                                    "connection ownership changed before remote revocation".into(),
+                                );
+                            }
+                            match huginn_core::siwc::SiwcCredentials::from_secret_json(
+                                secret.expose(),
+                            ) {
+                                Ok(creds) => RemoteCandidate::Ready { auth, creds },
+                                Err(_) => RemoteCandidate::LocalOnly(
+                                    "stored OAuth credentials could not be parsed".into(),
+                                ),
+                            }
+                        }
+                        Err(_) => RemoteCandidate::LocalOnly(
+                            "stored OAuth credentials were unavailable".into(),
+                        ),
+                    }
+                }
+                .await;
+                let local_result = self.revoke_locked(&mut state, id).await;
+                Ok((candidate, local_result))
+            })
+            .await?;
+
+        let remote_report = match candidate {
+            RemoteCandidate::None => None,
+            RemoteCandidate::LocalOnly(reason) => {
+                Some(huginn_core::siwc::SiwcRevocationOutcome::LocalOnly { reason })
+            }
+            RemoteCandidate::Ready { auth, creds } => {
+                if self.access.epoch.load(Ordering::SeqCst) != self.owner
+                    || self.retired.is_cancelled()
+                {
+                    Some(huginn_core::siwc::SiwcRevocationOutcome::LocalOnly {
+                        reason: "connection ownership changed before remote revocation".into(),
+                    })
+                } else {
+                    Some(auth.revoke_remote(&creds, cancel).await)
+                }
+            }
+        };
+
+        local_result?;
+        Ok(match remote_report {
+            Some(huginn_core::siwc::SiwcRevocationOutcome::RemoteConfirmed) => {
+                "Sign in with ChatGPT session revoked remotely and deleted locally.".into()
+            }
+            Some(huginn_core::siwc::SiwcRevocationOutcome::LocalOnly { reason }) => {
+                format!(
+                    "Local Sign in with ChatGPT credentials deleted, but remote revocation was not confirmed ({reason})."
+                )
+            }
+            None => "Connection revoked locally. Next inference is blocked, including in a pinned turn. Remote completion remains unknown.".into(),
+        })
+    }
+
     pub async fn list(&self) -> ConnectionResult<Vec<ConnectionRecord>> {
         self.run_operation(async {
             let _operation = self.operation().await?;
@@ -701,6 +859,7 @@ impl ConnectionManager {
             ));
         }
         let material = ConnectionMaterial {
+            origin: Some(ConnectionRevision::from(&record)),
             settings: record.settings,
             secret,
         };
@@ -739,10 +898,21 @@ impl ConnectionManager {
         settings: ConnectionSettings,
         secret: Option<Secret>,
     ) -> ConnectionResult<ConnectionRecord> {
+        let authentication = if settings.requires_secret {
+            AuthenticationMethod::ApiKey
+        } else {
+            AuthenticationMethod::None
+        };
         self.run_operation(async {
             let _operation = self.operation().await?;
-            self.write_connection(None, settings, secret, self.access.secrets.mode())
-                .await
+            self.write_connection(
+                None,
+                settings,
+                secret,
+                self.access.secrets.mode(),
+                authentication,
+            )
+            .await
         })
         .await
     }
@@ -752,10 +922,21 @@ impl ConnectionManager {
         settings: ConnectionSettings,
         secret: Option<Secret>,
     ) -> ConnectionResult<ConnectionRecord> {
+        let authentication = if settings.requires_secret {
+            AuthenticationMethod::ApiKey
+        } else {
+            AuthenticationMethod::None
+        };
         self.run_operation(async {
             let _operation = self.operation().await?;
-            self.write_connection(Some(id), settings, secret, self.access.secrets.mode())
-                .await
+            self.write_connection(
+                Some(id),
+                settings,
+                secret,
+                self.access.secrets.mode(),
+                authentication,
+            )
+            .await
         })
         .await
     }
@@ -767,6 +948,7 @@ impl ConnectionManager {
         settings: ConnectionSettings,
         secret: Option<Secret>,
         mode: SecretMode,
+        authentication: AuthenticationMethod,
     ) -> ConnectionResult<ConnectionRecord> {
         settings.validate()?;
         if settings.requires_secret != secret.is_some() {
@@ -787,16 +969,21 @@ impl ConnectionManager {
         {
             return Err(ConnectionError::InvalidConfiguration);
         }
-        let authentication = if settings.requires_secret {
-            AuthenticationMethod::ApiKey
-        } else {
-            AuthenticationMethod::None
-        };
         if !descriptor.authentication.contains(&authentication) {
             return Err(ConnectionError::InvalidConfiguration);
         }
         let mut state = self.state.lock().await;
         Self::check_state(&state)?;
+        if previous.is_none()
+            && settings.provider == huginn_core::siwc::SIWC_PROVIDER_ID
+            && state
+                .metadata
+                .connections
+                .values()
+                .any(|r| r.settings.provider == huginn_core::siwc::SIWC_PROVIDER_ID)
+        {
+            return Err(ConnectionError::InvalidConfiguration);
+        }
         let id = previous.unwrap_or_else(Uuid::new_v4);
         let old = match previous {
             Some(id) => Some(
@@ -879,6 +1066,13 @@ impl ConnectionManager {
                 .cloned()
                 .ok_or(ConnectionError::InvalidSelection)?;
             record.settings.model = model;
+            if !huginn_core::providers::supports_openai_reasoning_effort(
+                &record.settings.provider,
+                record.settings.endpoint.as_deref(),
+                &record.settings.model,
+            ) {
+                record.settings.reasoning_effort = None;
+            }
             record.settings.validate()?;
             let descriptor = self
                 .catalog
@@ -895,31 +1089,64 @@ impl ConnectionManager {
             {
                 return Err(ConnectionError::InvalidSelection);
             }
-            self.check_secret(&record).await?;
-            if self.access.identity(id).is_err() {
-                self.install(&record).await?;
-            }
-            let mut next = state.metadata.clone();
-            next.connections.insert(id, record.clone());
-            next.selected = Some(id);
-            self.providers
-                .clear_selection()
-                .map_err(|_| ConnectionError::InvalidSelection)?;
-            state.model_save_pending = true;
-            self.persist(&mut state, next).await?;
-            state.model_save_pending = false;
-            // No await between confirmed persistence and arming recovery. Keep
-            // the state lock until publication succeeds or its guard is dropped.
-            state.failed = true;
-            state.pending_model = Some(record.clone());
-            self.publish_model(&mut state, &record).await?;
-            drop(state);
-            Ok(ModelSelection {
-                connection: self.access.identity(id)?,
-                model: record.settings.model,
-            })
+            self.apply_selection_update(&mut state, id, record).await
         })
         .await
+    }
+    /// Update the reasoning effort preference for the NEXT turn on a saved connection.
+    /// Retains the authorization identity so already pinned turns keep their original setting.
+    pub async fn select_reasoning_effort(
+        &self,
+        id: Uuid,
+        effort: Option<huginn_core::providers::ReasoningEffort>,
+    ) -> ConnectionResult<ModelSelection> {
+        self.run_operation(async {
+            let _operation = self.operation().await?;
+            let mut state = self.state.lock().await;
+            Self::check_state(&state)?;
+            let mut record = state
+                .metadata
+                .connections
+                .get(&id)
+                .cloned()
+                .ok_or(ConnectionError::InvalidSelection)?;
+            record.settings.reasoning_effort = effort;
+            record.settings.validate()?;
+            self.apply_selection_update(&mut state, id, record).await
+        })
+        .await
+    }
+    /// Shared selection persistence and publication transition preserving the
+    /// `model_save_pending`, `failed`, and `pending_model` write order used by `recover`.
+    async fn apply_selection_update(
+        &self,
+        state: &mut State,
+        id: Uuid,
+        record: ConnectionRecord,
+    ) -> ConnectionResult<ModelSelection> {
+        self.check_secret(&record).await?;
+        if self.access.identity(id).is_err() {
+            self.install(&record).await?;
+        }
+        let mut next = state.metadata.clone();
+        next.connections.insert(id, record.clone());
+        next.selected = Some(id);
+        self.providers
+            .clear_selection()
+            .map_err(|_| ConnectionError::InvalidSelection)?;
+        state.model_save_pending = true;
+        self.persist(state, next).await?;
+        state.model_save_pending = false;
+        // No await between confirmed persistence and arming recovery. Keep
+        // the state lock until publication succeeds or its guard is dropped.
+        state.failed = true;
+        state.pending_model = Some(record.clone());
+        self.publish_model(state, &record).await?;
+        Ok(ModelSelection {
+            connection: self.access.identity(id)?,
+            model: record.settings.model,
+            reasoning_effort: record.settings.reasoning_effort,
+        })
     }
     async fn publish_model(
         &self,
@@ -986,26 +1213,29 @@ impl ConnectionManager {
         self.run_operation(async {
             let _operation = self.operation().await?;
             let mut state = self.state.lock().await;
-            Self::check_state(&state)?;
-            let record = state
-                .metadata
-                .connections
-                .get(&id)
-                .cloned()
-                .ok_or(ConnectionError::InvalidSelection)?;
-            self.invalidate(id).await;
-            let mut next = state.metadata.clone();
-            next.connections.remove(&id);
-            if next.selected == Some(id) {
-                next.selected = None;
-            }
-            if let Some(reference) = record.secret {
-                next.cleanup.insert(reference, record.mode);
-            }
-            self.persist(&mut state, next).await?;
-            self.reconcile_locked(&mut state).await
+            self.revoke_locked(&mut state, id).await
         })
         .await
+    }
+    async fn revoke_locked(&self, state: &mut State, id: Uuid) -> ConnectionResult<()> {
+        Self::check_state(state)?;
+        let record = state
+            .metadata
+            .connections
+            .get(&id)
+            .cloned()
+            .ok_or(ConnectionError::InvalidSelection)?;
+        self.invalidate(id).await;
+        let mut next = state.metadata.clone();
+        next.connections.remove(&id);
+        if next.selected == Some(id) {
+            next.selected = None;
+        }
+        if let Some(reference) = record.secret {
+            next.cleanup.insert(reference, record.mode);
+        }
+        self.persist(state, next).await?;
+        self.reconcile_locked(state).await
     }
     pub async fn reconcile(&self) -> ConnectionResult<()> {
         self.run_operation(async {
@@ -1096,6 +1326,7 @@ impl ConnectionManager {
                         let selection = ModelSelection {
                             connection: identity,
                             model: settings.model,
+                            reasoning_effort: settings.reasoning_effort,
                         };
                         let staged = self
                             .providers
@@ -1167,14 +1398,27 @@ impl ConnectionManagement for ConnectionManager {
         secret: Option<Secret>,
         mode: SecretMode,
     ) -> ConnectionResult<ConnectionRecord> {
+        let authentication = if settings.requires_secret {
+            AuthenticationMethod::ApiKey
+        } else {
+            AuthenticationMethod::None
+        };
         self.run_operation(async {
             let _operation = self.operation().await?;
-            self.write_connection(id, settings, secret, mode).await
+            self.write_connection(id, settings, secret, mode, authentication)
+                .await
         })
         .await
     }
     async fn select_model(&self, id: Uuid, model: String) -> ConnectionResult<ModelSelection> {
         self.select_model(id, model).await
+    }
+    async fn select_reasoning_effort(
+        &self,
+        id: Uuid,
+        effort: Option<huginn_core::providers::ReasoningEffort>,
+    ) -> ConnectionResult<ModelSelection> {
+        self.select_reasoning_effort(id, effort).await
     }
     async fn discover_models(
         &self,
@@ -1185,6 +1429,92 @@ impl ConnectionManagement for ConnectionManager {
     }
     async fn revoke(&self, id: Uuid) -> ConnectionResult<()> {
         self.revoke(id).await
+    }
+    async fn sign_in_siwc(&self, cancel: CancellationToken) -> ConnectionResult<ConnectionRecord> {
+        self.sign_in_siwc(cancel).await
+    }
+    async fn revoke_with_report(
+        &self,
+        id: Uuid,
+        cancel: CancellationToken,
+    ) -> ConnectionResult<String> {
+        self.revoke_with_report(id, cancel).await
+    }
+}
+
+fn siwc_record(state: &State, origin: ConnectionRevision) -> ConnectionResult<&ConnectionRecord> {
+    ConnectionManager::check_state(state)?;
+    state
+        .metadata
+        .connections
+        .get(&origin.id)
+        .filter(|r| {
+            r.revision == origin.revision
+                && r.settings.provider == huginn_core::siwc::SIWC_PROVIDER_ID
+        })
+        .ok_or(ConnectionError::Revoked)
+}
+
+#[async_trait]
+impl huginn_core::siwc::SiwcCredentialPersistence for ConnectionManager {
+    async fn persist_rotated(
+        &self,
+        origin: ConnectionRevision,
+        credentials: &huginn_core::siwc::SiwcCredentials,
+    ) -> huginn_core::Result<()> {
+        let secret = Secret::new(credentials.to_secret_json()?)?;
+        self.run_operation(async {
+            let _operation = self.operation().await?;
+            let state = self.state.lock().await;
+            let record = siwc_record(&state, origin)?;
+            let reference = record
+                .secret
+                .as_ref()
+                .ok_or(ConnectionError::MissingSecret)?;
+            let current_secret = self
+                .access
+                .secrets
+                .read_mode(record.mode, reference)
+                .await?;
+            let current_creds =
+                huginn_core::siwc::SiwcCredentials::from_secret_json(current_secret.expose())
+                    .map_err(|_| ConnectionError::InvalidConfiguration)?;
+            if current_creds.host_id != credentials.host_id
+                || current_creds.account_sub != credentials.account_sub
+            {
+                return Err(ConnectionError::Revoked);
+            }
+            self.access
+                .secrets
+                .write_mode(record.mode, reference, &secret)
+                .await
+        })
+        .await?;
+        Ok(())
+    }
+
+    async fn load_latest(
+        &self,
+        origin: ConnectionRevision,
+    ) -> huginn_core::Result<Option<huginn_core::siwc::SiwcCredentials>> {
+        let secret = self
+            .run_operation(async {
+                let _operation = self.operation().await?;
+                let state = self.state.lock().await;
+                let record = siwc_record(&state, origin)?;
+                let Some(reference) = record.secret.as_ref() else {
+                    return Ok(None);
+                };
+                match self.access.secrets.read_mode(record.mode, reference).await {
+                    Ok(secret) => Ok(Some(secret)),
+                    Err(ConnectionError::MissingSecret) => Ok(None),
+                    Err(error) => Err(error),
+                }
+            })
+            .await?;
+        secret
+            .map(|secret| huginn_core::siwc::SiwcCredentials::from_secret_json(secret.expose()))
+            .transpose()
     }
 }
 

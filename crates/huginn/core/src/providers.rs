@@ -53,10 +53,151 @@ pub struct ConnectionIdentity {
     pub revision: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    Low,
+    Medium,
+    High,
+}
+
+impl ReasoningEffort {
+    pub const ALL: [Self; 3] = [Self::Low, Self::Medium, Self::High];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+}
+
+impl std::fmt::Display for ReasoningEffort {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for ReasoningEffort {
+    type Err = ();
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "low" => Ok(Self::Low),
+            "medium" => Ok(Self::Medium),
+            "high" => Ok(Self::High),
+            _ => Err(()),
+        }
+    }
+}
+
+/// Whether `endpoint` is the canonical official OpenAI Platform API `/v1` base URL.
+pub fn is_official_openai_api_endpoint(endpoint: &str) -> bool {
+    let Ok(url) = url::Url::parse(endpoint) else {
+        return false;
+    };
+    if url.scheme() != "https"
+        || url.host_str() != Some("api.openai.com")
+        || url.port().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return false;
+    }
+    url.path().trim_end_matches('/') == "/v1"
+}
+
+/// Conservative allowlist of OpenAI API models verified for Chat Completions `reasoning_effort`.
+///
+/// Matches exact verified base aliases and verified dated snapshots only. Explicitly excludes
+/// Responses-only models (`o3-pro`, `o3-deep-research`, `o4-mini-deep-research`, `gpt-5-pro`,
+/// `gpt-5-codex`, `o1-pro`) and non-reasoning aliases (`o1-mini`, `o1-preview`, `gpt-5-chat-latest`).
+pub fn is_verified_openai_reasoning_model(model: &str) -> bool {
+    let normalized = model.trim().to_ascii_lowercase();
+    const VERIFIED_CHAT_COMPLETIONS_REASONING_MODELS: &[&str] = &[
+        "o1",
+        "o1-2024-12-17",
+        "o3",
+        "o3-2025-04-16",
+        "o3-mini",
+        "o3-mini-2025-01-31",
+        "o4-mini",
+        "o4-mini-2025-04-16",
+        "gpt-5",
+        "gpt-5-2025-08-07",
+        "gpt-5-mini",
+        "gpt-5-mini-2025-08-07",
+        "gpt-5-nano",
+        "gpt-5-nano-2025-08-07",
+    ];
+    VERIFIED_CHAT_COMPLETIONS_REASONING_MODELS.contains(&normalized.as_str())
+}
+
+/// Whether the given provider, endpoint, and model support verified OpenAI Chat Completions
+/// `reasoning_effort` selection.
+pub fn supports_openai_reasoning_effort(
+    provider: &str,
+    endpoint: Option<&str>,
+    model: &str,
+) -> bool {
+    provider == "openai"
+        && endpoint.is_some_and(is_official_openai_api_endpoint)
+        && is_verified_openai_reasoning_model(model)
+}
+
+/// Conservative allowlist of OpenAI API models verified for Chat Completions image input.
+///
+/// Matches exact verified Chat Completions aliases and snapshots only, excluding Responses-only
+/// models (`o3-pro`, `o3-deep-research`, `o4-mini-deep-research`, `gpt-5-pro`, `gpt-5-codex`),
+/// text-only reasoning models (`o3-mini`), and audio/realtime/TTS variants.
+pub fn is_verified_openai_vision_model(model: &str) -> bool {
+    let normalized = model.trim().to_ascii_lowercase();
+    const VERIFIED_CHAT_COMPLETIONS_VISION_MODELS: &[&str] = &[
+        "gpt-4o",
+        "gpt-4o-2024-05-13",
+        "gpt-4o-2024-08-06",
+        "gpt-4o-2024-11-20",
+        "chatgpt-4o-latest",
+        "gpt-4o-mini",
+        "gpt-4o-mini-2024-07-18",
+        "gpt-4.1",
+        "gpt-4.1-2025-04-14",
+        "gpt-4.1-mini",
+        "gpt-4.1-mini-2025-04-14",
+        "gpt-4.1-nano",
+        "gpt-4.1-nano-2025-04-14",
+        "o1",
+        "o1-2024-12-17",
+        "o3",
+        "o3-2025-04-16",
+        "o4-mini",
+        "o4-mini-2025-04-16",
+        "gpt-5",
+        "gpt-5-2025-08-07",
+        "gpt-5-mini",
+        "gpt-5-mini-2025-08-07",
+        "gpt-5-nano",
+        "gpt-5-nano-2025-08-07",
+    ];
+    VERIFIED_CHAT_COMPLETIONS_VISION_MODELS.contains(&normalized.as_str())
+}
+
+/// Whether the given provider, endpoint, and model support verified OpenAI Chat Completions
+/// image input.
+pub fn supports_openai_vision(provider: &str, endpoint: Option<&str>, model: &str) -> bool {
+    provider == "openai"
+        && endpoint.is_some_and(is_official_openai_api_endpoint)
+        && is_verified_openai_vision_model(model)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModelSelection {
     pub connection: ConnectionIdentity,
     pub model: String,
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 /// Local preparation only; none of these phases asserts remote connectivity.
@@ -81,6 +222,8 @@ pub struct SelectionSnapshot {
     pub connection: String,
     pub model: String,
     pub mode: SelectionMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConnectionSnapshot {

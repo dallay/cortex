@@ -698,6 +698,7 @@ enum OverlayView {
 struct View {
     bar: crate::status_bar::StatusBar,
     editor: Editor,
+    attachment_chips: Vec<String>,
     completion: Suggestions,
     /// The complete transcript, owned by the app.
     history: Vec<String>,
@@ -715,6 +716,7 @@ impl View {
         Self {
             bar: crate::status_bar::StatusBar::from_state(state),
             editor: state.editor.clone(),
+            attachment_chips: state.attachment_chips(),
             completion: state.completion.clone(),
             history: state.conversation.clone(),
             history_scroll: state.history_scroll,
@@ -1513,8 +1515,23 @@ Enter save Esc close"
         let composer_height = requested_composer_height
             .max(minimum_composer_height)
             .min(max_composer_height);
-        let [tail, composer] =
-            Layout::vertical([Constraint::Min(1), Constraint::Length(composer_height)]).areas(area);
+        let attachments_height = u16::from(!view.attachment_chips.is_empty());
+        let [tail, attachments_area, composer] = Layout::vertical([
+            Constraint::Min(1),
+            Constraint::Length(attachments_height),
+            Constraint::Length(composer_height),
+        ])
+        .areas(area);
+        if attachments_height > 0 {
+            let strip = format!(
+                " {}  (Alt+Backspace removes)",
+                view.attachment_chips.join(" ")
+            );
+            frame.render_widget(
+                Paragraph::new(strip).style(Style::default().fg(Color::Cyan)),
+                attachments_area,
+            );
+        }
         let popup_height = if view.completion.items.is_empty() {
             0
         } else {
@@ -1795,11 +1812,25 @@ Enter save Esc close"
         // a steering message the loop drains at its next step boundary; it is
         // never queued as a turn of its own.
         if !state.busy {
+            let images = match state.take_attachments_for_delivery() {
+                Ok(images) => images,
+                Err(_) => return DraftDelivery::Refused,
+            };
+            self.ui.enqueue_submitted_images(images);
             if prompts.try_send(line.to_owned()).is_err() {
+                if let Some(restored) = self.ui.take_last_enqueued_images() {
+                    state.attachments = restored;
+                }
                 return DraftDelivery::Refused;
             }
             state.busy = true;
             return DraftDelivery::Sent;
+        }
+        if !state.attachments.is_empty() {
+            state.status.set_diagnostic(
+                "Image attachments cannot be sent as mid-turn steering; wait for the turn to finish or remove them".into(),
+            );
+            return DraftDelivery::Refused;
         }
         let Some(steering) = &self.steering else {
             state.status.set_diagnostic(
@@ -1845,6 +1876,65 @@ Enter save Esc close"
             return;
         }
         if let Event::Paste(text) = &event {
+            if crate::clipboard::parse_pasted_image_path(text).is_some() {
+                let raw = text.clone();
+                let crate::state::UiState {
+                    editor, completion, ..
+                } = &mut *state;
+                completion.dismiss(editor);
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    state.pending_image_reads += 1;
+                    drop(state);
+                    let ui = self.ui.clone();
+                    handle.spawn(async move {
+                        let outcome = tokio::time::timeout(
+                            Duration::from_secs(5),
+                            tokio::task::spawn_blocking(move || {
+                                crate::clipboard::try_load_pasted_image_path(&raw)
+                                    .map(|res| (res, None))
+                                    .unwrap_or_else(|| (Err(String::new()), Some(raw)))
+                            }),
+                        )
+                        .await;
+                        let mut state = ui.lock();
+                        state.pending_image_reads -= 1;
+                        match outcome {
+                            Ok(Ok((Ok(image), None))) => {
+                                let _ = state.attach_image(image);
+                            }
+                            Ok(Ok((Err(error), None))) => {
+                                state.status.set_diagnostic(error);
+                            }
+                            Ok(Ok((_, Some(fallback_text)))) => {
+                                state.insert_pasted_text(&fallback_text);
+                            }
+                            Ok(Err(_)) => {
+                                state
+                                    .status
+                                    .set_diagnostic("Failed to read pasted image file.".into());
+                            }
+                            Err(_) => {
+                                state
+                                    .status
+                                    .set_diagnostic("Timed out reading pasted image file.".into());
+                            }
+                        }
+                        ui.dirty.notify_one();
+                    });
+                } else if let Some(loaded) = crate::clipboard::try_load_pasted_image_path(text) {
+                    match loaded {
+                        Ok(image) => {
+                            let _ = state.attach_image(image);
+                        }
+                        Err(error) => {
+                            state.status.set_diagnostic(error);
+                        }
+                    }
+                } else {
+                    state.insert_pasted_text(text);
+                }
+                return;
+            }
             state.insert_pasted_text(text);
             let crate::state::UiState {
                 editor, completion, ..
@@ -1865,6 +1955,18 @@ Enter save Esc close"
             } else {
                 self.ui.stop.cancel();
             }
+            return;
+        }
+        // Keep async read results with this draft, including when Enter would run a command.
+        if state.pending_image_reads != 0
+            && key.code == KeyCode::Enter
+            && !key
+                .modifiers
+                .intersects(KeyModifiers::ALT | KeyModifiers::SHIFT)
+        {
+            state
+                .status
+                .set_notice("Reading image; press Enter again when it finishes".into());
             return;
         }
         match Self::completion_key(&mut state, key) {
@@ -1902,6 +2004,68 @@ Enter save Esc close"
                 state.insert_editor_text("\n")
             }
             KeyCode::Char('j') if ctrl => state.insert_editor_text("\n"),
+            KeyCode::Char('v') if ctrl => {
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    state.pending_image_reads += 1;
+                    drop(state);
+                    let ui = self.ui.clone();
+                    handle.spawn(async move {
+                        let outcome = tokio::time::timeout(
+                            Duration::from_secs(5),
+                            tokio::task::spawn_blocking(crate::clipboard::read_clipboard_image),
+                        )
+                        .await;
+                        let mut state = ui.lock();
+                        state.pending_image_reads -= 1;
+                        match outcome {
+                            Ok(Ok(Ok(Some(image)))) => {
+                                let _ = state.attach_image(image);
+                            }
+                            Ok(Ok(Ok(None))) => {
+                                state.status.set_notice(
+                                    "Clipboard does not contain a supported image (PNG/JPEG/WebP)."
+                                        .into(),
+                                );
+                            }
+                            Ok(Ok(Err(error))) => {
+                                state.status.set_diagnostic(error);
+                            }
+                            Ok(Err(_)) => {
+                                state
+                                    .status
+                                    .set_diagnostic("Failed to read image from clipboard.".into());
+                            }
+                            Err(_) => {
+                                state.status.set_diagnostic(
+                                    "Timed out reading image from clipboard.".into(),
+                                );
+                            }
+                        }
+                        ui.dirty.notify_one();
+                    });
+                } else {
+                    let result = crate::clipboard::read_clipboard_image();
+                    match result {
+                        Ok(Some(image)) => {
+                            let _ = state.attach_image(image);
+                        }
+                        Ok(None) => {
+                            state.status.set_notice(
+                                "Clipboard does not contain a supported image (PNG/JPEG/WebP)."
+                                    .into(),
+                            );
+                        }
+                        Err(error) => {
+                            state.status.set_diagnostic(error);
+                        }
+                    }
+                }
+            }
+            KeyCode::Backspace
+                if key.modifiers.contains(KeyModifiers::ALT) && !state.attachments.is_empty() =>
+            {
+                state.remove_last_attachment();
+            }
             KeyCode::Enter => {
                 let draft = state.submitted_editor_text();
                 let line = if draft.trim_start().starts_with("/skill:") {
@@ -1909,24 +2073,32 @@ Enter save Esc close"
                 } else {
                     draft.trim().to_string()
                 };
-                if line.is_empty() {
+                if line.is_empty() && state.attachments.is_empty() {
                     return;
                 }
                 if matches!(line.as_str(), "/quit" | "/exit") {
                     self.ui.stop.cancel();
                     return;
                 }
-                drop(state);
-                if self.ui.dispatch_command(&line) {
-                    self.ui.lock().clear_editor();
-                    return;
+                if state.attachments.is_empty() {
+                    drop(state);
+                    if self.ui.dispatch_command(&line) {
+                        self.ui.lock().clear_editor();
+                        return;
+                    }
+                    let mut state = self.ui.lock();
+                    match self.deliver_draft(&line, &mut state, prompts) {
+                        DraftDelivery::Sent => {}
+                        DraftDelivery::Refused | DraftDelivery::Steered => return,
+                    }
+                    state.clear_editor();
+                } else {
+                    match self.deliver_draft(&line, &mut state, prompts) {
+                        DraftDelivery::Sent => {}
+                        DraftDelivery::Refused | DraftDelivery::Steered => return,
+                    }
+                    state.clear_editor();
                 }
-                let mut state = self.ui.lock();
-                match self.deliver_draft(&line, &mut state, prompts) {
-                    DraftDelivery::Sent => {}
-                    DraftDelivery::Refused | DraftDelivery::Steered => return,
-                }
-                state.clear_editor();
             }
             KeyCode::PageUp => {
                 // Scroll the transcript up; the composer keeps its own focus.
@@ -1938,7 +2110,13 @@ Enter save Esc close"
             KeyCode::Char(ch) if !ctrl && !key.modifiers.contains(KeyModifiers::ALT) => {
                 state.insert_editor_text(&ch.to_string())
             }
-            KeyCode::Backspace => state.backspace_editor(),
+            KeyCode::Backspace => {
+                if state.editor.text.is_empty() && !state.attachments.is_empty() {
+                    state.remove_last_attachment();
+                } else {
+                    state.backspace_editor();
+                }
+            }
             KeyCode::Delete => state.delete_editor(),
             KeyCode::Left => state.move_editor_left(),
             KeyCode::Right => state.move_editor_right(),
@@ -2483,6 +2661,7 @@ mod tests {
                 widgets: String::new(),
             },
             editor: Editor::default(),
+            attachment_chips: Vec::new(),
             history: Vec::new(),
             history_scroll: 0,
             tail: String::new(),

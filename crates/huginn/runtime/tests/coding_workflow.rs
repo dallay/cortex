@@ -1213,6 +1213,7 @@ async fn session_lock_and_recovery_prevent_concurrent_or_replayed_effects() {
             name: "shell".into(),
             arguments: json!({"command":"echo unsafe"}),
         }],
+        images: vec![],
     });
     store.save(&session).await.unwrap();
     let lease = store.lease(&session.id).unwrap();
@@ -1248,6 +1249,7 @@ fn recovery_places_missing_tool_results_before_later_user_messages() {
                     arguments: json!({}),
                 },
             ],
+            images: vec![],
         },
         Message::text(Role::User, "next turn"),
         Message::tool("first".into(), "completed".into()),

@@ -36,12 +36,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| "http://127.0.0.1:11434".into());
     let adapter = InferenceAdapter::ollama(180);
     let material = ConnectionMaterial {
+        origin: None,
         settings: ConnectionSettings {
             provider: "ollama".into(),
             endpoint: Some(endpoint),
             model: model.clone(),
             requires_secret: false,
             allow_loopback_http: true,
+            reasoning_effort: None,
         },
         secret: None,
     };
@@ -52,6 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             revision: 1,
         },
         model,
+        reasoning_effort: None,
     };
     let model = adapter
         .create_connection_model(&selection, material, CancellationToken::new())

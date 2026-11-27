@@ -625,6 +625,13 @@
     },
     {
       "kinds": "test",
+      "label": "//crates/huginn/core:images_and_siwc",
+      "manifest": "crates/huginn/core/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/core#huginn-core@0.0.1",
+      "target": "images_and_siwc"
+    },
+    {
+      "kinds": "test",
       "label": "//crates/huginn/core:kernel_lifecycle",
       "manifest": "crates/huginn/core/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/core#huginn-core@0.0.1",
@@ -776,6 +783,13 @@
       "manifest": "crates/huginn/plugin-api/Cargo.toml",
       "package_id": "path+file://<workspace>/crates/huginn/plugin-api#huginn-plugin-api@0.0.1",
       "target": "workflows"
+    },
+    {
+      "kinds": "test",
+      "label": "//crates/huginn/presentation:clipboard",
+      "manifest": "crates/huginn/presentation/Cargo.toml",
+      "package_id": "path+file://<workspace>/crates/huginn/presentation#huginn-presentation@0.0.1",
+      "target": "clipboard"
     },
     {
       "kinds": "test",

@@ -313,6 +313,17 @@ async fn enable_connection_management(
     supervisor.register(Box::new(huginn_runtime::providers::CustomProviderPlugin {
         timeout_secs: config.timeout_secs,
     }))?;
+    let host_id_storage = config.db.parent().map(|p| p.join("siwc_host_id"));
+    let siwc_auth = Arc::new(huginn_runtime::siwc::SiwcOAuthClient::with_storage(
+        config.timeout_secs,
+        host_id_storage,
+    ));
+    let siwc_persistence = Arc::new(std::sync::OnceLock::new());
+    supervisor.register(Box::new(huginn_runtime::siwc::SiwcProviderPlugin {
+        auth: siwc_auth.clone(),
+        persistence: Some(siwc_persistence.clone()),
+        timeout_secs: config.timeout_secs,
+    }))?;
     supervisor.start().await?;
     let providers = supervisor.resolve::<ProvidersService>(&providers_id())?;
     let catalog = supervisor.resolve::<ProviderCatalogService>(&catalog_id())?;
@@ -333,8 +344,11 @@ async fn enable_connection_management(
         Err(error) => return Err(error.into()),
     };
     let manager = Arc::new(
-        ConnectionManager::open(store, access, providers.0.clone(), catalog.0.clone()).await?,
+        ConnectionManager::open(store, access, providers.0.clone(), catalog.0.clone())
+            .await?
+            .with_siwc_auth(siwc_auth),
     );
+    let _ = siwc_persistence.set(manager.clone());
     // Explicit configuration still wins at startup; UI choices are deliberate
     // runtime changes. Never combine stored credentials with legacy settings.
     if let Some(selection) = explicit_selection {
@@ -746,24 +760,28 @@ async fn tui_chat(
         ui.synchronize(session);
         ui.finish_operation(startup_operation);
         let implementation = supervisor.resolve::<LoopService>(&composition::loop_id())?;
-        while let Some(prompt) = ui.prompt().await {
+        while let Some((prompt, images)) = ui.prompt_submission().await {
             if !current_model_ready(&model_readiness) {
                 ui.notification("No model configured. Use /login, then /model. No restart needed.".into());
                 ui.synchronize(session);
                 continue;
             }
-            let prompt = match prompts::expand(session, prompt) {
-                Ok(prompt) => prompt,
-                Err(error) => {
-                    ui.notification(error.to_string());
-                    ui.synchronize(session);
-                    continue;
+            let prompt = if prompt.is_empty() {
+                prompt
+            } else {
+                match prompts::expand(session, prompt) {
+                    Ok(prompt) => prompt,
+                    Err(error) => {
+                        ui.notification(error.to_string());
+                        ui.synchronize(session);
+                        continue;
+                    }
                 }
             };
             let cancel = CancellationToken::new();
             let operation = ui.begin(cancel.clone());
             let scoped_events = huginn_core::ScopedEventSink { sink: ui.as_ref(), operation };
-            let result = if matches!(prompt.as_str(), "/compact" | "/summarize") {
+            let result = if images.is_empty() && matches!(prompt.as_str(), "/compact" | "/summarize") {
                 let request = huginn_core::ApprovalRequest {
                     id: uuid::Uuid::new_v4().to_string(),
                     action: "session.compact".into(),
@@ -785,12 +803,25 @@ async fn tui_chat(
                     }
                     Err(error) => Err(error),
                 }
-            } else {
+            } else if images.is_empty() {
                 interruptible(
                     cancel.clone(),
                     implementation
                         .0
                         .run(session, prompt, policy.as_ref(), &scoped_events, cancel),
+                )
+                    .await
+            } else {
+                interruptible(
+                    cancel.clone(),
+                    implementation.0.run_with_images(
+                        session,
+                        prompt,
+                        images,
+                        policy.as_ref(),
+                        &scoped_events,
+                        cancel,
+                    ),
                 )
                     .await
             };

@@ -178,6 +178,7 @@ pub async fn select(management: &ProvidersService, connection: &ConnectionIdenti
             ProviderAction::Select(ModelSelection {
                 connection: connection.clone(),
                 model: model.into(),
+                reasoning_effort: None,
             }),
             CancellationToken::new(),
         )

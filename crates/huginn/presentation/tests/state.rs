@@ -1865,6 +1865,7 @@ fn connection_attachment_rejects_stale_sources_revisions_and_retired_close() {
         connection: "a".into(),
         model: "alpha".into(),
         mode: SelectionMode::Unmanaged,
+        reasoning_effort: None,
     });
     let mut b = a.clone();
     b.revision = 3;

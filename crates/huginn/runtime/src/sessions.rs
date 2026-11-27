@@ -106,7 +106,8 @@ fn db_error(error: rusqlite::Error) -> AgentError {
 #[async_trait]
 impl SessionStore for SqliteSessions {
     async fn save(&self, session: &Session) -> Result<()> {
-        let data = serde_json::to_string(session)?;
+        let persisted = session.for_persistence();
+        let data = serde_json::to_string(&persisted)?;
         let connection = self
             .connection
             .lock()

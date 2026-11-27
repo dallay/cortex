@@ -16,6 +16,8 @@ pub struct OpenAiProvider {
     model: String,
     key: Option<String>,
     timeout_secs: u64,
+    reasoning_effort: Option<huginn_core::providers::ReasoningEffort>,
+    use_max_completion_tokens: bool,
 }
 impl OpenAiProvider {
     #[cfg(all(feature = "test-hooks", debug_assertions))]
@@ -48,13 +50,62 @@ impl OpenAiProvider {
         allow_loopback_http: bool,
     ) -> Result<Self> {
         let client = transport_client(base_url, timeout_secs, allow_loopback_http)?;
+        let use_max_completion_tokens =
+            huginn_core::providers::is_official_openai_api_endpoint(base_url)
+                && huginn_core::providers::is_verified_openai_reasoning_model(&model);
         Ok(Self {
             client,
             url: format!("{}/chat/completions", base_url.trim_end_matches('/')),
             model,
             key,
             timeout_secs,
+            reasoning_effort: None,
+            use_max_completion_tokens,
         })
+    }
+
+    pub const fn with_reasoning_effort(
+        mut self,
+        reasoning_effort: Option<huginn_core::providers::ReasoningEffort>,
+    ) -> Self {
+        self.reasoning_effort = reasoning_effort;
+        self
+    }
+
+    fn request_body(&self, request: &ModelRequest) -> Value {
+        let mut body = json!({
+            "model": self.model,
+            "messages": request.messages.iter().map(wire_message).collect::<Vec<_>>(),
+            "stream": true,
+            "stream_options": {"include_usage": true},
+        });
+        if self.use_max_completion_tokens {
+            body["max_completion_tokens"] = json!(request.max_tokens);
+        } else {
+            body["max_tokens"] = json!(request.max_tokens);
+        }
+        if let Some(effort) = self.reasoning_effort {
+            body["reasoning_effort"] = json!(effort.as_str());
+        }
+        if !request.tools.is_empty() {
+            body["tools"] = Value::Array(
+                request
+                    .tools
+                    .iter()
+                    .map(|t| {
+                        json!({
+                            "type": "function",
+                            "function": {
+                                "name": t.name,
+                                "description": t.description,
+                                "parameters": t.input_schema
+                            }
+                        })
+                    })
+                    .collect(),
+            );
+        }
+        body
     }
 }
 pub(crate) fn transport_client(
@@ -179,7 +230,26 @@ fn status_failure(status: reqwest::StatusCode) -> AgentError {
 }
 
 fn wire_message(message: &Message) -> Value {
-    let mut result = json!({"role": message.role, "content": message.content});
+    use base64::Engine as _;
+    let content = if message.images.is_empty() {
+        json!(message.content)
+    } else {
+        let mut parts = Vec::with_capacity(message.images.len() + 1);
+        if !message.content.is_empty() {
+            parts.push(json!({"type": "text", "text": message.content}));
+        }
+        for image in &message.images {
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&image.bytes);
+            parts.push(json!({
+                "type": "image_url",
+                "image_url": {
+                    "url": format!("data:{};base64,{encoded}", image.format.mime_type())
+                }
+            }));
+        }
+        Value::Array(parts)
+    };
+    let mut result = json!({"role": message.role, "content": content});
     if !message.tool_calls.is_empty() {
         result["tool_calls"] = Value::Array(message.tool_calls.iter().map(|call| json!({
             "id":call.id,"type":"function","function":{"name":call.name,"arguments":call.arguments.to_string()}
@@ -204,13 +274,7 @@ impl ModelProvider for OpenAiProvider {
         request: ModelRequest,
         cancel: CancellationToken,
     ) -> Result<BoxStream<'static, Result<ModelDelta>>> {
-        let mut body = json!({"model":self.model,"messages":request.messages.iter().map(wire_message).collect::<Vec<_>>(),
-            "stream":true,"max_tokens":request.max_tokens,"stream_options":{"include_usage":true}});
-        if !request.tools.is_empty() {
-            body["tools"] = Value::Array(request.tools.iter().map(|t| json!({
-            "type":"function","function":{"name":t.name,"description":t.description,"parameters":t.input_schema}
-        })).collect());
-        }
+        let body = self.request_body(&request);
         let mut builder = self.client.post(&self.url).json(&body);
         if let Some(key) = &self.key {
             builder = builder.bearer_auth(key);
@@ -650,5 +714,57 @@ impl ProviderFactories {
             .get(name)
             .ok_or_else(|| AgentError::Configuration(format!("unknown provider {name}")))?;
         factory(config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn openai_provider_uses_max_completion_tokens_for_official_reasoning_models() {
+        let req = ModelRequest {
+            messages: vec![huginn_core::Message::text(
+                huginn_core::Role::User,
+                "reason",
+            )],
+            tools: vec![],
+            max_tokens: 4096,
+        };
+        // Official OpenAI endpoint with verified reasoning model: uses max_completion_tokens
+        let official = OpenAiProvider::new(
+            "https://api.openai.com/v1",
+            "o3-mini".into(),
+            Some("test-key".into()),
+            10,
+        )
+        .unwrap();
+        let body = official.request_body(&req);
+        assert_eq!(body["max_completion_tokens"], req.max_tokens);
+        assert!(body.get("max_tokens").is_none());
+
+        // Official OpenAI endpoint with standard model: uses max_tokens
+        let non_reasoning = OpenAiProvider::new(
+            "https://api.openai.com/v1",
+            "gpt-4o".into(),
+            Some("test-key".into()),
+            10,
+        )
+        .unwrap();
+        let body_std = non_reasoning.request_body(&req);
+        assert_eq!(body_std["max_tokens"], req.max_tokens);
+        assert!(body_std.get("max_completion_tokens").is_none());
+
+        // Non-official endpoint with reasoning model: preserves max_tokens
+        let compat = OpenAiProvider::new(
+            "https://api.openai-compatible.com/v1",
+            "o3-mini".into(),
+            Some("test-key".into()),
+            10,
+        )
+        .unwrap();
+        let body_compat = compat.request_body(&req);
+        assert_eq!(body_compat["max_tokens"], req.max_tokens);
+        assert!(body_compat.get("max_completion_tokens").is_none());
     }
 }

@@ -13,6 +13,7 @@ fn last_observable_revision_is_reserved_for_fail_closed_absence() {
             connection: "c".into(),
             model: "m".into(),
             mode: SelectionMode::Unmanaged,
+            reasoning_effort: None,
         }),
     );
     assert_eq!(observed.borrow().phase, ConnectionPhase::Unavailable);
