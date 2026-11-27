@@ -55,6 +55,36 @@ async fn server(router: Router) -> (String, tokio::task::JoinHandle<()>) {
     });
     (url, task)
 }
+
+#[test]
+fn siwc_host_id_is_reused_across_client_instances() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("huginn").join("siwc-host-id");
+    let first = huginn_runtime::siwc::SiwcOAuthClient::with_storage(5, Some(path.clone()));
+    let first_id = first.get_or_create_host_id().unwrap();
+    let second = huginn_runtime::siwc::SiwcOAuthClient::with_storage(5, Some(path.clone()));
+
+    assert_eq!(second.get_or_create_host_id().unwrap(), first_id);
+    assert_eq!(std::fs::read_to_string(path).unwrap(), first_id);
+}
+
+#[test]
+fn siwc_host_id_rejects_unwritable_or_malformed_storage() {
+    let dir = tempfile::tempdir().unwrap();
+    let not_a_directory = dir.path().join("file");
+    std::fs::write(&not_a_directory, b"blocker").unwrap();
+    let unwritable = huginn_runtime::siwc::SiwcOAuthClient::with_storage(
+        5,
+        Some(not_a_directory.join("siwc-host-id")),
+    );
+    assert!(unwritable.get_or_create_host_id().is_err());
+
+    let malformed_path = dir.path().join("malformed-host-id");
+    std::fs::write(&malformed_path, "not-a-huginn-host-id").unwrap();
+    let malformed = huginn_runtime::siwc::SiwcOAuthClient::with_storage(5, Some(malformed_path));
+    assert!(malformed.get_or_create_host_id().is_err());
+}
+
 #[tokio::test]
 async fn http_adapter_sends_auth_and_assembles_tool_calls() {
     let seen = Arc::new(Mutex::new(None));

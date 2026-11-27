@@ -112,26 +112,66 @@ impl SiwcOAuthClient {
         if let Some(existing) = in_mem.as_ref() {
             return Ok(existing.clone());
         }
-        if let Some(path) = &self.host_id_storage {
-            if path.exists() {
-                if let Ok(content) = std::fs::read_to_string(path) {
-                    let trimmed = content.trim();
-                    if !trimmed.is_empty() {
-                        *in_mem = Some(trimmed.to_string());
-                        return Ok(trimmed.to_string());
+        let host_id = if let Some(path) = &self.host_id_storage {
+            match std::fs::read_to_string(path) {
+                Ok(content) => parse_persisted_host_id(&content)?,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    if let Some(parent) = path
+                        .parent()
+                        .filter(|parent| !parent.as_os_str().is_empty())
+                    {
+                        std::fs::create_dir_all(parent).map_err(|_| {
+                            AgentError::Configuration(
+                                "could not create SIWC host ID storage".into(),
+                            )
+                        })?;
+                    }
+                    let fresh = format!("huginn-{}", uuid::Uuid::new_v4());
+                    match std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(path)
+                    {
+                        Ok(mut file) => {
+                            use std::io::Write;
+                            if let Err(err) = file
+                                .write_all(fresh.as_bytes())
+                                .and_then(|()| file.sync_all())
+                            {
+                                drop(file);
+                                let _ = std::fs::remove_file(path);
+                                return Err(AgentError::Configuration(format!(
+                                    "could not persist SIWC host ID: {err}"
+                                )));
+                            }
+                            fresh
+                        }
+                        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                            let content = std::fs::read_to_string(path).map_err(|_| {
+                                AgentError::Configuration(
+                                    "could not read SIWC host ID storage".into(),
+                                )
+                            })?;
+                            parse_persisted_host_id(&content)?
+                        }
+                        Err(err) => {
+                            return Err(AgentError::Configuration(format!(
+                                "could not persist SIWC host ID: {err}"
+                            )));
+                        }
                     }
                 }
+                Err(_) => {
+                    return Err(AgentError::Configuration(
+                        "could not read SIWC host ID storage".into(),
+                    ));
+                }
             }
-        }
-        let fresh = format!("huginn-{}", uuid::Uuid::new_v4());
-        if let Some(path) = &self.host_id_storage {
-            if let Some(parent) = path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            let _ = std::fs::write(path, fresh.as_bytes());
-        }
-        *in_mem = Some(fresh.clone());
-        Ok(fresh)
+        } else {
+            format!("huginn-{}", uuid::Uuid::new_v4())
+        };
+        *in_mem = Some(host_id.clone());
+        Ok(host_id)
     }
 
     fn http_client(&self, url: &str) -> Result<reqwest::Client> {
@@ -382,6 +422,20 @@ impl SiwcOAuthClient {
             Some((verified_sub, verified_email)),
             None,
         )
+    }
+}
+
+fn parse_persisted_host_id(raw: &str) -> Result<String> {
+    let host_id = raw.trim();
+    if host_id
+        .strip_prefix("huginn-")
+        .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok())
+    {
+        Ok(host_id.to_owned())
+    } else {
+        Err(AgentError::Configuration(
+            "stored SIWC host ID is invalid".into(),
+        ))
     }
 }
 
