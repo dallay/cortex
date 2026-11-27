@@ -4,6 +4,26 @@ use huginn_core::{CancellationToken, MAX_IMAGE_BYTES};
 use huginn_presentation::clipboard::run_command_for_test;
 use std::{process::Command, thread, time::Duration};
 
+fn assert_process_stopped(pid: &str) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let output = Command::new("ps")
+            .args(["-o", "stat=", "-p", pid])
+            .output()
+            .unwrap();
+        let state = String::from_utf8_lossy(&output.stdout);
+        let state = state.trim();
+        if state.is_empty() || state.starts_with('Z') {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "process {pid} is still running with state {state}"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
 #[test]
 fn clipboard_command_returns_output_after_successful_exit() {
     let stop = CancellationToken::new();
@@ -33,6 +53,8 @@ fn clipboard_command_stops_and_reaps_its_child_when_cancelled() {
     let cancel = stop.clone();
     let directory = tempfile::tempdir().unwrap();
     let ready_path = directory.path().join("child-started");
+    let shell_pid_path = directory.path().join("shell-pid");
+    let child_pid_path = directory.path().join("child-pid");
     let signal_ready_path = ready_path.clone();
     let canceller = thread::spawn(move || {
         let deadline = std::time::Instant::now() + Duration::from_secs(2);
@@ -46,8 +68,10 @@ fn clipboard_command_stops_and_reaps_its_child_when_cancelled() {
     let mut command = Command::new("sh");
     command.args([
         "-c",
-        "sleep 30 & touch \"$1\"; wait",
+        "sleep 3 & echo $$ > \"$1\"; echo $! > \"$2\"; touch \"$3\"; wait",
         "clipboard-test",
+        shell_pid_path.to_str().unwrap(),
+        child_pid_path.to_str().unwrap(),
         ready_path.to_str().unwrap(),
     ]);
     let started = std::time::Instant::now();
@@ -57,6 +81,10 @@ fn clipboard_command_stops_and_reaps_its_child_when_cancelled() {
     assert!(canceller.join().unwrap(), "child did not signal readiness");
     assert_eq!(error, "clipboard read cancelled");
     assert!(started.elapsed() < Duration::from_secs(2));
+    let shell_pid = std::fs::read_to_string(shell_pid_path).unwrap();
+    let child_pid = std::fs::read_to_string(child_pid_path).unwrap();
+    assert_process_stopped(shell_pid.trim());
+    assert_process_stopped(child_pid.trim());
 }
 
 #[test]
