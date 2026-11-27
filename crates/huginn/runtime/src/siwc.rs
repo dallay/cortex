@@ -717,69 +717,101 @@ async fn await_loopback_callback(
 ) -> Result<LoopbackCallback> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(OAUTH_CALLBACK_TIMEOUT_SECS);
     let op = async {
-        let (mut stream, _) = listener
-            .accept()
-            .await
-            .map_err(|_| AgentError::Model("SIWC loopback callback accept failed".into()))?;
-        let mut buf = Vec::with_capacity(1024);
-        let mut chunk = [0u8; 1024];
         loop {
-            let n = stream
-                .read(&mut chunk)
+            let (mut stream, _) = listener
+                .accept()
                 .await
-                .map_err(|_| AgentError::Model("failed to read OAuth callback request".into()))?;
-            if n == 0 {
-                break;
+                .map_err(|_| AgentError::Model("SIWC loopback callback accept failed".into()))?;
+            let mut buf = Vec::with_capacity(1024);
+            let mut chunk = [0u8; 1024];
+            let mut read_failed = false;
+            loop {
+                let n = match stream.read(&mut chunk).await {
+                    Ok(n) => n,
+                    Err(_) => {
+                        read_failed = true;
+                        break;
+                    }
+                };
+                if n == 0 {
+                    break;
+                }
+                if buf.len() + n > MAX_CALLBACK_REQUEST_BYTES {
+                    read_failed = true;
+                    break;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+                if buf.windows(2).any(|w| w == b"\r\n") || buf.contains(&b'\n') {
+                    break;
+                }
             }
-            if buf.len() + n > MAX_CALLBACK_REQUEST_BYTES {
-                return Err(AgentError::Model(
-                    "OAuth callback request exceeded size limit".into(),
-                ));
+            if read_failed {
+                let _ = stream
+                    .write_all(
+                        b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nBad request.\r\n",
+                    )
+                    .await;
+                let _ = stream.shutdown().await;
+                continue;
             }
-            buf.extend_from_slice(&chunk[..n]);
-            if buf.windows(2).any(|w| w == b"\r\n") || buf.contains(&b'\n') {
-                break;
+            let request = String::from_utf8_lossy(&buf);
+            let request_line = request.lines().next().unwrap_or_default();
+            let target = request_line.split_whitespace().nth(1).unwrap_or_default();
+            let parsed = match reqwest::Url::parse(&format!("http://127.0.0.1{target}")) {
+                Ok(url) => url,
+                Err(_) => {
+                    let _ = stream
+                        .write_all(
+                            b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nMalformed URL.\r\n",
+                        )
+                        .await;
+                    let _ = stream.shutdown().await;
+                    continue;
+                }
+            };
+            let mut code = None;
+            let mut state = None;
+            let mut client_id = None;
+            let mut error = None;
+            for (k, v) in parsed.query_pairs() {
+                match k.as_ref() {
+                    "code" => code = Some(v.into_owned()),
+                    "state" => state = Some(v.into_owned()),
+                    "client_id" => client_id = Some(v.into_owned()),
+                    "error" => error = Some(v.into_owned()),
+                    _ => {}
+                }
             }
-        }
-        let request = String::from_utf8_lossy(&buf);
-        let request_line = request.lines().next().unwrap_or_default();
-        let target = request_line.split_whitespace().nth(1).unwrap_or_default();
-        let parsed = reqwest::Url::parse(&format!("http://127.0.0.1{target}"))
-            .map_err(|_| AgentError::Model("malformed OAuth callback URL".into()))?;
-        let mut code = None;
-        let mut state = None;
-        let mut client_id = None;
-        let mut error = None;
-        for (k, v) in parsed.query_pairs() {
-            match k.as_ref() {
-                "code" => code = Some(v.into_owned()),
-                "state" => state = Some(v.into_owned()),
-                "client_id" => client_id = Some(v.into_owned()),
-                "error" => error = Some(v.into_owned()),
-                _ => {}
+
+            // If state does not match, reject this request with 400 but continue listening
+            // under the deadline in case the genuine browser redirect arrives.
+            if state.as_deref() != Some(expected_state) {
+                let _ = stream
+                    .write_all(
+                        b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nState mismatch.\r\n",
+                    )
+                    .await;
+                let _ = stream.shutdown().await;
+                continue;
             }
+
+            // State matches: this is the authoritative response for this flow.
+            let response_body = if error.is_some() || code.is_none() {
+                "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nSign-in failed. You may close this tab.\r\n"
+            } else {
+                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nSign-in received by Huginn. You may close this tab.\r\n"
+            };
+            let _ = stream.write_all(response_body.as_bytes()).await;
+            let _ = stream.shutdown().await;
+            if let Some(err) = error {
+                return Err(AgentError::Model(format!(
+                    "SIWC authorization denied: {err}"
+                )));
+            }
+            let code =
+                code.ok_or_else(|| AgentError::Model("SIWC OAuth callback missing code".into()))?;
+            return Ok(LoopbackCallback { code, client_id });
         }
-        let response_body = if error.is_some()
-            || state.as_deref() != Some(expected_state)
-            || code.is_none()
-        {
-            "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nSign-in failed or state mismatch. You may close this tab.\r\n"
-        } else {
-            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nSign-in received by Huginn. You may close this tab.\r\n"
-        };
-        let _ = stream.write_all(response_body.as_bytes()).await;
-        let _ = stream.shutdown().await;
-        if let Some(err) = error {
-            return Err(AgentError::Model(format!(
-                "SIWC authorization denied: {err}"
-            )));
-        }
-        if state.as_deref() != Some(expected_state) {
-            return Err(AgentError::Model("SIWC OAuth state mismatch".into()));
-        }
-        let code =
-            code.ok_or_else(|| AgentError::Model("SIWC OAuth callback missing code".into()))?;
-        Ok(LoopbackCallback { code, client_id })
     };
     tokio::select! {
         biased;
@@ -1354,6 +1386,27 @@ fn drain_responses_sse(buffer: &mut Vec<u8>, completed: &mut bool) -> DrainOutco
                 items.push(Err(AgentError::Model(
                     "SIWC Responses API reported a stream error".into(),
                 )));
+                ended = true;
+                break;
+            }
+            "response.incomplete" => {
+                let reason = value
+                    .get("response")
+                    .and_then(|r| r.get("status_details"))
+                    .and_then(|d| d.get("reason"))
+                    .and_then(Value::as_str)
+                    .or_else(|| {
+                        value
+                            .get("response")
+                            .and_then(|r| r.get("incomplete_details"))
+                            .and_then(|d| d.get("reason"))
+                            .and_then(Value::as_str)
+                    })
+                    .or_else(|| value.get("reason").and_then(Value::as_str))
+                    .unwrap_or("unknown_reason");
+                items.push(Err(AgentError::Model(format!(
+                    "SIWC response incomplete: {reason}"
+                ))));
                 ended = true;
                 break;
             }

@@ -15,6 +15,14 @@ fn parses_quoted_and_escaped_image_paths_only() {
         parse_pasted_image_path(r"/tmp/my\ shot.webp"),
         Some(PathBuf::from("/tmp/my shot.webp"))
     );
+    assert_eq!(
+        parse_pasted_image_path(r"C:\Users\Alice\Pictures\shot.png"),
+        Some(PathBuf::from(r"C:\Users\Alice\Pictures\shot.png"))
+    );
+    assert_eq!(
+        parse_pasted_image_path(r"\\server\share\photos\shot.jpeg"),
+        Some(PathBuf::from(r"\\server\share\photos\shot.jpeg"))
+    );
     assert_eq!(parse_pasted_image_path("hello world"), None);
     assert_eq!(parse_pasted_image_path("/tmp/notes.txt"), None);
 }

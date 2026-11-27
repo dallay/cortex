@@ -965,6 +965,16 @@ impl ConnectionManager {
         }
         let mut state = self.state.lock().await;
         Self::check_state(&state)?;
+        if previous.is_none()
+            && settings.provider == huginn_core::siwc::SIWC_PROVIDER_ID
+            && state
+                .metadata
+                .connections
+                .values()
+                .any(|r| r.settings.provider == huginn_core::siwc::SIWC_PROVIDER_ID)
+        {
+            return Err(ConnectionError::InvalidConfiguration);
+        }
         let id = previous.unwrap_or_else(Uuid::new_v4);
         let old = match previous {
             Some(id) => Some(

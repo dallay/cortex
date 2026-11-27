@@ -6,6 +6,23 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Check if a string looks like an unquoted Windows absolute path or UNC path:
+/// e.g. `C:\...`, `c:/...`, or `\\server\share\...`.
+fn is_windows_style_path(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    if bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
+    {
+        return true;
+    }
+    if s.starts_with(r"\\") {
+        return true;
+    }
+    false
+}
+
 /// Unquote and unescape a single dragged/pasted local file path from terminal paste.
 pub fn parse_pasted_image_path(raw: &str) -> Option<PathBuf> {
     let trimmed = raw.trim();
@@ -16,6 +33,8 @@ pub fn parse_pasted_image_path(raw: &str) -> Option<PathBuf> {
         || (trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() >= 2)
     {
         trimmed[1..trimmed.len() - 1].to_string()
+    } else if is_windows_style_path(trimmed) {
+        trimmed.to_string()
     } else {
         // Terminal drag-and-drop on macOS/Linux escapes spaces and shell metacharacters with `\`.
         let mut out = String::with_capacity(trimmed.len());
