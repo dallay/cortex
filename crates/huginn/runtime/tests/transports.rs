@@ -958,6 +958,7 @@ async fn siwc_full_vertical_slice_oauth_id_token_refresh_persistence_responses_a
     let seen_responses_body = Arc::new(AsyncMutex::new(None::<serde_json::Value>));
     let expected_verifier = Arc::new(AsyncMutex::new(String::new()));
     let expected_nonce = Arc::new(AsyncMutex::new(String::new()));
+    let expected_redirect_uri = Arc::new(AsyncMutex::new(String::new()));
     let base_slot = Arc::new(OnceLock::<String>::new());
 
     let token_refreshes_c = token_refreshes.clone();
@@ -966,6 +967,7 @@ async fn siwc_full_vertical_slice_oauth_id_token_refresh_persistence_responses_a
     let seen_body_c = seen_responses_body.clone();
     let verifier_c = expected_verifier.clone();
     let nonce_c = expected_nonce.clone();
+    let redirect_uri_c = expected_redirect_uri.clone();
     let keypair_c = keypair.clone();
     let base_for_oidc = base_slot.clone();
     let base_for_token = base_slot.clone();
@@ -1019,6 +1021,11 @@ async fn siwc_full_vertical_slice_oauth_id_token_refresh_persistence_responses_a
                             assert_eq!(
                                 params.get("code_verifier").map(String::as_str),
                                 Some(verifier_c.lock().await.as_str())
+                            );
+                            let expected_redirect_uri = redirect_uri_c.lock().await.clone();
+                            assert_eq!(
+                                params.get("redirect_uri").map(String::as_str),
+                                Some(expected_redirect_uri.as_str())
                             );
                             let nonce = nonce_c.lock().await.clone();
                             let id_token = sign_test_id_token(
@@ -1129,11 +1136,13 @@ async fn siwc_full_vertical_slice_oauth_id_token_refresh_persistence_responses_a
     // 1. PKCE + documented authorize URL parameters.
     let (verifier, challenge) = SiwcOAuthClient::generate_pkce();
     let dynamic_nonce = format!("nonce-{}", uuid::Uuid::new_v4());
+    let callback_redirect_uri = "http://127.0.0.1:4321/callback";
     *expected_verifier.lock().await = verifier.clone();
     *expected_nonce.lock().await = dynamic_nonce.clone();
+    *expected_redirect_uri.lock().await = callback_redirect_uri.to_owned();
     let auth_url = oauth
         .build_authorize_url(
-            "http://127.0.0.1:4321/callback",
+            callback_redirect_uri,
             "state-1",
             &dynamic_nonce,
             &challenge,
@@ -1169,7 +1178,7 @@ async fn siwc_full_vertical_slice_oauth_id_token_refresh_persistence_responses_a
     let creds = oauth
         .exchange_code(
             &cb.code,
-            "http://127.0.0.1:4321/callback",
+            callback_redirect_uri,
             &verifier,
             "host-1",
             cb.client_id.as_deref().unwrap(),

@@ -1610,6 +1610,49 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn cached_credentials_are_not_reused_for_another_account() {
+        let origin = ConnectionRevision {
+            id: uuid::Uuid::from_u128(1),
+            revision: uuid::Uuid::from_u128(2),
+        };
+        let account_a = credentials(
+            "host-1",
+            "account-a",
+            now_unix() + 3600,
+            "access-a",
+            "refresh-a",
+        );
+        let account_b = credentials(
+            "host-1",
+            "account-b",
+            now_unix() + 3600,
+            "access-b",
+            "refresh-b",
+        );
+        let auth = Arc::new(RotationAuth {
+            refreshed: account_a.clone(),
+            refreshes: AtomicUsize::new(0),
+        });
+        let coordinator = SiwcRefreshCoordinator::new(auth.clone(), None);
+
+        assert_eq!(
+            coordinator
+                .resolve(Some(origin), &account_a, CancellationToken::new())
+                .await
+                .unwrap(),
+            account_a
+        );
+        assert_eq!(
+            coordinator
+                .resolve(Some(origin), &account_b, CancellationToken::new())
+                .await
+                .unwrap(),
+            account_b
+        );
+        assert_eq!(auth.refreshes.load(Ordering::SeqCst), 0);
+    }
+
     async fn assert_pending_is_not_reused_after_scope_change(change_origin: bool) {
         let origin = ConnectionRevision {
             id: uuid::Uuid::from_u128(1),
