@@ -17,9 +17,10 @@ use huginn_core::{
         ProviderDescriptor,
     },
     AgentError, AgentLoop, ApprovalDecision, ApprovalPolicy, ApprovalRequest, CancellationToken,
-    Event, EventSink, InstructionSource, Message, ModelDelta, ModelProvider, ModelRequest,
-    PreparedAction, Result, Role, Session, SessionInfo, SessionStore, Tool, ToolCall, ToolContext,
-    ToolDefinition, ToolRegistry, TurnUsage, UsageAttribution, UsageCompleteness, UsageSemantics,
+    Event, EventSink, ImageAttachment, InstructionSource, Message, ModelDelta, ModelProvider,
+    ModelRequest, PreparedAction, Result, Role, Session, SessionInfo, SessionStore, Tool, ToolCall,
+    ToolContext, ToolDefinition, ToolRegistry, TurnUsage, UsageAttribution, UsageCompleteness,
+    UsageSemantics,
 };
 use std::{
     collections::VecDeque,
@@ -112,6 +113,7 @@ struct ScriptedProvider {
     attribution: Option<UsageAttribution>,
     steps: Mutex<VecDeque<ScriptStep>>,
     request_limits: Option<Arc<Mutex<Vec<u32>>>>,
+    reject_image_requests: bool,
 }
 
 impl ScriptedProvider {
@@ -120,7 +122,13 @@ impl ScriptedProvider {
             attribution,
             steps: Mutex::new(steps.into()),
             request_limits: None,
+            reject_image_requests: false,
         }
+    }
+
+    fn rejecting_image_requests(mut self) -> Self {
+        self.reject_image_requests = true;
+        self
     }
 
     fn recording_requests(
@@ -133,6 +141,7 @@ impl ScriptedProvider {
                 attribution,
                 steps: Mutex::new(steps.into()),
                 request_limits: Some(request_limits.clone()),
+                reject_image_requests: false,
             },
             request_limits,
         )
@@ -150,6 +159,16 @@ impl ModelProvider for ScriptedProvider {
         request: ModelRequest,
         _: CancellationToken,
     ) -> Result<BoxStream<'static, Result<ModelDelta>>> {
+        if self.reject_image_requests
+            && request
+                .messages
+                .iter()
+                .any(|message| !message.images.is_empty())
+        {
+            return Err(AgentError::Model(
+                "model does not support image inputs".into(),
+            ));
+        }
         if let Some(request_limits) = &self.request_limits {
             request_limits.lock().unwrap().push(request.max_tokens);
         }
@@ -169,6 +188,16 @@ fn attr(provider: &str, model: &str) -> UsageAttribution {
         connection: Some("conn-1".into()),
         model: model.into(),
     }
+}
+
+fn one_pixel_png() -> ImageAttachment {
+    let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    bytes.extend_from_slice(&13u32.to_be_bytes());
+    bytes.extend_from_slice(b"IHDR");
+    bytes.extend_from_slice(&1u32.to_be_bytes());
+    bytes.extend_from_slice(&1u32.to_be_bytes());
+    bytes.extend_from_slice(&[8, 2, 0, 0, 0]);
+    ImageAttachment::from_bytes(bytes, None).unwrap()
 }
 
 fn make_loop(
@@ -243,6 +272,49 @@ async fn continuation_request_uses_only_the_remaining_turn_output_budget() {
         .unwrap();
 
     assert_eq!(*request_limits.lock().unwrap(), vec![40, 25]);
+}
+
+#[tokio::test]
+async fn rejected_image_request_does_not_poison_later_text_only_turns() {
+    let model = ScriptedProvider::new(
+        Some(attr("openai", "text-only-model")),
+        vec![vec![
+            Ok(ModelDelta::Text("text-only response".into())),
+            Ok(ModelDelta::Finished),
+        ]],
+    )
+    .rejecting_image_requests();
+    let (engine, _) = make_loop(Arc::new(model), vec![], LoopConfig::default());
+    let mut session = Session::new(".".into());
+
+    let rejected = engine
+        .run_with_images(
+            &mut session,
+            "describe this image".into(),
+            vec![one_pixel_png()],
+            &AutoApprove,
+            &RecordingSink::default(),
+            CancellationToken::new(),
+        )
+        .await;
+    assert!(rejected.is_err());
+    let rejected_message = session
+        .messages
+        .iter()
+        .find(|message| message.role == Role::User && message.content == "describe this image")
+        .unwrap();
+    assert!(rejected_message.images.is_empty());
+
+    engine
+        .run(
+            &mut session,
+            "continue with text only".into(),
+            &AutoApprove,
+            &RecordingSink::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

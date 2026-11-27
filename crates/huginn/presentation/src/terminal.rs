@@ -1812,10 +1812,10 @@ Enter save Esc close"
         // a steering message the loop drains at its next step boundary; it is
         // never queued as a turn of its own.
         if !state.busy {
-            if !state.attachments.is_empty() && state.check_draft_image_budget(0).is_err() {
-                return DraftDelivery::Refused;
-            }
-            let images = std::mem::take(&mut state.attachments);
+            let images = match state.take_attachments_for_delivery() {
+                Ok(images) => images,
+                Err(_) => return DraftDelivery::Refused,
+            };
             self.ui.enqueue_submitted_images(images);
             if prompts.try_send(line.to_owned()).is_err() {
                 if let Some(restored) = self.ui.take_last_enqueued_images() {

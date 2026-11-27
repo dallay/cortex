@@ -436,6 +436,16 @@ impl UiState {
         Ok(())
     }
 
+    pub(crate) fn take_attachments_for_delivery(
+        &mut self,
+    ) -> std::result::Result<Vec<huginn_core::ImageAttachment>, String> {
+        if self.attachments.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.check_draft_image_budget(0)?;
+        Ok(std::mem::take(&mut self.attachments))
+    }
+
     pub fn remove_last_attachment(&mut self) -> bool {
         if let Some(removed) = self.attachments.pop() {
             let chip = removed.chip_label(self.attachments.len() + 1);
@@ -2108,3 +2118,30 @@ impl Interaction for Ui {
 #[cfg(feature = "test-driver")]
 #[doc(hidden)]
 pub mod test_support;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn one_pixel_png() -> huginn_core::ImageAttachment {
+        let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        bytes.extend_from_slice(&13u32.to_be_bytes());
+        bytes.extend_from_slice(b"IHDR");
+        bytes.extend_from_slice(&1u32.to_be_bytes());
+        bytes.extend_from_slice(&1u32.to_be_bytes());
+        bytes.extend_from_slice(&[8, 2, 0, 0, 0]);
+        huginn_core::ImageAttachment::from_bytes(bytes, None).unwrap()
+    }
+
+    #[test]
+    fn stale_session_budget_rejects_delivery_without_dropping_draft_images() {
+        let mut state = UiState::default();
+        state.attach_image(one_pixel_png()).unwrap();
+        state.session_image_bytes = huginn_core::MAX_SESSION_IMAGE_BYTES;
+
+        let result = state.take_attachments_for_delivery();
+
+        assert!(result.is_err());
+        assert_eq!(state.attachments.len(), 1);
+    }
+}
