@@ -163,15 +163,23 @@ Huginn implements the dedicated, local-only SIWC vertical slice for a single
 account and text-only streaming inference, kept strictly separate from the
 API-key / Chat Completions route:
 
-- **Authorization & registration:** browser PKCE (`S256`) + literal `127.0.0.1`
-  ephemeral loopback callback, persistent host identifier, initial
-  `client_id=dynamic_agent_client` registration with issued `client_id` reuse,
-  and validation of `state` and required scopes before marking the connection
-  ready.
-- **Secret storage:** host ID, issued `client_id`, access token, rotating
-  refresh token, and expiry are stored strictly in `OsSecrets` (macOS Keychain
-  / Linux Secret Service) with no silent downgrade to ephemeral or plaintext
-  storage.
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:4bc58fa546a11531ea1c6fcdb8182ed3f44d837840571c0fcc2eef9ce50ebab9 -->
+
+- **Authorization & registration:** each sign-in uses browser PKCE (`S256`), a
+  literal `127.0.0.1` ephemeral loopback callback, the persistent host ID, and
+  `client_id=dynamic_agent_client` registration. The issued `client_id` is used
+  for code exchange and token refresh, and sent for remote revocation; it is not
+  reused for later sign-ins. Huginn validates `state` and required scopes before
+  marking the connection ready.
+- **Secret storage:** the issued `client_id`, access token, rotating refresh
+  token, and expiry are stored strictly in `OsSecrets` (macOS Keychain / Linux
+  Secret Service), with no silent downgrade to ephemeral or plaintext storage.
+  The host ID is included in the credential record and is also written as
+  plaintext to the production `siwc_host_id` file beside the database.
+
+<!-- /coderabbit-ai-generated:v1 -->
 - **Model discovery & inference:** `GET https://api.openai.com/v1/models`
   filtered by `visibility == "list"` using `slug`, and `POST https://api.openai.com/v1/responses`
   with `store: false` and `stream: true`, turn pinning, usage accounting, local
