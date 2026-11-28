@@ -4,7 +4,7 @@
 //! Operates against an isolated, authenticated, loopback Neo4j 5.26 container,
 //! torn down cleanly upon completion. Credentials are kept private and never logged.
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use muninn_core::model::{
     Entity, Fact, Metadata, Preference, Relationship, ToolCall, ToolCallStatus,
 };
@@ -22,6 +22,12 @@ use uuid::Uuid;
 #[path = "common/fixture.rs"]
 mod fixture;
 use fixture::DockerFixture;
+
+fn parse_neo4j_datetime(value: String) -> DateTime<Utc> {
+    DateTime::parse_from_rfc3339(&value)
+        .expect("Neo4j should return a valid RFC 3339 timestamp")
+        .with_timezone(&Utc)
+}
 
 #[tokio::test]
 async fn test_bolt_01_03_durability_reconnect_across_three_tiers() {
@@ -345,6 +351,15 @@ async fn test_bolt_01_03_durability_reconnect_across_three_tiers() {
             .await
             .expect("reconnecting client_b failed");
         eprintln!("[BOLT-01-03] Fresh Neo4jClient connected successfully.");
+        let database_now_rows = client_b
+            .execute("RETURN toString(datetime()) AS now", vec![])
+            .await
+            .expect("Neo4j clock query failed");
+        let database_now = parse_neo4j_datetime(
+            database_now_rows[0]
+                .get::<String>("now")
+                .expect("Neo4j clock query must return a timestamp"),
+        );
 
         let short_term_b = Neo4jShortTermStore::new(client_b.clone());
         let long_term_b = Neo4jLongTermStore::new(client_b.clone());
@@ -361,7 +376,7 @@ async fn test_bolt_01_03_durability_reconnect_across_three_tiers() {
         let conv = conv_opt.expect("conversation must exist after reconnect");
         assert_eq!(conv.id, conv_id);
         assert_eq!(conv.session_id, session_id);
-        assert!(conv.created_at <= Utc::now());
+        assert!(conv.created_at <= database_now);
 
         let conv_with_msgs = short_term_b
             .get_conversation(&session_id, Some(conv_id), &owner_scope, Some(10))
@@ -376,7 +391,7 @@ async fn test_bolt_01_03_durability_reconnect_across_three_tiers() {
         assert_eq!(m1.role.as_str(), "user");
         assert_eq!(m1.content, msg1.content);
         assert_eq!(m1.metadata.get("source"), Some(&json!("user-input")));
-        assert!(m1.created_at <= Utc::now());
+        assert!(m1.created_at <= database_now);
 
         // Message 2 verification
         let m2 = &conv_with_msgs.messages[1];
@@ -384,7 +399,7 @@ async fn test_bolt_01_03_durability_reconnect_across_three_tiers() {
         assert_eq!(m2.role.as_str(), "assistant");
         assert_eq!(m2.content, msg2.content);
         assert_eq!(m2.metadata.get("source"), Some(&json!("agent-output")));
-        assert!(m2.created_at <= Utc::now());
+        assert!(m2.created_at <= database_now);
         assert!(m2.created_at >= m1.created_at);
 
         // =====================================================================
@@ -499,7 +514,7 @@ async fn test_bolt_01_03_durability_reconnect_across_three_tiers() {
             trace.metadata.get("environment"),
             Some(&json!("production"))
         );
-        assert!(trace.started_at <= Utc::now());
+        assert!(trace.started_at <= database_now);
         assert!(trace.completed_at.unwrap() >= trace.started_at);
 
         assert_eq!(trace.steps.len(), 1);
@@ -510,7 +525,7 @@ async fn test_bolt_01_03_durability_reconnect_across_three_tiers() {
         assert_eq!(step.action, step_rec.action);
         assert_eq!(step.observation, step_rec.observation);
         assert_eq!(step.metadata.get("agent_state"), Some(&json!("executing")));
-        assert!(step.created_at <= Utc::now());
+        assert!(step.created_at <= database_now);
 
         assert_eq!(step.tool_calls.len(), 1);
         let tc = &step.tool_calls[0];
@@ -524,7 +539,21 @@ async fn test_bolt_01_03_durability_reconnect_across_three_tiers() {
             Some(&json!("neo4j-cluster-1"))
         );
         assert_eq!(tc.result, Some(json!({"status": "synced", "lag_ms": 2})));
-        assert!(tc.created_at <= Utc::now());
+        let timestamp_rows = client_b
+            .execute(
+                "MATCH (tc:ToolCall {id: $id}) \
+                 RETURN toString(tc.timestamp) AS stored_at",
+                vec![("id", tool_call_id.to_string().into())],
+            )
+            .await
+            .expect("tool call timestamp query failed");
+        let stored_at = parse_neo4j_datetime(
+            timestamp_rows[0]
+                .get::<String>("stored_at")
+                .expect("tool call timestamp must be persisted"),
+        );
+        assert_eq!(tc.created_at, stored_at);
+        assert!(tc.created_at <= database_now);
 
         // =====================================================================
         // 4. Direct Cypher structural assertions verifying exact edges and shapes
