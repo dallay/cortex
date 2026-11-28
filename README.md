@@ -5,6 +5,8 @@
 The AI Infrastructure Stack for Production
 
 [![CI](https://img.shields.io/github/actions/workflow/status/dallay/cortex/ci.yml?branch=main&label=CI&logo=github)](https://github.com/dallay/cortex/actions/workflows/ci.yml)
+[![SonarCloud Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=dallay_cortex&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=dallay_cortex)
+[![Codecov Coverage](https://codecov.io/gh/dallay/cortex/graph/badge.svg?token=X2A75Y1676)](https://codecov.io/gh/dallay/cortex)
 [![License](https://img.shields.io/github/license/dallay/cortex)](LICENSE)
 [![Rust MSRV](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdallay%2Fcortex%2Fmain%2FCargo.toml&query=%24.workspace.package%5B%27rust-version%27%5D&label=Rust%20MSRV&suffix=%2B&color=DEA584&logo=rust&labelColor=4A4A4A)](https://www.rust-lang.org)
 [![Node](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdallay%2Fcortex%2Fmain%2Fpackage.json&query=%24.engines.node&label=Node&color=339933&logo=nodedotjs&labelColor=4A4A4A)](https://nodejs.org)
@@ -519,15 +521,19 @@ pnpm typecheck && pnpm build && pnpm exec vitest run
 
 ## 📚 Documentation
 
-| Guide                                          | Description                |
-|------------------------------------------------|----------------------------|
-| [Rook Architecture](docs/rook/architecture.md) | How Rook works internally  |
-| [API Reference](docs/rook/api.md)              | All HTTP endpoints         |
-| [Configuration](docs/rook/configuration.md)    | Complete config reference  |
-| [Providers](docs/rook/providers.md)            | Provider setup & quirks    |
-| [Deployment](docs/rook/deployment.md)          | Production deployment      |
-| [Huginn Docs](docs/huginn/README.md)           | Coding agent documentation |
-| [Dev Testing](dev/README.md)                   | Local testing with Docker  |
+| Guide | Description |
+| --- | --- |
+| [Rook Application](apps/rook/README.md) | Rook binary overview and usage |
+| [Rook Architecture](docs/rook/architecture.md) | How Rook works internally |
+| [API Reference](docs/rook/api.md) | All HTTP endpoints |
+| [Configuration](docs/rook/configuration.md) | Complete config reference |
+| [Providers](docs/rook/providers.md) | Provider setup and quirks |
+| [Deployment](docs/rook/deployment.md) | Production deployment |
+| [Huginn Application](apps/huginn/README.md) | Local coding agent overview and quick start |
+| [Huginn Guide](docs/huginn/README.md) | Coding agent usage and configuration |
+| [Muninn Application](apps/muninn/README.md) | Persistent memory overview, CLI, and status |
+| [Muninn Documentation](docs/muninn/README.md) | Compatibility status and technical references |
+| [Dev Testing](dev/README.md) | Local testing with Docker |
 
 ---
 
