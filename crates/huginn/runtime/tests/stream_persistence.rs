@@ -526,3 +526,79 @@ async fn persisted_usage_preserves_partial_completeness_attribution_and_interrup
     assert_eq!(recovered.completeness(), UsageCompleteness::Partial);
     assert_eq!(recovered.attribution, Some(attribution));
 }
+
+#[tokio::test]
+async fn manual_compaction_drops_raw_image_payloads_from_compacted_history() {
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let db = data.path().join("sessions.db");
+    let store = Arc::new(CountingStore {
+        inner: SqliteSessions::open(&db).unwrap(),
+        snapshots: Mutex::new(vec![]),
+    });
+    let model = Arc::new(Model {
+        chunks: 1,
+        ending: Ending::Finished,
+        requests: Mutex::new(vec![]),
+    });
+    let engine = StandardLoop {
+        instructions: Arc::new(huginn_runtime::instructions::FilesystemInstructions),
+        model: model.clone(),
+        tools: Arc::new(Registry::native(2).unwrap()),
+        sessions: store.clone(),
+        config: LoopConfig::default(),
+        lifecycle: CancellationToken::new(),
+    };
+    let sink = Sink {
+        events: Mutex::new(vec![]),
+        saves_at_text: Mutex::new(vec![]),
+        store,
+        cancel_on_text: None,
+    };
+
+    // Minimal valid PNG header + IHDR chunk (1x1) so magic-byte validation passes.
+    let mut png = vec![
+        0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, b'I', b'H', b'D',
+        b'R', 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+        0x15, 0xC4, 0x89,
+    ];
+    png.extend_from_slice(&[0u8; 64]);
+    let attachment =
+        huginn_core::ImageAttachment::from_bytes(png, Some("shot.png".into())).unwrap();
+    assert!(!attachment.bytes.is_empty());
+
+    let mut session = Session::new(workspace.path().canonicalize().unwrap());
+    session
+        .messages
+        .push(huginn_core::Message::user_with_images(
+            "inspect this screenshot",
+            vec![attachment],
+        ));
+    session
+        .messages
+        .push(huginn_core::Message::text(Role::Assistant, "looks good"));
+    assert!(session.in_memory_image_bytes() > 0);
+
+    let loop_service: Arc<dyn huginn_core::AgentLoop> = Arc::new(engine);
+    loop_service
+        .compact(&mut session, &sink, CancellationToken::new())
+        .await
+        .unwrap();
+
+    assert_eq!(session.summary_through, 2);
+    assert!(
+        session.messages[0].images.is_empty(),
+        "compacted turn must drop raw image payloads from memory"
+    );
+    assert_eq!(
+        session.in_memory_image_bytes(),
+        0,
+        "compacted images must not continue consuming the per-session memory budget"
+    );
+    let requests = model.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert!(
+        requests[0].messages.iter().all(|m| m.images.is_empty()),
+        "compaction summary request must be text-only"
+    );
+}

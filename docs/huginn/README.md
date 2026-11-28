@@ -268,15 +268,16 @@ When you run `huginn chat`, you get a Ratatui-based terminal interface.
 
 ### Commands (type `/` to open)
 
-| Command      | Description                    |
-|--------------|--------------------------------|
-| `/login`     | Configure provider credentials |
-| `/providers` | Switch between providers       |
-| `/model`     | Change the active model        |
-| `/logout`    | Clear stored credentials       |
-| `/exinfo`    | System information             |
-| `/clear`     | Clear current conversation     |
-| `/quit`      | Exit Huginn                    |
+| Command      | Description                                              |
+|--------------|----------------------------------------------------------|
+| `/login`     | Configure provider credentials (or Sign in with ChatGPT) |
+| `/providers` | Switch between providers                                 |
+| `/model`     | Change the active model                                  |
+| `/reasoning` | Set reasoning effort for verified OpenAI models          |
+| `/logout`    | Revoke / clear stored credentials                        |
+| `/exinfo`    | System information                                       |
+| `/clear`     | Clear current conversation                               |
+| `/quit`      | Exit Huginn                                              |
 
 ### `/settings` modal
 
@@ -305,13 +306,15 @@ The `/help` view supports scrolling with `↑/↓` and `PgUp`/`PgDn`.
 
 ### Keyboard Shortcuts
 
-| Shortcut                                                      | Action                 |
-|---------------------------------------------------------------|------------------------|
-| `Ctrl+C`                                                      | Cancel current request |
-| `Ctrl+L`                                                      | Clear screen           |
-| `Enter` / `Ctrl+Enter`                                        | Send message           |
-| `Shift+Enter` (compatible terminals) / `Alt+Enter` / `Ctrl+J` | Insert a newline       |
-| `↑/↓`                                                         | History navigation     |
+| Shortcut                                                      | Action                               |
+|---------------------------------------------------------------|--------------------------------------|
+| `Ctrl+C`                                                      | Cancel current request               |
+| `Ctrl+L`                                                      | Clear screen                         |
+| `Ctrl+V`                                                      | Paste image from OS clipboard        |
+| `Alt+Backspace`                                               | Remove last attached image           |
+| `Enter` / `Ctrl+Enter`                                        | Send message                         |
+| `Shift+Enter` (compatible terminals) / `Alt+Enter` / `Ctrl+J` | Insert a newline                     |
+| `↑/↓`                                                         | History navigation                   |
 
 The composer grows with the draft up to a limit based on the terminal's
 height. If the text takes more rows, the composer shifts the earlier rows
@@ -323,6 +326,15 @@ and applies `trim()`, which removes leading and trailing whitespace. `/skill:`
 invocations keep their existing handling. The paste's internal content
 is preserved, and the marker is not sent. A paste exceeding the input
 limit of 64 KiB is discarded.
+
+To discuss screenshots or diagrams with verified OpenAI vision models, press
+`Ctrl+V` to attach an image from the OS clipboard (macOS/Linux) or paste/drag a
+local PNG, JPEG, or WebP file path. Attached images appear as preview chips
+above the composer (up to 5 MiB per image, 4 images per message, and 16 MiB
+total in-memory per active session) and can be removed with `Alt+Backspace` (or
+`Backspace` on an empty draft). Images stay in memory for follow-up turns in
+the active session only and are never persisted as binary blobs in
+`sessions.db`. See [Providers UI](providers-ui.md) for the verified model list.
 
 ---
 
@@ -553,7 +565,7 @@ MIT License - same as [Cortex repository](https://github.com/dallay/cortex).
 
 ## Core provider plugins
 
-`cargo run -p huginn -- chat` includes three independent core plugins. `/login`
+`cargo run -p huginn -- chat` includes four independent core plugins. `/login`
 shows a single entry per provider:
 
 - **Local Ollama** (`ollama`): initial endpoint `http://127.0.0.1:11434`, with no key
@@ -566,6 +578,11 @@ shows a single entry per provider:
 - **Custom — OpenAI-compatible** (`openai`): enter the service's base URL (include `/v1` if the service requires it). Choose authentication within the flow;
   the API key is optional. It does not implement the Anthropic protocol. It keeps the
   `openai` ID to reuse saved connections.
+- **Sign in with ChatGPT** (`chatgpt-siwc`): optional local-only OAuth PKCE
+  (`127.0.0.1` loopback) flow for a single ChatGPT account over OpenAI's
+  Responses API (`POST /v1/responses`, `store: false`, `stream: true`,
+  text-only). Credentials are stored strictly in `OsSecrets` with zero silent
+  fallback to OpenAI Platform API-key billing. See [OAuth support](oauth.md).
 
 Leave `Model ID` empty to query the catalog and choose a model before
 persisting the connection. If you enter an ID, it is checked against the catalog when
