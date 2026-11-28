@@ -38,16 +38,16 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 neo4rs = "=0.8.0"
 subtle = "2"
-sha2 = "0.10"
+sha2 = "0.11"
 url = "2.5.9"
 reqwest = { version = "=0.13.5", default-features = false, features = ["rustls-no-provider"] }
 rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
-rustls-native-certs = "=0.7.3"
-candle-core = { version = "=0.11.0", default-features = false }
-candle-nn = { version = "=0.11.0", default-features = false }
-candle-transformers = { version = "=0.11.0", default-features = false }
+rustls-native-certs = "=0.8.5"
+candle-core = { version = "=0.11.1", default-features = false }
+candle-nn = { version = "=0.11.1", default-features = false }
+candle-transformers = { version = "=0.11.1", default-features = false }
 safetensors = "=0.8.0"
-tokenizers = { version = "=0.22.2", default-features = false, features = ["onig"] }
+tokenizers = { version = "=0.23.2", default-features = false, features = ["onig"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 rustix = { version = "=1.1.6", features = ["fs", "process"] }

@@ -15,7 +15,7 @@ neo4rs = "=0.8.0"
 serde.workspace = true
 serde_json.workspace = true
 serde-saphyr = { version = "2", default-features = false, features = ["deserialize"] }
-sha2 = "0.10"
+sha2 = "0.11"
 tracing.workspace = true
 uuid.workspace = true
 
