@@ -19,16 +19,16 @@ crypto-rust = ["dep:aes", "dep:block-padding", "dep:cbc", "dep:getrandom", "dep:
 crypto-openssl = ["dep:getrandom", "dep:num", "dep:once_cell", "dep:openssl"]
 
 [dependencies]
-aes = { version = "0.8", optional = true }
-block-padding = { version = "0.3", features = ["std"], optional = true }
-cbc = { version = "0.1", features = ["block-padding", "alloc"], optional = true }
+aes = { version = "0.9", optional = true }
+block-padding = { version = "0.4", features = ["std"], optional = true }
+cbc = { version = "0.2", features = ["block-padding", "alloc"], optional = true }
 dbus = "0.9"
 getrandom = { version = "0.4", optional = true }
-hkdf = { version = "0.12", optional = true }
+hkdf = { version = "0.13", optional = true }
 num = { version = "0.4", optional = true }
 once_cell = { version = "1", optional = true }
 openssl = { version = "0.10.55", optional = true }
-sha2 = { version = "0.10", optional = true }
+sha2 = { version = "0.11", optional = true }
 zeroize = { version = "1.8", features = ["derive"] }
 
 [package.metadata.docs.rs]
