@@ -610,7 +610,7 @@ jobs:
         # the runner image must not decide which Python reaches the CLI.
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: '3.11'
+          python-version: '3.15'
       - name: Install Semgrep CLI
         # setuptools<81 keeps pkg_resources, which the pinned semgrep requires when
         # importing. It must match the pin of the just ci-semgrep recipe.
@@ -891,7 +891,7 @@ jobs:
           cargo llvm-cov -p muninn-providers -p muninn --no-report
           cargo llvm-cov report --lcov --output-path coverage/rust-lcov.info
       - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@e805d875275f728fac1885b413934be6d7c63f65 # v8.4.1
+        uses: SonarSource/sonarqube-scan-action@59202af334b4ba7b5db01b701b8e79f8b3bef0f4 # v8.5.0
         # Note: sonar.qualitygate.wait removed because the SonarCloud project-level
         # quality gate (New Code Coverage >= 80%) fails for large PRs that add
         # new crates (Muninn observability and MCP extensions) which remain
