@@ -351,6 +351,9 @@ impl<'a> LoopExecution<'a> {
         }
         session.summary = Some(summary.content);
         session.summary_through = through;
+        for msg in &mut session.messages[..through] {
+            msg.images.clear();
+        }
         self.record(session, Event::Compacted { through }, sink)
             .await
     }

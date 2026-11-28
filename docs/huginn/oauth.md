@@ -36,11 +36,12 @@ than `chatgpt-siwc` has no supported login method and must not be reported as an
 absent adapter. Existing API-key and local forms remain available. Connection
 readiness is local, not proof of remote access.
 
-The remaining blockers are product implementation and validation, plus the lack
-of confirmation for Huginn or any specific account/workspace. The documented
-flow is for Responses API; it does not authorize adding OAuth to Huginn's current
-Chat Completions-compatible route. Do not substitute consumer tokens, CLI
-credential extraction, or a synthetic authorization server.
+The remaining validation gate is real-provider manual acceptance with a live
+ChatGPT account, plus the lack of OpenAI confirmation for Huginn specifically
+or any particular account/workspace. The documented flow is for Responses API;
+it does not authorize adding OAuth to Huginn's Chat Completions-compatible
+route. Do not substitute consumer tokens, CLI credential extraction, or a
+synthetic authorization server.
 
 ## Per-target support matrix
 
@@ -69,14 +70,16 @@ credential extraction, or a synthetic authorization server.
 - **Local availability:** The documented category includes open-source and
   locally hosted apps. Huginn's category fit is inferred from its MIT license
   and local execution; Huginn has not been specifically approved or tested with
-  an account. No SIWC registration, token exchange, or inference is implemented.
+  a live account. SIWC registration, token exchange, and text-only Responses API
+  inference are implemented separately in the dedicated `chatgpt-siwc` adapter,
+  not on the `openai` Chat Completions adapter.
 - **Compatible endpoints:** OpenAI-compatible wire format does not inherit
   OpenAI authorization rights. Every vendor requires its own official evidence
   for the exact endpoint, client type, scopes, and registration.
-- **Support decision:** SIWC is documented for the open-source/local app
-  category, but OAuth is unsupported in Huginn until a separate implementation
-  and authorized validation are completed. Retain the existing API-key and
-  no-auth forms without promising access to any vendor's models.
+- **Support decision:** Keep OAuth unsupported on the `openai` Chat Completions
+  adapter and retain the existing API-key and no-auth forms without promising
+  access to any vendor's models. Use the dedicated `chatgpt-siwc` adapter for
+  SIWC over Responses API, with zero silent fallback to API-key billing.
 
 ### `ollama` — local inference only
 
@@ -124,8 +127,9 @@ The registration guide specifies these SIWC endpoints and scopes:
   OpenAI Platform, separately from a ChatGPT plan.
 - **Sign in with ChatGPT:** a separate, optional consent flow for eligible
   Responses API requests using the user's ChatGPT plan. It does not provide an
-  API key, is not implemented in Huginn, and does not authorize use of the
-  current Chat Completions route.
+  API key, is implemented in Huginn as the dedicated `chatgpt-siwc` vertical
+  slice (text-only Responses API), and does not authorize use of the Chat
+  Completions route.
 - **Codex authentication:** [OpenAI's Codex authentication guide](https://developers.openai.com/codex/auth)
   describes sign-in for Codex clients and separate API-key authentication. A
   Codex login or session does not establish Huginn's authorization to use SIWC.
@@ -153,43 +157,64 @@ The registration guide specifies these SIWC endpoints and scopes:
   were used. The existing UI/contract tests do not certify external OAuth or
   native secret-store behavior.
 
-## Separate first implementation slice proposal
+## Implemented first vertical slice (`chatgpt-siwc`)
 
-If the project later authorizes implementation, start with a dedicated,
-local-only SIWC vertical slice for one account and text-only streaming inference.
-Keep it separate from the API-key/Chat Completions route. The slice would cover
-browser registration and PKCE loopback callback, validation of identity and
-granted scopes, safe persistence of registration identifiers and rotating
-tokens, refresh and remote revocation, and one Responses API request with
-`store: false` and `stream: true`. Do not silently fall back to API-key billing.
-Exclude hosted/commercial distribution, multiple accounts, images, tools, and
-Codex session reuse from this first slice.
+Huginn implements the dedicated, local-only SIWC vertical slice for a single
+account and text-only streaming inference, kept strictly separate from the
+API-key / Chat Completions route:
 
-Decisions required before implementation:
+- **Authorization & registration:** browser PKCE (`S256`) + literal `127.0.0.1`
+  ephemeral loopback callback, persistent host identifier, initial
+  `client_id=dynamic_agent_client` registration with issued `client_id` reuse,
+  and validation of `state` and required scopes before marking the connection
+  ready.
+- **Secret storage:** host ID, issued `client_id`, access token, rotating
+  refresh token, and expiry are stored strictly in `OsSecrets` (macOS Keychain
+  / Linux Secret Service) with no silent downgrade to ephemeral or plaintext
+  storage.
+- **Model discovery & inference:** `GET https://api.openai.com/v1/models`
+  filtered by `visibility == "list"` using `slug`, and `POST https://api.openai.com/v1/responses`
+  with `store: false` and `stream: true`, turn pinning, usage accounting, local
+  cancellation, and zero silent fallback to API-key billing.
+- **Deferred follow-ups:** multiple simultaneous SIWC accounts, tool calling,
+  multimodal/image inputs, reasoning effort over Responses API, hosted or
+  commercial distribution, and Codex session reuse remain out of scope.
 
-1. Confirm the intended distribution and whether the app remains within the
-   documented open-source/local category; hosted or paid distribution needs a
-   separate OpenAI eligibility decision.
-2. Decide the user-facing name, explicit opt-in/consent flow, and whether the
-   first slice supports one account only.
-3. Decide the secret-store contract and backend for the stable host ID,
-   per-account issued client ID, and rotating tokens.
-4. Decide model selection behavior, including account-specific discovery,
-   unavailable/empty catalogs, and whether manual model entry is allowed.
-5. Define Responses API mapping, streaming, cancellation, usage/errors, and
-   workspace/credit-limit feedback for the first text-only scope.
-6. Authorize a real-provider acceptance test and define its account/workspace
-   controls; deterministic fixtures alone cannot verify eligibility.
+## Real-provider manual acceptance checklist
+
+Deterministic local mock-server tests verify PKCE, token exchange/rotation,
+`/v1/models`, `/v1/responses` SSE, and OIDC revocation, but cannot certify live
+OpenAI account or workspace eligibility. Report real-provider runs separately
+from deterministic fixture tests, recording OS, terminal, credential backend,
+and date:
+
+- [ ] **Sign-in (`/login` → `chatgpt-siwc`):** confirm consent screen, complete
+  browser PKCE loopback callback on `127.0.0.1`, verify ready connection without
+  affecting existing API-key or Ollama connections, and verify credentials are
+  stored in `OsSecrets` (never in `sessions.db`, logs, or terminal scrollback).
+- [ ] **Model discovery (`/model`):** list eligible models (`visibility == "list"`,
+  using `slug`) and pin a model for the next turn.
+- [ ] **Streamed text turn:** send a text prompt, verify streamed output via
+  `POST /v1/responses` (`store: false`, `stream: true`), verify reported usage
+  accounting, and verify cancellation and error handling without fallback to an
+  OpenAI API key.
+- [ ] **Token refresh rotation:** verify an expiring access token refreshes via
+  `/api/accounts/oauth/token`, rotates the refresh token in `OsSecrets`, and
+  fails closed if refresh is rejected.
+- [ ] **Revocation (`/logout`):** confirm `/logout` calls the OIDC-discovered
+  `revocation_endpoint`, clears local credentials, and explicitly reports
+  whether remote revocation was confirmed or only local cleanup occurred.
 
 ## Revocation and future gates
 
-`/logout` removes local connection authorization and stored credentials. It does
-not revoke a provider API key or prove remote token revocation. A future SIWC
-implementation must call the currently discovered remote revocation endpoint
-and report when remote revocation was not confirmed. Cancelling local work does
-not prove that remote execution or billing stopped.
+`/logout` removes local connection authorization and stored credentials. For
+API-key connections, it does not revoke a provider API key or prove remote
+token revocation. For `chatgpt-siwc`, `/logout` calls the OIDC-discovered
+`revocation_endpoint`, clears local credentials, and explicitly reports when
+remote revocation was not confirmed. Cancelling local work does not prove that
+remote execution or billing stopped.
 
-Before enabling OAuth for any target, require:
+Before enabling OAuth for any additional target, require:
 
 1. A reviewed threat model and explicit token storage, expiry, refresh,
    cancellation, and local-versus-remote revocation semantics.

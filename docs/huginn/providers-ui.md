@@ -39,7 +39,9 @@ keyboard, or rendering capabilities to adapters.
   `o3-mini`, Responses-only models such as `o3-pro` and `gpt-5-pro`, and
   audio/realtime/TTS variants), are kept in memory for follow-up turns in the
   active session only, and are never persisted as binary blobs in `sessions.db`.
-- `/logout`: confirm local revocation and credential cleanup.
+- `/logout`: confirm local revocation and credential cleanup; for `chatgpt-siwc`,
+  also invoke the OIDC-discovered remote revocation endpoint and explicitly
+  report whether remote revocation succeeded or only local cleanup occurred.
 
 In settings forms, Tab or the vertical arrows move between fields; the horizontal
 arrows change options. In provider search, the vertical arrows move between
@@ -58,10 +60,14 @@ missing credentials rather than implying availability.
 ## Contract and limits
 
 To learn the current compatibility with authentication methods, see the
-[OAuth compatibility matrix and the reason its implementation is blocked](oauth.md).
-`/login` and `/providers` explicitly state that OAuth is not supported, even
-on adapters that declare only OAuth. They do not offer OAuth options or fields
-for tokens; the API-key forms and local forms remain unchanged.
+[OAuth compatibility matrix and SIWC vertical slice contract](oauth.md).
+`/login` offers **Sign in with ChatGPT (OAuth)** only on the dedicated
+`chatgpt-siwc` adapter behind explicit consent (browser PKCE loopback on
+`127.0.0.1`, strict `OsSecrets` storage, and Responses API text-only streaming).
+For all other adapters (`openai`, `ollama`, `ollama-cloud`, and any other
+OAuth-only adapter), `/login` and `/providers` continue to report OAuth as
+unsupported without offering OAuth token fields; API-key and local forms remain
+unchanged.
 
 `huginn-plugin-api::v1::Workflow` describes fields and an asynchronous operation.
 The synchronous callback only returns that description. The host captures public
@@ -186,4 +192,5 @@ Record the terminal, dimensions, OS, credential backend, and outcome for each ru
 - Repeat secure-mode save/restart on real macOS Keychain and Linux Secret Service.
 
 Manual acceptance and real OS-backend results must be reported separately from
-fixture tests. OAuth and `huginn auth login` remain outside this change.
+fixture tests. Live SIWC acceptance is tracked in [oauth.md](oauth.md);
+`huginn auth login` remains separate from the interactive TUI SIWC flow.
