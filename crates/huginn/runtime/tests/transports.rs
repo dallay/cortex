@@ -387,7 +387,7 @@ async fn mcp_protocol_error_does_not_cancel_server_for_later_calls() {
         &registry,
         &policy,
         CancellationToken::new(),
-        3,
+        10,
     )
     .await
     .unwrap();

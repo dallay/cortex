@@ -7,6 +7,7 @@ publish = false
 
 [features]
 test-driver = ["dep:huginn-application", "dep:huginn-reference-extension"]
+test-hooks = []
 
 [[bin]]
 name = "tui-fixture"
@@ -17,6 +18,11 @@ required-features = ["test-driver"]
 name = "input_parser"
 path = "tests/input_parser.rs"
 required-features = ["test-driver"]
+
+[[test]]
+name = "clipboard_lifecycle"
+path = "tests/clipboard_lifecycle.rs"
+required-features = ["test-hooks"]
 
 [dependencies]
 aes-gcm.workspace = true
@@ -41,7 +47,7 @@ zeroize = "1"
 
 [target.'cfg(unix)'.dependencies]
 # Safe, nonblocking host input after Ratatui's initial cursor query.
-rustix = { version = "1", features = ["event"] }
+rustix = { version = "1", features = ["event", "process"] }
 
 [dev-dependencies]
 portable-pty = "=0.9.0"

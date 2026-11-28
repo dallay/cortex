@@ -5,7 +5,7 @@ compares the declared Cargo workspace inventory with explicit Bazel target mappi
 exclusions. A matching package/target count is not evidence of coverage.
 
 Cargo metadata is the source of truth for package and declared-target inventory. The current
-workspace has 43 packages and 294 declared targets.
+workspace has 43 packages and 299 declared targets.
 
 ```sh
 cargo metadata --locked --no-deps --format-version 1
@@ -132,11 +132,11 @@ older than the version the tooling supports.
 `python3 dev/bazel/check_inventory.py` reports the current state:
 
 ```text
-Inventory coverage: 291/294 mapped; 3 reviewed exclusions.
+Inventory coverage: 296/299 mapped; 3 reviewed exclusions.
 ```
 
 - 187 non-Huginn Cargo targets: 184 map to verified Bazel labels and 3 carry reviewed exclusions.
-- 107 Huginn Cargo targets, including `apps/huginn`: 107 map to Bazel labels and none carry reviewed
+- 112 Huginn Cargo targets, including `apps/huginn`: 112 map to Bazel labels and none carry reviewed
   exclusions.
 
 The excluded targets are:
@@ -164,8 +164,8 @@ Parity was measured by running both build systems over the non-Huginn packages:
   and integration test cases, 0 failures, and 28 ignored tests, plus 6 passing doc-test cases.
 
 The recorded case totals predate this PR's `transport-axum` `codex_routes` target, which adds two
-tests; the target is included in the current full run. The current inventory has 294 Cargo targets,
-and `just bazel-test` reports 286 test targets with 0 failures, including the two `//dev/bazel`
+tests; the target is included in the current full run. The current inventory has 299 Cargo targets,
+and `just bazel-test` reports 291 test targets with 0 failures, including the two `//dev/bazel`
 tooling targets. The earlier `csrf_session_binding` target added 7 cases to its recorded baseline.
 
 The case comparison above still covers only the non-Huginn packages. Huginn is now modeled and

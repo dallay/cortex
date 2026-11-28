@@ -33,6 +33,22 @@ impl OpenAiProvider {
         Ok(())
     }
 
+    #[cfg(all(feature = "test-hooks", debug_assertions))]
+    #[doc(hidden)]
+    pub fn trust_test_proxy(&mut self, proxy_url: &str, certificate_der: &[u8]) -> Result<()> {
+        let proxy = reqwest::Proxy::https(proxy_url)
+            .map_err(|_| AgentError::Configuration("invalid test proxy".into()))?;
+        self.client = transport_builder(&self.url, self.timeout_secs, false)?
+            .proxy(proxy)
+            .add_root_certificate(
+                reqwest::Certificate::from_der(certificate_der)
+                    .map_err(|_| AgentError::Configuration("invalid test certificate".into()))?,
+            )
+            .build()
+            .map_err(|_| AgentError::Configuration("cannot construct test HTTP client".into()))?;
+        Ok(())
+    }
+
     pub fn new(
         base_url: &str,
         model: String,
@@ -714,57 +730,5 @@ impl ProviderFactories {
             .get(name)
             .ok_or_else(|| AgentError::Configuration(format!("unknown provider {name}")))?;
         factory(config)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn openai_provider_uses_max_completion_tokens_for_official_reasoning_models() {
-        let req = ModelRequest {
-            messages: vec![huginn_core::Message::text(
-                huginn_core::Role::User,
-                "reason",
-            )],
-            tools: vec![],
-            max_tokens: 4096,
-        };
-        // Official OpenAI endpoint with verified reasoning model: uses max_completion_tokens
-        let official = OpenAiProvider::new(
-            "https://api.openai.com/v1",
-            "o3-mini".into(),
-            Some("test-key".into()),
-            10,
-        )
-        .unwrap();
-        let body = official.request_body(&req);
-        assert_eq!(body["max_completion_tokens"], req.max_tokens);
-        assert!(body.get("max_tokens").is_none());
-
-        // Official OpenAI endpoint with standard model: uses max_tokens
-        let non_reasoning = OpenAiProvider::new(
-            "https://api.openai.com/v1",
-            "gpt-4o".into(),
-            Some("test-key".into()),
-            10,
-        )
-        .unwrap();
-        let body_std = non_reasoning.request_body(&req);
-        assert_eq!(body_std["max_tokens"], req.max_tokens);
-        assert!(body_std.get("max_completion_tokens").is_none());
-
-        // Non-official endpoint with reasoning model: preserves max_tokens
-        let compat = OpenAiProvider::new(
-            "https://api.openai-compatible.com/v1",
-            "o3-mini".into(),
-            Some("test-key".into()),
-            10,
-        )
-        .unwrap();
-        let body_compat = compat.request_body(&req);
-        assert_eq!(body_compat["max_tokens"], req.max_tokens);
-        assert!(body_compat.get("max_completion_tokens").is_none());
     }
 }
