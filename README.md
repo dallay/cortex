@@ -24,6 +24,14 @@ The AI Infrastructure Stack for Production
 
 </div>
 
+## Additional Quality Metrics
+
+[![SonarCloud Coverage](https://sonarcloud.io/api/project_badges/measure?project=dallay_cortex&metric=coverage)](https://sonarcloud.io/summary/new_code?id=dallay_cortex) [![SonarCloud Duplicated Lines](https://sonarcloud.io/api/project_badges/measure?project=dallay_cortex&metric=duplicated_lines_density)](https://sonarcloud.io/summary/new_code?id=dallay_cortex) [![SonarCloud Lines of Code](https://sonarcloud.io/api/project_badges/measure?project=dallay_cortex&metric=ncloc)](https://sonarcloud.io/summary/new_code?id=dallay_cortex) [![SonarCloud Reliability Rating](https://sonarcloud.io/api/project_badges/measure?project=dallay_cortex&metric=reliability_rating)](https://sonarcloud.io/summary/new_code?id=dallay_cortex) [![SonarCloud Security Rating](https://sonarcloud.io/api/project_badges/measure?project=dallay_cortex&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=dallay_cortex)
+
+[![SonarCloud Maintainability Issues](https://sonarcloud.io/api/project_badges/measure?project=dallay_cortex&metric=software_quality_maintainability_issues)](https://sonarcloud.io/summary/new_code?id=dallay_cortex) [![SonarCloud Reliability Issues](https://sonarcloud.io/api/project_badges/measure?project=dallay_cortex&metric=software_quality_reliability_issues)](https://sonarcloud.io/summary/new_code?id=dallay_cortex) [![SonarCloud Security Issues](https://sonarcloud.io/api/project_badges/measure?project=dallay_cortex&metric=software_quality_security_issues)](https://sonarcloud.io/summary/new_code?id=dallay_cortex) [![SonarCloud Technical Debt](https://sonarcloud.io/api/project_badges/measure?project=dallay_cortex&metric=sqale_index)](https://sonarcloud.io/summary/new_code?id=dallay_cortex) [![SonarCloud Maintainability Rating](https://sonarcloud.io/api/project_badges/measure?project=dallay_cortex&metric=sqale_rating)](https://sonarcloud.io/summary/new_code?id=dallay_cortex)
+
+[![Codecov coverage distribution sunburst](https://codecov.io/gh/dallay/cortex/graphs/sunburst.svg?token=X2A75Y1676)](https://codecov.io/gh/dallay/cortex)
+
 ---
 
 <p align="center">
